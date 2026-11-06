@@ -24,9 +24,12 @@
 #include "groomlab/graph_edit.h"
 #include "groomlab/graph_io.h"
 #include "groomlab/groom_file.h"
+#include "groom/GroomEvaluator.h"
 #include "groomlab/presets.h"
 #include "groomlab/random.h"
 #include "test_helpers.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -72,6 +75,43 @@ const json& nodeOfType(const json& graph, const std::string& type) {
 }
 
 }  // namespace
+
+TEST(Presets, ShippedPresetsAreFoundDescribedAndLoad) {
+    const std::vector<std::string> dirs = presetSearchDirs({}, kShipped);
+    ASSERT_FALSE(dirs.empty());
+    EXPECT_EQ(dirs.back(), kShipped);
+    const std::vector<PresetInfo> presets = listPresets(dirs);
+    ASSERT_GT(presets.size(), 10u);
+    bool basics = false;
+    for (const PresetInfo& p : presets) {
+        EXPECT_FALSE(p.title.empty()) << p.name;
+        EXPECT_FALSE(p.description.empty()) << p.name << ": every shipped preset is described for the menu";
+        EXPECT_TRUE(std::find(presetCategories().begin(), presetCategories().end(), p.category) != presetCategories().end())
+            << p.name << " in category '" << p.category << "'";
+        EXPECT_EQ(presetPath(p.name, dirs), p.path);
+        // Its graph loads as a groom stores it (the preset's own fields gone, the backdrops kept).
+        std::ifstream in(std::filesystem::u8path(p.path));
+        std::stringstream text;
+        text << in.rdbuf();
+        const std::string graphText = presetGraphJson(text.str(), 20.0);
+        if (!test::presetUsesCompound(p.path)) EXPECT_NO_THROW(loadGraphJson(graphText)) << p.name;
+        const json graph = json::parse(graphText);
+        for (const std::string& field : presetFields()) {
+            if (field != "backdrops") EXPECT_FALSE(graph.contains(field)) << p.name << " keeps " << field;
+        }
+        if (p.name == "hair_basics") {
+            basics = true;
+            EXPECT_EQ(p.title, "Hair basics");
+            EXPECT_EQ(p.category, "Hair");
+        }
+    }
+    EXPECT_TRUE(basics);
+    EXPECT_EQ(presetPath("no_such_preset", dirs), "");
+    EXPECT_EQ(presetTitle("wet_hair"), "Wet hair");
+    EXPECT_EQ(presetNameError("mine"), "");
+    EXPECT_NE(presetNameError("bad/name"), "");
+    EXPECT_NE(presetNameError(""), "");
+}
 
 TEST(Presets, AnEarlierDirectoryHidesALaterOne) {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "groomlab_presets_test";
@@ -312,6 +352,8 @@ std::string readPreset(const std::string& name) {
     return text.str();
 }
 
+
+
 TEST(Presets, SearchDirsFollowTheEnvironment) {
 #ifdef _WIN32
     _putenv_s("GROOMLAB_PRESET_PATH", "C:/a;C:/b");
@@ -416,6 +458,49 @@ void expectNear(const json& got, const json& want, const std::string& what) {
 
 }  // namespace
 
+TEST(PresetLooks, EveryShippedPresetMakesWhatItMadeBefore) {
+    const GroomFile reference = readGroomFile(std::string(GROOMLAB_TEST_DATA) + "/strokes/strokes.groom");
+    ASSERT_TRUE(reference.data.scalp);
+    const std::optional<double> size = presetScalpSize(*reference.data.scalp);
+    json looks = json::object();
+    std::set<std::string> compound;
+    for (const PresetInfo& p : listPresets({kShipped})) {
+        if (test::presetUsesCompound(p.path)) {
+            compound.insert(p.name);
+            continue;
+        }
+        std::ifstream in(std::filesystem::u8path(p.path));
+        std::stringstream text;
+        text << in.rdbuf();
+        GroomData data = reference.data;
+        data.graphJson = presetGraphJson(text.str(), size);
+        test::paintRequiredMaps(text.str(), data);  // the maps a host makes on applying it, painted
+        try {
+            GroomEvaluator groom(data);
+            groom.setPathResolver(searchPathResolver({reference.directory, kShipped}));
+            const StrandsPtr made = groom.evaluate(kPresetLookDensity, 0.0);
+            looks[p.name] = made ? presetLook(*made) : json{{"error", "nothing made"}};
+        } catch (const std::exception& e) {
+            looks[p.name] = {{"error", e.what()}};
+        }
+    }
+    ASSERT_GT(looks.size(), 10u);
+    if (updatingGoldens()) std::ofstream(kPresetLooks, std::ios::binary) << looks.dump(1) << "\n";
+    std::ifstream in(kPresetLooks, std::ios::binary);
+    ASSERT_TRUE(in) << "no " << kPresetLooks.generic_string() << " (run python tools/dev/record_preset_looks.py)";
+    const json recorded = json::parse(in);
+    for (const auto& [name, look] : looks.items()) {
+        if (!recorded.contains(name)) {
+            ADD_FAILURE() << "preset " << name << " has no recorded look (run python tools/dev/record_preset_looks.py)";
+            continue;
+        }
+        expectNear(look, recorded.at(name), name);
+    }
+    for (const auto& [name, look] : recorded.items()) {
+        EXPECT_TRUE(looks.contains(name) || compound.count(name)) << "preset " << name << " is recorded but no longer shipped: re-record";
+    }
+}
+
 // ---- A preset's look as one Compound shows the look's key params ("exposed") -------------------
 
 namespace {
@@ -466,6 +551,23 @@ json editedValue(const json& spec, const json& value) {
     return v;
 }
 
+// The look the reference groom makes from a graph (presetLook), or the error it gives.
+json lookOf(const GroomFile& reference, const std::string& graphJson) {
+    GroomData data = reference.data;
+    data.graphJson = graphJson;
+    try {
+        GroomEvaluator groom(data);
+        groom.setPathResolver(searchPathResolver({reference.directory, kShipped}));
+        const StrandsPtr made = groom.evaluate(kPresetLookDensity, 0.0);
+        return made ? presetLook(*made) : json{{"error", "nothing made"}};
+    } catch (const std::exception& e) {
+        return {{"error", e.what()}};
+    }
+}
+
 }  // namespace
+
+
+
 
 }  // namespace groomlab

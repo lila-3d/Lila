@@ -25,6 +25,9 @@
 #include "groomlab/subdivision.h"
 #include "groomlab/texture.h"
 #include "test_helpers.h"
+#include "groom/GroomEvaluator.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -150,6 +153,34 @@ TEST(Maps, TextureDensityFollowsTheImageAndReloads) {
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     writePgm(path, 64, 64, [](int, int) { return 0; });
     EXPECT_EQ(mg.eval(mg.scatter)->strandCount(), 0u);
+    std::remove(path.c_str());
+}
+
+TEST(Maps, MapTextureRewrittenReloads) {
+    // A Map node reading an image, feeding Scatter's density: the same graph evaluated again
+    // after the image is rewritten (a paint stroke) gives the new mask, not the cached strands.
+    const std::string path = tempPath("groomlab_scalpmask.pgm");
+    writePgm(path, 32, 32, [](int, int) { return 255; });
+    GroomData d;
+    d.scalp = mappedPlane();
+    d.graphJson = R"j({"version": 1, "output": "out", "nodes": [
+        {"name": "scalp", "type": "Scalp"},
+        {"name": "scatter", "type": "Scatter", "params": {"density": 800.0}, "paramInputs": ["density"]},
+        {"name": "mask", "type": "Map", "params": {"name": "mask"}},
+        {"name": "out", "type": "Output"}],
+      "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+        {"from": "mask", "to": "scatter", "input": "density"}, {"from": "scatter", "to": "out", "input": "strands"}]})j";
+    d.maps["mask"] = {"texture", path};  // the host's catalog says where the map lives
+    GroomEvaluator groom(d);
+    const std::size_t white = groom.evaluate(1.0f, 0.0)->strandCount();
+    EXPECT_NEAR(static_cast<double>(white), 800.0, 120.0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    writePgm(path, 32, 32, [](int x, int) { return x < 16 ? 0 : 255; });  // the left half painted black
+    const StrandsPtr half = groom.evaluate(1.0f, 0.0);
+    EXPECT_NEAR(static_cast<double>(half->strandCount()), white * 0.5, 100.0);
+    std::size_t stray = 0;  // the image is sampled filtered: a few strands land near the black side
+    for (std::size_t s = 0; s < half->strandCount(); ++s) stray += half->strandPoints(s)[0].x < 0.44f;
+    EXPECT_LT(stray, half->strandCount() / 20);
     std::remove(path.c_str());
 }
 
@@ -337,6 +368,85 @@ std::pair<std::size_t, std::size_t> halves(const StrandSet& s) {
     return {left, right};
 }
 
+TEST(Maps, MapNodeOutputsEachChannelOfAColorTexture) {
+    // Masks packed in one color texture: r on the right half, g on the left, b nowhere, a all
+    // over. Each output of the Map node gives its channel; luminance (the first output, what a
+    // link naming none reads) the mix as before.
+    const std::string path = tempPath("groomlab_packed.png");
+    writeRgba(path, 32, 32, [](int x, int) { return std::array<int, 4>{x >= 16 ? 255 : 0, x < 16 ? 255 : 0, 0, 255}; });
+    auto run = [&](const std::string& channel) {
+        GroomData d;
+        d.scalp = mappedPlane();
+        d.graphJson = densityFromMap(R"({"name": "packed"})", channel);
+        d.maps["packed"] = {"texture", path};
+        GroomEvaluator groom(d);
+        return halves(*groom.evaluate(1.0f, 0.0));
+    };
+    const auto red = run("r"), green = run("g"), blue = run("b"), alpha = run("a"), gray = run("");
+    EXPECT_LT(red.first, red.second / 10);
+    EXPECT_LT(green.second, green.first / 10);
+    EXPECT_EQ(blue.first + blue.second, 0u);
+    EXPECT_NEAR(static_cast<double>(alpha.first + alpha.second), 800.0, 120.0);
+    // Luminance: 0.7152 on the left (green), 0.2126 on the right (red).
+    EXPECT_GT(gray.first, gray.second * 2);
+    EXPECT_EQ(run("luminance"), gray);
+    std::remove(path.c_str());
+}
+
+TEST(Maps, AMapNodeDrivesTheDensityOnARefinedScalpWhereItIsPainted) {
+    // A checker painted as a texture, through a Map node into Scatter's density, on a scalp
+    // refined twice: Scatter places its roots on the cage, and the Map node reads them on the
+    // refined scalp, so each root goes there first (read as the refined scalp's own face, a
+    // cage root sampled the image somewhere else: strands in the black squares).
+    const std::string path = tempPath("groomlab_checker.png");
+    auto white = [](float u, float v) { return (static_cast<int>(u * 4.0f) + static_cast<int>(v * 4.0f)) % 2 == 0; };
+    writeRgba(path, 64, 64, [&](int x, int y) {
+        const int c = white((x + 0.5f) / 64.0f, 1.0f - (y + 0.5f) / 64.0f) ? 255 : 0;  // (rows from the top: v up)
+        return std::array<int, 4>{c, c, c, 255};
+    });
+    const MeshPtr refined = subdivideScalp(mappedPlane(8), 2);
+    ASSERT_EQ(refined->subdivisionLevel(), 2);
+    GroomData d;
+    d.scalp = refined;
+    d.graphJson = densityFromMap(R"({"name": "checker"})");
+    d.maps["checker"] = {"texture", path};
+    GroomEvaluator groom(d);
+    const StrandsPtr out = groom.evaluate(1.0f, 0.0);
+    ASSERT_GT(out->strandCount(), 200u);
+    std::size_t misplaced = 0;
+    for (std::size_t s = 0; s < out->strandCount(); ++s) {
+        const Vec3f root = out->strandPoints(s)[0];
+        // (Within two texels of a square's edge, the filtered image, either side will do.)
+        const float u = root.x * 4.0f, v = root.z * 4.0f;
+        const bool edge = std::abs(u - std::round(u)) < 0.13f || std::abs(v - std::round(v)) < 0.13f;
+        if (!edge && !white(root.x, root.z)) ++misplaced;
+    }
+    EXPECT_EQ(misplaced, 0u) << "of " << out->strandCount();
+    std::remove(path.c_str());
+}
+
+TEST(Maps, MapNodeOutputsEachChannelOfAColorVertexMap) {
+    // A color vertex map as the host lays it on the scalp: a color set of the map's name with
+    // the real r g b a (cornerColorsFromVertexMap). b is 1 on the right half only.
+    const auto base = mappedPlane();
+    auto mesh = std::make_shared<ScalpMesh>(*base);
+    std::vector<float> values;
+    for (const Vec3f& p : mesh->points()) values.insert(values.end(), {0.2f, 0.0f, p.x > 0.5f ? 1.0f : 0.0f, 1.0f});
+    mesh->setCornerColors("tint", cornerColorsFromVertexMap(values, *mesh, kColorMap));
+    auto run = [&](const std::string& channel) {
+        GroomData d;
+        d.scalp = mesh;
+        d.graphJson = densityFromMap(R"({"name": "tint"})", channel);
+        d.maps["tint"] = {"vertices", ""};
+        GroomEvaluator groom(d);
+        return halves(*groom.evaluate(1.0f, 0.0));
+    };
+    const auto blue = run("b"), red = run("r");
+    EXPECT_LT(blue.first, blue.second / 8);
+    EXPECT_NEAR(static_cast<double>(red.first + red.second), 800.0 * 0.2, 60.0);  // r = 0.2 everywhere
+    EXPECT_NEAR(static_cast<double>(red.first) / std::max<std::size_t>(red.second, 1), 1.0, 0.5);
+}
+
 TEST(Maps, MapNodeOutputsAreTheChannelsAtEachRoot) {
     // One Map node on a packed color texture (r = 1 on the right half, g on the left, b 0.4, a
     // 0.8 everywhere) and on a color vertex map with the same colors: each output read at the
@@ -393,6 +503,165 @@ TEST(Maps, MapNodeOutputsAreTheChannelsAtEachRoot) {
         }
         EXPECT_GT(checked, 20u);
     }
+    std::remove(path.c_str());
+}
+
+TEST(Maps, OneMapNodeFeedsTwoParamsFromTwoChannels) {
+    // The point of the outputs: one Map node feeds Scatter's density from r and Length's length
+    // from g (a packed map), no duplicate nodes; it runs once. Saved, the links keep their
+    // outputs ("output" written only when not the first); the old `channel` param is ignored
+    // (luminance until relinked).
+    const std::string path = tempPath("groomlab_map_two.png");
+    writeRgba(path, 32, 32, [](int x, int) { return std::array<int, 4>{x >= 16 ? 255 : 0, 64, 0, 255}; });
+    const std::string graph = R"j({"version": 1, "output": "out", "nodes": [
+        {"name": "scalp", "type": "Scalp"},
+        {"name": "scatter", "type": "Scatter", "params": {"density": 800.0}, "paramInputs": ["density"]},
+        {"name": "length", "type": "Length", "paramInputs": ["keep"]},
+        {"name": "mask", "type": "Map", "params": {"name": "packed"}},
+        {"name": "out", "type": "Output"}],
+      "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+        {"from": "mask", "to": "scatter", "input": "density", "output": "r"},
+        {"from": "scatter", "to": "length", "input": "strands"},
+        {"from": "mask", "to": "length", "input": "keep", "output": "g"},
+        {"from": "length", "to": "out", "input": "strands"}]})j";
+    GroomData d;
+    d.scalp = mappedPlane();
+    d.graphJson = graph;
+    d.maps["packed"] = {"texture", path};
+    GroomEvaluator groom(d);
+    const StrandsPtr strands = groom.evaluate(1.0f, 0.0);
+    ASSERT_TRUE(strands);
+    const auto [left, right] = halves(*strands);
+    EXPECT_LT(left, right / 10);  // density from r
+    // Length from g (0.25 everywhere: the fraction kept), against luminance (0.39 on the right).
+    const Vec3f* pts = strands->strandPoints(0);
+    const std::size_t n = strands->strandPointCount(0);
+    float length = 0.0f;
+    for (std::size_t i = 1; i < n; ++i) length += (pts[i] - pts[i - 1]).length();
+    GroomData plain = d;
+    plain.graphJson = graph;
+    const std::string noG = R"(, "output": "g")";
+    plain.graphJson.erase(plain.graphJson.find(noG), noG.size());  // length from luminance instead
+    const StrandsPtr lum = GroomEvaluator(plain).evaluate(1.0f, 0.0);
+    ASSERT_TRUE(lum && lum->strandCount() == strands->strandCount());
+    const Vec3f* lp = lum->strandPoints(0);
+    float lumLength = 0.0f;
+    for (std::size_t i = 1; i < lum->strandPointCount(0); ++i) lumLength += (lp[i] - lp[i - 1]).length();
+    EXPECT_NEAR(length / lumLength, (64.0f / 255.0f) / (0.2126f + 0.7152f * 64.0f / 255.0f), 0.03f);
+
+    GraphDocument doc = loadGraphJson(graph);
+    EvalContext ctx;
+    ExternalInputs ext;
+    ext.set("scalp", MeshPtr(d.scalp), d.scalp->contentHash());
+    setMapExternals(ext, d.maps);
+    ctx.externals = &ext;
+    doc.graph.evaluate(doc.output, ctx);
+    EXPECT_EQ(doc.graph.evaluationCount(), 5u);  // scalp, the Map node once, scatter, length, out
+    const std::string saved = saveGraphJson(doc);
+    EXPECT_NE(saved.find(R"("output": "r")"), std::string::npos);
+    EXPECT_NE(saved.find(R"("output": "g")"), std::string::npos);
+    EXPECT_EQ(saveGraphJson(loadGraphJson(saved)), saved);
+
+    // A graph from before the outputs: `channel` is an unknown param now, and the link reads luminance.
+    std::string old = graph;
+    old.replace(old.find(R"({"name": "packed"})"), 18, R"({"name": "packed", "channel": "r"})");
+    for (const char* port : {R"(, "output": "r")", R"(, "output": "g")"}) old.erase(old.find(port), std::string(port).size());
+    GraphDocument oldDoc = loadGraphJson(old);
+    std::size_t output = 9;
+    NodeId src = 0;
+    const std::size_t density = oldDoc.graph.inputSpecs(oldDoc.node("scatter")).size() - 1;  // the exposed param's slot
+    ASSERT_TRUE(oldDoc.graph.inputSource(oldDoc.node("scatter"), density, &src, &output));
+    EXPECT_EQ(output, 0u);
+    GroomData before = d;
+    before.graphJson = old;
+    const auto oldHalves = halves(*GroomEvaluator(before).evaluate(1.0f, 0.0));
+    EXPECT_GT(oldHalves.first, oldHalves.second / 4);  // luminance: strands on the left too
+    std::remove(path.c_str());
+}
+
+TEST(HairColor, APaintedMapColorsTheHairAndFollowsItsFile) {
+    // HairColor.map names a painted map: a color texture map's color at each root replaces the
+    // pigment's (or multiplies it); rewriting the file (a stroke) re-evaluates the node.
+    const std::string path = tempPath("groomlab_haircolor_map.png");
+    writeRgba(path, 16, 16, [](int x, int) { return x < 8 ? std::array<int, 4>{255, 0, 0, 255} : std::array<int, 4>{0, 0, 255, 255}; });
+    auto graphWith = [](const std::string& colorParams) {
+        return R"j({"version": 1, "output": "out", "nodes": [
+            {"name": "scalp", "type": "Scalp"},
+            {"name": "scatter", "type": "Scatter", "params": {"density": 400.0}},
+            {"name": "color", "type": "HairColor", "params": )j" + colorParams + R"j(},
+            {"name": "out", "type": "Output"}],
+          "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+            {"from": "scatter", "to": "color", "input": "strands"}, {"from": "color", "to": "out", "input": "strands"}]})j";
+    };
+    GroomData d;
+    d.scalp = mappedPlane();
+    d.graphJson = graphWith(R"({"mode": "color", "map": "dye"})");
+    d.maps["dye"] = {"texture", path};
+    GroomEvaluator groom(d);
+    auto colorsBySide = [](const StrandSet& s) {
+        std::array<float, 3> left{}, right{};
+        std::size_t nl = 0, nr = 0;
+        const auto colors = strandColors(s);
+        for (std::size_t i = 0; i < s.strandCount(); ++i) {
+            const float x = s.strandPoints(i)[0].x;
+            if (x > 0.1f && x < 0.3f) {  // away from the edges (textures repeat) and the middle
+                for (int k = 0; k < 3; ++k) left[k] += colors[i][k];
+                ++nl;
+            } else if (x > 0.7f && x < 0.9f) {
+                for (int k = 0; k < 3; ++k) right[k] += colors[i][k];
+                ++nr;
+            }
+        }
+        for (int k = 0; k < 3; ++k) {
+            left[k] /= static_cast<float>(std::max<std::size_t>(nl, 1));
+            right[k] /= static_cast<float>(std::max<std::size_t>(nr, 1));
+        }
+        return std::make_pair(left, right);
+    };
+    const auto [left, right] = colorsBySide(*groom.evaluate(1.0f, 0.0));
+    EXPECT_NEAR(left[0], 1.0f, 0.02f);
+    EXPECT_NEAR(left[2], 0.0f, 0.02f);
+    EXPECT_NEAR(right[2], 1.0f, 0.02f);
+    EXPECT_NEAR(right[0], 0.0f, 0.02f);
+
+    // Rewritten green: the cached node reads the new file.
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    writeRgba(path, 16, 16, [](int, int) { return std::array<int, 4>{0, 255, 0, 255}; });
+    const auto [greenLeft, greenRight] = colorsBySide(*groom.evaluate(1.0f, 0.0));
+    EXPECT_NEAR(greenLeft[1], 1.0f, 0.02f);
+    EXPECT_NEAR(greenRight[1], 1.0f, 0.02f);
+    EXPECT_NEAR(greenLeft[0], 0.0f, 0.02f);
+
+    // Mode melanin: the map dyes the pigment (green keeps only the pigment's green).
+    GroomData m = d;
+    m.graphJson = graphWith(R"({"map": "dye", "melaninRandom": 0})");
+    GroomData plain = d;
+    plain.graphJson = graphWith(R"({"melaninRandom": 0})");
+    const auto [mulLeft, mulRight] = colorsBySide(*GroomEvaluator(m).evaluate(1.0f, 0.0));
+    const auto [pigLeft, pigRight] = colorsBySide(*GroomEvaluator(plain).evaluate(1.0f, 0.0));
+    EXPECT_NEAR(mulLeft[0], 0.0f, 1e-4f);
+    EXPECT_NEAR(mulLeft[1], pigLeft[1], 0.01f);
+    EXPECT_GT(pigLeft[0], 0.01f);
+
+    // A color vertex map (its color set on the scalp) colors it the same way.
+    auto mesh = std::make_shared<ScalpMesh>(*mappedPlane());
+    std::vector<float> values;
+    for (const Vec3f& p : mesh->points()) values.insert(values.end(), {p.x > 0.5f ? 1.0f : 0.0f, 0.5f, 0.0f, 1.0f});
+    mesh->setCornerColors("dye", cornerColorsFromVertexMap(values, *mesh, kColorMap));
+    GroomData v = d;
+    v.scalp = mesh;
+    v.maps["dye"] = {"vertices", ""};
+    const auto [vLeft, vRight] = colorsBySide(*GroomEvaluator(v).evaluate(1.0f, 0.0));
+    EXPECT_NEAR(vLeft[1], 0.5f, 0.02f);
+    EXPECT_LT(vLeft[0], 0.1f);
+    EXPECT_GT(vRight[0], 0.9f);
+
+    // A missing map is an error on the node, not a silent color.
+    GroomData missing = d;
+    missing.maps.clear();
+    missing.graphJson = graphWith(R"({"map": "nowhere"})");
+    GroomEvaluator broken(missing);
+    EXPECT_THROW(broken.evaluate(1.0f, 0.0), GraphError);
     std::remove(path.c_str());
 }
 
@@ -468,6 +737,33 @@ TEST(Maps, MapNodeKeysOnTheGuidesOnlyWhenReadingThem) {
     setGroomExternals(ext, recolored(*scalp, "tip", 0.7f), nullptr, nullptr);
     doc.graph.evaluateStrands(doc.output, ctx);
     EXPECT_EQ(doc.graph.evaluationCount(), runs + 3);  // the Map node, the Length and the output
+}
+
+TEST(Maps, GroomKeepsItsScalpAndPosesWhenTheyDoNotChange) {
+    const auto plane = mappedPlane();
+    GuideHierarchy h;
+    h.addGuide(h.addGroup("primary"), test::straightCurve({0.5f, 0.0f, 0.5f}, {0.0f, 0.3f, 0.0f}));
+    h.evaluate(plane.get());
+    GroomData d;
+    d.scalp = plane;
+    d.hierarchyJson = h.toJson();
+    GroomEvaluator groom(d);
+    const HierarchyPtr first = groom.hierarchy();
+    ASSERT_TRUE(first);
+    groom.setScalp(std::make_shared<ScalpMesh>(*plane));  // the same content: the old mesh stays
+    EXPECT_EQ(groom.data().scalp, plane);
+    groom.setGuidePoses(nullptr);  // no poses before or after
+    EXPECT_EQ(groom.hierarchy(), first);
+    groom.setScalp(recolored(*plane, "tip", 0.2f));  // repainted, the same surface: the hierarchy stays
+    EXPECT_NE(groom.data().scalp, plane);
+    EXPECT_EQ(groom.hierarchy(), first);
+    auto poses = std::make_shared<GuideSet>();
+    poses->add(first->guides().front().id, test::straightCurve({0.5f, 0.0f, 0.5f}, {0.2f, 0.3f, 0.0f}));
+    groom.setGuidePoses(poses);
+    const HierarchyPtr posed = groom.hierarchy();
+    EXPECT_NE(posed, first);
+    groom.setGuidePoses(std::make_shared<GuideSet>(*poses));  // the same poses again
+    EXPECT_EQ(groom.hierarchy(), posed);
 }
 
 TEST(Texture, UdimStampsFollowTheTilesOnDisk) {

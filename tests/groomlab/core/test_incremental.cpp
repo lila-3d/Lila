@@ -39,6 +39,9 @@
 #include "groomlab/stroke.h"
 #include "groomlab/view_projection.h"
 #include "test_helpers.h"
+#include "groom/GroomEvaluator.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -1241,6 +1244,81 @@ std::shared_ptr<GuideHierarchy> movedGroup(const GuideHierarchy& from, const std
         h->setPoints(g.id, std::move(points));
     }
     return h;
+}
+
+TEST(Incremental, AGuidesNodeIsKeyedByItsOwnGroups) {
+    // A dab on the whiskers' guides (a brush's preview guides) leaves the fur's Guides node and its
+    // branch cached (their key is the fur group's guides, not the whole hierarchy's), and the other
+    // way round; Merge and the Width after it go on incrementally, writing the side that changed.
+    const Verified verified;
+    const auto scalp = test::makeSphere(24, 48, 1.0f);
+    const GuideHierarchy base = twoGroups(*scalp);
+    GroomData data;
+    data.scalp = scalp;
+    data.graphJson = kTwoGroupGraph;
+    GroomEvaluator session(data);
+    session.setHierarchy(std::make_shared<const GuideHierarchy>(base));
+    // A fresh session's view of the same guides (every node in full).
+    auto fresh = [&](const std::shared_ptr<GuideHierarchy>& h) {
+        GroomEvaluator other(data);
+        other.setHierarchy(std::make_shared<const GuideHierarchy>(base));
+        other.setPreviewHierarchy(std::make_shared<GuideHierarchy>(*h));
+        const GroomEvaluator::Result& view = other.evaluate(GroomEvaluator::Request{});
+        EXPECT_TRUE(view.errors.empty());
+        return view.strands ? view.strands->contentHash() : 0;
+    };
+    GroomEvaluator::Request request;
+    const GroomEvaluator::Result& first = session.evaluate(request);
+    ASSERT_TRUE(first.errors.empty()) << first.errors[0];
+    const std::size_t whiskerStrands = 4, all = first.strands->strandCount();
+    ASSERT_GT(all, 10 * whiskerStrands);
+
+    auto runOf = [&](const std::string& node) {
+        const auto runs = session.stats().runs;
+        const auto it = runs.find(node);
+        return it == runs.end() ? std::string() : it->second;
+    };
+    // The whiskers moved: their branch made again; the fur's is not looked at past Merge's input.
+    // The guides as the session shows them (a stroke's preview starts from them), previewed as
+    // they are first (the press).
+    const GuideHierarchy shown = *session.hierarchy();
+    session.setPreviewHierarchy(std::make_shared<GuideHierarchy>(shown));
+    ASSERT_TRUE(session.evaluate(request).errors.empty());
+    std::size_t evaluations = session.evaluationCount();
+    const auto whiskersMoved = movedGroup(shown, "whiskers", 0.01f);
+    session.setPreviewHierarchy(std::make_shared<GuideHierarchy>(*whiskersMoved));
+    const GroomEvaluator::Result& whiskers = session.evaluate(request);
+    ASSERT_TRUE(whiskers.errors.empty()) << whiskers.errors[0];
+    EXPECT_EQ(whiskers.strands->contentHash(), fresh(whiskersMoved));
+    EXPECT_EQ(runOf("merge"), "incremental " + std::to_string(whiskerStrands)) << "the whiskers' side, every strand of it";
+    EXPECT_EQ(runOf("width"), "incremental " + std::to_string(whiskerStrands));
+    EXPECT_EQ(runOf("whiskerGuides").rfind("full", 0), 0u) << runOf("whiskerGuides");
+    // whiskerGuides, toStrands, whiskerWidth, merge, width (and Output).
+    EXPECT_LE(session.evaluationCount() - evaluations, 6u) << "the fur's branch stays cached";
+
+    // The fur moved: the whiskers' branch cached, Merge writes the fur strands Interpolate made again.
+    evaluations = session.evaluationCount();
+    const auto furMoved = movedGroup(*whiskersMoved, "fur", 0.005f);
+    session.setPreviewHierarchy(std::make_shared<GuideHierarchy>(*furMoved));
+    const GroomEvaluator::Result& fur = session.evaluate(request);
+    ASSERT_TRUE(fur.errors.empty()) << fur.errors[0];
+    EXPECT_EQ(fur.strands->contentHash(), fresh(furMoved));
+    EXPECT_EQ(runOf("whiskerWidth"), "cached");
+    EXPECT_EQ(runOf("furGuides").rfind("full", 0), 0u) << runOf("furGuides");
+    EXPECT_EQ(runOf("merge").rfind("incremental", 0), 0u) << runOf("merge");
+    EXPECT_LE(session.evaluationCount() - evaluations, 6u) << "furGuides, interp, merge, width (the whiskers' branch cached)";
+
+    // A whisker added: Merge's sides no longer hold the strands its last result held (in full).
+    auto added = std::make_shared<GuideHierarchy>(*furMoved);
+    const Vec3f n = Vec3f(0.6f, 0.3f, 1.0f).normalized();
+    added->addGuide(added->findGroup("whiskers"), test::straightCurve(n, n * 0.8f, 8));
+    added->evaluate(scalp.get());
+    session.setPreviewHierarchy(std::make_shared<GuideHierarchy>(*added));
+    const GroomEvaluator::Result& more = session.evaluate(request);
+    ASSERT_TRUE(more.errors.empty()) << more.errors[0];
+    EXPECT_EQ(more.strands->strandCount(), all + 1);
+    EXPECT_EQ(more.strands->contentHash(), fresh(added));
+    EXPECT_EQ(runOf("merge").rfind("full", 0), 0u) << runOf("merge");
 }
 
 // Hands on the strands the host set as the external "other" (a second side's).

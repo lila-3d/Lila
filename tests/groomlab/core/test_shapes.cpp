@@ -18,10 +18,13 @@
 #include "groomlab/graph.h"
 #include "groomlab/graph_io.h"
 #include "groomlab/groom.h"
+#include "groom/GroomEvaluator.h"
 #include "groomlab/guide_set.h"
 #include "groomlab/map_ref.h"
 #include "groomlab/operators.h"
 #include "test_helpers.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -1164,6 +1167,34 @@ TEST(Mirror, OneSideMirroredOntoTheOther) {
         ASSERT_GE(moved->roots()[s].face, 0);
         EXPECT_NEAR((off.scalp->position(moved->roots()[s]) - moved->strandPoints(s)[0]).length(), 0.0f, 1e-4f);
     }
+}
+
+TEST(Mirror, GuidesInGuidesOut) {
+    // Fed guides, it gives guides (a Curves node): Guides -> Mirror -> Interpolate's guides.
+    GroomData data;
+    data.scalp = test::makeSphere(24, 48, 1.0f);
+    auto guides = std::make_shared<GuideSet>();
+    guides->add(1, test::straightCurve({0.6f, 0.8f, 0.0f}, {0.6f, 0.8f, 0.0f}, 4));
+    guides->add(2, test::straightCurve({0.0f, 0.8f, 0.6f}, {0.0f, 0.8f, 0.6f}, 4));
+    guides->rootOnMesh(*data.scalp);
+    data.guides = guides;
+    data.graphJson = R"({"version": 1, "output": "out", "nodes": [
+        {"name": "guides", "type": "Guides"}, {"name": "mirror", "type": "Mirror"},
+        {"name": "scalp", "type": "Scalp"}, {"name": "scatter", "type": "Scatter", "params": {"density": 20.0}},
+        {"name": "interpolate", "type": "Interpolate"}, {"name": "out", "type": "Output"}],
+      "connections": [{"from": "guides", "to": "mirror", "input": "strands"}, {"from": "scalp", "to": "scatter", "input": "scalp"},
+        {"from": "scatter", "to": "interpolate", "input": "strands"}, {"from": "mirror", "to": "interpolate", "input": "guides"},
+        {"from": "scalp", "to": "interpolate", "input": "scalp"}, {"from": "interpolate", "to": "out", "input": "strands"}]})";
+    GroomEvaluator session(data);
+    const GroomEvaluator::Result& view = session.evaluate(GroomEvaluator::Request{});
+    ASSERT_TRUE(view.errors.empty()) << view.errors.front();
+    const GraphDocument& doc = *session.viewDocument();
+    const GuidesPtr mirrored = valueAs<GuidesPtr>(doc.graph.cachedValue(doc.nodesByName.at("mirror")));
+    ASSERT_TRUE(mirrored);
+    ASSERT_EQ(mirrored->guides().size(), 3u);  // the one at x = 0.6, its mirror, the one on the plane
+    const Guide& made = mirrored->guides().back();
+    EXPECT_NEAR(made.points.back().x, -1.2f, 1e-3f);
+    EXPECT_GE(made.root.face, 0);
 }
 
 TEST(Noise, KinkyIsStraightBetweenRandomKnots) {

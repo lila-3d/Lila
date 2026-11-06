@@ -8,6 +8,9 @@
 #include "groomlab/groom.h"
 #include "groomlab/guide_hierarchy.h"
 #include "test_helpers.h"
+#include "groom/GroomEvaluator.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -42,6 +45,70 @@ std::string graph(bool connectGuides, const char* source = "guide") {
         {"from": "length", "to": "out", "input": "strands"})j";
     if (connectGuides) g += R"j(, {"from": "guides", "to": "scatter", "input": "guides"})j";
     return g + "]}";
+}
+
+TEST(Layers, DensityAndLengthFromGuideLayers) {
+    const auto plane = test::makePlane(16);
+    GroomData d;
+    d.scalp = plane;
+    d.hierarchyJson = layeredHierarchy(*plane);
+    d.graphJson = graph(true);
+    const StrandsPtr s = GroomEvaluator(d).evaluate(1.0f, 0.0);
+    ASSERT_GT(s->strandCount(), 300u);
+    std::size_t right = 0;
+    float leftLength = 0.0f;
+    std::size_t nLeft = 0;
+    for (std::size_t i = 0; i < s->strandCount(); ++i) {
+        const Vec3f* p = s->strandPoints(i);
+        const float len = (p[s->strandPointCount(i) - 1] - p[0]).length();
+        if (p[0].x > 0.62f) ++right;
+        if (p[0].x < 0.3f) {
+            leftLength += len;
+            ++nLeft;
+        }
+    }
+    EXPECT_LT(right, s->strandCount() / 50);  // painted out: (almost) no strands on the right
+    ASSERT_GT(nLeft, 0u);
+    EXPECT_NEAR(leftLength / nLeft, 0.5f * 0.2f, 0.02f);  // length layer read from the strand channel
+
+    // A layer no guide carries: a clear error, not silently 0.
+    {
+        GroomData missing = d;
+        GuideHierarchy h = GuideHierarchy::fromJson(d.hierarchyJson);
+        h.removeAttribute("density");
+        missing.hierarchyJson = h.toJson();
+        EXPECT_THROW(GroomEvaluator(missing).evaluate(1.0f, 0.0), GraphError);
+    }
+
+    // Scatter without its guides input: a clear error on the node.
+    d.graphJson = graph(false);
+    try {
+        GroomEvaluator(d).evaluate(1.0f, 0.0);
+        FAIL();
+    } catch (const GraphError& e) {
+        EXPECT_NE(std::string(e.what()).find("connect them"), std::string::npos);
+    }
+}
+
+TEST(Layers, AnAttributeMapBeforeStrandsReadsTheGuideLayer) {
+    // Painted values live on the guides; an attribute map on Scatter (no
+    // strands yet) reads the guide layer of that name, like a guide map.
+    const auto plane = test::makePlane(16);
+    GroomData d;
+    d.scalp = plane;
+    d.hierarchyJson = layeredHierarchy(*plane);
+    d.graphJson = graph(true, "guide");
+    const std::size_t viaGuide = GroomEvaluator(d).evaluate(1.0f, 0.0)->strandCount();
+    d.graphJson = graph(true, "attribute");
+    EXPECT_EQ(GroomEvaluator(d).evaluate(1.0f, 0.0)->strandCount(), viaGuide);
+
+    d.graphJson = graph(false, "attribute");
+    try {
+        GroomEvaluator(d).evaluate(1.0f, 0.0);
+        FAIL();
+    } catch (const GraphError& e) {
+        EXPECT_NE(std::string(e.what()).find("painted on the guides"), std::string::npos) << e.what();
+    }
 }
 
 TEST(Layers, RemoveALayer) {

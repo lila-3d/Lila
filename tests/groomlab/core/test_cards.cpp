@@ -24,9 +24,27 @@
 #include "groomlab/groom.h"
 #include "groomlab/strand_geometry.h"
 #include "test_helpers.h"
+#include "groom/GroomEvaluator.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
+
+StrandsPtr clumpedFur() {
+    GroomData d;
+    d.scalp = test::makePlane(16);
+    d.graphJson = R"j({"version": 1, "output": "out", "nodes": [
+        {"name": "scalp", "type": "Scalp"},
+        {"name": "scatter", "type": "Scatter", "params": {"density": 800.0}},
+        {"name": "clump", "type": "Clump", "params": {"count": 12, "strength": 0.8}},
+        {"name": "out", "type": "Output"}, {"name": "resolution", "type": "Resample", "params": {"segments": 10}}],
+      "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+        {"from": "scatter", "to": "clump", "input": "strands"},
+        {"from": "clump", "to": "out", "input": "strands"}]})j";
+    return GroomEvaluator(d).evaluate(1.0f, 0.0);
+}
+
 
 TEST(Cards, ATipNeverFlaresBackOutToItsRootsWidth) {
     // One clump gathering from a wide spread on the scalp into a narrow lock whose ends splay out
@@ -103,6 +121,7 @@ TEST(Cards, AFlyawayNodesStraysGetCardsOfTheirOwn) {
         for (const std::size_t i : card.strands) EXPECT_EQ(flag[i], 0.0f);
     }
 }
+
 
 TEST(Cards, TheCardsNodeBuildsCardsFromTheStrandsBeforeIt) {
     GroomData d;
@@ -257,6 +276,73 @@ TEST(Cards, CardsFromGuidesLieAlongEachGuideFromWhereItGrows) {
     EXPECT_FALSE(loose->cardLayers().front()->cards.empty());
 }
 
+TEST(Cards, BakeCoversTheCardsAndWritesTga) {
+    const StrandsPtr s = clumpedFur();
+    const auto plane = test::makePlane(16);
+    const CardMesh mesh = buildCards(*s, plane.get(), {});
+    CardBakeSettings bake;
+    bake.size = 256;
+    bake.scalp = plane.get();
+    const CardTextures t = bakeCardTextures(*s, mesh, bake);
+    ASSERT_EQ(t.coverage.size(), 256u * 256u);
+    std::size_t covered = 0;
+    for (const auto a : t.coverage) covered += a > 0 ? 1 : 0;
+    EXPECT_GT(covered, 256u * 256u / 50);           // strands land in the cells
+    EXPECT_LT(covered, 256u * 256u * 9 / 10);       // with gaps between strands and cells
+    std::set<int> coordU;
+    for (std::size_t p = 0; p < 256u * 256u; ++p) coordU.insert(t.attribute[p * 4 + 3]);
+    EXPECT_GT(coordU.size(), 50u);                  // a gradient root to tip
+    EXPECT_EQ(t.tangent.size(), 3u * 256u * 256u);
+    EXPECT_EQ(t.attribute.size(), 4u * 256u * 256u);
+    EXPECT_EQ(t.color.size(), 3u * 256u * 256u);
+    EXPECT_EQ(t.occlusion.size(), 256u * 256u);
+    // Strands run root to tip: tangents point up the texture (y, the green channel, high).
+    double up = 0.0;
+    std::size_t n = 0;
+    for (std::size_t p = 0; p < 256u * 256u; ++p) {
+        if (t.coverage[p] > 128) up += t.tangent[p * 3 + 1], ++n;
+    }
+    ASSERT_GT(n, 0u);
+    EXPECT_GT(up / static_cast<double>(n), 200.0);
+    // The normal: out of the card (z, blue, high) where the strands are; DirectX's green, OpenGL's
+    // the other way up.
+    ASSERT_EQ(t.normal.size(), 3u * 256u * 256u);
+    double out = 0.0;
+    for (std::size_t p = 0; p < 256u * 256u; ++p) {
+        if (t.coverage[p] > 128) out += t.normal[p * 3 + 2];
+    }
+    EXPECT_GT(out / static_cast<double>(n), 200.0);
+    const std::vector<std::uint8_t> gl = cardNormalOpenGl(t);
+    for (std::size_t p = 0; p < 256u * 256u; p += 97) {
+        EXPECT_EQ(gl[p * 3], t.normal[p * 3]);
+        EXPECT_EQ(gl[p * 3 + 1], 255 - t.normal[p * 3 + 1]);
+    }
+
+    const std::string path = (std::filesystem::temp_directory_path() / "groomlab_cards_alpha.tga").string();
+    writeTga(path, t.size, t.size, 1, t.coverage);
+    EXPECT_EQ(std::filesystem::file_size(path), 18u + 256u * 256u);
+    std::ifstream in(path, std::ios::binary);
+    char header[18];
+    in.read(header, 18);
+    EXPECT_EQ(header[2], 3);   // grayscale
+    EXPECT_EQ(header[16], 8);  // bits
+    in.close();
+    writeTga(path, t.size, t.size, 4, t.attribute);
+    EXPECT_EQ(std::filesystem::file_size(path), 18u + 4u * 256u * 256u);
+    std::ifstream rgba(path, std::ios::binary);
+    rgba.read(header, 18);
+    EXPECT_EQ(header[16], 32);
+    EXPECT_EQ(header[17] & 0x0F, 8);  // alpha bits
+    rgba.close();
+    std::filesystem::remove(path);
+    EXPECT_THROW(writeTga(path, 2, 2, 1, {1, 2, 3}), std::runtime_error);
+}
+
+
+
+
+
+
 // One clump along x = 0..0.2 standing up +y: strands alternately 1 and 0.5
 // long, with melanin 0.5.
 StrandsPtr shortAndLong() {
@@ -316,6 +402,61 @@ TEST(Cards, StrandsKeepTheirLengthOnTheCardAndTheirColor) {
     EXPECT_EQ(ts.color[p * 3 + 2], t.color[p * 3]);
 }
 
+TEST(Cards, TheGroomBakesOntoItsScalp) {
+    // A plane with UVs = (x, z), and hair lying flat along +x just above it on its lower half (z < 0.5).
+    const auto bare = test::makePlane(8);
+    auto plane = std::make_shared<ScalpMesh>(*bare);
+    std::vector<ScalpMesh::UV> uvs;
+    for (const auto& tri : plane->triangles()) {
+        for (const int v : tri) uvs.push_back({plane->points()[static_cast<std::size_t>(v)].x, plane->points()[static_cast<std::size_t>(v)].z});
+    }
+    auto s = std::make_shared<StrandSet>();
+    for (int i = 0; i < 60; ++i) {
+        const float z = 0.5f * static_cast<float>(i) / 59.0f;
+        std::vector<Vec3f> pts;
+        for (int k = 0; k <= 10; ++k) pts.push_back({0.05f + 0.9f * static_cast<float>(k) / 10.0f, 0.004f, z});
+        s->addStrand(static_cast<StrandId>(i + 1), pts, std::vector<float>(pts.size(), 0.01f));
+    }
+    s->addStrandChannel("melanin", 0.5f);
+    ScalpBakeSettings bake;
+    bake.size = 64;
+    EXPECT_THROW(bakeScalpTextures(*s, *plane, bake), std::invalid_argument);  // no UVs yet
+    plane->setCornerUVs(uvs);
+    const ScalpTextures t = bakeScalpTextures(*s, *plane, bake);
+    ASSERT_EQ(t.coverage.size(), 64u * 64u);
+    ASSERT_EQ(t.color.size(), 3u * 64u * 64u);
+    // Covered where the hair lies (v < 0.5: the image's bottom half), bare above.
+    auto coverage = [&](int y0, int y1) {
+        double sum = 0.0;
+        for (int y = y0; y < y1; ++y) {
+            for (int x = 8; x < 56; ++x) sum += t.coverage[static_cast<std::size_t>(y) * 64 + static_cast<std::size_t>(x)];
+        }
+        return sum / ((y1 - y0) * 48.0);
+    };
+    EXPECT_GT(coverage(40, 60), 100.0);
+    EXPECT_LT(coverage(4, 24), 5.0);
+    // The color is the hair's base color, and fills the bare skin too.
+    const std::array<float, 3> linear = melaninColor(0.5f, 0.2f);
+    for (const std::size_t p : {std::size_t{50 * 64 + 30}, std::size_t{10 * 64 + 30}}) {
+        for (std::size_t k = 0; k < 3; ++k) {
+            const float c = linear[k];
+            const float srgb = c <= 0.0031308f ? 12.92f * c : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f;
+            EXPECT_NEAR(t.color[p * 3 + k], srgb * 255.0f, 3.0f) << p;
+        }
+    }
+    // Standing hair only marks the skin at its roots.
+    const StrandsPtr fur = clumpedFur();
+    ScalpBakeSettings wide;
+    wide.size = 64;
+    const ScalpTextures roots = bakeScalpTextures(*fur, *plane, wide);
+    std::size_t covered = 0;
+    for (const auto c : roots.coverage) covered += c > 0 ? 1 : 0;
+    EXPECT_GT(covered, 64u * 64u / 4u);
+}
+
+
+
+
 TEST(Cards, CardsStayClearOfTheScalp) {
     // Hair combed flat along the plane: its card lies on the skin, just above it.
     auto s = std::make_shared<StrandSet>();
@@ -337,6 +478,23 @@ TEST(Cards, CardsStayClearOfTheScalp) {
     EXPECT_LT(lowest, 0.05f);   // but on it
 }
 
+
+
+// A head of hair: a sphere scalp, a few hundred strands in two dozen loose clumps.
+StrandsPtr clumpedHead() {
+    GroomData d;
+    d.scalp = test::makeSphere(16, 24, 1.0f);
+    d.graphJson = R"j({"version": 1, "output": "out", "nodes": [
+        {"name": "scalp", "type": "Scalp"},
+        {"name": "scatter", "type": "Scatter", "params": {"density": 40.0}},
+        {"name": "clump", "type": "Clump", "params": {"count": 24, "strength": 0.7}},
+        {"name": "out", "type": "Output"}, {"name": "resolution", "type": "Resample", "params": {"segments": 12}}],
+      "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+        {"from": "scatter", "to": "clump", "input": "strands"},
+        {"from": "clump", "to": "out", "input": "strands"}]})j";
+    return GroomEvaluator(d).evaluate(1.0f, 0.0);
+}
+
 // The old look: one flat card per clump, facing out of the scalp, no fit, no ruffle.
 CardSettings singleCardSettings() {
     CardSettings s;
@@ -352,6 +510,8 @@ CardSettings singleCardSettings() {
 float quantile(const std::vector<float>& sorted, float q) {
     return sorted[std::min(sorted.size() - 1, static_cast<std::size_t>(q * static_cast<float>(sorted.size())))];
 }
+
+
 
 TEST(Cards, TheCardReachesTheLongestStrandAndTipsAreDrawn) {
     const StrandsPtr s = shortAndLong();  // strands 1.0 and 0.5 long, the mean curve 0.75
@@ -508,6 +668,8 @@ TEST(Cards, CardsShadeLikeTheirStrandsLitDrawing) {
     ASSERT_EQ(g.bitangents.size(), g.normals.size());
     for (std::size_t i = 0; i < g.normals.size(); ++i) EXPECT_FLOAT_EQ(g.bitangents[i], g.normals[i]);
 }
+
+// The cards' wireframe: every quad's four edges, each once (neighbors share theirs), no diagonals.
 
 // Two clumps alike in shape side by side, standing up: clump 0 dark, clump 1 light, both
 // blending toward a light tip per point (HairColor's colorR/G/B, per strand and per point).
@@ -717,6 +879,7 @@ TEST(Cards, FitTwistRotatesTheWholeCardTheWayTheStrandsLie) {
     EXPECT_LT(worst, 1e-4f);
 }
 
+
 TEST(Cards, TipsTaperAndNeverFlare) {
     // Six strands up, five ending at 0.7 and one going on to 1.0 with its tip flaring
     // sideways: the card runs on to that tip, but its last quarter is never wider than the
@@ -859,6 +1022,7 @@ TEST(Cards, AStrayStrandLeavesItsCardForAFlyawayCard) {
     }
 }
 
+
 TEST(Cards, LooseStrandsJoinTheNearestCardOrGetFlyawayCards) {
     // One clump standing up along x = 0..0.2, three loose strands beside it (within its
     // width) and two far off, with no clump.
@@ -895,6 +1059,7 @@ TEST(Cards, LooseStrandsJoinTheNearestCardOrGetFlyawayCards) {
     settings.maxCards = 1;  // flyaway cards count against the budget
     EXPECT_EQ(buildCards(*s, nullptr, settings).cards.size(), 1u);
 }
+
 
 // Strands wound around an axis (a braid's weave): `count` of them, `points` each,
 // `turns` turns around `axis(t)` at `radius`, t root to tip.
@@ -1097,6 +1262,7 @@ TEST(Cards, EachCardsNodeKeepsItsOwnBakedCells) {
     EXPECT_EQ(applyCardAtlas(again, renamed, nullptr), again.cards.size());
 }
 
+
 TEST(Cards, EachCardsNodeHasItsOwnBakeStamp) {
     // What a bake is made from, per Cards node: the strands its cards are made of and their
     // shapes. A look after the cards changes neither node's; a change between the nodes only
@@ -1144,6 +1310,53 @@ TEST(Cards, EachCardsNodeHasItsOwnBakeStamp) {
     now = stamps();
     EXPECT_EQ(now.at("outer").bakeHash, baked.at("outer").bakeHash);
     EXPECT_NE(now.at("inner").bakeHash, baked.at("inner").bakeHash);
+}
+
+
+TEST(Resample, ItsSegmentsAreTheStrandsResolution) {
+    // Scatter only places roots: the Resample node's segments grow every strand,
+    // whichever node is evaluated, so Interpolate before it works at them too.
+    GroomData d;
+    d.scalp = test::makePlane(4);
+    d.graphJson = R"j({"version": 1, "output": "out", "nodes": [
+        {"name": "scalp", "type": "Scalp"},
+        {"name": "scatter", "type": "Scatter", "params": {"density": 50.0}},
+        {"name": "resample", "type": "Resample", "params": {"segments": 13, "mode": "even"}},
+        {"name": "out", "type": "Output"}],
+      "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+        {"from": "scatter", "to": "resample", "input": "strands"}, {"from": "resample", "to": "out", "input": "strands"}]})j";
+    GroomEvaluator groom(d);
+    const StrandsPtr s = groom.evaluate(1.0f, 0.0);
+    ASSERT_GT(s->strandCount(), 10u);
+    EXPECT_EQ(s->uniformPointCount(), 14u);
+    GraphDocument doc = loadGraphJson(d.graphJson);
+    ExternalInputs ext;
+    ext.set("scalp", test::makePlane(4), 1);
+    EvalContext ctx;
+    ctx.externals = &ext;
+    EXPECT_EQ(doc.graph.evaluateStrands(doc.node("scatter"), ctx)->uniformPointCount(), 14u);
+    doc.graph.node(doc.node("resample")).params().set("segments", std::int64_t{5});
+    EXPECT_EQ(doc.graph.evaluateStrands(doc.node("scatter"), ctx)->uniformPointCount(), 6u);  // not a stale cache
+
+    // Strands of any resolution through it (here 3 and 20 points) come out evenly resampled, shape kept.
+    auto mixed = std::make_shared<StrandSet>();
+    mixed->addStrand(1, {{0, 0, 0}, {0, 0.5f, 0}, {0, 1, 0}}, {0.02f, 0.015f, 0.01f});
+    std::vector<Vec3f> bent;
+    for (int k = 0; k < 20; ++k) bent.push_back({0.1f * static_cast<float>(k), static_cast<float>(k) / 19.0f, 1.0f});
+    mixed->addStrand(2, bent, std::vector<float>(20, 0.01f));
+    auto resample = OperatorRegistry::instance().create(op::kResample);
+    resample->params().set("segments", std::int64_t{8});
+    resample->params().set("mode", std::string("even"));
+    const StrandsPtr even = valueAs<StrandsPtr>(resample->evaluate(ctx, {StrandsPtr(mixed)}));
+    EXPECT_EQ(even->uniformPointCount(), 9u);
+    EXPECT_TRUE(even->validate());
+    EXPECT_NEAR(even->strandPoints(0)[8].y, 1.0f, 1e-5f);
+    EXPECT_NEAR(even->strandPoints(1)[8].x, 1.9f, 1e-4f);
+    EXPECT_NEAR(even->widths()[4], 0.015f, 1e-5f);  // widths follow
+    auto keep = OperatorRegistry::instance().create(op::kResample);  // 0: each keeps its own
+    keep->params().set("segments", std::int64_t{0});
+    keep->params().set("mode", std::string("even"));
+    EXPECT_EQ(valueAs<StrandsPtr>(keep->evaluate(ctx, {StrandsPtr(mixed)}))->strandPointCount(1), 20u);
 }
 
 TEST(Resample, ByCurvature) {
@@ -1239,6 +1452,28 @@ TEST(Subdivide, SmoothStrandsThroughTheirPointsAtTheRendersLevels) {
     EXPECT_EQ(valueAs<StrandsPtr>(op->evaluate(render, {StrandsPtr(s)}))->strandPointCount(0), 17u);
     op->params().set("viewportLevels", std::int64_t{0});
     EXPECT_EQ(valueAs<StrandsPtr>(op->evaluate(viewport, {StrandsPtr(s)})), StrandsPtr(s));
+}
+
+TEST(Subdivide, LeavesTheGrowthResolutionToTheResample) {
+    // Resample asks the Scatter for its segments; a Subdivide after it adds points to the output only.
+    GroomData d;
+    d.scalp = test::makePlane(4);
+    d.graphJson = R"j({"version": 1, "output": "out", "nodes": [
+        {"name": "scalp", "type": "Scalp"},
+        {"name": "scatter", "type": "Scatter", "params": {"density": 50.0}},
+        {"name": "resample", "type": "Resample", "params": {"segments": 4}},
+        {"name": "smooth", "type": "Subdivide", "params": {"levels": 2}},
+        {"name": "out", "type": "Output"}],
+      "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"}, {"from": "scatter", "to": "resample", "input": "strands"},
+        {"from": "resample", "to": "smooth", "input": "strands"}, {"from": "smooth", "to": "out", "input": "strands"}]})j";
+    GroomEvaluator groom(d);
+    EXPECT_EQ(groom.evaluate(1.0f, 0.0)->uniformPointCount(), 17u);
+    GraphDocument doc = loadGraphJson(d.graphJson);
+    ExternalInputs ext;
+    ext.set("scalp", test::makePlane(4), 1);
+    EvalContext ctx;
+    ctx.externals = &ext;
+    EXPECT_EQ(doc.graph.evaluateStrands(doc.node("scatter"), ctx)->uniformPointCount(), 5u);
 }
 
 TEST(Resample, OnlyEnabledOnesOnStrandsSetTheResolution) {

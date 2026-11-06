@@ -12,6 +12,7 @@
 
 #include "groomlab/groom.h"
 #include "groomlab/groom_file.h"
+#include "groom/GroomEvaluator.h"
 #include "groomlab/guide_hierarchy.h"
 #include "groomlab/scalp_history.h"
 #include "groomlab/scalp_maps.h"
@@ -19,6 +20,8 @@
 #include "groomlab/stroke.h"
 #include "groomlab/subdivision.h"
 #include "test_helpers.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -137,6 +140,184 @@ TEST(ScalpPieces, RefinedPiecesAreTheJoinedMeshCut) {
     }
 }
 
+TEST(ScalpPieces, ScatterPerScalpMergesOnTheJoinedMesh) {
+    const MeshPtr head = test::makeSphere(8, 16);
+    const MeshPtr ears = movedPlane({3, 0, 0});
+    GroomData alone;
+    alone.scalp = head;
+    alone.graphJson = branchesGraph(false);
+    const StrandsPtr own = GroomEvaluator(alone).evaluate(1.0f, 0.0);
+    ASSERT_GT(own->strandCount(), 0u);
+
+    GroomData data;
+    data.scalp = head;
+    data.scalps = {{"ears", ears}};
+    data.graphJson = branchesGraph(true);
+    GroomEvaluator groom(data);
+    const StrandsPtr both = groom.evaluate(1.0f, 0.0);
+    const MeshPtr joined = groom.scalp();
+    ASSERT_EQ(joined->pieces().size(), 2u);
+    const std::size_t headTriangles = head->triangleCount();
+    std::size_t onHead = 0, onEars = 0;
+    for (std::size_t s = 0; s < both->strandCount(); ++s) {
+        const StrandRoot& root = both->roots()[s];
+        ASSERT_TRUE(joined->contains(root));
+        // Each strand grows from its root on the joined mesh.
+        EXPECT_LT((both->strandPoints(s)[0] - joined->position(root)).length(), 1e-5f);
+        if (static_cast<std::size_t>(root.face) < headTriangles) {
+            ++onHead;
+        } else {
+            ++onEars;
+            EXPECT_NEAR(both->strandPoints(s)[0].y, 0.0f, 1e-5f);  // on the ears' plane
+            EXPECT_GE(both->strandPoints(s)[0].x, 3.0f - 1e-5f);
+        }
+    }
+    EXPECT_GT(onEars, 100u);
+    // The groom's own scalp's strands are the ones it grows without the ears, to the bit.
+    ASSERT_EQ(onHead, own->strandCount());
+    for (std::size_t s = 0; s < own->strandCount(); ++s) {
+        EXPECT_EQ(both->ids()[s], own->ids()[s]);
+        EXPECT_EQ(both->roots()[s].face, own->roots()[s].face);
+        for (std::size_t k = 0; k < own->strandPointCount(s); ++k) EXPECT_EQ(both->strandPoints(s)[k], own->strandPoints(s)[k]);
+    }
+}
+
+TEST(ScalpPieces, SubdivisionMatchRenderTakesEachScalpsLevel) {
+    const MeshPtr head = test::makeSphere(8, 16);
+    auto ears = std::make_shared<ScalpMesh>(*movedPlane({3, 0, 0}, 3));
+    ears->setRenderSubdivision(2, "test");
+    GroomData data;
+    data.scalp = head;  // renders without subdivision
+    data.scalps = {{"ears", ears}};
+    data.graphJson = branchesGraph(true, "matchRender");
+    GroomEvaluator groom(data);
+    EXPECT_EQ(groom.scalpSubdivision(), 2);  // the ears' Scalp node asks for theirs
+    const StrandsPtr strands = groom.evaluate(1.0f, 0.0);
+    const MeshPtr joined = groom.scalp();
+    EXPECT_EQ(joined->subdivisionLevel(), 2);
+    std::size_t onEars = 0;
+    for (std::size_t s = 0; s < strands->strandCount(); ++s) {
+        const StrandRoot& root = strands->roots()[s];
+        ASSERT_TRUE(joined->contains(root));
+        EXPECT_LT((strands->strandPoints(s)[0] - joined->position(root)).length(), 1e-5f);
+        onEars += strands->strandPoints(s)[0].x >= 3.0f - 1e-4f;
+    }
+    EXPECT_GT(onEars, 50u);
+}
+
+TEST(ScalpPieces, DeformingScalpsKeepTheirStrands) {
+    const MeshPtr head = test::makeSphere(8, 16);
+    const MeshPtr ears = movedPlane({3, 0, 0});
+    GroomData data;
+    data.scalp = head;
+    data.scalps = {{"ears", ears}};
+    data.graphJson = branchesGraph(true);
+    GroomEvaluator groom(data);
+    const StrandsPtr first = groom.evaluate(1.0f, 0.0);
+    // The next frame: every point moved up (a rest pose keeps the placement).
+    auto moved = [](const MeshPtr& m) {
+        std::vector<Vec3f> points = m->points();
+        for (Vec3f& p : points) p.y += 0.5f;
+        auto out = std::make_shared<ScalpMesh>(m->withPoints(points));
+        out->setRestPoints(m->points());
+        return MeshPtr(out);
+    };
+    groom.setScalp(moved(head));
+    groom.setScalps({{"ears", moved(ears)}});
+    const StrandsPtr next = groom.evaluate(1.0f, 0.0);
+    ASSERT_EQ(next->strandCount(), first->strandCount());
+    for (std::size_t s = 0; s < next->strandCount(); ++s) {
+        EXPECT_EQ(next->ids()[s], first->ids()[s]);
+        EXPECT_NEAR(next->strandPoints(s)[0].y - first->strandPoints(s)[0].y, 0.5f, 1e-4f);
+    }
+}
+
+TEST(ScalpPieces, InterpolateOnAScalpsPieceReadsTheJoinedMesh) {
+    const MeshPtr head = test::makeSphere(8, 16);
+    const MeshPtr ears = movedPlane({3, 0, 0});
+    const MeshPtr joined = combineScalps(head, {{"ears", ears}});
+    // Guides on the ears leaning along +x, rooted on the joined mesh as a host roots them.
+    auto guides = std::make_shared<GuideSet>();
+    std::uint64_t id = 1;
+    for (float x : {3.2f, 3.5f, 3.8f}) {
+        for (float z : {0.2f, 0.5f, 0.8f}) guides->add(id++, test::straightCurve({x, 0, z}, Vec3f(1, 1, 0).normalized() * 0.3f));
+    }
+    guides->rootOnMesh(*joined);
+    GroomData data;
+    data.scalp = head;
+    data.scalps = {{"ears", ears}};
+    data.guides = guides;
+    data.graphJson = R"({"version": 1, "nodes": [
+    {"name": "earScalp", "type": "Scalp", "params": {"input": "ears"}},
+    {"name": "guides", "type": "Guides"},
+    {"name": "scatter", "type": "Scatter", "params": {"density": 200.0}},
+    {"name": "interpolate", "type": "Interpolate"},
+    {"name": "output", "type": "Output"}],
+    "connections": [
+    {"from": "earScalp", "to": "scatter", "input": "scalp"},
+    {"from": "scatter", "to": "interpolate", "input": "strands"},
+    {"from": "guides", "to": "interpolate", "input": "guides"},
+    {"from": "earScalp", "to": "interpolate", "input": "scalp"},
+    {"from": "interpolate", "to": "output", "input": "strands"}], "output": "output"})";
+    GroomEvaluator groom(data);
+    const StrandsPtr strands = groom.evaluate(1.0f, 0.0);
+    ASSERT_GT(strands->strandCount(), 50u);
+    for (std::size_t s = 0; s < strands->strandCount(); ++s) {
+        const std::size_t n = strands->strandPointCount(s);
+        const Vec3f along = strands->strandPoints(s)[n - 1] - strands->strandPoints(s)[0];
+        EXPECT_GT(along.x, 0.1f);  // leaning as the guides do
+        EXPECT_GE(static_cast<std::size_t>(strands->roots()[s].face), head->triangleCount());
+    }
+}
+
+TEST(ScalpPieces, FollowingTheScalpsCarriesEveryStrand) {
+    const MeshPtr head = test::makeSphere(8, 16);
+    const MeshPtr ears = movedPlane({3, 0, 0});
+    auto moved = [](const MeshPtr& m) {
+        std::vector<Vec3f> points = m->points();
+        for (Vec3f& p : points) p.x += 1.0f;
+        auto out = std::make_shared<ScalpMesh>(m->withPoints(points));
+        out->setRestPoints(m->points());
+        return MeshPtr(out);
+    };
+    GroomData data;
+    data.scalp = head;
+    data.scalps = {{"ears", ears}};
+    data.graphJson = branchesGraph(true);
+    const StrandsPtr rest = GroomEvaluator(data).evaluate(1.0f, 0.0);
+    data.scalp = moved(head);
+    data.scalps = {{"ears", moved(ears)}};
+    data.followScalp = true;
+    GroomEvaluator groom(data);
+    const StrandsPtr carried = groom.evaluate(1.0f, 0.0);
+    ASSERT_EQ(carried->strandCount(), rest->strandCount());
+    for (std::size_t s = 0; s < carried->strandCount(); ++s) {
+        EXPECT_NEAR(carried->strandPoints(s)[0].x - rest->strandPoints(s)[0].x, 1.0f, 1e-4f);
+    }
+}
+
+TEST(ScalpPieces, GroomFileKeepsTheScalps) {
+    GroomFile file;
+    file.data.scalp = test::makeSphere(8, 16);
+    file.data.scalps = {{"ears", movedPlane({3, 0, 0}, 4, 1.0f, true, "tint")}, {"brows", movedPlane({0, 3, 0}, 2)}};
+    file.data.graphJson = branchesGraph(true);
+    const GroomFile back = groomFileFromJson(groomFileToJson(file));
+    ASSERT_EQ(back.data.scalps.size(), 2u);
+    EXPECT_EQ(back.data.scalps[0].first, "ears");
+    EXPECT_EQ(back.data.scalps[1].first, "brows");
+    EXPECT_EQ(back.data.scalps[0].second->contentHash(), file.data.scalps[0].second->contentHash());
+    EXPECT_EQ(back.data.scalps[1].second->contentHash(), file.data.scalps[1].second->contentHash());
+    const StrandsPtr a = GroomEvaluator(file.data).evaluate(1.0f, 0.0);
+    const StrandsPtr b = GroomEvaluator(back.data).evaluate(1.0f, 0.0);
+    EXPECT_EQ(a->contentHash(), b->contentHash());
+    // Turned to Z up and back: the same scalps.
+    GroomFile turned = back;
+    convertUpAxis(turned, "Z");
+    EXPECT_NE(turned.data.scalps[0].second->points().back(), back.data.scalps[0].second->points().back());
+    convertUpAxis(turned, "Y");
+    EXPECT_EQ(turned.data.scalps[0].second->points(), back.data.scalps[0].second->points());
+}
+
 TEST(ScalpPieces, VertexMapPaintedBeforeAScalpWasAdded) {
     const MeshPtr head = movedPlane({0, 0, 0});
     const MeshPtr joined = combineScalps(head, {{"ears", movedPlane({3, 0, 0}, 2)}});
@@ -151,9 +332,84 @@ TEST(ScalpPieces, VertexMapPaintedBeforeAScalpWasAdded) {
     EXPECT_FLOAT_EQ(mapped->colorAt("density", onEars)[0], 0.0f);
 }
 
+TEST(ScalpPieces, ScalpNodeNamingNoScalp) {
+    GroomData data;
+    data.scalp = test::makeSphere(8, 16);
+    data.scalps = {{"ears", movedPlane({3, 0, 0})}};
+    data.graphJson = branchesGraph(true, "off", "tail");
+    GroomEvaluator groom(data);
+    const GroomEvaluator::Result& view = groom.evaluate(GroomEvaluator::Request{});
+    ASSERT_TRUE(view.strands);
+    for (std::size_t s = 0; s < view.strands->strandCount(); ++s) {
+        EXPECT_LT(static_cast<std::size_t>(view.strands->roots()[s].face), data.scalp->triangleCount());
+    }
+    bool said = false;
+    for (const auto& [node, note] : groom.nodeNotes()) said = said || (node == "earScalp" && note.find("tail") != std::string::npos);
+    EXPECT_TRUE(said);
+}
+
 // ---- Scripted strokes on the other scalps ------------------------------------------------------
 
+
 // ---- Jiggle on the other scalps ----------------------------------------------------------------
+
+TEST(ScalpPieces, HairOnAMovingOtherScalpJiggles) {
+    const MeshPtr head = test::makeSphere(8, 16);
+    const MeshPtr ears = movedPlane({3, 0, 0});
+    std::string graph = branchesGraph(true);
+    const std::string last = R"({"from": "merge", "to": "output", "input": "strands"})";
+    ASSERT_NE(graph.find(last), std::string::npos);
+    graph.replace(graph.find(last), last.size(),
+                  R"({"from": "merge", "to": "jiggle", "input": "strands"}, {"from": "jiggle", "to": "output", "input": "strands"})");
+    graph.replace(graph.find(R"({"name": "output")"), 0, R"({"name": "jiggle", "type": "Jiggle"}, )");
+    GroomData data;
+    data.scalp = head;
+    data.scalps = {{"ears", ears}};
+    data.graphJson = graph;
+    GroomEvaluator groom(data);
+    const int frames = groom.scalpHistoryFrames();
+    ASSERT_GT(frames, 0);
+    const StrandsPtr still = groom.evaluate(1.0f, 0.0);
+    ASSERT_TRUE(still);
+    const std::size_t headTriangles = head->triangleCount();
+    // The head kept still; the ears came in along z over the last frames.
+    auto pastEars = [&](int k) {
+        std::vector<Vec3f> points = ears->points();
+        for (Vec3f& p : points) p.z -= 0.05f * static_cast<float>(std::min(k, 4));
+        return points;
+    };
+    std::vector<std::vector<Vec3f>> joinedPast, ownPast;
+    for (int k = 1; k <= frames; ++k) {
+        std::vector<Vec3f> all = head->points();
+        const std::vector<Vec3f> e = pastEars(k);
+        all.insert(all.end(), e.begin(), e.end());
+        joinedPast.push_back(std::move(all));
+        ownPast.push_back(head->points());
+    }
+    // Every scalp's own earlier frames: the ears' hair jiggles, the head's stays as it was.
+    groom.setScalpHistory(ScalpHistory::make(kFrameSeconds, joinedPast));
+    const StrandsPtr moving = groom.evaluate(1.0f, 0.0);
+    ASSERT_EQ(moving->strandCount(), still->strandCount());
+    std::size_t earsMoved = 0, earStrands = 0;
+    for (std::size_t s = 0; s < still->strandCount(); ++s) {
+        const bool onEars = static_cast<std::size_t>(still->roots()[s].face) >= headTriangles;
+        const std::size_t n = still->strandPointCount(s);
+        EXPECT_EQ(moving->strandPoints(s)[0], still->strandPoints(s)[0]);  // roots stay
+        const float tip = (moving->strandPoints(s)[n - 1] - still->strandPoints(s)[n - 1]).length();
+        if (onEars) {
+            ++earStrands;
+            earsMoved += tip > 1e-4f;
+        } else {
+            EXPECT_EQ(tip, 0.0f) << "a strand on the still head moved";
+        }
+    }
+    ASSERT_GT(earStrands, 100u);
+    EXPECT_EQ(earsMoved, earStrands);
+    // The groom's own scalp's frames alone: the ears keep still (as a host reading only it gives).
+    groom.setScalpHistory(ScalpHistory::make(kFrameSeconds, ownPast));
+    const StrandsPtr headOnly = groom.evaluate(1.0f, 0.0);
+    EXPECT_EQ(headOnly->positions(), still->positions());
+}
 
 // ---- Each scalp at its own subdivision level ---------------------------------------------------
 
@@ -232,6 +488,122 @@ TEST(ScalpPieces, PlanRefinesEachScalpAtItsOwnLevel) {
     const std::vector<float> fine = plan->refineVertexValues(values, 1);
     ASSERT_EQ(fine.size(), refined->pointCount());
     for (std::size_t v = 0; v < fine.size(); ++v) EXPECT_NEAR(fine[v], refined->points()[v].x, 0.35f);
+}
+
+TEST(ScalpPieces, EachScalpRefinesAtItsOwnLevelInTheSession) {
+    const MeshPtr head = test::makeSphere(8, 16);  // renders without subdivision
+    auto ears = std::make_shared<ScalpMesh>(*movedPlane({3, 0, 0}, 3));
+    ears->setRenderSubdivision(2, "test");
+    const MeshPtr joined = combineScalps(head, {{"ears", ears}});
+    // Maps painted on both scalps: a value per point of the scalps joined.
+    ScalpMaps maps;
+    std::vector<float> tint(joined->pointCount());
+    for (std::size_t v = 0; v < tint.size(); ++v) tint[v] = 0.1f + 0.05f * static_cast<float>(v % 7);
+    maps.maps["tint"] = {"vertices", tint, ""};
+    // Guides on both, rooted on the joined mesh as a host roots them.
+    GuideHierarchy h;
+    const GroupId group = h.addGroup("primary");
+    TubeProfile tube;
+    tube.width = {0.2f, 0.1f};
+    for (const Vec3f& at : {Vec3f{0, 1, 0}, Vec3f{0.6f, 0.8f, 0}, Vec3f{3.3f, 0, 0.4f}, Vec3f{3.7f, 0, 0.6f}}) {
+        const Vec3f up = at.x > 2.0f ? Vec3f{0, 1, 0} : at.normalized();
+        h.addGuide(group, test::straightCurve(at, up * 0.3f, 6), tube);
+    }
+    h.evaluate(joined.get());
+
+    GroomData data;
+    data.scalp = head;
+    data.scalps = {{"ears", ears}};
+    data.graphJson = branchesGraph(true, "matchRender");
+    data.hierarchyJson = h.toJson();
+    GroomEvaluator session(data);
+    session.setScalpMaps(maps);
+    EXPECT_EQ(session.scalpSubdivisions(), (std::map<std::string, int>{{"scalp", 0}, {"ears", 2}}));
+    EXPECT_EQ(session.scalpSubdivision(), 2);
+    const GroomEvaluator::Result& view = session.evaluate(GroomEvaluator::Request{});
+    ASSERT_TRUE(view.strands) << (view.errors.empty() ? "" : view.errors.front());
+    const MeshPtr scalp = view.scalp;
+    const MeshPtr earsRefined = subdivideScalp(ears, 2);
+    // The head as it is, then the ears refined twice.
+    ASSERT_EQ(scalp->triangleCount(), head->triangleCount() + earsRefined->triangleCount());
+    for (std::size_t v = 0; v < head->pointCount(); ++v) EXPECT_EQ(scalp->points()[v], head->points()[v]);
+    const std::size_t headTriangles = head->triangleCount();
+
+    // The head's strands are the ones it grows alone (matchRender: not refined), to the bit.
+    GroomData headAlone;
+    headAlone.scalp = head;
+    headAlone.graphJson = branchesGraph(false, "matchRender");
+    const StrandsPtr own = GroomEvaluator(headAlone).evaluate(1.0f, 0.0);
+    std::vector<std::size_t> onHead, onEars;
+    for (std::size_t s = 0; s < view.strands->strandCount(); ++s) {
+        const StrandRoot& root = view.strands->roots()[s];
+        ASSERT_TRUE(scalp->contains(root));
+        EXPECT_LT((view.strands->strandPoints(s)[0] - scalp->position(root)).length(), 1e-5f);
+        (static_cast<std::size_t>(root.face) < headTriangles ? onHead : onEars).push_back(s);
+    }
+    ASSERT_EQ(onHead.size(), own->strandCount());
+    for (std::size_t i = 0; i < onHead.size(); ++i) {
+        const std::size_t s = onHead[i];
+        EXPECT_EQ(view.strands->ids()[s], own->ids()[i]);
+        EXPECT_EQ(view.strands->roots()[s].face, own->roots()[i].face);
+        EXPECT_EQ(view.strands->strandPoints(s)[0], own->strandPoints(i)[0]);
+    }
+    // The ears' strands sit where the ears alone (refined at their level) put theirs.
+    GroomData earsAlone;
+    earsAlone.scalp = ears;
+    earsAlone.graphJson = earsAloneGraph("matchRender");
+    const StrandsPtr theirs = GroomEvaluator(earsAlone).evaluate(1.0f, 0.0);
+    ASSERT_EQ(onEars.size(), theirs->strandCount());
+    ASSERT_GT(onEars.size(), 50u);
+    for (std::size_t i = 0; i < onEars.size(); ++i) {
+        const std::size_t s = onEars[i];
+        EXPECT_EQ(view.strands->roots()[s].face, theirs->roots()[i].face + static_cast<std::int32_t>(headTriangles));
+        EXPECT_LT((view.strands->strandPoints(s)[0] - theirs->strandPoints(i)[0]).length(), 1e-5f);
+    }
+    // The maps on the refined scalp read as on each scalp's own: the head's corners as painted,
+    // the ears' refined as the ears alone refine them.
+    ASSERT_TRUE(scalp->hasColorSet("tint"));
+    for (std::size_t t = 0; t < headTriangles; t += 5) {
+        for (int k = 0; k < 3; ++k) {
+            const auto v = static_cast<std::size_t>(head->triangles()[t][static_cast<std::size_t>(k)]);
+            const StrandRoot corner{static_cast<std::int32_t>(t), k == 1 ? 1.0f : 0.0f, k == 2 ? 1.0f : 0.0f};
+            EXPECT_NEAR(scalp->colorAt("tint", corner)[0], tint[v], 1e-6f);
+        }
+    }
+    ScalpMaps earMaps;
+    earMaps.maps["tint"] = {"vertices", std::vector<float>(tint.begin() + static_cast<std::ptrdiff_t>(head->pointCount()), tint.end()), ""};
+    GroomEvaluator earSession(earsAlone);
+    earSession.setScalpMaps(earMaps);
+    const MeshPtr earScalp = earSession.scalp();
+    ASSERT_EQ(earScalp->triangleCount(), earsRefined->triangleCount());
+    for (std::size_t t = 0; t < earScalp->triangleCount(); t += 3) {
+        const StrandRoot r{static_cast<std::int32_t>(t), 0.3f, 0.3f};
+        EXPECT_NEAR(scalp->colorAt("tint", {static_cast<std::int32_t>(headTriangles + t), 0.3f, 0.3f})[0], earScalp->colorAt("tint", r)[0], 1e-5f);
+    }
+    // The guides rooted on the refined scalp: the head's on its own triangles where they were.
+    ASSERT_TRUE(view.hierarchy);
+    std::size_t headGuides = 0, earGuides = 0;
+    for (const HierarchyGuide& g : view.hierarchy->guides()) {
+        ASSERT_TRUE(scalp->contains(g.root));
+        EXPECT_LT((scalp->position(g.root) - g.points.front()).length(), 1e-4f);
+        const HierarchyGuide* authored = h.guide(g.id);
+        ASSERT_TRUE(authored);
+        if (static_cast<std::size_t>(authored->root.face) < headTriangles) {
+            ++headGuides;
+            EXPECT_LT(static_cast<std::size_t>(g.root.face), headTriangles);
+            EXPECT_LT((scalp->position(g.root) - joined->position(authored->root)).length(), 1e-6f);
+        } else {
+            ++earGuides;
+            EXPECT_GE(static_cast<std::size_t>(g.root.face), headTriangles);
+        }
+    }
+    EXPECT_EQ(headGuides, 2u);
+    EXPECT_EQ(earGuides, 2u);
+    // The Scalp nodes say each scalp's own level.
+    for (const auto& [node, note] : session.nodeNotes()) {
+        if (node == "earScalp") EXPECT_NE(note.find("x2"), std::string::npos) << note;
+        if (node == "scalp") EXPECT_EQ(note.find("Catmull-Clark"), std::string::npos) << note;
+    }
 }
 
 }  // namespace

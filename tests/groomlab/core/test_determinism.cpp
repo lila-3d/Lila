@@ -23,6 +23,7 @@
 #include <fstream>
 #include <map>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <type_traits>
@@ -37,6 +38,7 @@
 #include "groomlab/cards.h"
 #include "groomlab/feathers.h"
 #include "groomlab/groom_file.h"
+#include "groom/GroomEvaluator.h"
 #include "groomlab/instances.h"
 #include "groomlab/parallel.h"
 #include "groomlab/paths.h"
@@ -45,6 +47,8 @@
 #include "groomlab/random.h"
 #include "groomlab/scalp_mesh.h"
 #include "test_helpers.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -115,12 +119,17 @@ struct Preset {
 struct Reference {
     GroomFile file;
     std::vector<Preset> presets;
+    std::set<std::string> compound;  // presets Lila can't load (test::presetUsesCompound)
 
     Reference() : file(readGroomFile(std::string(GROOMLAB_TEST_DATA) + "/strokes/strokes.groom")) {
         const std::optional<double> size = presetScalpSize(*file.data.scalp);
         // The shipped presets, and the test's own grooms of the nodes no preset uses yet
         // (tests/data/presets: parity_nodes, every node and param of batch N2).
         for (const PresetInfo& p : listPresets({kShipped, std::string(GROOMLAB_TEST_DATA) + "/presets"})) {
+            if (test::presetUsesCompound(p.path)) {
+                compound.insert(p.name);
+                continue;
+            }
             std::ifstream in(std::filesystem::u8path(p.path), std::ios::binary);
             std::stringstream text;
             text << in.rdbuf();
@@ -166,6 +175,33 @@ Made made(const StrandsPtr& strands) {
     return m;
 }
 
+// A fresh session of `data` (search paths: the file's folder, the shipped presets'), at `seconds`.
+Made evaluateFresh(const GroomData& data, const std::string& directory, double seconds = 0.0, bool cards = false) {
+    try {
+        GroomEvaluator session(data);
+        session.setPathResolver(searchPathResolver({directory, kShipped}));
+        return made(session.evaluate(kDensity, seconds, cards));
+    } catch (const std::exception& e) {
+        Made m;
+        m.error = e.what();
+        return m;
+    }
+}
+
+Made evaluatePreset(const Preset& preset, double seconds = 0.0, bool cards = false) {
+    const GroomData data = dataOf(preset);
+    return evaluateFresh(data, reference().file.directory, seconds, cards);
+}
+
+// Every preset's result, in the list's order or the reverse.
+std::map<std::string, Made> evaluateAll(bool reversed = false, bool cards = false) {
+    std::vector<Preset> presets = reference().presets;
+    if (reversed) std::reverse(presets.begin(), presets.end());
+    std::map<std::string, Made> out;
+    for (const Preset& p : presets) out[p.name] = evaluatePreset(p, 0.0, cards);
+    return out;
+}
+
 void expectSameResults(const std::map<std::string, Made>& got, const std::map<std::string, Made>& want, const std::string& how) {
     ASSERT_EQ(got.size(), want.size());
     for (const auto& [name, m] : want) EXPECT_EQ(got.at(name), m) << name << ": " << how;
@@ -173,8 +209,106 @@ void expectSameResults(const std::map<std::string, Made>& got, const std::map<st
 
 }  // namespace
 
+TEST(Determinism, EveryShippedPresetMakesTheSameEveryTimeInAnyOrder) {
+    // Fresh sessions one after another: nothing one evaluation leaves behind (pooled arrays,
+    // memos, scratch, a distance field's bricks) reaches the next.
+    const std::map<std::string, Made> first = evaluateAll();
+    ASSERT_GT(first.size(), 30u);
+    std::size_t madeSome = 0;
+    for (const auto& [name, m] : first) madeSome += m.error.empty() && m.strands > 0 ? 1 : 0;
+    EXPECT_GT(madeSome, 30u);
+    // The tests' own groom of batch N2's nodes makes hair (an error would compare equal every time).
+    ASSERT_TRUE(first.count("parity_nodes"));
+    EXPECT_TRUE(first.at("parity_nodes").error.empty()) << first.at("parity_nodes").error;
+    EXPECT_GT(first.at("parity_nodes").strands, 100u);
+    expectSameResults(evaluateAll(), first, "evaluated again");
+    expectSameResults(evaluateAll(true), first, "evaluated in the reverse order");
+}
+
 #if GROOMLAB_HAS_TBB
+TEST(Determinism, EveryShippedPresetMakesTheSameOnOneThreadAsOnAll) {
+    // Every parallel loop cut differently (one thread takes the ranges whole; all of them split
+    // and steal): no result depends on how a loop's iterations were shared out.
+    const std::map<std::string, Made> all = evaluateAll();
+    std::map<std::string, Made> one, two;
+    {
+        const tbb::global_control single(tbb::global_control::max_allowed_parallelism, 1);
+        one = evaluateAll();
+    }
+    {
+        const tbb::global_control pair(tbb::global_control::max_allowed_parallelism, 2);
+        two = evaluateAll(true);
+    }
+    expectSameResults(one, all, "one thread");
+    expectSameResults(two, all, "two threads");
+}
+
+TEST(Determinism, PresetsMakeTheSameUnderTheThreadCap) {
+    // The cap a host sets (parallel.h: setParallelThreads, GROOMLAB_THREADS) runs the loops on
+    // fewer threads; the strands are the same bit for bit.
+    const std::size_t cores = parallelThreads();
+    std::vector<Preset> some(reference().presets.begin(), reference().presets.begin() + std::min<std::size_t>(3, reference().presets.size()));
+    ASSERT_FALSE(some.empty());
+    for (const Preset& p : some) {
+        const Made all = evaluatePreset(p, 0.0, false);
+        setParallelThreads(2);
+        EXPECT_EQ(parallelThreads(), std::min<std::size_t>(2, cores));
+        const Made capped = evaluatePreset(p, 0.0, false);
+        setParallelThreads(0);
+        EXPECT_EQ(parallelThreads(), cores);
+        EXPECT_EQ(capped, all) << p.name;
+    }
+}
+
+TEST(Determinism, CardsAndFeathersBuildTheSameOnAnyThreadCount) {
+    // The evaluation building the Cards nodes' cards (an export's): the card meshes, their atlas
+    // cells and members, the same on one thread as on all.
+    std::vector<Preset> withCards;
+    for (const Preset& p : reference().presets) {
+        if (p.graph.find("\"Cards\"") != std::string::npos || p.graph.find("\"Propagate\"") != std::string::npos) withCards.push_back(p);
+    }
+    ASSERT_GE(withCards.size(), 2u);  // the presets without a Compound that build cards
+    std::size_t cardLayers = 0;
+    for (const Preset& p : withCards) {
+        const Made all = evaluatePreset(p, 0.0, true);
+        Made one;
+        {
+            const tbb::global_control single(tbb::global_control::max_allowed_parallelism, 1);
+            one = evaluatePreset(p, 0.0, true);
+        }
+        EXPECT_EQ(one, all) << p.name;
+        EXPECT_EQ(evaluatePreset(p, 0.0, true), all) << p.name << ": again";
+        GroomEvaluator session(dataOf(p));
+        session.setPathResolver(searchPathResolver({reference().file.directory, kShipped}));
+        const StrandsPtr strands = session.evaluate(kDensity, 0.0, true);
+        if (strands) cardLayers += strands->cardLayers().size();
+    }
+    EXPECT_GT(cardLayers, 0u) << "no preset built cards: the test checks nothing of them";
+}
 #endif
+
+TEST(Determinism, AGroomFileWrittenAndReadBackEvaluatesTheSame) {
+    // Each preset's groom as a groom file's text and back: the same text again, and the same
+    // strands as the groom it was written from. One through a file on disk too.
+    const Reference& ref = reference();
+    for (const Preset& p : ref.presets) {
+        GroomFile file = ref.file;
+        file.data.graphJson = p.graph;
+        const std::string text = groomFileToJson(file);
+        const GroomFile back = groomFileFromJson(text, ref.file.directory);
+        EXPECT_EQ(groomFileToJson(back), text) << p.name << ": the text read back writes other text";
+        EXPECT_EQ(evaluateFresh(back.data, ref.file.directory), evaluateFresh(file.data, ref.file.directory)) << p.name;
+    }
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "groomlab_determinism.groom";
+    GroomFile file = ref.file;
+    file.data.graphJson = ref.presets.front().graph;
+    writeGroomFile(path.u8string(), file);
+    const GroomFile back = readGroomFile(path.u8string());
+    EXPECT_EQ(groomFileToJson(back), groomFileToJson(file));
+    EXPECT_EQ(evaluateFresh(back.data, ref.file.directory), evaluateFresh(file.data, ref.file.directory));
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+}
 
 // ---- The same bits on every machine ------------------------------------------------------------
 // Every preset's strands against the bits recorded in tests/data/golden/PresetDigests.json, each
@@ -253,6 +387,58 @@ std::string differingParts(const json& got, const json& want) {
 }
 
 }  // namespace
+
+TEST(Determinism, EveryPresetMakesTheRecordedBitsOnEveryPlatform) {
+    json got = json::object();
+    for (const Preset& p : reference().presets) {
+        try {
+            GroomEvaluator session(dataOf(p));
+            session.setPathResolver(searchPathResolver({reference().file.directory, kShipped}));
+            const StrandsPtr strands = session.evaluate(kDensity, 0.0, true);
+            got[p.name] = strands ? digests(*strands) : json{{"error", "nothing made"}};
+        } catch (const std::exception& e) {
+            got[p.name] = {{"error", e.what()}};
+        }
+    }
+    const json record = {{"math", buildMath()}, {"presets", got}};
+    const std::filesystem::path file = std::filesystem::path(GROOMLAB_TEST_DATA) / "golden" / "PresetDigests.json";
+    if (const char* out = std::getenv("GROOMLAB_DIGESTS_OUT"); out && *out) std::ofstream(out, std::ios::binary) << record.dump(1) << "\n";
+    if (envSet("GROOMLAB_UPDATE_GOLDEN")) std::ofstream(file, std::ios::binary) << record.dump(1) << "\n";
+    std::ifstream in(file, std::ios::binary);
+    ASSERT_TRUE(in) << "no " << file.generic_string() << " (record it with GROOMLAB_UPDATE_GOLDEN=1)";
+    const json recorded = json::parse(in);
+    const json& want = recorded.at("presets");
+    const std::string math = recorded.value("math", std::string());
+    if (math != buildMath()) {
+        // Another C runtime's float functions: how far the bits still agree, for the record.
+        std::size_t same = 0, sameGeometry = 0;
+        for (const auto& [name, w] : want.items()) {
+            if (!got.contains(name)) continue;
+            const std::string parts = differingParts(got.at(name), w);
+            same += parts.empty() ? 1 : 0;
+            const bool geometry = parts.find(" positions") != std::string::npos || parts.find(" widths") != std::string::npos ||
+                                  parts.find(" ids") != std::string::npos || parts.find(" roots") != std::string::npos;
+            sameGeometry += !parts.empty() && !geometry ? 1 : 0;
+            if (!parts.empty()) std::printf("[ digests ] %s: other bits in%s\n", name.c_str(), parts.c_str());
+        }
+        std::printf("[ digests ] %zu of %zu presets make %s's bits (%zu more its geometry)\n", same, want.size(), math.c_str(), sameGeometry);
+        RecordProperty("presets_matching", std::to_string(same));
+        // A release build always has portable math (the record's): another build is a stale cache
+        // (an existing build folder keeps GROOMLAB_PORTABLE_MATH as it was configured), not a skip.
+        FAIL() << "recorded with " << math << "'s math, this build has " << buildMath()
+               << "'s: configure with -DGROOMLAB_PORTABLE_MATH=ON";
+    }
+    for (const auto& [name, w] : want.items()) {
+        if (!got.contains(name)) {
+            if (reference().compound.count(name)) continue;
+            ADD_FAILURE() << name << " is recorded but no longer made: re-record";
+            continue;
+        }
+        const std::string parts = differingParts(got.at(name), w);
+        if (!parts.empty()) ADD_FAILURE() << name << ": other bits than recorded in" << parts;
+    }
+    for (const auto& [name, g] : got.items()) EXPECT_TRUE(want.contains(name)) << name << " has no recorded digests: re-record";
+}
 
 TEST(Determinism, EveryFloatAGroomFileHoldsReadsBackBitForBit) {
     // The shortest text of a float read as a double and rounded to a float lands on the neighbour

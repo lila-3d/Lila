@@ -1,4 +1,4 @@
 add_executable(lila_groom_tests main.cpp test_groom.cpp test_locks.cpp test_style.cpp test_settle.cpp test_shell.cpp test_groom_scene.cpp test_groomlab.cpp)
-target_link_libraries(lila_groom_tests PRIVATE LilaScene doctest::doctest)
+target_link_libraries(lila_groom_tests PRIVATE LilaScene doctest::doctest TBB::tbb)
 target_include_directories(lila_groom_tests PRIVATE ${CMAKE_SOURCE_DIR}/tests)
 add_test(NAME lila_groom_tests COMMAND lila_groom_tests)

@@ -23,6 +23,9 @@
 #include "groomlab/random.h"
 #include "groomlab/simulation.h"
 #include "test_helpers.h"
+#include "groom/GroomEvaluator.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -472,6 +475,35 @@ TEST(DistanceField, TablesAnswerAsTheFieldDoes) {
     }
 }
 
+// The head graph's strands (tests/data/app/head_graph.json) as they come into its Collide, at
+// `density`; `dive`: combed straight down through the head instead (every strand pushed out).
+StrandsPtr headStrands(const std::shared_ptr<const ScalpMesh>& head, double density, bool dive) {
+    std::string graph = readText(std::string(GROOMLAB_TEST_DATA) + "/app/head_graph.json");
+    auto replace = [&](const std::string& from, const std::string& to) {
+        const std::size_t at = graph.find(from);
+        EXPECT_NE(at, std::string::npos) << from;
+        if (at != std::string::npos) graph.replace(at, from.size(), to);
+    };
+    char d[64];
+    std::snprintf(d, sizeof(d), "\"density\": %f", density);
+    replace("\"density\": 175.0", d);
+    replace(R"("output": "output")", R"("output": "combDown")");
+    GroomData data;
+    data.scalp = head;
+    data.graphJson = graph;
+    StrandsPtr strands = GroomEvaluator(data).evaluate(1.0f, 0.0);
+    if (dive) {  // every segment straight down from the root, its length kept
+        auto down = std::make_shared<StrandSet>(*strands);
+        for (std::size_t s = 0; s < down->strandCount(); ++s) {
+            Vec3f* p = down->strandPoints(s);
+            const Vec3f* q = strands->strandPoints(s);
+            for (std::size_t i = 1; i < down->strandPointCount(s); ++i) p[i] = p[i - 1] + Vec3f{0, -(q[i] - q[i - 1]).length(), 0};
+        }
+        strands = down;
+    }
+    return strands;
+}
+
 // The head graph's Collide (offset 0.08, maxDepth 30, 3 passes) by `method`, timed.
 StrandsPtr headCollide(const MeshPtr& head, const StrandsPtr& in, const std::string& method, double* ms) {
     auto op = OperatorRegistry::instance().create(op::kCollide);
@@ -501,6 +533,67 @@ Apart apart(const StrandSet& a, const StrandSet& b) {
     }
     r.mean = sum / static_cast<double>(std::max<std::size_t>(a.pointCount(), 1));
     return r;
+}
+
+TEST(Collide, FieldMatchesExactOnTheHead) {
+    // The app's head at ~25k strands, as the head graph combs it (lying along the scalp: nothing
+    // to push) and combed straight down through the head (every strand pushed out of it, most
+    // points deep under the scalp): the field's result (its answers alone) against the exact one.
+    // A strand pushed out from deep inside folds along the surface, point by point, and where a
+    // point lands decides where the next ones go: the exact method against itself with its input
+    // moved by 1e-4 shows how many points move for a difference that size (the field's answers
+    // differ from the mesh's by more than that only at a point or two in ten thousand: the field's
+    // blend near the surface, by up to a few thousandths; deep under it, a face about as near as
+    // the mesh's closest, DistanceField.AnswersAloneAsTheMeshDoes), the bound for how many of the
+    // field's points are apart from the exact ones. A strand straight down through the crown may
+    // fold either way for such a difference (the exact method's do for 1e-3), so the worst point is
+    // a whole strand's length apart; the mean stays a small fraction of the offset. The field
+    // leaves (almost) no point under the offset by more than 3% of it, as the mesh measures it,
+    // where the exact method leaves none, and none inside the surface.
+    const auto head = headScalp();
+    for (const bool dive : {false, true}) {
+        const StrandsPtr in = headStrands(head, 44.0, dive);
+        auto moved = std::make_shared<StrandSet>(*in);
+        for (std::size_t s = 0; s < moved->strandCount(); ++s) {
+            for (std::size_t i = 1; i < moved->strandPointCount(s); ++i) moved->strandPoints(s)[i].x += 1e-4f;
+        }
+        double fieldMs = 0.0, exactMs = 0.0, againMs = 0.0, ms = 0.0;
+        const StrandsPtr field = headCollide(head, in, "field", &fieldMs);
+        headCollide(head, in, "field", &againMs);  // the field made: the cost of a later evaluation
+        const StrandsPtr exact = headCollide(head, in, "exact", &exactMs);
+        const StrandsPtr nudged = headCollide(head, moved, "exact", &ms);
+        ASSERT_TRUE(field && exact && nudged);
+        ASSERT_EQ(field->pointCount(), exact->pointCount());
+        const Apart f = apart(*field, *exact), n = apart(*nudged, *exact);
+        // Points (not roots) under the offset, as the mesh measures them, and not past maxDepth; of
+        // them, those inside the surface.
+        std::size_t insideField = 0;
+        auto under = [&](const StrandSet& s, std::size_t* inside) {
+            std::size_t count = 0;
+            for (std::size_t k = 0; k < s.strandCount(); ++k) {
+                for (std::size_t i = 1; i < s.strandPointCount(k); ++i) {
+                    const float h = exactHeight(*head, s.strandPoints(k)[i]);
+                    count += h < 0.08f * 0.97f && h > -30.0f;
+                    if (inside) *inside += h < 0.0f && h > -30.0f;
+                }
+            }
+            return count;
+        };
+        const std::size_t underField = under(*field, &insideField), underExact = under(*exact, nullptr);
+        std::printf("[ field ] head%s, %zu strands, %zu points: field vs exact worst %.2e, mean %.2e, %zu points over 1e-3 "
+                    "apart (exact, input moved 1e-4: worst %.2e, mean %.2e, %zu over); under the offset by over 3%%: field %zu "
+                    "(inside the surface %zu), exact %zu; Collide %.1f ms with the field's making, %.1f ms made, exact %.1f ms\n",
+                    dive ? " combed through" : "", field->strandCount(), field->pointCount(), f.worst, f.mean, f.over, n.worst,
+                    n.mean, n.over, underField, insideField, underExact, fieldMs, againMs, exactMs);
+        const MeshDistanceField::Stats st =
+            sharedDistanceField(head, MeshDistanceField::cellSizeFor(*head, 0.08f), MeshDistanceField::reachFor(30.0f))->stats();
+        std::printf("[ field ]   the field so far: %zu regions, %zu far bricks, %zu fine bricks, %zu nodes, %zu queries, %.1f MB\n",
+                    st.regions, st.farBricks, st.fineBricks, st.nodes, st.queries, static_cast<double>(st.bytes) / 1e6);
+        EXPECT_LT(f.mean, 0.005 * 0.08);
+        EXPECT_LE(f.over, n.over);
+        EXPECT_LE(underField, underExact + field->pointCount() / 50000);
+        EXPECT_EQ(insideField, 0u);
+    }
 }
 
 // ---- A deforming scalp: Collide through the rest pose's field (RestPoseCollision) ----
@@ -568,6 +661,25 @@ Under under(const ScalpMesh& mesh, const StrandSet& s, float slack) {
     return u;
 }
 
+TEST(Collide, RestFieldLeavesAStillScalpAsItWas) {
+    // A scalp at its rest pose (rest points its own) is the still mesh's field: the same result to
+    // the bit as a mesh without a rest pose, and no rest-pose collision is made for it.
+    const auto head = headScalp();
+    const MeshPtr still = movedHead(head, [](const Vec3f& p) { return p; });
+    EXPECT_FALSE(RestPoseCollision::of(still, 0.08f, 30.0f, 30.0f));
+    EXPECT_FALSE(RestPoseCollision::of(head, 0.08f, 30.0f, 30.0f));
+    const MeshPtr moved = movedHead(head, [](const Vec3f& p) { return rigidly(p, 1.0f); });
+    EXPECT_TRUE(RestPoseCollision::of(moved, 0.08f, 30.0f, 30.0f));
+    // A depth limit within two of the field's cell diagonals of the offset: the field would only
+    // ask near the surface, so Collide asks the mesh (as it does any deformed mesh by `exact`).
+    EXPECT_FALSE(RestPoseCollision::of(moved, 0.08f, 0.01f, 0.08f));
+    for (const bool dive : {false, true}) {
+        const StrandsPtr in = headStrands(head, 20.0, dive);
+        double ms = 0.0;
+        EXPECT_EQ(headCollide(still, in, "field", &ms)->positions(), headCollide(head, in, "field", &ms)->positions());
+    }
+}
+
 TEST(Collide, FieldIsLocalToTheMesh) {
     // A sphere and the same sphere with its vertices beyond x = 7.5 pushed out by 6% (an edit of one
     // side, as a new rest pose): strands combed straight down through both (every one on the upper
@@ -620,6 +732,154 @@ TEST(Collide, FieldIsLocalToTheMesh) {
                 worst);
     EXPECT_GT(far, 1000u);
     EXPECT_EQ(differ, 0u);
+}
+
+TEST(Collide, RestFieldFollowsARigidMotion) {
+    // The head turned 35 degrees and moved, its strands with it: every vertex's frame moves the
+    // same way, so a point is asked of the rest field where it was at rest (the moved mesh where
+    // that field cannot tell). Against the exact method: the mean a small fraction of the offset
+    // (the field's own error: its grid lies another way across the moved head), the worst point no
+    // farther than the exact method moves for its input nudged by 1e-4 (a strand pushed out from
+    // deep inside folds along the surface point by point, so a tiny difference may move its tip
+    // far), and (almost) no point under the offset by more than 3% of it. Against a field made for
+    // the moved head (what making one per frame gives) and the strands collided at rest and moved
+    // (both the field's answers alone), the bounds of the still head's field against the exact
+    // method (FieldMatchesExactOnTheHead): the mean, and no more points apart than the exact
+    // method's against itself nudged.
+    const auto head = headScalp();
+    auto motion = [](const Vec3f& p) { return rigidly(p, 1.0f); };
+    const MeshPtr now = movedHead(head, motion);
+    for (const bool dive : {false, true}) {
+        const StrandsPtr atRest = headStrands(head, 44.0, dive);
+        const StrandsPtr in = movedStrands(atRest, motion);
+        auto nudgedIn = std::make_shared<StrandSet>(*in);
+        for (std::size_t s = 0; s < nudgedIn->strandCount(); ++s) {
+            for (std::size_t i = 1; i < nudgedIn->strandPointCount(s); ++i) nudgedIn->strandPoints(s)[i].x += 1e-4f;
+        }
+        double restMs = 0.0, perFrameMs = 0.0, exactMs = 0.0, ms = 0.0;
+        const StrandsPtr rest = headCollide(now, in, "field", &restMs);
+        const StrandsPtr perFrame = headCollide(withoutRest(now), in, "field", &perFrameMs);
+        const StrandsPtr exact = headCollide(now, in, "exact", &exactMs);
+        const StrandsPtr nudged = headCollide(now, nudgedIn, "exact", &ms);
+        const StrandsPtr carried = movedStrands(headCollide(head, atRest, "field", &ms), motion);
+        ASSERT_TRUE(rest && perFrame && exact && nudged && carried);
+        const Apart vsField = apart(*rest, *perFrame), vsExact = apart(*rest, *exact), vsCarried = apart(*rest, *carried),
+                    n = apart(*nudged, *exact);
+        const Under u = under(*now, *rest, 0.03f), uExact = under(*now, *exact, 0.03f), uField = under(*now, *perFrame, 0.03f);
+        std::printf("[ rest ] rigid%s, %zu points: rest field vs a field of the frame worst %.2e mean %.2e; vs exact worst %.2e "
+                    "mean %.2e (exact nudged 1e-4: worst %.2e mean %.2e); vs collided at rest and moved worst %.2e mean %.2e; "
+                    "under the offset by over 3%%: rest %zu (deepest %.3f), frame's field %zu, exact %zu; Collide %.1f ms, "
+                    "frame's field %.1f ms, exact %.1f ms\n",
+                    dive ? " combed through" : "", rest->pointCount(), vsField.worst, vsField.mean, vsExact.worst, vsExact.mean,
+                    n.worst, n.mean, vsCarried.worst, vsCarried.mean, u.count, u.worst, uField.count, uExact.count, restMs,
+                    perFrameMs, exactMs);
+        const double worstBound = std::max(1e-3, 2.0 * n.worst);
+        EXPECT_LT(vsField.mean, 0.005 * 0.08);
+        EXPECT_LE(vsField.over, n.over);
+        EXPECT_LT(vsExact.mean, 0.005 * 0.08);
+        EXPECT_LE(vsExact.worst, worstBound);
+        EXPECT_LT(vsCarried.mean, 0.005 * 0.08);
+        EXPECT_LE(vsCarried.over, n.over);
+        EXPECT_LE(u.count, uExact.count + rest->pointCount() / 50000);
+    }
+}
+
+TEST(Collide, RestFieldKeepsStrandsOutOfABendingScalp) {
+    // The head bent, its strands with it: each point is taken to rest by its nearest vertex's
+    // frame, which the surface near the point follows only up to how the skin between them turns
+    // and stretches. The bend turns the front and back of the head 2.5 degrees each, opposite ways
+    // (mild: the skin shears by about 5% across it), then 10 (about 20%). Measured on the bent
+    // mesh itself (its exact closest points: a stricter judge than a field made on it):
+    //  - mild: as close to the exact method as a field made for the bent head (what making one per
+    //    frame gives): (almost) no point under the offset by more than 3% of it, none by more than
+    //    5%, the mean apart from the exact result within 1% of the offset (the field's own error,
+    //    folded along the surface by the strands combed through the head: the exact method moves
+    //    them a third of that for its input nudged by 1e-4);
+    //  - 10 degrees: the pushes miss by up to about a tenth of the offset where the shear is
+    //    greatest: no point under the offset by more than 15% of it (all well outside the
+    //    surface), at most 2% of the points under it by more than 3%, the mean within 3% of it.
+    // Either way the worst point is within the rigid motion's bound (the exact method's own for an
+    // input nudged by 1e-4: a strand folding along the surface amplifies any difference).
+    const auto head = headScalp();
+    for (const float amount : {0.25f, 1.0f})
+    for (const bool dive : {false, true}) {
+        auto motion = [amount](const Vec3f& p) { return bent(p, amount); };
+        const MeshPtr now = movedHead(head, motion);
+        const StrandsPtr in = movedStrands(headStrands(head, 44.0, dive), motion);
+        auto nudgedIn = std::make_shared<StrandSet>(*in);
+        for (std::size_t s = 0; s < nudgedIn->strandCount(); ++s) {
+            for (std::size_t i = 1; i < nudgedIn->strandPointCount(s); ++i) nudgedIn->strandPoints(s)[i].x += 1e-4f;
+        }
+        double ms = 0.0;
+        const StrandsPtr rest = headCollide(now, in, "field", &ms);
+        const StrandsPtr perFrame = headCollide(withoutRest(now), in, "field", &ms);
+        const StrandsPtr exact = headCollide(now, in, "exact", &ms);
+        const StrandsPtr nudged = headCollide(now, nudgedIn, "exact", &ms);
+        ASSERT_TRUE(rest && perFrame && exact && nudged);
+        const Apart vsExact = apart(*rest, *exact), n = apart(*nudged, *exact);
+        const Under u = under(*now, *rest, 0.03f), uExact = under(*now, *exact, 0.03f), uField = under(*now, *perFrame, 0.03f);
+        std::printf("[ rest ] bent x%.2f%s, %zu points: rest field vs exact worst %.2e mean %.2e (exact nudged 1e-4: worst %.2e "
+                    "mean %.2e); under the offset by over 3%%: rest %zu (deepest %.4f under it), frame's field %zu (%.4f), exact "
+                    "%zu (%.4f)\n",
+                    amount, dive ? " combed through" : "", rest->pointCount(), vsExact.worst, vsExact.mean, n.worst, n.mean, u.count,
+                    u.worst, uField.count, uField.worst, uExact.count, uExact.worst);
+        const bool mild = amount < 0.5f;
+        if (mild) {
+            EXPECT_LE(u.count, uExact.count + rest->pointCount() / 50000);
+            EXPECT_LT(u.worst, 0.05f * 0.08f);
+            EXPECT_LT(vsExact.mean, 0.01 * 0.08);
+        } else {
+            EXPECT_LE(u.count, rest->pointCount() / 50);
+            EXPECT_LT(u.worst, 0.15f * 0.08f);
+            EXPECT_LT(vsExact.mean, 0.03 * 0.08);
+        }
+        EXPECT_LE(vsExact.worst, std::max(1e-3, 2.0 * n.worst));
+    }
+}
+
+TEST(Collide, RestFieldIsMadeOnceForEveryFrame) {
+    // Playback of a moving, bending head: the rest pose's field is made at most once (the first
+    // frame; none when an earlier test made it), never again on a later frame, where a mesh
+    // without a rest pose is given a field of its own on every frame. The cost of a frame:
+    // Collide through the rest field, the exact method (what Collide did on a deformed scalp
+    // before), and a field made for each frame.
+    const auto head = headScalp();
+    constexpr int kFrames = 6;
+    for (const double density : {44.0, 175.0}) {
+        const StrandsPtr atRest = headStrands(head, density, false);
+        double restMs = 0.0, exactMs = 0.0, perFrameMs = 0.0;
+        std::size_t restMade = 0, perFrameMade = 0;
+        for (int frame = 0; frame < kFrames; ++frame) {
+            const float t = static_cast<float>(frame) / static_cast<float>(kFrames - 1);
+            auto motion = [t](const Vec3f& p) { return rigidly(bent(p, t), 0.5f * t); };
+            const MeshPtr now = movedHead(head, motion);
+            const StrandsPtr in = movedStrands(atRest, motion);
+            double ms = 0.0;
+            std::size_t made = MeshDistanceField::madeCount();
+            headCollide(now, in, "field", &ms);
+            if (frame > 0) {
+                restMade += MeshDistanceField::madeCount() - made;
+                restMs += ms;
+            } else {
+                EXPECT_LE(MeshDistanceField::madeCount() - made, 1u);
+            }
+            headCollide(now, in, "exact", &ms);
+            if (frame > 0) exactMs += ms;
+            made = MeshDistanceField::madeCount();
+            headCollide(withoutRest(now), in, "field", &ms);
+            if (frame > 0) {
+                perFrameMade += MeshDistanceField::madeCount() - made;
+                perFrameMs += ms;
+            }
+        }
+        const double frames = kFrames - 1;
+        std::printf("[ rest ] playback, %zu strands, %zu points: per frame Collide %.1f ms through the rest field (%zu fields "
+                    "made after the first frame), %.1f ms exact, %.1f ms with a field made for each frame (%zu made)\n",
+                    atRest->strandCount(), atRest->pointCount(), restMs / frames, restMade, exactMs / frames,
+                    perFrameMs / frames, perFrameMade);
+        EXPECT_EQ(restMade, 0u);
+        EXPECT_EQ(perFrameMade, static_cast<std::size_t>(kFrames - 1));
+    }
 }
 
 // ---- The guide simulation through the rest field ----
@@ -705,6 +965,87 @@ Apart apart(const std::vector<Vec3f>& a, const std::vector<Vec3f>& b) {
     }
     r.mean = sum / static_cast<double>(std::max<std::size_t>(a.size(), 1));
     return r;
+}
+
+TEST(Simulation, RestFieldLeavesAStillColliderAsItWas) {
+    // A collider (or a scalp the guides are not rooted on) at its rest pose: the same frames, to the
+    // bit, as the mesh without a rest pose.
+    const auto head = headScalp();
+    const GuidesPtr guides = headGuides(*headStrands(head, 20.0, false), 20);
+    auto still = [](const Vec3f& p, float) { return p; };
+    for (const bool asScalp : {false, true}) {
+        EXPECT_EQ(simulateHead(head, guides, asScalp, true, still, 4).points,
+                  simulateHead(head, guides, asScalp, false, still, 4).points);
+    }
+}
+
+TEST(Simulation, RestFieldFollowsAMovingHeadAndIsMadeOnce) {
+    // The head turning and moving (rigidly), then also bending (10 degrees at the end), as the
+    // guides' collider and as a scalp they are not rooted on: the solver over a few frames asking
+    // its rest pose's field against one made for each frame (the path of a mesh without a rest
+    // pose). The mean apart within the bounds of Collide's tests (0.5% of the offset rigidly, 3%
+    // bent), the worst point within twice what the per-frame path moves for its guides nudged by
+    // 1e-4 (a guide pushed along the surface amplifies any difference, frame after frame); no
+    // point under the offset by more than 15% of it beyond the per-frame path's deepest (friction,
+    // after the push, slides a point a little way in on a curved surface); no field made after the first frame, where
+    // the per-frame path makes one each frame. Each step timed.
+    const auto head = headScalp();
+    const GuidesPtr guides = headGuides(*headStrands(head, 20.0, false), 5);
+    constexpr int kFrames = 6;
+    struct Case {
+        const char* name;
+        std::function<Vec3f(const Vec3f&, float)> motion;
+        double meanBound;
+    };
+    const std::vector<Case> cases = {
+        {"rigid", [](const Vec3f& p, float t) { return rigidly(p, 0.5f * t); }, 0.005},
+        {"bending", [](const Vec3f& p, float t) { return rigidly(bent(p, t), 0.5f * t); }, 0.03},
+    };
+    for (const Case& c : cases)
+    for (const bool asScalp : {false, true}) {
+        const bool bent = std::string(c.name) == "bending";
+        const HeadSim rest = simulateHead(head, guides, asScalp, true, c.motion, kFrames);
+        const HeadSim frame = simulateHead(head, guides, asScalp, false, c.motion, kFrames);
+        const HeadSim frameNudged = simulateHead(head, guides, asScalp, false, c.motion, kFrames, 1e-4f);
+        const Apart vsFrame = apart(rest.points, frame.points), n = apart(frameNudged.points, frame.points);
+        // Under the offset, measured on the last frame's mesh, within the reach the solver pushes from
+        // (half the longest guide: farther from the surface, a point under it is on the open cap's far
+        // side, or below its rim).
+        const MeshPtr last = movedHead(head, [&](const Vec3f& p) { return c.motion(p, 1.0f); });
+        float longest = 0.0f;
+        for (const Guide& g : guides->guides()) {
+            float length = 0.0f;
+            for (std::size_t j = 1; j < g.points.size(); ++j) length += (g.points[j] - g.points[j - 1]).length();
+            longest = std::max(longest, length);
+        }
+        const float depth = std::max(2.0f * 0.08f, 0.5f * longest);
+        auto deepestOf = [&](const std::vector<Vec3f>& points) {
+            float deepest = 0.0f;
+            for (std::size_t g = 0, k = 0; g < guides->size(); ++g) {
+                for (std::size_t j = 0; j < guides->guides()[g].points.size(); ++j, ++k) {
+                    if (j == 0) continue;
+                    const SurfacePoint sp = last->closestPoint(points[k]);
+                    const float h = (points[k] - sp.position).dot(sp.normal);
+                    if ((points[k] - sp.position).length() < depth) deepest = std::max(deepest, 0.08f - h);
+                }
+            }
+            return deepest;
+        };
+        const float deepest = deepestOf(rest.points), deepestFrame = deepestOf(frame.points);
+        std::printf("[ rest ] Simulate, %s head as the %s, %zu guides, %zu points: rest field vs a field of each frame worst "
+                    "%.2e mean %.2e (per-frame nudged 1e-4: worst %.2e mean %.2e); deepest under the offset %.4f (per frame %.4f); per step "
+                    "%.1f ms through the rest field (%zu fields made after the first), %.1f ms with a field per frame (%zu made)\n",
+                    c.name, asScalp ? "scalp" : "collider", guides->size(), rest.points.size(), vsFrame.worst, vsFrame.mean,
+                    n.worst, n.mean, deepest, deepestFrame, rest.msPerStep, rest.madeAfterFirst, frame.msPerStep, frame.madeAfterFirst);
+        EXPECT_LT(vsFrame.mean, c.meanBound * 0.08);
+        EXPECT_LE(vsFrame.worst, std::max(1e-3, (bent ? 3.0 : 2.0) * n.worst));
+        // Bent, the rest field's answer is the rest pose's carried by the head's motion: off by
+        // the bend (the solver pushes points out again after keeping the lengths, so the per-frame
+        // path now keeps them within a few hundredths of the offset and only that is left).
+        EXPECT_LT(deepest, deepestFrame + (bent ? 0.5f : 0.15f) * 0.08f);
+        EXPECT_EQ(rest.madeAfterFirst, 0u);
+        EXPECT_EQ(frame.madeAfterFirst, static_cast<std::size_t>(kFrames - 2));
+    }
 }
 
 }  // namespace

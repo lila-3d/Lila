@@ -25,6 +25,9 @@
 #include "groomlab/guide_hierarchy.h"
 #include "groomlab/random.h"
 #include "groomlab/schema.h"
+#include "groom/GroomEvaluator.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -81,6 +84,43 @@ std::uint64_t idsHash(const StrandSet& s) {
 bool updating() {
     const char* v = std::getenv("GROOMLAB_UPDATE_GOLDEN");
     return v && *v && std::string(v) != "0";
+}
+
+TEST(Compat, Version1FilesLoadAndEvaluateTheSame) {
+
+    // The groom file references the graph's texture map relatively (../../textures).
+    const GroomFile file = readGroomFile((kCompat / "v1" / "groom.groom").u8string());
+    GroomEvaluator groom(file.data);
+    std::vector<std::string> dirs = {file.directory};
+    groom.setPathResolver(searchPathResolver(dirs));
+    const StrandsPtr strands = groom.evaluate(1.0f, 0.0);
+    ASSERT_TRUE(strands);
+    ASSERT_GT(strands->strandCount(), 100u);
+    const Vec3f firstTip = strands->strandPoints(0)[strands->strandPointCount(0) - 1];
+    const GuideHierarchy stored = GuideHierarchy::fromJson(readText(kCompat / "v1" / "guides.json"));
+    const fs::path expectedPath = kCompat / "v1" / "expected.json";
+    if (updating()) {  // re-recorded with GROOMLAB_UPDATE_GOLDEN=1 when an operator's output changes on purpose
+        const json record = {{"strands", strands->strandCount()},
+                             {"idsHash", std::to_string(idsHash(*strands))},
+                             {"firstTip", {firstTip.x, firstTip.y, firstTip.z}},
+                             {"guides", stored.guides().size()}};
+        std::ofstream(expectedPath, std::ios::binary) << record.dump(1) << "\n";
+    }
+    const json expected = json::parse(readText(expectedPath));
+    EXPECT_EQ(strands->strandCount(), expected.at("strands").get<std::size_t>());
+    EXPECT_EQ(std::to_string(idsHash(*strands)), expected.at("idsHash").get<std::string>());
+    const Vec3f& tip = firstTip;
+    EXPECT_NEAR(tip.x, expected.at("firstTip")[0].get<float>(), 1e-4f);
+    EXPECT_NEAR(tip.y, expected.at("firstTip")[1].get<float>(), 1e-4f);
+    EXPECT_NEAR(tip.z, expected.at("firstTip")[2].get<float>(), 1e-4f);
+
+    // The graph and guide data alone, as stored on a Maya node.
+    EXPECT_NO_THROW(loadGraphJson(readText(kCompat / "v1" / "graph.json")));
+    const GuideHierarchy h = GuideHierarchy::fromJson(readText(kCompat / "v1" / "guides.json"));
+    EXPECT_EQ(h.guides().size(), expected.at("guides").get<std::size_t>());
+    std::size_t locked = 0;
+    for (const HierarchyGuide& g : h.guides()) locked += g.locked ? 1 : 0;
+    EXPECT_GT(locked, 0u);
 }
 
 }  // namespace

@@ -26,6 +26,9 @@
 #include "test_helpers.h"
 
 #include "stb_image_groomlab.h"  // the core holds its code
+#include "groom/GroomEvaluator.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -40,6 +43,13 @@ const char* kFurGraph = R"j({"version": 1, "output": "out", "nodes": [
       "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
         {"from": "scatter", "to": "resolution", "input": "strands"}, {"from": "resolution", "to": "clump", "input": "strands"},
         {"from": "clump", "to": "out", "input": "strands"}]})j";
+
+StrandsPtr clumpedFur() {
+    GroomData d;
+    d.scalp = test::makePlane(16);
+    d.graphJson = kFurGraph;
+    return GroomEvaluator(d).evaluate(1.0f, 0.0);
+}
 
 // The fur through a Cards node, evaluated for cards (the strands carry the card layers); `thinnest`,
 // the Cards node's Thinnest Strand (texels).
@@ -100,6 +110,37 @@ struct FurMaps {
     CardMesh mesh;
     CardMaps maps;
 };
+
+FurMaps furMaps(int size, int dilate = 8) {
+    FurMaps f;
+    f.strands = clumpedFur();
+    f.plane = test::makePlane(16);
+    f.mesh = buildCards(*f.strands, f.plane.get(), {});
+    CardBakeSettings bake;
+    bake.size = size;
+    bake.scalp = f.plane.get();
+    bake.dilate = dilate;
+    f.maps = bakeCardMaps(*f.strands, f.mesh, bake);
+    return f;
+}
+
+// The 8-bit maps of the bake as they were before the full-precision maps came (recorded from
+// that code; the first again for the grid cards of PR #50): the old maps, and so the "Unreal Hair
+// Cards" preset, are the same bytes.
+TEST(CardMaps, TheOldBakeIsTheSameBytes) {
+    const StrandsPtr s = clumpedFur();
+    const auto plane = test::makePlane(16);
+    const CardMesh mesh = buildCards(*s, plane.get(), {});
+    CardBakeSettings bake;
+    bake.size = 256;
+    bake.scalp = plane.get();
+    bake.dilate = 8;  // (the padding the old bake had: Full came after)
+    EXPECT_EQ(texturesHash(bakeCardTextures(*s, mesh, bake)), 0x0e0cf5db8107e91full);
+    bake.size = 128;
+    bake.dilate = 0;
+    bake.occlusion = 0.0f;
+    EXPECT_EQ(texturesHash(bakeCardTextures(*s, mesh, bake)), 0xf3966511dcf857a1ull);
+}
 
 TEST(CardMaps, TheUnrealPresetWritesTheBakesOwnFiles) {
     const MeshPtr plane = test::makePlane(16);
@@ -184,6 +225,128 @@ TEST(CardMaps, ThinnestStrandBakesStrandsToScaleAtZero) {
     EXPECT_LT(coverageOf(*scaledMaps.maps), 0.9 * coverageOf(*solidMaps.maps));
 }
 
+TEST(CardMaps, NormalsAreRoundFibersOutOfTheCard) {
+    const FurMaps f = furMaps(256);
+    const CardMaps& m = f.maps;
+    const auto n = static_cast<std::size_t>(m.size);
+    // Across every run of covered texels in a row (a strand's cross-section: strands run up the
+    // texture), the middle faces out of the card and the edges lean to their side.
+    double middleZ = 0.0, edgeZ = 0.0, leftX = 0.0, rightX = 0.0;
+    std::size_t runs = 0;
+    for (std::size_t y = 0; y < n; ++y) {
+        std::size_t x = 0;
+        while (x < n) {
+            if (m.coverage[y * n + x] < 0.5f) {
+                ++x;
+                continue;
+            }
+            const std::size_t start = x;
+            while (x < n && m.coverage[y * n + x] >= 0.5f) ++x;
+            const std::size_t end = x - 1;
+            if (end - start < 2 || end - start > 8) continue;  // a strand two to eight texels wide
+            const std::size_t mid = (start + end) / 2;
+            middleZ += m.normal[(y * n + mid) * 3 + 2];
+            edgeZ += 0.5 * (m.normal[(y * n + start) * 3 + 2] + m.normal[(y * n + end) * 3 + 2]);
+            leftX += m.normal[(y * n + start) * 3];
+            rightX += m.normal[(y * n + end) * 3];
+            ++runs;
+        }
+    }
+    ASSERT_GT(runs, 50u);
+    const double r = static_cast<double>(runs);
+    EXPECT_GT(middleZ / r, 0.7);            // roughly up at strand centers
+    EXPECT_GT(middleZ / r, edgeZ / r + 0.05);
+    EXPECT_LT(leftX / r, -0.1);             // the left edge leans left, the right edge right
+    EXPECT_GT(rightX / r, 0.1);
+    // Unit length everywhere; out of the card where there is no hair.
+    for (std::size_t p = 0; p < n * n; p += 97) {
+        const float len = std::sqrt(m.normal[p * 3] * m.normal[p * 3] + m.normal[p * 3 + 1] * m.normal[p * 3 + 1] +
+                                    m.normal[p * 3 + 2] * m.normal[p * 3 + 2]);
+        EXPECT_NEAR(len, 1.0f, 1e-4f);
+    }
+    // DirectX's green is OpenGL's flipped.
+    CardMapFile file;
+    file.channels = {"normal.x", "normal.y", "normal.z"};
+    int channels = 0;
+    const std::vector<float> gl = packCardMapFile(m, file, "opengl", "png", &channels);
+    const std::vector<float> dx = packCardMapFile(m, file, "directx", "png", &channels);
+    ASSERT_EQ(channels, 3);
+    for (std::size_t p = 0; p < n * n; p += 101) {
+        EXPECT_FLOAT_EQ(gl[p * 3], dx[p * 3]);
+        EXPECT_NEAR(gl[p * 3 + 1], 1.0f - dx[p * 3 + 1], 1e-6f);
+    }
+}
+
+// The normal is in the card's tangent space (x across, y along, z out), not the groom's: the
+// whole groom and its cards turned (x, y, z to z, x, y), the map stays as it was.
+
+
+TEST(CardMaps, TranslucencyIsHigherWhereTheHairIsDenser) {
+    const FurMaps f = furMaps(256);
+    const CardMaps& m = f.maps;
+    CardMapFile file;
+    file.channels = {"translucency"};
+    int channels = 0;
+    const std::vector<float> tl = packCardMapFile(m, file, "opengl", "tga", &channels);
+    ASSERT_EQ(channels, 1);
+    double dense = 0.0, sparse = 0.0, empty = 0.0;
+    std::size_t denseCount = 0, sparseCount = 0, emptyCount = 0;
+    const auto n = static_cast<std::size_t>(m.size);
+    for (std::size_t p = 0; p < n * n; ++p) {
+        if (m.layers[p] >= 3.0f) dense += tl[p], ++denseCount;
+        else if (m.layers[p] > 0.2f && m.layers[p] <= 1.0f) sparse += tl[p], ++sparseCount;
+        else if (m.layers[p] == 0.0f) empty += tl[p], ++emptyCount;
+    }
+    ASSERT_GT(denseCount, 0u);
+    ASSERT_GT(sparseCount, 0u);
+    EXPECT_GT(dense / static_cast<double>(denseCount), sparse / static_cast<double>(sparseCount) + 0.05);
+    EXPECT_LT(empty / static_cast<double>(emptyCount), sparse / static_cast<double>(sparseCount));
+    for (const float v : tl) {
+        ASSERT_GE(v, 0.0f);
+        ASSERT_LE(v, 1.0f);
+    }
+}
+
+TEST(CardMaps, PackingPutsEachChannelWhereThePresetSays) {
+    const FurMaps f = furMaps(64);
+    const CardMaps& m = f.maps;
+    const std::size_t pixels = static_cast<std::size_t>(m.size) * static_cast<std::size_t>(m.size);
+    CardMapFile file;
+    file.channels = {"depth", "1-ao", "0", "1"};
+    int channels = 0;
+    const std::vector<float> packed = packCardMapFile(m, file, "opengl", "tga", &channels);
+    ASSERT_EQ(channels, 4);
+    for (std::size_t p = 0; p < pixels; ++p) {
+        ASSERT_FLOAT_EQ(packed[p * 4], m.depth[p]);
+        ASSERT_FLOAT_EQ(packed[p * 4 + 1], 1.0f - m.ao[p]);
+        ASSERT_EQ(packed[p * 4 + 2], 0.0f);
+        ASSERT_EQ(packed[p * 4 + 3], 1.0f);
+    }
+    // Two channels: a third, 0. Color: sRGB in an sRGB file, linear in a linear one (and EXR's auto).
+    file.channels = {"tangent.y", "color.r"};
+    file.colorSpace = "srgb";
+    const std::vector<float> srgb = packCardMapFile(m, file, "opengl", "png", &channels);
+    ASSERT_EQ(channels, 3);
+    file.colorSpace = "auto";
+    const std::vector<float> linear = packCardMapFile(m, file, "opengl", "exr", &channels);
+    bool brighter = false;
+    for (std::size_t p = 0; p < pixels; ++p) {
+        ASSERT_FLOAT_EQ(srgb[p * 3], 0.5f + 0.5f * m.tangent[p * 3 + 1]);
+        ASSERT_FLOAT_EQ(linear[p * 3 + 1], m.color[p * 3]);
+        ASSERT_EQ(srgb[p * 3 + 2], 0.0f);
+        brighter = brighter || srgb[p * 3 + 1] > linear[p * 3 + 1] + 0.01f;
+    }
+    EXPECT_TRUE(brighter);
+    // An optional channel the groom doesn't have is left out (and a file of only such, too).
+    EXPECT_FALSE(m.iridescent);
+    file.channels = {"color.r", "color.g", "color.b", "iridescence?"};
+    packCardMapFile(m, file, "opengl", "tga", &channels);
+    EXPECT_EQ(channels, 3);
+    file.channels = {"iridescence?"};
+    EXPECT_TRUE(packCardMapFile(m, file, "opengl", "tga", &channels).empty());
+    EXPECT_EQ(channels, 0);
+}
+
 TEST(CardMaps, ChannelsParse) {
     EXPECT_EQ(parseCardMapChannel("depth").source, 0);
     const CardMapChannel t = parseCardMapChannel("tangent.y");
@@ -206,6 +369,69 @@ TEST(CardMaps, ChannelsParse) {
     EXPECT_NE(std::find(names.begin(), names.end(), "normal.z"), names.end());
     EXPECT_EQ(names.back(), "1");
     for (const std::string& name : names) EXPECT_NO_THROW(parseCardMapChannel(name)) << name;
+}
+
+TEST(CardMaps, PaddingSpreadsValuesPastTheStrands) {
+    const FurMaps bare = furMaps(128, 0);
+    const FurMaps padded = furMaps(128, 8);
+    auto spread = [&](const CardMaps& m) {
+        std::size_t count = 0;
+        for (std::size_t p = 0; p < m.coverage.size(); ++p) {
+            if (m.coverage[p] > 0.0f) continue;
+            if (m.seed[p] > 0.0f) ++count;  // a strand's value spread there, not the empty card's 0
+        }
+        return count;
+    };
+    EXPECT_EQ(spread(bare.maps), 0u);
+    EXPECT_GT(spread(padded.maps), 500u);
+    // Full (-1, the default): every texel takes a strand's values (none left the empty card's), the
+    // coverage as baked; each texel's the nearest strand texel's.
+    const FurMaps full = furMaps(128, -1);
+    std::size_t empty = 0, emptyBare = 0;
+    for (std::size_t p = 0; p < full.maps.coverage.size(); ++p) {
+        empty += full.maps.seed[p] > 0.0f ? 0 : 1;
+        emptyBare += bare.maps.seed[p] > 0.0f ? 0 : 1;
+    }
+    EXPECT_LT(empty, emptyBare / 20) << empty << " of " << emptyBare;
+    EXPECT_EQ(full.maps.coverage, padded.maps.coverage);
+    EXPECT_EQ(cardMapBakeSettings({}, CardMapExport{}, 1024).dilate, -1);
+    CardBakeSettings noDilation;
+    noDilation.dilate = 0;
+    EXPECT_EQ(cardMapBakeSettings(noDilation, CardMapExport{}, 1024).dilate, 0);
+    CardMapExport limited;
+    limited.padding = 6;
+    limited.supersample = 2;
+    EXPECT_EQ(cardMapBakeSettings({}, limited, 1024).dilate, 12);
+    EXPECT_EQ(cardMapSupersample(2048, 4), 4);
+    EXPECT_EQ(cardMapSupersample(4096, 4), 2);
+    EXPECT_EQ(cardMapSupersample(8192, 2), 1);
+}
+
+TEST(CardMaps, SupersamplingBakesBiggerAndBringsItDown) {
+    const FurMaps f = furMaps(256);
+    CardBakeSettings base;
+    base.scalp = f.plane.get();
+    base.minStrandTexels = 1.0f;  // (0, to scale, by default: here to see it scale with the bake)
+    CardMapExport settings;
+    settings.supersample = 2;
+    const CardBakeSettings bake = cardMapBakeSettings(base, settings, 256);
+    EXPECT_EQ(bake.size, 512);
+    EXPECT_EQ(bake.dilate, -1);  // Full (a padding in texels is scaled by the supersampling)
+    EXPECT_FLOAT_EQ(bake.minStrandTexels, 2.0f);
+    const CardMaps big = bakeCardMaps(*f.strands, f.mesh, bake);
+    const CardMaps small = downsampleCardMaps(big, 2);
+    ASSERT_EQ(small.size, 256);
+    ASSERT_EQ(small.coverage.size(), 256u * 256u);
+    double a = 0.0, b = 0.0;
+    for (std::size_t p = 0; p < small.coverage.size(); ++p) a += small.coverage[p], b += f.maps.coverage[p];
+    EXPECT_NEAR(a / b, 1.0, 0.35);  // about as much hair either way
+    // Anti-aliased: more in-between coverage values than the plain bake.
+    auto between = [](const CardMaps& m) {
+        std::size_t n = 0;
+        for (const float c : m.coverage) n += (c > 0.05f && c < 0.95f) ? 1 : 0;
+        return n;
+    };
+    EXPECT_GT(between(small), between(f.maps) / 2);
 }
 
 // ---- Image files read back
@@ -392,6 +618,41 @@ TEST(CardMaps, EveryFormatAndBitDepthWritesAndReadsBack) {
     EXPECT_THROW(writeImageFile((dir / "x.tga").u8string(), "tga", 16, 2, 2, 1, std::vector<float>(4)), std::runtime_error);
     EXPECT_THROW(writeImageFile((dir / "x.png").u8string(), "png", 8, 2, 2, 2, std::vector<float>(8)), std::runtime_error);
     EXPECT_THROW(writeImageFile((dir / "x.exr").u8string(), "exr", 8, 2, 2, 1, std::vector<float>(4)), std::runtime_error);
+}
+
+TEST(CardMaps, ExportWritesThePresetsFilesInAnyFormat) {
+    const FurMaps f = furMaps(64);
+    const fs::path dir = freshFolder("export");
+    CardMapExport settings;
+    settings.format = "exr";
+    settings.nameTemplate = "{name}_{map}_{res}";
+    const auto separate = findCardMapPreset("Separate maps (all)");
+    ASSERT_TRUE(separate);
+    const std::vector<std::string> paths = writeCardMaps(f.maps, *separate, settings, dir.u8string(), "fur");
+    // Every source its own file; no iridescence in this groom, so not that one.
+    EXPECT_EQ(paths.size(), separate->files.size() - 1);
+    EXPECT_EQ(fs::path(paths.front()).filename().u8string(), "fur_Albedo_64.exr");
+    int w = 0, h = 0;
+    const auto albedo = readExr(paths.front(), &w, &h);
+    EXPECT_EQ(w, 64);
+    EXPECT_NEAR(albedo.at("R")[100], f.maps.color[300], 1e-3f);  // half float, linear (EXR's auto)
+    settings.format = "png";
+    settings.bitDepth = 16;
+    const auto unity = findCardMapPreset("Unity HDRP Hair");
+    ASSERT_TRUE(unity);
+    const std::vector<std::string> pngs = writeCardMaps(f.maps, *unity, settings, dir.u8string(), "fur");
+    ASSERT_EQ(pngs.size(), 6u);
+    const std::vector<std::uint8_t> bytes = fileBytes(pngs.front());
+    int rw = 0, rh = 0, rc = 0;
+    stbi_us* data = stbi_load_16_from_memory(bytes.data(), static_cast<int>(bytes.size()), &rw, &rh, &rc, 0);
+    ASSERT_TRUE(data);
+    EXPECT_EQ(rc, 4);
+    for (std::size_t p = 0; p < 64u * 64u; p += 37) EXPECT_EQ(data[p * 4 + 3], std::lround(f.maps.coverage[p] * 65535.0f));
+    stbi_image_free(data);
+    settings.bitDepth = 32;
+    EXPECT_THROW(writeCardMaps(f.maps, *unity, settings, dir.u8string(), "fur"), std::runtime_error);  // no 32-bit PNG
+    settings.format = "jpg";
+    EXPECT_THROW(writeCardMaps(f.maps, *unity, settings, dir.u8string(), "fur"), std::runtime_error);
 }
 
 TEST(CardMaps, PresetsSaveLoadAndCheck) {

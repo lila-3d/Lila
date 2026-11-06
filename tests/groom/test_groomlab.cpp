@@ -11,6 +11,9 @@
 #include "scene/Transform.h"
 
 #include <glm/gtc/constants.hpp>
+#include <tbb/global_control.h>
+
+#include <filesystem>
 
 using namespace lila;
 using groomtest::D3;
@@ -121,4 +124,104 @@ TEST_CASE("groomStrands node: grows on the connected scalp, follows its transfor
     g.evaluate();
     CHECK(strands->as<int64_t>(at("strandCount")) == 0);
     CHECK(!strands->as<std::string>(at("warning")).empty());
+}
+
+namespace
+{
+/** Every bit of the strands: points, per-point attrs and per-curve attrs, in order. */
+uint64_t bitsOf(const curve::Splines& strands)
+{
+    uint64_t h = 1469598103934665603ull;
+    auto add = [&](const void* data, size_t bytes) {
+        const auto* b = static_cast<const unsigned char*>(data);
+        for (size_t i = 0; i < bytes; ++i)
+            h = (h ^ b[i]) * 1099511628211ull;
+    };
+    for (const curve::Spline& s : strands)
+    {
+        add(s.points.data(), s.points.size() * sizeof(D3));
+        for (const auto& [name, values] : s.pointAttrs)
+        {
+            add(name.data(), name.size());
+            add(values.data(), values.size() * sizeof(double));
+        }
+        for (const auto& [name, value] : s.attrs)
+        {
+            add(name.data(), name.size());
+            add(&value, sizeof value);
+        }
+    }
+    return h;
+}
+
+struct StrandsScene
+{
+    std::string head;
+    scene::Node* strands = nullptr;
+
+    int at(const char* a) const { return strands->type().attrIndex(a); }
+    curve::Splines grown() const
+    {
+        scene::Graph::current().evaluate();
+        return curve::splinesOf(strands->value(at("outCurve")));
+    }
+};
+
+/** A head, guides on its crown and a groomStrands node growing the default graph's hair on it. */
+StrandsScene strandsScene(double radius)
+{
+    scene::Graph& g = scene::Graph::current();
+    g.clear();
+    UndoStack::get().clear();
+    StrandsScene out;
+    out.head = curvetest::run("polySphere", {{"name", "Head"}, {"radius", radius}, {"subdivisionsAxis", 40}, {"subdivisionsHeight", 30}})[0];
+    scene::Node* scalp = g.find(out.head);
+    scene::Node* guides = curve::helpers::createCurve(g, crownGuides(radius), "Guides");
+    out.strands = g.createNode(*scene::types::find("groomStrands"), "Strands");
+    g.connect({scalp->id(), scene::MeshNode::kOutMesh, -1}, {out.strands->id(), out.at("inMesh"), -1});
+    g.connect({scalp->id(), scene::Transform::kWorldMatrix, -1}, {out.strands->id(), out.at("meshMatrix"), -1});
+    g.connect({guides->id(), curve::CurveShape::kWorldSpace, -1}, {out.strands->id(), out.at("inCurve"), -1});
+    return out;
+}
+} // namespace
+
+TEST_CASE("groomStrands: the same strands bit for bit on any thread count, evaluated again, and after save and load")
+{
+    const double radius = 10.0;
+    const curve::Splines first = strandsScene(radius).grown();
+    REQUIRE(first.size() > 1000);
+    const uint64_t bits = bitsOf(first);
+
+    // Every parallel loop cut differently: one thread takes each range whole, two split and steal.
+    for (const int threads : {1, 2})
+    {
+        const tbb::global_control cap(tbb::global_control::max_allowed_parallelism, size_t(threads));
+        CHECK_MESSAGE(bitsOf(strandsScene(radius).grown()) == bits, threads, " threads");
+    }
+
+    // Evaluated again from the node's cache, and after an edit that is undone: the same bits.
+    StrandsScene s = strandsScene(radius);
+    CHECK(bitsOf(s.grown()) == bits);
+    CHECK(bitsOf(s.grown()) == bits);
+    curvetest::run("setAttr", {{"args", {s.head + ".translateY", 3.0}}});
+    CHECK(bitsOf(s.grown()) != bits);
+    curvetest::run("setAttr", {{"args", {s.head + ".translateY", 0.0}}});
+    CHECK(bitsOf(s.grown()) == bits);
+    scene::Graph::current().setValue({s.strands->id(), s.at("graph"), -1}, scatterGraph(2.0));
+    CHECK(bitsOf(s.grown()) != bits);
+    scene::Graph::current().setValue({s.strands->id(), s.at("graph"), -1}, std::string());
+    CHECK(bitsOf(s.grown()) == bits);
+
+    // Saved and opened again: a fresh node grows the same strands.
+    const auto path = std::filesystem::temp_directory_path() / "lila_groomstrands_roundtrip.lila";
+    curvetest::run("saveScene", {{"args", {path.string()}}});
+    scene::Graph::current().clear();
+    UndoStack::get().clear();
+    curvetest::run("openScene", {{"args", {path.string()}}});
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    scene::Node* opened = g.find("Strands");
+    REQUIRE(opened);
+    CHECK(bitsOf(curve::splinesOf(opened->value(opened->type().attrIndex("outCurve")))) == bits);
+    std::filesystem::remove(path);
 }

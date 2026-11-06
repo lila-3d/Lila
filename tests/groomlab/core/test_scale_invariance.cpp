@@ -1,0 +1,239 @@
+// SPDX-License-Identifier: Apache-2.0
+// Modified for Lila (2026).
+// Scale invariance: a groom looks the same whatever the scene's scale. Every shipped preset fitted
+// to the reference groom (its scalp, guides and hierarchy) and to the same groom scaled by k makes
+// the same strands (the same count and IDs), their points and widths k times as far and wide.
+
+#include <gtest/gtest.h>
+
+#include <algorithm>
+#include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <map>
+#include <set>
+#include <sstream>
+
+#include <nlohmann/json.hpp>
+
+#include "groomlab/graph_edit.h"
+#include "groomlab/graph_io.h"
+#include "groomlab/groom_file.h"
+#include "groom/GroomEvaluator.h"
+#include "groomlab/presets.h"
+#include "test_helpers.h"
+
+using lila::groom::GroomEvaluator;
+
+namespace groomlab {
+namespace {
+
+using json = nlohmann::json;
+
+const std::string kShipped = GROOMLAB_SHIPPED_PRESETS;
+constexpr float kDensity = 0.05f;  // as PresetLooks: the preview's share keeps every preset quick
+
+std::vector<Vec3f> scaled(std::vector<Vec3f> points, float k) {
+    for (Vec3f& p : points) p = p * k;
+    return points;
+}
+
+MeshPtr scaledMesh(const MeshPtr& mesh, float k) {
+    if (!mesh) return mesh;
+    auto out = std::make_shared<ScalpMesh>(scaled(mesh->points(), k), mesh->triangles());
+    if (mesh->hasUVs()) out->setCornerUVs(mesh->cornerUVs());
+    for (const std::string& name : mesh->colorSetNames()) out->setCornerColors(name, *mesh->cornerColors(name));
+    if (mesh->hasRest()) out->setRestPoints(scaled(mesh->restPoints(), k));
+    out->setPolygons(mesh->polygons());
+    out->setRenderSubdivision(mesh->renderSubdivision(), mesh->renderSubdivisionFrom());
+    return out;
+}
+
+// The groom k times as big: the scalp, colliders, flat guides and the hierarchy's shapes (world
+// points, rooted shapes, children's offsets along their parents and the tubes' radii).
+GroomData scaledGroom(GroomData data, float k) {
+    data.scalp = scaledMesh(data.scalp, k);
+    for (auto& [name, mesh] : data.meshes) mesh = scaledMesh(mesh, k);
+    if (data.guides) {
+        auto guides = std::make_shared<GuideSet>(*data.guides);
+        for (Guide& g : guides->guides()) g.points = scaled(std::move(g.points), k);
+        data.guides = guides;
+    }
+    if (!data.hierarchyJson.empty()) {
+        json h = json::parse(data.hierarchyJson);
+        for (json& g : h["guides"]) {
+            for (const char* key : {"points", "rootLocal"}) {
+                if (!g.contains(key)) continue;
+                for (json& v : g[key]) v = v.get<double>() * k;
+            }
+            if (g.contains("offsets")) {  // x, y in the parent's tube radii; z along it, in scene units
+                json& o = g["offsets"];
+                for (std::size_t i = 2; i < o.size(); i += 3) o[i] = o[i].get<double>() * k;
+            }
+            if (g.contains("tube") && g["tube"].contains("width")) {
+                for (json& r : g["tube"]["width"]) r = r.get<double>() * k;
+            }
+        }
+        data.hierarchyJson = h.dump();
+    }
+    return data;
+}
+
+struct Made {
+    StrandsPtr strands;
+    std::string error;
+    std::vector<std::pair<std::string, StrandsPtr>> nodes;  // each node's strands, in the graph's order (with `nodes`)
+};
+
+Made make(const GroomData& groom, const std::string& preset, std::optional<double> size, const std::string& dir,
+          bool nodes = false) {
+    GroomData data = groom;
+    data.graphJson = presetGraphJson(preset, size);
+    Made made;
+    try {
+        GroomEvaluator session(data);
+        session.setPathResolver(searchPathResolver({dir, kShipped}));
+        made.strands = session.evaluate(kDensity, 0.0);
+        if (nodes) {
+            const json graph = json::parse(data.graphJson);
+            for (const json& n : graph["nodes"]) {
+                const std::string name = n.value("name", std::string());
+                try {
+                    if (StrandsPtr s = valueAs<StrandsPtr>(session.evaluateNode(name, kDensity, 0.0))) made.nodes.emplace_back(name, s);
+                } catch (const std::exception& e) {
+                    made.error += name + ": " + e.what() + "; ";
+                }
+            }
+        }
+    } catch (const std::exception& e) {
+        made.error = e.what();
+    }
+    return made;
+}
+
+// How far `b` is from `a` scaled by k: the strands' count and IDs must match (else a message), the
+// largest point and width difference as a share of `extent` x k (the groom's size there).
+struct Difference {
+    std::string mismatch;
+    double points = 0.0, widths = 0.0;
+    std::string channel;  // a channel that is neither the same nor k times
+};
+
+Difference compare(const StrandSet& a, const StrandSet& b, float k, double extent) {
+    Difference d;
+    if (a.strandCount() != b.strandCount()) {
+        std::set<StrandId> ia(a.ids().begin(), a.ids().end()), ib(b.ids().begin(), b.ids().end());
+        std::size_t onlyA = 0, onlyB = 0;
+        for (const StrandId id : ia) onlyA += ib.count(id) ? 0 : 1;
+        for (const StrandId id : ib) onlyB += ia.count(id) ? 0 : 1;
+        d.mismatch = std::to_string(a.strandCount()) + " strands vs " + std::to_string(b.strandCount()) + " (" +
+                     std::to_string(onlyA) + " only at 1, " + std::to_string(onlyB) + " only at k)";
+        return d;
+    }
+    for (std::size_t i = 0; i < a.strandCount(); ++i) {
+        if (a.ids()[i] != b.ids()[i]) {
+            d.mismatch = "strand " + std::to_string(i) + "'s ID differs";
+            return d;
+        }
+        if (a.strandPointCount(i) != b.strandPointCount(i)) {
+            d.mismatch = "strand " + std::to_string(i) + " has " + std::to_string(a.strandPointCount(i)) + " points vs " +
+                         std::to_string(b.strandPointCount(i));
+            return d;
+        }
+    }
+    const double scale = k * extent;
+    for (std::size_t i = 0; i < a.strandCount(); ++i) {
+        const Vec3f* p = a.strandPoints(i);
+        const Vec3f* q = b.strandPoints(i);
+        for (std::size_t j = 0; j < a.strandPointCount(i); ++j) d.points = std::max(d.points, (q[j] - p[j] * k).length() / scale);
+    }
+    // Widths of 1 everywhere are unset (no Width node: StrandSet's default, which hosts replace).
+    const auto unset = [](const StrandSet& s) {
+        return std::all_of(s.widths().begin(), s.widths().end(), [](float w) { return w == 1.0f; });
+    };
+    if (a.widths().size() == b.widths().size() && !(unset(a) && unset(b))) {
+        for (std::size_t i = 0; i < a.widths().size(); ++i) {
+            d.widths = std::max(d.widths, std::abs(b.widths()[i] - a.widths()[i] * k) / scale);
+        }
+    }
+    for (const std::string& name : a.strandChannelNames()) {
+        const auto* ca = a.strandChannel(name);
+        const auto* cb = b.strandChannel(name);
+        if (!cb || ca->size() != cb->size()) {
+            d.channel = name + " (missing at k)";
+            break;
+        }
+        std::size_t notSame = 0, notTimesK = 0;
+        for (std::size_t i = 0; i < ca->size(); ++i) {
+            const double x = (*ca)[i], y = (*cb)[i];
+            notSame += std::abs(y - x) <= 1e-3 * std::max(1.0, std::abs(x)) ? 0 : 1;
+            notTimesK += std::abs(y - x * k) <= 1e-3 * std::max(1.0, std::abs(x * k)) ? 0 : 1;
+        }
+        // A share of a thousandth may differ: a choice among the strands (Clump's centers, a
+        // tangle's partner) that a tie decides, which the rounding at another scale breaks the other way.
+        if (std::min(notSame, notTimesK) * 1000 > ca->size()) {
+            d.channel = name + " (" + std::to_string(std::min(notSame, notTimesK)) + " of " + std::to_string(ca->size()) + ")";
+            break;
+        }
+    }
+    return d;
+}
+
+std::string readText(const std::string& path) {
+    std::ifstream in(std::filesystem::u8path(path), std::ios::binary);
+    std::stringstream text;
+    text << in.rdbuf();
+    return text.str();
+}
+
+}  // namespace
+
+// Scales by powers of ten: a scene in other units (mm, cm, m) or ten times as big. The rounding
+// lattices operators keep for edit stability are decimal (roundToDecadeStep), so these round
+// alike; Collide's, Gravity's and Interpolate keepClearance's distance fields sit on power-of-two
+// world grids, so their interpolation differs a little (well within kTolerance).
+TEST(ScaleInvariance, EveryShippedPresetLooksTheSameAtEveryScale) {
+    const GroomFile reference = readGroomFile(std::string(GROOMLAB_TEST_DATA) + "/strokes/strokes.groom");
+    ASSERT_TRUE(reference.data.scalp);
+    const double size = *presetScalpSize(*reference.data.scalp);
+    constexpr double kTolerance = 1e-3;  // of the groom's size (0.2 mm on a head): a field's cells, never a hidden length
+    int checked = 0;
+    for (const PresetInfo& p : listPresets({kShipped})) {
+        const std::string text = readText(p.path);
+        const Made base = make(reference.data, text, size, reference.directory);
+        for (const float k : {0.01f, 0.1f, 10.0f, 100.0f}) {
+            const Made big = make(scaledGroom(reference.data, k), text, size * k, reference.directory);
+            const std::string what = p.name + " at x" + std::to_string(k);
+            if (!base.error.empty() || !big.error.empty()) {
+                EXPECT_EQ(big.error, base.error) << what << ": the same error at every scale";
+                continue;
+            }
+            ASSERT_TRUE(base.strands && big.strands) << what;
+            const Difference d = compare(*base.strands, *big.strands, k, size);
+            const auto fine = [&](const Difference& x) {
+                return x.mismatch.empty() && x.points < kTolerance && x.widths < kTolerance && x.channel.empty();
+            };
+            std::string where;
+            if (!fine(d)) {  // the nodes whose strands differ (in the graph's order), to say where it goes wrong
+                const Made a = make(reference.data, text, size, reference.directory, true);
+                const Made b = make(scaledGroom(reference.data, k), text, size * k, reference.directory, true);
+                for (std::size_t i = 0; i < a.nodes.size() && i < b.nodes.size(); ++i) {
+                    const Difference n = compare(*a.nodes[i].second, *b.nodes[i].second, k, size);
+                    if (fine(n)) continue;
+                    where += "\n  " + a.nodes[i].first + ": " +
+                             (n.mismatch.empty() ? "points " + std::to_string(n.points) + " widths " + std::to_string(n.widths) +
+                                                       " channel " + n.channel
+                                                 : n.mismatch);
+                }
+            }
+            EXPECT_TRUE(d.mismatch.empty()) << what << ": " << d.mismatch << where;
+            EXPECT_LT(d.points, kTolerance) << what << ": points off by " << d.points << " of the groom's size" << where;
+            EXPECT_LT(d.widths, kTolerance) << what << ": widths off by " << d.widths << " of the groom's size" << where;
+            EXPECT_TRUE(d.channel.empty()) << what << ": channel " << d.channel << " is neither the same nor k times" << where;
+            ++checked;
+        }
+    }
+    EXPECT_GT(checked, 100);
+}
+
+}  // namespace groomlab

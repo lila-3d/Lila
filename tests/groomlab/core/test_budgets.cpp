@@ -52,6 +52,9 @@
 #include "groomlab/process_caches.h"
 #include "groomlab/random.h"
 #include "test_helpers.h"
+#include "groom/GroomEvaluator.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -139,6 +142,31 @@ GuideHierarchy guidesOn(const ScalpMesh& scalp, int primaries, std::size_t child
     return h;
 }
 
+TEST(Budget, RenderExpansionOfAMillionStrands) {
+    // Spec: 1M strands x 24 points expand in < 5 s with < 1.25 GB peak (the CPU engine's: the
+    // scalp's clearance field built whole for Interpolate's walk, ~1.1 GB measured; 0.9 GB before).
+    const double baseline = peakMegabytes();
+    const auto scalp = test::makeSphere(120, 240, 1.0f);
+    GroomData data;
+    data.scalp = scalp;
+    data.graphJson = lookGraph(80000.0, 23);  // ~1M strands on the unit sphere
+    data.hierarchyJson = guidesOn(*scalp, 300, 0).toJson();
+
+    const auto t0 = std::chrono::steady_clock::now();
+    GroomEvaluator groom(data);
+    groom.setCacheIntermediates(false);  // render: nothing is re-evaluated, keep only what is needed
+    const StrandsPtr strands = groom.evaluate(1.0f, 0.0);
+    const double ms = msSince(t0);
+    const double peak = peakMegabytes() - baseline;
+    ASSERT_TRUE(strands);
+    std::printf("[ budget ] render expansion: %zu strands x %zu points in %.0f ms, peak +%.0f MB\n",
+                strands->strandCount(), strands->uniformPointCount(), ms, peak);
+    EXPECT_GT(strands->strandCount(), 950000u);
+    EXPECT_EQ(strands->uniformPointCount(), 24u);
+    EXPECT_BUDGET(ms, 5000.0);
+    EXPECT_BUDGET(peak, 1280.0);
+}
+
 TEST(Budget, ParameterTweakAtPreviewDensity) {
     // Spec: a single-parameter tweak with upstream cached, at preview density, < 33 ms.
     const auto scalp = test::makeSphere(60, 120, 1.0f);
@@ -202,6 +230,40 @@ double brushDabMs(const std::string& graph, const char* label) {
     }
     std::printf("[ budget ] brush dab on 2000 guides + 10%% preview of %s: %.1f ms worst of 5\n", label, worst);
     return worst;
+}
+
+TEST(Budget, AParamTweakThroughTheGraphText) {
+    // What a slider tick costs on the way a host takes: the graph's JSON written again with one
+    // param changed, parsed, every document cloned from the parse and the old cache adopted
+    // (GroomEvaluator::setGraphJson), then the evaluation at preview density. The text part alone
+    // must stay well under a frame on a look graph of a dozen nodes.
+    const auto scalp = test::makeSphere(60, 120, 1.0f);
+    GroomData data;
+    data.scalp = scalp;
+    data.graphJson = lookGraph(8000.0, 15);
+    data.hierarchyJson = guidesOn(*scalp, 100, 0).toJson();
+    GroomEvaluator groom(data);
+    ASSERT_TRUE(groom.evaluate(0.1f, 0.0));
+    double textMs = 0.0, evalMs = 0.0;
+    const std::string was = "\"amplitude\": 0.02";
+    for (int i = 0; i < 5; ++i) {
+        char amplitude[32];
+        std::snprintf(amplitude, sizeof amplitude, "\"amplitude\": %.3f", 0.03 + 0.01 * i);
+        std::string text = data.graphJson;
+        const std::size_t at = text.find(was);
+        ASSERT_NE(at, std::string::npos);
+        text.replace(at, was.size(), amplitude);
+        const auto t0 = std::chrono::steady_clock::now();
+        groom.setGraphJson(text);
+        const double t = msSince(t0);
+        const auto t1 = std::chrono::steady_clock::now();
+        ASSERT_TRUE(groom.evaluate(0.1f, 0.0));
+        textMs = std::max(textMs, t);
+        evalMs = std::max(evalMs, msSince(t1));
+    }
+    std::printf("[ budget ] a param tweak through the graph text: text %.2f ms + evaluation %.1f ms, worst of 5\n", textMs,
+                evalMs);
+    EXPECT_BUDGET(textMs, 3.0);
 }
 
 TEST(Budget, BrushDabWithInterpolationPreview) {
@@ -929,6 +991,39 @@ TEST(Budget, DeformingScalpPointsUpdate) {
                 rest->triangleCount(), freshMs / kFrames, freshQueryMs / kFrames, refitMs / kFrames, refitQueryMs / kFrames);
 }
 
+TEST(Budget, FollowScalpOnADeformingScalp) {
+    // 100k strands (Scatter, Interpolate, Clump, Noise, Width) on a deforming scalp
+    // with a rest pose, frame after frame through a GroomEvaluator: normally every node re-runs on
+    // every frame; following the scalp, the graph runs once on the rest pose and each frame only
+    // carries the strands root by root.
+    const auto sphere = test::makeSphere(60, 120, 1.0f);
+    auto rest = std::make_shared<ScalpMesh>(*sphere);
+    rest->setRestPoints(sphere->points());
+    GroomData data;
+    data.graphJson = lookGraph(8000.0, 15);
+    data.hierarchyJson = guidesOn(*sphere, 300, 0).toJson();
+    data.scalp = rest;
+    double perFrame[2] = {0.0, 0.0};
+    std::size_t strands = 0;
+    for (int follow = 0; follow < 2; ++follow) {
+        data.followScalp = follow == 1;
+        GroomEvaluator session(data);
+        constexpr int kFrames = 5;
+        for (int frame = 0; frame <= kFrames; ++frame) {
+            const auto scalp = stretchedFrame(*rest, frame + 1);
+            const auto t0 = std::chrono::steady_clock::now();
+            session.updateScalpPoints(scalp->points());
+            const StrandsPtr out = session.evaluate(1.0f, frame / 24.0);
+            const double ms = msSince(t0);
+            ASSERT_TRUE(out);
+            strands = out->strandCount();
+            if (frame > 0) perFrame[follow] += ms / kFrames;  // frame 0: the first evaluation
+        }
+    }
+    std::printf("[ budget ] deforming scalp, %zu strands per frame: normal %.1f ms, following the scalp %.1f ms\n", strands,
+                perFrame[0], perFrame[1]);
+}
+
 TEST(Budget, HierarchyEvaluationOnADeformingScalp) {
     // 1000 primaries with 9 children each (10k guides), evaluated on a moving scalp, a frame at a time.
     const auto sphere = test::makeSphere(60, 120, 1.0f);
@@ -1498,6 +1593,45 @@ std::string lodGraph(int maxCards) {
                   maxCards);
     return buffer;
 }
+
+TEST(Budget, MultiLodCardEvaluation) {
+    // Three LODs of a card export (50k strands, cards at 300, 150 and 60): each through a Groom of its own.
+    const auto scalp = test::makeSphere(60, 120, 1.0f);
+    GroomData data;
+    data.scalp = scalp;
+    data.hierarchyJson = guidesOn(*scalp, 300, 0).toJson();
+    const int lods[] = {300, 150, 60};
+    auto t0 = std::chrono::steady_clock::now();
+    std::size_t cards = 0;
+    for (const int maxCards : lods) {
+        data.graphJson = lodGraph(maxCards);
+        GroomEvaluator groom(data);
+        const StrandsPtr out = groom.evaluate(1.0f, 0.0, true);
+        ASSERT_TRUE(out);
+        cards += out->cardLayers().empty() ? 0 : out->cardLayers()[0]->cards.size();
+    }
+    const double freshMs = msSince(t0);
+    // The same LODs through one Groom, swapping graphs: only Cards and the output run again.
+    t0 = std::chrono::steady_clock::now();
+    std::size_t swappedCards = 0, evaluations = 0;
+    {
+        data.graphJson = lodGraph(lods[0]);
+        GroomEvaluator groom(data);
+        for (const int maxCards : lods) {
+            if (maxCards != lods[0]) groom.setGraphJson(lodGraph(maxCards));
+            const StrandsPtr out = groom.evaluate(1.0f, 0.0, true);
+            ASSERT_TRUE(out);
+            swappedCards += out->cardLayers().empty() ? 0 : out->cardLayers()[0]->cards.size();
+            evaluations += groom.evaluationCount();
+        }
+    }
+    const double swappedMs = msSince(t0);
+    EXPECT_EQ(swappedCards, cards);
+    std::printf("[ budget ] 3 card LODs through fresh Grooms: %.0f ms (%zu cards); through one Groom with "
+                "setGraphJson: %.0f ms (%zu node runs)\n",
+                freshMs, cards, swappedMs, evaluations);
+}
+
 
 TEST(Budget, LookOperatorsHalfMillion) {
     // The operators a look tweak runs again at 500k strands x 16 points (the XGen comparison's

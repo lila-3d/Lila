@@ -24,7 +24,10 @@
 #include "groomlab/simulation.h"
 #include "groomlab/presets.h"
 #include "groomlab/operators.h"
+#include "groom/GroomEvaluator.h"
 #include "groomlab/scales.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -423,6 +426,7 @@ TEST(Graph, NodeCatalogIsEveryHostsAddNodeMenu) {
     }
 }
 
+
 TEST(Graph, RegistryCreatesByName) {
     OperatorRegistry::instance().registerType("TestLines", {}, [] { return std::make_unique<LinesOp>(); });
     Graph g;
@@ -513,6 +517,8 @@ TEST(GraphJson, AnIntegerParamOutOfRangeIsAnError) {
     EXPECT_THROW(loadGraphJson(with("-1e19")), GraphError);
     EXPECT_THROW(loadGraphJson(with("9.3e18")), GraphError);
 }
+
+
 
 TEST(ParamSpecs, EachDefaultIsWrittenOnceInItsSpec) {
     // A param's default lives in its spec alone: every getter falls back to it (ParamSet), so an
@@ -615,6 +621,29 @@ TEST(GraphEdit, NewNodesFitTheGroomsSize) {
     EXPECT_DOUBLE_EQ(preset["nodes"][0]["params"]["amplitude"].get<double>(), 0.05);
     EXPECT_DOUBLE_EQ(preset["nodes"][1]["params"]["radius"].get<double>(), 0.25);
     EXPECT_DOUBLE_EQ(preset["nodes"][1]["params"]["frequency"].get<double>(), 0.8);
+}
+
+TEST(GroomSession, StrandsThatAreNotNumbersAreSaidAtTheirNode) {
+    // A node making points that are not numbers (an amplitude past a float's range): the view says so, naming it,
+    // and keeps them out of the bounds.
+    GroomData d;
+    d.scalp = test::makePlane(4);
+    d.graphJson = R"j({"version": 1, "output": "output", "nodes": [
+        {"name": "scalp", "type": "Scalp"}, {"name": "scatter", "type": "Scatter", "params": {"density": 50.0}},
+        {"name": "noise", "type": "Noise", "params": {"amplitude": 1e39}},
+        {"name": "width", "type": "Width"}, {"name": "output", "type": "Output"}],
+      "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"}, {"from": "scatter", "to": "noise", "input": "strands"},
+        {"from": "noise", "to": "width", "input": "strands"}, {"from": "width", "to": "output", "input": "strands"}]})j";
+    GroomEvaluator session(d);
+    const GroomEvaluator::Result& view = session.evaluate(GroomEvaluator::Request{});
+    bool said = false;
+    for (const std::string& e : view.errors) said = said || (e.find("node 'noise'") != std::string::npos && e.find("NaN") != std::string::npos);
+    EXPECT_TRUE(said) << (view.errors.empty() ? std::string("no errors") : view.errors[0]) << " strands " << (view.strands ? view.strands->strandCount() : 0);
+    EXPECT_TRUE(std::isfinite(view.bounds.lo.x) && std::isfinite(view.bounds.hi.y));
+    // Finite strands say nothing of it.
+    d.graphJson.replace(d.graphJson.find("1e39"), 4, "0.01");
+    GroomEvaluator fine(d);
+    for (const std::string& e : fine.evaluate(GroomEvaluator::Request{}).errors) EXPECT_EQ(e.find("NaN"), std::string::npos) << e;
 }
 
 // ---------------------------------------------------------------------------
@@ -807,6 +836,49 @@ TEST(Graph, EachScatterGrowsWithTheResampleOfItsOwnBranch) {
     ASSERT_TRUE(doc.graph.evaluateStrands(doc.output, ctx));
     EXPECT_EQ(pointsOf("bare"), 8u);
     EXPECT_EQ(pointsOf("whiskers"), 8u);
+}
+
+TEST(NodeNotes, NodesThatDoNothingAsSetSaySo) {
+    // EvalContext::note: informational, the result stands; the session's stats carry them.
+    GroomData d;
+    d.scalp = test::makePlane(4, 2.0f);
+    d.graphJson = R"({"version": 1, "output": "out", "nodes": [
+        {"name": "scalp", "type": "Scalp"}, {"name": "guides", "type": "Guides"},
+        {"name": "scatter", "type": "Scatter", "params": {"density": 20.0}},
+        {"name": "interp", "type": "Interpolate"},
+        {"name": "clump", "type": "Clump", "params": {"count": 0}},
+        {"name": "part", "type": "Part"}, {"name": "flow", "type": "Flow"},
+        {"name": "color", "type": "HairColor", "params": {"tipColor": [1.0, 0.0, 0.0]}},
+        {"name": "cards", "type": "Cards", "params": {"clumpChannel": "lockId"}},
+        {"name": "out", "type": "Output"}],
+      "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+        {"from": "scatter", "to": "interp", "input": "strands"}, {"from": "guides", "to": "interp", "input": "guides"},
+        {"from": "scalp", "to": "interp", "input": "scalp"}, {"from": "interp", "to": "clump", "input": "strands"},
+        {"from": "clump", "to": "part", "input": "strands"}, {"from": "part", "to": "flow", "input": "strands"},
+        {"from": "flow", "to": "color", "input": "strands"}, {"from": "color", "to": "cards", "input": "strands"},
+        {"from": "cards", "to": "out", "input": "strands"}]})";
+    GroomEvaluator session(d);
+    const GroomEvaluator::Result& view = session.evaluate(GroomEvaluator::Request{});
+    ASSERT_TRUE(view.strands);
+    EXPECT_TRUE(view.errors.empty()) << view.errors[0];
+    std::map<std::string, std::string> notes;
+    for (const auto& [node, note] : session.nodeNotes()) notes[node] = note;
+    EXPECT_NE(notes["interp"].find("no guides"), std::string::npos) << notes["interp"];
+    EXPECT_NE(notes["clump"].find("no clumps"), std::string::npos) << notes["clump"];
+    EXPECT_NE(notes["part"].find("no parts"), std::string::npos) << notes["part"];
+    EXPECT_NE(notes["flow"].find("no flow arrows"), std::string::npos) << notes["flow"];
+    EXPECT_NE(notes["color"].find("tipStrength is 0"), std::string::npos) << notes["color"];
+    EXPECT_NE(notes["cards"].find("lockId"), std::string::npos) << notes["cards"];
+    EXPECT_EQ(notes.count("scatter"), 0u);
+    // The stats carry them too, and a node set to do something says nothing.
+    EXPECT_NE(session.stats().notes.at("clump").find("no clumps"), std::string::npos);
+    d.graphJson.replace(d.graphJson.find(R"("tipColor": [1.0, 0.0, 0.0])"), 27, R"("tipStrength": 0.5)");
+    GroomEvaluator tipped(d);
+    tipped.evaluate(GroomEvaluator::Request{});
+    for (const auto& [node, note] : tipped.nodeNotes()) EXPECT_NE(node, "color") << note;
+    // An Instance naming a mesh the host lacks (the built-in plates never are).
+    EXPECT_EQ(missingInstancePrototypes("leaf groomlab:scale leaf twig", [](const std::string& n) { return n == "twig"; }),
+              std::vector<std::string>{"leaf"});
 }
 
 TEST(ParamSpecs, LimitsClampOnceAndEveryFieldReachesTheSpecs) {

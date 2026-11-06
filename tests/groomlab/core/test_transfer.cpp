@@ -11,6 +11,9 @@
 #include "groomlab/guide_hierarchy.h"
 #include "groomlab/parts.h"
 #include "test_helpers.h"
+#include "groom/GroomEvaluator.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -37,6 +40,44 @@ GuideHierarchy furryHead(const ScalpMesh& head) {
     h.generateChildren(g, "children", params);
     h.evaluate(&head);
     return h;
+}
+
+TEST(Transfer, GuidesReRootOnANewScalpKeepingShapeAndLayers) {
+    const auto head = test::makeSphere(24, 48, 1.0f);
+    const auto sculpt = test::makeSphere(17, 31, 1.1f);  // another tessellation, a bit bigger
+    GuideHierarchy h = furryHead(*head);
+    const GuideHierarchy before = h;
+
+    h.transfer(*head, *sculpt);
+    ASSERT_EQ(h.guides().size(), before.guides().size());
+    for (std::size_t i = 0; i < h.guides().size(); ++i) {
+        const HierarchyGuide& a = before.guides()[i];
+        const HierarchyGuide& b = h.guides()[i];
+        EXPECT_EQ(a.id, b.id);
+        EXPECT_EQ(a.attributes, b.attributes);
+        EXPECT_NEAR(b.points.front().length(), 1.1f, 0.01f) << "root on the new scalp";
+        EXPECT_NEAR(curveLength(b.points), curveLength(a.points), 0.02f);
+        if (!b.isChild()) {
+            // Still standing straight out: the shape turned with the normal.
+            const Vec3f dir = (b.points.back() - b.points.front()).normalized();
+            EXPECT_GT(dir.dot(b.points.front().normalized()), 0.99f);
+            EXPECT_LT((b.points.front().normalized() - a.points.front().normalized()).length(), 0.02f);
+        }
+    }
+
+    // Evaluates on the new scalp with the layer intact.
+    GroomData d;
+    d.scalp = sculpt;
+    d.hierarchyJson = h.toJson();
+    d.graphJson = R"j({"version": 1, "output": "out", "nodes": [
+        {"name": "scalp", "type": "Scalp"}, {"name": "guides", "type": "Guides"},
+        {"name": "scatter", "type": "Scatter", "params": {"density": {"guide": "fur", "max": 300.0}}},
+        {"name": "interp", "type": "Interpolate"}, {"name": "out", "type": "Output"}],
+      "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+        {"from": "guides", "to": "scatter", "input": "guides"},
+        {"from": "scatter", "to": "interp", "input": "strands"}, {"from": "guides", "to": "interp", "input": "guides"},
+        {"from": "scalp", "to": "interp", "input": "scalp"}, {"from": "interp", "to": "out", "input": "strands"}]})j";
+    EXPECT_GT(GroomEvaluator(d).evaluate(1.0f, 0.0)->strandCount(), 50u);
 }
 
 TEST(Transfer, FitMovesAndScalesOntoAScalpElsewhere) {

@@ -21,6 +21,9 @@
 #include "groomlab/operators.h"
 #include "groomlab/scalp_history.h"
 #include "test_helpers.h"
+#include "groom/GroomEvaluator.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -413,6 +416,27 @@ TEST(Jiggle, HostsSampleHistoryOnlyForActiveJiggleNodes) {
     EXPECT_EQ(scalpHistoryFrames(plain.graph, plain.output), 0);
     GraphDocument greedy = loadGraphJson(chainGraph(R"({"name": "motion", "type": "Jiggle", "params": {"history": 1000}})"));
     EXPECT_EQ(scalpHistoryFrames(greedy.graph, greedy.output), kMaxScalpHistory);
+}
+
+TEST(Jiggle, GroomPassesItsHistoryToTheGraph) {
+    const MeshPtr sphere = test::makeSphere(12, 24, 1.0f);
+    GroomData data;
+    data.scalp = sphere;
+    data.graphJson = chainGraph(R"({"name": "motion", "type": "Jiggle"})");
+    GroomEvaluator groom(data);
+    EXPECT_EQ(groom.scalpHistoryFrames(), 12);
+    const StrandsPtr still = groom.evaluate(1.0f, 0.0);
+    ASSERT_FALSE(groom.nodeNotes().empty());
+    std::vector<std::vector<Vec3f>> past;
+    for (int k = 1; k <= 12; ++k) {
+        std::vector<Vec3f> pts = sphere->points();
+        for (Vec3f& p : pts) p.z -= 0.04f * static_cast<float>(std::min(k, 4));
+        past.push_back(std::move(pts));
+    }
+    groom.setScalpHistory(ScalpHistory::make(kFrame, std::move(past)));
+    const StrandsPtr moving = groom.evaluate(1.0f, 0.0);
+    EXPECT_TRUE(groom.nodeNotes().empty());
+    EXPECT_NE(moving->positions(), still->positions());
 }
 
 TEST(ScalpHistory, TheSamplerReadsEachFrameOnceAndNoticesAnEditedAnimation) {

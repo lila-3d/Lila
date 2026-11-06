@@ -29,11 +29,14 @@
 
 #include <nlohmann/json.hpp>
 
+#include "groom/GroomEvaluator.h"
 #include "groomlab/guide_hierarchy.h"
 #include "groomlab/paths.h"
 #include "groomlab/presets.h"
 #include "groomlab/simulation.h"
 #include "test_helpers.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -104,6 +107,16 @@ std::string guides() {
         }
     }
     return h.toJson();
+}
+
+std::unique_ptr<GroomEvaluator> session(const std::string& graphJson, const MeshPtr& scalp, const std::string& hierarchy) {
+    GroomData data;
+    data.graphJson = graphJson;
+    data.hierarchyJson = hierarchy;
+    data.scalp = scalp;
+    auto groom = std::make_unique<GroomEvaluator>(data);
+    groom->setPathResolver(searchPathResolver(kPresetDirs));
+    return groom;
 }
 
 // What changed among the strands of `before` rooted (on `scalp`, the unbulged sphere; a barb at its
@@ -187,6 +200,63 @@ double secondsFor(const std::string& graph) {
 
 }  // namespace
 
+TEST(Locality, AnEditOfTheScalpChangesEveryPresetOnlyNearIt) {
+    const MeshPtr round = sphere(false, false);
+    const std::string hierarchy = guides();
+    std::size_t checked = 0;
+    for (const PresetInfo& p : listPresets(kPresetDirs)) {
+        if (kCannot.count(p.name) || test::presetUsesCompound(p.path)) continue;
+        const std::string graph = presetGraph(p.name, round);
+        const double seconds = secondsFor(graph);
+        for (const bool pose : {false, true}) {
+            const StrandsPtr before = session(graph, sphere(false, pose), hierarchy)->evaluate(kDensity, seconds);
+            const StrandsPtr after = session(graph, sphere(true, pose), hierarchy)->evaluate(kDensity, seconds);
+            ASSERT_TRUE(before && after) << p.name;
+            const Changes changes = farChanges(*round, *before, *after);
+            ASSERT_GT(changes.far, 100u) << p.name;
+            const std::string what = p.name + (pose ? " posed: " : " re-made: ") + changes.text();
+            const auto global = kGlobal.find(p.name);
+            if (global != kGlobal.end()) {
+                std::printf("[ global   ] %s (%s)\n", what.c_str(), global->second.c_str());
+            } else if (!changes.none()) {
+                EXPECT_TRUE(changes.fewChannels()) << what;
+                std::printf("[ few      ] %s\n", what.c_str());
+            }
+        }
+        ++checked;
+    }
+    EXPECT_GT(checked, 28u);
+}
+
+// Scatter's even roots (randomness below 1: relaxed apart, each root until those around it settle;
+// an edit reaches at most kRelaxIterations x kRelaxReach spacings, 8.3 at this density, and its
+// ripple dies out sooner) and a preview's evenly spread share of them, and Clumps picking their own centers evenly (by
+// size) and at random: local too, re-made and posed.
+TEST(Locality, EvenRootsTheirPreviewAndOwnClumpsChangeOnlyNearTheEdit) {
+    const MeshPtr round = sphere(false, false);
+    const std::string graph = R"({"version": 1, "output": "out", "nodes": [
+        {"name": "scalp", "type": "Scalp"},
+        {"name": "scatter", "type": "Scatter", "params": {"density": 60.0, "randomness": 0.3, "length": 3.0}},
+        {"name": "even", "type": "Clump", "params": {"clumpBy": "size", "size": 2.0, "randomness": 0.0}},
+        {"name": "random", "type": "Clump", "params": {"clumpBy": "size", "size": 1.0, "randomness": 1.0, "clumpChannel": "small"}},
+        {"name": "out", "type": "Output"}],
+      "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+        {"from": "scatter", "to": "even", "input": "strands"}, {"from": "even", "to": "random", "input": "strands"},
+        {"from": "random", "to": "out", "input": "strands"}]})";
+    for (const float density : {0.2f}) {  // the preview relaxes every root (up to 1M), then thins them
+        for (const bool pose : {false, true}) {
+            const StrandsPtr before = session(graph, sphere(false, pose), "")->evaluate(density, 0.0);
+            const StrandsPtr after = session(graph, sphere(true, pose), "")->evaluate(density, 0.0);
+            ASSERT_TRUE(before && after);
+            const Changes changes = farChanges(*round, *before, *after);
+            ASSERT_GT(changes.far, 1000u);
+            const std::string what = std::string(pose ? "posed" : "re-made") + " at density " + std::to_string(density) + ": " + changes.text();
+            EXPECT_TRUE(changes.none() || changes.fewChannels()) << what;
+            if (!changes.none()) std::printf("[ few      ] %s\n", what.c_str());
+        }
+    }
+}
+
 // The guide simulation: guides on two sides of the sphere (rooted beyond x = 5, and below
 // x = -2: farther apart than anything reaches between them, 2 volume cells or the repulsion
 // radius a substep, over the frames simulated), simulated with every guide-to-guide force on,
@@ -263,6 +333,29 @@ TEST(Locality, AnEditOfTheGuidesAndScalpInOnePlaceSimulatesTheFarGuidesAsBefore)
         EXPECT_GT(far, 50u);
         EXPECT_GT(moved, far / 2);
         EXPECT_EQ(changed, 0u);
+    }
+}
+
+// Which node of a preset (LOCALITY_PRESET; LOCALITY_POSE set: posed) changes far strands: a
+// diagnosis, skipped without it.
+TEST(Locality, NodeByNode) {
+    const char* name = std::getenv("LOCALITY_PRESET");
+    if (!name) GTEST_SKIP() << "set LOCALITY_PRESET to a preset's name";
+    const bool pose = std::getenv("LOCALITY_POSE") != nullptr;
+    const MeshPtr round = sphere(false, false);
+    const std::string hierarchy = guides();
+    const std::string graph = presetGraph(name, round);
+    auto a = session(graph, sphere(false, pose), hierarchy);
+    auto b = session(graph, sphere(true, pose), hierarchy);
+    const json nodes = json::parse(graph)["nodes"];
+    for (const json& node : nodes) {
+        GroomEvaluator::Request r;
+        r.density = kDensity;
+        r.time = secondsFor(graph);
+        r.viewNode = node["name"].get<std::string>();
+        const StrandsPtr sa = a->evaluate(r).strands;
+        const StrandsPtr sb = b->evaluate(r).strands;
+        if (sa && sb) std::printf("%-20s %s\n", r.viewNode.c_str(), farChanges(*round, *sa, *sb).text().c_str());
     }
 }
 

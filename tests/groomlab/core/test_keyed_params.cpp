@@ -14,6 +14,9 @@
 #include "groomlab/groom.h"
 #include "groomlab/operators.h"
 #include "test_helpers.h"
+#include "groom/GroomEvaluator.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -171,6 +174,21 @@ std::string keyedGraph(const std::string& lengthLinks) {
 
 float strandLength(const StrandSet& s, std::size_t i) { return arcLength(s.strandPoints(i), s.strandPointCount(i)); }
 
+TEST(KeyedParams, AGroomKeysAParamFromItsControls) {
+    GroomData d;
+    d.scalp = test::makePlane(8);
+    d.graphJson = keyedGraph(R"j(, "paramControls": {"scale": "length_keep"})j");
+    GroomEvaluator groom(d);
+    const float own = strandLength(*groom.evaluate(1.0f, 0.0), 0);
+    groom.setControls({{"length_keep", 0.5f}});
+    const StrandsPtr half = groom.evaluate(1.0f, 1.0);
+    EXPECT_NEAR(strandLength(*half, 0), own * 0.5f, 1e-3f);
+    groom.setControls({{"length_keep", 2.0f}});
+    const StrandsPtr twice = groom.evaluate(1.0f, 2.0);
+    EXPECT_NEAR(strandLength(*twice, 0), own * 2.0f, 1e-3f);
+    EXPECT_EQ(half->strandCount(), twice->strandCount());  // the topology stays
+}
+
 TEST(KeyedParams, TheJsonKeepsLinksAndOwnValues) {
     GraphDocument doc = loadGraphJson(keyedGraph(R"j(, "paramControls": {"scale": "len"})j"));
     ExternalInputs ext;
@@ -202,6 +220,7 @@ TEST(KeyedParams, TheJsonKeepsLinksAndOwnValues) {
     EXPECT_THROW(loadGraphJson(R"j({"version": 1, "output": "w", "nodes": [
         {"name": "w", "type": "Wind", "paramControls": {"strength": 3}}], "connections": []})j"), GraphError);
 }
+
 
 TEST(KeyedParams, ASwitchFollowsItsKeyedIndexWhenWalked) {
     // The walk hosts use for the hair look and cards follows a keyed Switch after an evaluation.

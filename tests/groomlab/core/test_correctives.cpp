@@ -9,6 +9,9 @@
 #include "groomlab/correctives.h"
 #include "groomlab/groom.h"
 #include "test_helpers.h"
+#include "groom/GroomEvaluator.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -183,6 +186,28 @@ TEST(Correctives, RideTheAnimation) {
         const Vec3f expected = sculpted.guide(p)->points[k] + Vec3f(0.0f, 0.2f, 0.0f);
         EXPECT_LT((a.points[k] - expected).length(), 1e-4f) << k;
     }
+}
+
+TEST(Correctives, GroomAppliesThemAtEvaluationTime) {
+    Scene s;
+    GuideId p = kNoGuide, ch = kNoGuide;
+    const GuideHierarchy sculpted = sculpt(s, p, ch);
+    Correctives c;
+    c.record("fix", s.h, sculpted, 1.0, s.scalp.get());
+    c.layer("fix")->fadeOut = 0.5;
+
+    GroomData d;
+    d.scalp = s.scalp;
+    d.hierarchyJson = s.h.toJson();
+    d.correctivesJson = c.toJson();
+    d.graphJson = "";
+    GroomEvaluator groom(d);
+    groom.evaluate(0.02f, 1.0);
+    const HierarchyPtr atKey = groom.hierarchy();
+    EXPECT_LT((atKey->guide(p)->points.back() - sculpted.guide(p)->points.back()).length(), 1e-3f);
+    groom.evaluate(0.02f, 5.0);
+    const HierarchyPtr later = groom.hierarchy();
+    EXPECT_GT((later->guide(p)->points.back() - sculpted.guide(p)->points.back()).length(), 0.05f);
 }
 
 }  // namespace

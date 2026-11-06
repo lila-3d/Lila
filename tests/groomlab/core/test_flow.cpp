@@ -12,6 +12,9 @@
 #include "groomlab/flow.h"
 #include "groomlab/groom.h"
 #include "test_helpers.h"
+#include "groom/GroomEvaluator.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -43,6 +46,110 @@ TEST(Flow, BlendsArrowsOnTheSurface) {
     ASSERT_EQ(again.pins.size(), 2u);
     EXPECT_EQ(again.contentHash(), set.contentHash());
     EXPECT_TRUE(FlowSet::fromJson("").empty());
+}
+
+TEST(Flow, TheFlowNodeLaysGuidelessFurAlongTheArrows) {
+    const auto plane = test::makePlane(8);
+    GroomData d;
+    d.scalp = plane;
+    d.flowJson = pins(*plane, {{{0.5f, 0, 0.5f}, {1, 0, 0}}}).toJson();
+    // No guides anywhere: Scatter grows short fur, Flow lays it down.
+    d.graphJson = R"({"version": 1, "output": "out", "nodes": [
+        {"name": "scalp", "type": "Scalp"},
+        {"name": "scatter", "type": "Scatter", "params": {"density": 300.0, "length": 0.2}},
+        {"name": "flow", "type": "Flow", "params": {"lift": 30.0, "bend": 0.0, "rollRandom": 0.0}},
+        {"name": "out", "type": "Output"}, {"name": "resolution", "type": "Resample", "params": {"segments": 5}}],
+      "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+                      {"from": "scatter", "to": "resolution", "input": "strands"},
+                      {"from": "resolution", "to": "flow", "input": "strands"},
+                      {"from": "flow", "to": "out", "input": "strands"}]})";
+    GroomEvaluator groom(d);
+    const StrandsPtr s = groom.evaluate(1.0f, 0.0);
+    ASSERT_TRUE(s && s->strandCount() > 50);
+    for (std::size_t i = 0; i < s->strandCount(); ++i) {
+        const Vec3f* p = s->strandPoints(i);
+        const std::size_t n = s->strandPointCount(i);
+        const Vec3f heading = (p[n - 1] - p[0]).normalized();
+        EXPECT_NEAR(std::asin(heading.y) * 57.2958f, 30.0f, 0.5f) << i;  // lift off the skin
+        EXPECT_NEAR(heading.z, 0.0f, 1e-3f);                              // along the arrow
+        EXPECT_GT(heading.x, 0.8f);
+        EXPECT_NEAR(arcLength(p, n), 0.2f, 1e-3f);                        // lengths kept
+    }
+}
+
+TEST(Flow, StrandsCurveAsTheArrowsTurn) {
+    // Arrows along +x on the left, turning to +z from the middle on: long, low strands from
+    // the left follow them round, bending smoothly rather than heading straight on.
+    const auto plane = test::makePlane(16);
+    GroomData d;
+    d.scalp = plane;
+    d.flowJson = pins(*plane, {{{0.1f, 0, 0.3f}, {1, 0, 0}}, {{0.55f, 0, 0.3f}, {0, 0, 1}},
+                               {{0.55f, 0, 0.7f}, {0, 0, 1}}, {{0.9f, 0, 0.5f}, {0, 0, 1}}}).toJson();
+    d.graphJson = R"({"version": 1, "output": "out", "nodes": [
+        {"name": "scalp", "type": "Scalp"},
+        {"name": "scatter", "type": "Scatter", "params": {"density": 400.0, "length": 0.5}},
+        {"name": "flow", "type": "Flow", "params": {"lift": 2.0, "bend": 0.0, "rollRandom": 0.0}},
+        {"name": "out", "type": "Output"}, {"name": "resolution", "type": "Resample", "params": {"segments": 24}}],
+      "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+                      {"from": "scatter", "to": "resolution", "input": "strands"},
+                      {"from": "resolution", "to": "flow", "input": "strands"},
+                      {"from": "flow", "to": "out", "input": "strands"}]})";
+    const StrandsPtr s = GroomEvaluator(d).evaluate(1.0f, 0.0);
+    std::size_t checked = 0;
+    for (std::size_t i = 0; i < s->strandCount(); ++i) {
+        const Vec3f* p = s->strandPoints(i);
+        const std::size_t n = s->strandPointCount(i);
+        if (p[0].x > 0.15f || std::abs(p[0].z - 0.3f) > 0.05f) continue;  // roots by the first arrow
+        ++checked;
+        const Vec3f first = (p[1] - p[0]).normalized(), last = (p[n - 1] - p[n - 2]).normalized();
+        EXPECT_GT(first.x, 0.9f) << i;  // leaves along the first arrow
+        EXPECT_GT(last.z, 0.5f) << i;   // and turns with the others
+        float sharpest = 0.0f;
+        for (std::size_t k = 1; k + 1 < n; ++k) {
+            const Vec3f a = (p[k] - p[k - 1]).normalized(), b = (p[k + 1] - p[k]).normalized();
+            sharpest = std::max(sharpest, std::acos(std::clamp(a.dot(b), -1.0f, 1.0f)) * 57.2958f);
+        }
+        EXPECT_LT(sharpest, 20.0f) << i;  // a curve, not a kink
+        EXPECT_NEAR(arcLength(p, n), 0.5f, 0.01f);
+    }
+    EXPECT_GT(checked, 3u);
+}
+
+TEST(Flow, StrandsWrapAroundACurvedScalp) {
+    // Arrows down the sides of a sphere; long strands laid low follow its curve instead of
+    // leaving on a straight tangent.
+    const auto sphere = test::makeSphere(24, 48, 1.0f);
+    GroomData d;
+    d.scalp = sphere;
+    FlowSet set;
+    for (int k = 0; k < 12; ++k) {
+        const float a = 6.2831853f * static_cast<float>(k) / 12.0f;
+        const Vec3f at{0.7f * std::cos(a), 0.714f, 0.7f * std::sin(a)};
+        set.pins.push_back(FlowSet::makePin(*sphere, sphere->closestPoint(at), Vec3f{0, -1, 0}));
+    }
+    d.flowJson = set.toJson();
+    d.graphJson = R"({"version": 1, "output": "out", "nodes": [
+        {"name": "scalp", "type": "Scalp"},
+        {"name": "scatter", "type": "Scatter", "params": {"density": 20.0, "length": 0.8}},
+        {"name": "flow", "type": "Flow", "params": {"lift": 5.0, "bend": 1.0, "rollRandom": 0.0}},
+        {"name": "out", "type": "Output"}, {"name": "resolution", "type": "Resample", "params": {"segments": 16}}],
+      "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+                      {"from": "scatter", "to": "resolution", "input": "strands"},
+                      {"from": "resolution", "to": "flow", "input": "strands"},
+                      {"from": "flow", "to": "out", "input": "strands"}]})";
+    const StrandsPtr s = GroomEvaluator(d).evaluate(1.0f, 0.0);
+    std::size_t checked = 0;
+    for (std::size_t i = 0; i < s->strandCount(); ++i) {
+        const Vec3f* p = s->strandPoints(i);
+        const std::size_t n = s->strandPointCount(i);
+        if (p[0].y < 0.3f) continue;  // the upper part, under the arrows
+        ++checked;
+        float farthest = 0.0f;
+        for (std::size_t k = 0; k < n; ++k) farthest = std::max(farthest, p[k].length());
+        EXPECT_LT(farthest, 1.06f) << i;  // hugs the sphere (a straight tangent 0.8 long reaches 1.28)
+        EXPECT_LT(p[n - 1].y, p[0].y - 0.2f) << i;  // down the side, with the arrows
+    }
+    EXPECT_GT(checked, 10u);
 }
 
 }  // namespace

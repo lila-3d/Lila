@@ -64,9 +64,11 @@ add_executable(lila_groomlab_tests
     core/test_reference_guides.cpp
     core/test_regions.cpp
     core/test_renderman_look.cpp
+    core/test_render_overrides.cpp
     core/test_robustness.cpp
     core/test_scale_export.cpp
     core/test_scale_with_scalp.cpp
+    core/test_scale_invariance.cpp
     core/test_scales.cpp
     core/test_scalp_paint.cpp
     core/test_scalp_pieces.cpp
@@ -75,6 +77,7 @@ add_executable(lila_groomlab_tests
     core/test_sculpt_node.cpp
     core/test_self_collide.cpp
     core/test_semver.cpp
+    core/test_session.cpp
     core/test_shapes.cpp
     core/test_sim_attributes.cpp
     core/test_simulation.cpp
@@ -98,7 +101,7 @@ add_executable(lila_groomlab_tests
     io/test_guide_cache.cpp
     io/test_sim_cache.cpp
     example_node_src/example_op.cpp)
-target_link_libraries(lila_groomlab_tests PRIVATE groomlab_core GTest::gtest_main nlohmann_json::nlohmann_json Alembic::Alembic psapi)
+target_link_libraries(lila_groomlab_tests PRIVATE groomlab_core lila_groom_evaluator GTest::gtest_main nlohmann_json::nlohmann_json Alembic::Alembic psapi)
 target_include_directories(lila_groomlab_tests PRIVATE core ${CMAKE_SOURCE_DIR}/third_party/stb ${CMAKE_SOURCE_DIR}/src/groom/groomlab/core/src)
 target_compile_definitions(lila_groomlab_tests PRIVATE "GROOMLAB_TEST_DATA=\"${CMAKE_CURRENT_SOURCE_DIR}/data\""
     "GROOMLAB_SHIPPED_PRESETS=\"${CMAKE_CURRENT_SOURCE_DIR}/data/shipped_presets\""

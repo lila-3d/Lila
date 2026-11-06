@@ -17,6 +17,7 @@
 
 #include "groomlab/display.h"
 #include "groomlab/groom_file.h"
+#include "groom/GroomEvaluator.h"
 #include "groomlab/flow.h"
 #include "groomlab/guide_hierarchy.h"
 #include "groomlab/operator_state.h"
@@ -24,6 +25,8 @@
 #include "groomlab/stroke.h"
 #include "groomlab/subdivision.h"
 #include "test_helpers.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -334,6 +337,153 @@ void expectRootsOn(const StrandSet& strands, const ScalpMesh& surface) {
     }
 }
 
+TEST(Subdivision, SessionRootsOnTheRefinedSurface) {
+    const auto head = quadSphere(12, 16);
+    for (const int levels : {0, 2}) {
+        GroomData data;
+        data.graphJson = graphWith(levels == 0 ? "off" : "2");
+        data.scalp = head;
+        data.hierarchyJson = guidesOn(*head);
+        GroomEvaluator session(data);
+        EXPECT_EQ(session.scalpSubdivision(), levels);
+        const GroomEvaluator::Result& view = session.evaluate(GroomEvaluator::Request{});
+        ASSERT_TRUE(view.strands) << (view.errors.empty() ? "" : view.errors.front());
+        const MeshPtr surface = subdivideScalp(head, levels);
+        EXPECT_EQ(view.scalp->triangleCount(), surface->triangleCount());
+        EXPECT_EQ(view.scalp->points(), surface->points());
+        EXPECT_EQ(view.cageScalp->pointCount(), head->pointCount());
+        expectRootsOn(*view.strands, *surface);
+        // The guides are rooted on it too.
+        for (const HierarchyGuide& g : view.hierarchy->guides()) {
+            ASSERT_TRUE(surface->contains(g.root));
+            EXPECT_LT((surface->position(g.root) - g.points.front()).length(), 1e-4f);
+        }
+    }
+}
+
+// A density expression masking the upper half (y > 0), at randomness 1 (random spots) and 0 (even
+// spots, relaxed apart): on the cage and on the refined scalp, every root where the density is
+// above 0 (none pushed out past the mask's edge), and as many strands at each level.
+TEST(Subdivision, ADensityExpressionMasksTheRootsAtEveryLevelAndRandomness) {
+    const auto head = quadSphere(12, 16);
+    for (const char* randomness : {"1", "0"}) {
+        std::size_t counts[2] = {0, 0};
+        for (const int levels : {0, 2}) {
+            SCOPED_TRACE(std::string("randomness ") + randomness + ", subdivision " + std::to_string(levels));
+            std::string graph = graphWith(levels == 0 ? "off" : "2");
+            const std::string scatter = R"({"density": 2.0})";
+            graph.replace(graph.find(scatter), scatter.size(),
+                          std::string(R"({"density": {"expression": "y > 0 ? 1 : 0", "min": 0, "max": 2}, "randomness": )") +
+                              randomness + "}");
+            GroomData data;
+            data.graphJson = graph;
+            data.scalp = head;
+            data.hierarchyJson = guidesOn(*head);
+            GroomEvaluator session(data);
+            const GroomEvaluator::Result& view = session.evaluate(GroomEvaluator::Request{});
+            ASSERT_TRUE(view.strands) << (view.errors.empty() ? "" : view.errors.front());
+            ASSERT_GT(view.strands->strandCount(), 50u);
+            counts[levels == 0 ? 0 : 1] = view.strands->strandCount();
+            for (std::size_t s = 0; s < view.strands->strandCount(); ++s) {
+                EXPECT_GT(view.scalp->position(view.strands->roots()[s]).y, -1e-4f) << "strand " << s;
+            }
+        }
+        // The same roots, carried onto the refined surface (the mask read there, so only those along
+        // its edge can differ): about as many.
+        EXPECT_NEAR(static_cast<double>(counts[1]), static_cast<double>(counts[0]), 0.08 * static_cast<double>(counts[0]));
+    }
+}
+
+TEST(Subdivision, BindingStableWhileTheScalpDeforms) {
+    const auto head = quadSphere(12, 16);
+    auto rested = std::make_shared<ScalpMesh>(*head);
+    rested->setRestPoints(head->points());
+    GroomData data;
+    data.graphJson = graphWith("2");
+    data.scalp = rested;
+    data.hierarchyJson = guidesOn(*head);
+    GroomEvaluator session(data);
+    std::vector<StrandRoot> roots;
+    for (int frame = 0; frame < 4; ++frame) {
+        // A bulge that grows: not rigid, so the refined points are not the cage's moved.
+        std::vector<Vec3f> points = head->points();
+        for (Vec3f& p : points) p = p + Vec3f{0.0f, 0.15f * static_cast<float>(frame) * std::max(0.0f, p.y), 0.0f};
+        session.updateScalpPoints(points);
+        const GroomEvaluator::Result& view = session.evaluate(GroomEvaluator::Request{});
+        ASSERT_TRUE(view.strands);
+        if (frame == 0) {
+            roots = view.strands->roots();
+        } else {
+            ASSERT_EQ(view.strands->roots().size(), roots.size());
+            for (std::size_t s = 0; s < roots.size(); ++s) {
+                EXPECT_EQ(view.strands->roots()[s].face, roots[s].face);
+                EXPECT_EQ(view.strands->roots()[s].u, roots[s].u);
+                EXPECT_EQ(view.strands->roots()[s].v, roots[s].v);
+            }
+        }
+        auto cage = std::make_shared<ScalpMesh>(head->withPoints(points));
+        cage->setRestPoints(head->points());
+        expectRootsOn(*view.strands, *subdivideScalp(cage, 2));
+    }
+}
+
+TEST(Subdivision, MatchRenderAndTheNote) {
+    auto head = quadSphere(10, 12);
+    head->setRenderSubdivision(2, "Arnold catclark, 2 iterations");
+    GroomData data;
+    data.graphJson = graphWith("");  // matchRender, the default
+    data.scalp = head;
+    GroomEvaluator session(data);
+    EXPECT_EQ(session.scalpSubdivision(), 2);
+    session.evaluate(GroomEvaluator::Request{});
+    EXPECT_EQ(session.scalp()->subdivisionLevel(), 2);
+    bool noted = false;
+    for (const auto& [node, note] : session.nodeNotes()) {
+        if (node != "scalp") continue;
+        noted = true;
+        EXPECT_NE(note.find("Catmull-Clark x2"), std::string::npos) << note;
+        EXPECT_NE(note.find("Arnold catclark, 2 iterations"), std::string::npos) << note;
+    }
+    EXPECT_TRUE(noted);
+    session.setGraphJson(graphWith("off"));
+    EXPECT_EQ(session.scalpSubdivision(), 0);
+    EXPECT_EQ(session.scalp(), session.cageScalp());
+    session.setGraphJson(graphWith("1"));
+    EXPECT_EQ(session.scalp()->subdivisionLevel(), 1);
+    // Without a render level, match render is off: the scalp as given.
+    auto plain = quadSphere(10, 12);
+    session.setGraphJson(graphWith(""));
+    session.setScalp(plain);
+    EXPECT_EQ(session.scalpSubdivision(), 0);
+    EXPECT_EQ(session.scalp().get(), session.cageScalp().get());
+}
+
+
+TEST(Subdivision, ColliderMeshNodeRefines) {
+    const char* graph = R"({
+      "version": 1,
+      "nodes": [{"name": "collider", "type": "ColliderMesh", "params": {"subdivision": "SUB"}}, {"name": "output", "type": "Output"}],
+      "connections": [],
+      "output": "output"
+    })";
+    for (const std::string sub : {"1", "matchRender", "off"}) {
+        std::string g = graph;
+        g.replace(g.find("SUB"), 3, sub);
+        auto mesh = quadSphere(8, 8, 2.0f);
+        mesh->setRenderSubdivision(2);
+        GroomData data;
+        data.graphJson = g;
+        data.meshes["collider"] = mesh;
+        GroomEvaluator session(data);
+        session.evaluate(GroomEvaluator::Request{});
+        const MeshPtr out = valueAs<MeshPtr>(session.evaluateNode("collider", 1.0f, 0.0));
+        ASSERT_TRUE(out);
+        const int levels = sub == "1" ? 1 : sub == "off" ? 0 : 2;
+        EXPECT_EQ(out->subdivisionLevel(), levels) << sub;
+        EXPECT_EQ(out->triangleCount(), levels == 0 ? mesh->triangleCount() : SubdivisionPlan::of(*mesh, levels)->triangles().size());
+    }
+}
+
 TEST(Subdivision, GroomFilesKeepPolygonsAndTheLevel) {
     auto head = quadSphere(6, 8);
     head->setRenderSubdivision(3, "smooth mesh preview, level 3");
@@ -481,6 +631,23 @@ struct Overlays {
     StrandsPtr strands;
 };
 
+Overlays overlaysOf(GroomEvaluator& session, const std::vector<Vec3f>& samples) {
+    const GroomEvaluator::Result& view = session.evaluate(GroomEvaluator::Request{});
+    Overlays o;
+    o.strands = view.strands;
+    EXPECT_TRUE(view.parts && view.flow) << (view.errors.empty() ? "" : view.errors.front());
+    if (!view.parts || !view.flow) return o;
+    o.lines = view.parts->lines();
+    o.pins = view.flow->positions();
+    o.directions = view.flow->directions();
+    o.sinks = view.flow->sinkPositions();
+    for (const Vec3f& p : samples) {
+        const SurfacePoint sp = view.scalp->closestPoint(p);
+        o.field.push_back(view.flow->at(sp.position, sp.normal));
+    }
+    return o;
+}
+
 // Within `tol` of each other, point by point (a cage point and where it refines to: the refined
 // control mesh lies inside the cage's facets on a convex head, by up to about the sagitta of an
 // edge, and Catmull-Clark evens the spacing out along the surface).
@@ -498,6 +665,98 @@ void expectSameStrands(const StrandSet& a, const StrandSet& b) {
         EXPECT_EQ(a.roots()[s].v, b.roots()[s].v);
     }
 }
+
+TEST(SubdivisionBinding, PartsAndFlowStayWhereTheyWereDrawn) {
+    // A head of 16 x 12 faces (edges about 4 long at the equator, radius 10).
+    const auto head = quadSphere(12, 16);
+    GroomData data;
+    data.graphJson = graphWith("off");
+    data.scalp = head;
+    data.hierarchyJson = guidesOn(*head);
+    partsAndFlowOn(*head, data);
+    std::vector<Vec3f> samples;
+    for (int k = 0; k < 12; ++k) samples.push_back(onSphere(10.0f, 25.0f + 4.0f * static_cast<float>(k), 60.0f + 15.0f * static_cast<float>(k)));
+    GroomEvaluator session(data);
+    const Overlays off = overlaysOf(session, samples);
+    ASSERT_EQ(off.lines.size(), 1u);
+    ASSERT_GT(off.lines[0].size(), 10u);
+    ASSERT_EQ(off.pins.size(), 6u);
+    ASSERT_EQ(off.sinks.size(), 1u);
+    // Off: the stored data as it is, on the scalp as given.
+    {
+        const PartLines direct(PartSet::fromJson(data.partsJson), *head);
+        EXPECT_EQ(off.lines, direct.lines());
+        const FlowField field(FlowSet::fromJson(data.flowJson), *head);
+        EXPECT_EQ(off.pins, field.positions());
+        EXPECT_EQ(off.directions, field.directions());
+    }
+    // Every level: the same places (the refined surface's), the same directions. Not the same
+    // points in space: a point keeps its place in the surface's parametrization, and the refined
+    // control mesh of this head lies inside the cage (by up to ~0.25 at the 16-gon's corners: the
+    // level-1 points of a regular 16-gon of radius 10 sit at 9.75) and Catmull-Clark evens out the
+    // faces' spacing toward the poles, moving points along the surface a little. Under a tenth of
+    // the 4-long edges here (0.23 measured); bound to refined triangles by their cage index (the
+    // bug), they landed up to 12 away, anywhere on the head.
+    for (const char* level : {"1", "2", "3"}) {
+        session.setGraphJson(graphWith(level));
+        const Overlays on = overlaysOf(session, samples);
+        ASSERT_EQ(session.scalp()->subdivisionLevel(), level[0] - '0');
+        ASSERT_EQ(on.lines.size(), 1u) << level;
+        expectNear(on.lines[0], off.lines[0], 0.35f, std::string("part, level ") + level);
+        expectNear(on.pins, off.pins, 0.35f, std::string("pins, level ") + level);
+        expectNear(on.sinks, off.sinks, 0.35f, std::string("sink, level ") + level);
+        ASSERT_EQ(on.directions.size(), off.directions.size());
+        for (std::size_t i = 0; i < on.directions.size(); ++i) {
+            EXPECT_LT(degreesBetween(on.directions[i], off.directions[i]), 8.0f) << level << " pin " << i;
+        }
+        ASSERT_EQ(on.field.size(), off.field.size());
+        for (std::size_t i = 0; i < on.field.size(); ++i) EXPECT_LT(degreesBetween(on.field[i], off.field[i]), 10.0f) << level << " sample " << i;
+    }
+    // Back off: as at first, to the bit, strands and all.
+    session.setGraphJson(graphWith("off"));
+    const Overlays again = overlaysOf(session, samples);
+    EXPECT_EQ(again.lines, off.lines);
+    EXPECT_EQ(again.pins, off.pins);
+    EXPECT_EQ(again.directions, off.directions);
+    EXPECT_EQ(again.field, off.field);
+    ASSERT_TRUE(again.strands && off.strands);
+    expectSameStrands(*again.strands, *off.strands);
+}
+
+TEST(SubdivisionBinding, FollowingTheScalpCarriesThemOnTheRefinedRestPose) {
+    // Following the scalp, the strands are made on the refined rest pose, the parts and flow
+    // carried onto it (Interpolate keeps guides to their side of the part there): the scalp moved
+    // rigidly, the groom moves with it, as made at rest.
+    const auto head = quadSphere(12, 16);
+    auto rested = std::make_shared<ScalpMesh>(*head);
+    rested->setRestPoints(head->points());
+    GroomData data;
+    data.graphJson = graphWith("2");
+    data.scalp = rested;
+    data.hierarchyJson = guidesOn(*head);
+    data.followScalp = true;
+    partsAndFlowOn(*head, data);
+    GroomEvaluator session(data);
+    const Overlays atRest = overlaysOf(session, {});  // at rest: not following, made where it is
+    const Vec3f shift{0.0f, 2.0f, 0.0f};
+    std::vector<Vec3f> moved = head->points();
+    for (Vec3f& p : moved) p = p + shift;
+    session.updateScalpPoints(moved);
+    const Overlays carried = overlaysOf(session, {});
+    ASSERT_TRUE(carried.strands && atRest.strands);
+    ASSERT_EQ(carried.strands->strandCount(), atRest.strands->strandCount());
+    std::vector<Vec3f> expected = atRest.strands->positions();
+    for (Vec3f& p : expected) p = p + shift;
+    expectNear(carried.strands->positions(), expected, 1e-3f, "strands, following");
+    ASSERT_EQ(carried.lines.size(), 1u);
+    std::vector<Vec3f> drawn = PartLines(PartSet::fromJson(data.partsJson), *head).lines()[0];
+    for (Vec3f& p : drawn) p = p + shift;
+    expectNear(carried.lines[0], drawn, 0.35f, "part, where it was drawn");
+}
+
+
+
+
 
 // ---- The same groom at every level (smooth preview on or off, match render) -------------------
 
@@ -522,6 +781,119 @@ struct Layout {
     GuidesPtr centers;
     std::vector<std::size_t> chosen;
 };
+
+Layout layoutOf(GroomEvaluator& session) {
+    GroomEvaluator::Request request;
+    request.density = 1.0f;
+    const GroomEvaluator::Result& view = session.evaluate(request);
+    Layout out;
+    if (!view.strands) {
+        ADD_FAILURE() << (view.errors.empty() ? "no strands" : view.errors.front());
+        return out;
+    }
+    out.strands = view.strands;
+    const GraphDocument* doc = session.viewDocument();
+    const NodeId scatter = doc->nodesByName.at("scatter"), autoClump = doc->nodesByName.at("auto");
+    out.scattered = valueAs<StrandsPtr>(doc->graph.cachedValue(scatter));
+    // The first Clump's own centers: the strands it chose (by root).
+    ClumpState state;
+    EXPECT_TRUE(clumpState(doc->graph.node(autoClump), valueAs<StrandsPtr>(doc->graph.cachedValue(autoClump)), &state));
+    out.chosen = state.chosen;
+    auto centers = std::make_shared<GuideSet>();
+    for (const std::size_t s : out.chosen) {
+        const Vec3f* pts = out.scattered->strandPoints(s);
+        centers->add(out.scattered->ids()[s], std::vector<Vec3f>(pts, pts + out.scattered->strandPointCount(s))).root =
+            out.scattered->roots()[s];
+    }
+    out.centers = centers;
+    return out;
+}
+
+// The scalp's subdivision changes where the strands sit (on the surface drawn), not which strands
+// there are, their IDs, which become clump centers, or which center each strand clumps to: every
+// layout of Scatter, a density painted as a color set, and Clump's own centers.
+TEST(SubdivisionBinding, TheLevelKeepsTheStrandsAndTheirClumps) {
+    auto head = quadSphere(12, 16);
+    // A painted density: thick on top, thin below (per triangle corner, as Maya's color sets).
+    std::vector<ScalpMesh::Color> corners;
+    for (const ScalpMesh::Triangle& t : head->triangles()) {
+        for (const std::int32_t v : t) {
+            const float up = 0.5f + 0.05f * head->points()[static_cast<std::size_t>(v)].y;
+            corners.push_back({up, up, up, 1.0f});
+        }
+    }
+    head->setCornerColors("dens", corners);
+    const std::string density = R"("density": {"colorSet": "dens", "component": "luminance", "min": 0.5, "max": 6})";
+    for (const std::string& scatter : {density, density + R"(, "randomness": 0)",
+                                       std::string(R"("layout": "uvGrid", "gridRows": 30, "gridColumns": 40, "gridRandom": 0.5)")}) {
+        SCOPED_TRACE(scatter);
+        GroomData data;
+        data.graphJson = layoutGraph("off", scatter);
+        data.scalp = head;
+        GroomEvaluator session(data);
+        const Layout cage = layoutOf(session);
+        ASSERT_TRUE(cage.strands && cage.scattered && cage.centers);
+        ASSERT_GT(cage.strands->strandCount(), 300u);
+        ASSERT_GT(cage.centers->size(), 20u);
+        ASSERT_EQ(cage.chosen.size(), cage.centers->size());
+        const std::vector<float>* clumpIds = cage.strands->strandChannel("clumpId");
+        const std::vector<float>* ownIds = cage.strands->strandChannel("ownClump");
+        ASSERT_TRUE(clumpIds && ownIds);
+        for (const char* level : {"1", "2"}) {
+            SCOPED_TRACE(std::string("level ") + level);
+            session.setGraphJson(layoutGraph(level, scatter));
+            const Layout refined = layoutOf(session);
+            ASSERT_EQ(session.scalp()->subdivisionLevel(), level[0] - '0');
+            ASSERT_TRUE(refined.strands && refined.scattered && refined.centers);
+            ASSERT_EQ(refined.strands->strandCount(), cage.strands->strandCount());
+            EXPECT_EQ(refined.strands->ids(), cage.strands->ids());
+            EXPECT_EQ(refined.chosen, cage.chosen);
+            ASSERT_EQ(refined.centers->size(), cage.centers->size());
+            for (std::size_t c = 0; c < cage.centers->size(); ++c) EXPECT_EQ(refined.centers->guides()[c].id, cage.centers->guides()[c].id);
+            EXPECT_EQ(*refined.strands->strandChannel("clumpId"), *clumpIds);
+            EXPECT_EQ(*refined.strands->strandChannel("ownClump"), *ownIds);
+            // Each root on the refined surface, near where it grew on the cage (the refined
+            // control mesh lies a little inside this one: see PartsAndFlowStayWhereTheyWereDrawn).
+            const ScalpMesh& surface = *session.scalp();
+            for (std::size_t s = 0; s < refined.scattered->strandCount(); ++s) {
+                const StrandRoot& root = refined.scattered->roots()[s];
+                ASSERT_TRUE(surface.contains(root));
+                const Vec3f at = refined.scattered->strandPoints(s)[0];
+                EXPECT_LT((surface.position(root) - at).length(), 1e-4f) << s;
+                EXPECT_LT((at - cage.scattered->strandPoints(s)[0]).length(), 0.35f) << s;
+            }
+        }
+        // Back off: the cage's strands again, to the bit.
+        session.setGraphJson(layoutGraph("off", scatter));
+        const Layout again = layoutOf(session);
+        ASSERT_TRUE(again.strands);
+        expectSameStrands(*again.strands, *cage.strands);
+    }
+}
+
+// Focus on a Clump picking its own centers: its strands, its centers as dots at their roots on the
+// scalp drawn (the guides' dots, in the theme's clumpCenters color). Off again: no dots.
+
+// The same refined groom from two sessions, to the bit.
+TEST(SubdivisionBinding, RefinedLayoutIsDeterministic) {
+    const auto head = quadSphere(12, 16);
+    const std::string graph = layoutGraph("2", R"("density": 3, "randomness": 0.5)");
+    StrandsPtr first;
+    for (int run = 0; run < 2; ++run) {
+        GroomData data;
+        data.graphJson = graph;
+        data.scalp = head;
+        GroomEvaluator session(data);
+        const Layout layout = layoutOf(session);
+        ASSERT_TRUE(layout.strands);
+        if (run == 0) {
+            first = layout.strands;
+        } else {
+            expectSameStrands(*layout.strands, *first);
+            EXPECT_EQ(*layout.strands->strandChannel("clumpId"), *first->strandChannel("clumpId"));
+        }
+    }
+}
 
 double msSince(std::chrono::steady_clock::time_point t0) {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();

@@ -13,10 +13,13 @@
 #include "groomlab/display.h"
 #include "groomlab/follow_scalp.h"
 #include "groomlab/groom_file.h"
+#include "groom/GroomEvaluator.h"
 #include "groomlab/guide_hierarchy.h"
 #include "groomlab/random.h"
 #include "groomlab/strand_geometry.h"
 #include "test_helpers.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -173,6 +176,31 @@ std::string guidesJson(const ScalpMesh& scalp) {
     return h.toJson();
 }
 
+TEST(ScalpRefit, ADeformingScalpSequenceEvaluatesAsFreshScalpsDo) {
+    // Frame after frame, one session fed the points (updateScalpPoints: refits) and one fed a
+    // scalp built from scratch on every frame: the same strands, to the bit.
+    const auto head = headWithEverything();
+    GroomData data;
+    data.graphJson = kDeformingGraph;
+    data.hierarchyJson = guidesJson(*head);
+    data.scalp = head;
+    GroomEvaluator refit(data), fresh(data);
+    ASSERT_EQ(refit.evaluate(1.0f, 0.0)->contentHash(), fresh.evaluate(1.0f, 0.0)->contentHash());
+    for (int frame = 1; frame <= 5; ++frame) {
+        const std::vector<Vec3f> points = deformedPoints(*head, frame);
+        refit.updateScalpPoints(points);
+        fresh.setScalp(std::make_shared<const ScalpMesh>(rebuilt(*head, points)));
+        const StrandsPtr a = refit.evaluate(1.0f, frame / 24.0);
+        const StrandsPtr b = fresh.evaluate(1.0f, frame / 24.0);
+        ASSERT_TRUE(a && b);
+        ASSERT_GT(a->strandCount(), 100u);
+        EXPECT_EQ(a->contentHash(), b->contentHash()) << "frame " << frame;
+        EXPECT_EQ(refit.rawScalp()->contentHash(), fresh.rawScalp()->contentHash());
+        EXPECT_EQ(refit.hierarchy()->contentHash(), fresh.hierarchy()->contentHash());
+        EXPECT_TRUE(refit.rawScalp()->treeRefitted());  // Collide and the guides queried a refitted tree
+    }
+}
+
 // ---- Following the scalp ----------------------------------------------------------------------
 
 const char* kLookGraph = R"({
@@ -225,6 +253,173 @@ float maxDistance(const StrandSet& a, const StrandSet& b) {
     float worst = 0.0f;
     for (std::size_t i = 0; i < a.positions().size(); ++i) worst = std::max(worst, (a.positions()[i] - b.positions()[i]).length());
     return worst;
+}
+
+TEST(FollowScalp, AtRestOrWithoutARestPoseItIsTheGroomAsItIs) {
+    GroomData data = followData(kLookGraph);
+    GroomEvaluator normal(data);
+    data.followScalp = true;
+    GroomEvaluator follow(data);
+    const StrandsPtr a = normal.evaluate(1.0f, 0.0);
+    const StrandsPtr b = follow.evaluate(1.0f, 0.0);
+    EXPECT_EQ(a->contentHash(), b->contentHash());  // the scalp at its rest pose: nothing to carry
+    EXPECT_FALSE(follow.following());
+
+    // A scalp without a rest pose: as it is, said once.
+    auto moved = std::make_shared<ScalpMesh>(test::makeSphere(24, 48, 1.0f)->withPoints(deformedPoints(*data.scalp, 3)));
+    normal.setScalp(moved);
+    follow.setScalp(moved);
+    const GroomEvaluator::Result& view = follow.evaluate(GroomEvaluator::Request{});
+    EXPECT_EQ(view.strands->contentHash(), normal.evaluate(1.0f, 0.0)->contentHash());
+    ASSERT_EQ(view.messages.size(), 1u);
+    EXPECT_NE(view.messages[0].text.find("no rest pose"), std::string::npos);
+    EXPECT_TRUE(follow.evaluate(GroomEvaluator::Request{}).messages.empty());
+}
+
+TEST(FollowScalp, ARigidlyMovedScalpCarriesTheGroomAtRestRigidly) {
+    GroomData data = followData(kLookGraph);
+    const StrandsPtr rest = GroomEvaluator(data).evaluate(1.0f, 0.0);
+    const Rigid motion;
+    std::vector<Vec3f> points = data.scalp->points();
+    for (Vec3f& p : points) p = motion(p);
+    data.followScalp = true;
+    GroomEvaluator follow(data);
+    follow.updateScalpPoints(points);
+    const StrandsPtr carried = follow.evaluate(1.0f, 0.0);
+    EXPECT_TRUE(follow.following());
+    ASSERT_EQ(carried->strandCount(), rest->strandCount());
+    EXPECT_EQ(carried->ids(), rest->ids());
+    EXPECT_EQ(carried->widths(), rest->widths());
+    float worst = 0.0f;
+    for (std::size_t i = 0; i < rest->positions().size(); ++i) {
+        worst = std::max(worst, (carried->positions()[i] - motion(rest->positions()[i])).length());
+    }
+    EXPECT_LT(worst, 2e-5f) << "the rest strands, moved rigidly";
+
+    // Off, the same frame grows on the moved scalp (Noise is in world space): not the same.
+    follow.setFollowScalp(false);
+    EXPECT_GT(maxDistance(*follow.evaluate(1.0f, 0.0), *carried), 1e-3f);
+}
+
+TEST(FollowScalp, MotionKeysShareTheRestEvaluation) {
+    // A deforming scalp at two motion keys and back: each key carries the one rest evaluation.
+    GroomData data = followData(kLookGraph);
+    data.followScalp = true;
+    GroomEvaluator keys(data);
+    keys.setCacheIntermediates(true);
+    std::vector<std::uint64_t> hashes;
+    std::size_t runs = 0;
+    for (const int frame : {2, 3, 2}) {
+        keys.updateScalpPoints(deformedPoints(*data.scalp, frame));
+        hashes.push_back(keys.evaluate(1.0f, frame / 24.0)->contentHash());
+        if (frame == 2 && hashes.size() == 1) runs = keys.evaluationCount();
+        GroomData fresh = data;
+        fresh.scalp = std::make_shared<ScalpMesh>(data.scalp->withPoints(deformedPoints(*data.scalp, frame)));
+        EXPECT_EQ(GroomEvaluator(fresh).evaluate(1.0f, frame / 24.0)->contentHash(), hashes.back()) << "frame " << frame;
+    }
+    EXPECT_EQ(hashes[0], hashes[2]);
+    EXPECT_NE(hashes[0], hashes[1]);
+    EXPECT_EQ(keys.evaluationCount(), runs) << "the graph ran once, on the rest pose";
+}
+
+
+
+TEST(FollowScalp, PosesInWorldSpaceKeepTheirPlace) {
+    // Every guide posed where it is on the moved scalp (a simulation that followed the head
+    // exactly): the poses, taken back to rest, change nothing.
+    GroomData data = followData(kLookGraph);
+    data.followScalp = true;
+    const Rigid motion;
+    std::vector<Vec3f> points = data.scalp->points();
+    for (Vec3f& p : points) p = motion(p);
+    GroomEvaluator follow(data);
+    follow.updateScalpPoints(points);
+    const StrandsPtr plain = follow.evaluate(1.0f, 0.0);
+    auto poses = std::make_shared<GuideSet>();
+    for (const HierarchyGuide& g : follow.hierarchy()->guides()) {
+        if (!g.isChild()) poses->add(g.id, g.points);  // on the scalp now
+    }
+    follow.setGuidePoses(poses);
+    EXPECT_LT(maxDistance(*follow.evaluate(1.0f, 0.0), *plain), 1e-4f);
+}
+
+TEST(FollowScalp, JiggleReactsToTheHeadsMotionAsItDoesUnfollowed) {
+    // A head turning and moving rigidly over the last frames: Jiggle at rest (its history turned
+    // into rest space) and then carried lags as Jiggle on the moving head does.
+    const std::string graph = R"({"version": 1, "output": "output", "nodes": [
+        {"name": "scalp", "type": "Scalp"}, {"name": "guides", "type": "Guides"},
+        {"name": "scatter", "type": "Scatter", "params": {"density": 200.0}},
+        {"name": "interpolate", "type": "Interpolate"},
+        {"name": "jiggle", "type": "Jiggle", "params": {"history": 6}}, {"name": "output", "type": "Output"}],
+      "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+        {"from": "scatter", "to": "interpolate", "input": "strands"}, {"from": "guides", "to": "interpolate", "input": "guides"},
+        {"from": "scalp", "to": "interpolate", "input": "scalp"}, {"from": "interpolate", "to": "jiggle", "input": "strands"},
+        {"from": "jiggle", "to": "output", "input": "strands"}]})";
+    GroomData data = followData(graph.c_str());
+    auto at = [&](int k) {  // k frames ago
+        Rigid m;
+        m.angle = 0.6f - 0.08f * static_cast<float>(k);
+        m.move = Vec3f(0.5f - 0.1f * static_cast<float>(k), 0.0f, 0.0f);
+        std::vector<Vec3f> points = data.scalp->restPoints();
+        for (Vec3f& p : points) p = m(p);
+        return points;
+    };
+    std::vector<std::vector<Vec3f>> past;
+    for (int k = 1; k <= 6; ++k) past.push_back(at(k));
+    const ScalpHistoryPtr history = ScalpHistory::make(1.0 / 24.0, past);
+    GroomEvaluator normal(data);
+    data.followScalp = true;
+    GroomEvaluator follow(data);
+    StrandsPtr results[2];
+    GroomEvaluator* sessions[2] = {&normal, &follow};
+    for (int i = 0; i < 2; ++i) {
+        sessions[i]->updateScalpPoints(at(0));
+        sessions[i]->setScalpHistory(history);
+        results[i] = sessions[i]->evaluate(1.0f, 0.0);
+    }
+    ASSERT_EQ(results[0]->strandCount(), results[1]->strandCount());
+    // Without the history the strands are elsewhere (Jiggle moved them); followed, they moved the same way.
+    sessions[0]->setScalpHistory(nullptr);
+    const float lag = maxDistance(*results[0], *sessions[0]->evaluate(1.0f, 0.0));
+    EXPECT_GT(lag, 0.01f);
+    EXPECT_LT(maxDistance(*results[0], *results[1]), 0.02f * lag + 1e-4f);
+}
+
+TEST(FollowScalp, ReadsTimeKnowsWhatMoves) {
+    GroomData data = followData(kLookGraph);
+    GroomEvaluator session(data);
+    EXPECT_FALSE(session.readsTime());
+    std::string wind = kLookGraph;
+    const std::string widthNode = R"({"name": "width", "type": "Width"},)";
+    wind.replace(wind.find(widthNode), widthNode.size(), widthNode + R"({"name": "wind", "type": "Wind"},)");
+    const std::string toOutput = R"({"from": "width", "to": "output", "input": "strands"})";
+    wind.replace(wind.find(toOutput), toOutput.size(),
+                 R"({"from": "width", "to": "wind", "input": "strands"}, {"from": "wind", "to": "output", "input": "strands"})");
+    session.setGraphJson(wind);
+    EXPECT_TRUE(session.readsTime());
+    std::string still = wind;
+    still.replace(still.find(R"("type": "Wind"})"), 15, R"("type": "Wind", "params": {"strength": 0.0}})");
+    session.setGraphJson(still);
+    EXPECT_FALSE(session.readsTime());
+    session.setScalpHistory(ScalpHistory::make(1.0 / 24.0, {data.scalp->points()}));
+    EXPECT_TRUE(session.readsTime());
+}
+
+
+TEST(FollowScalp, GroomFilesKeepTheFlag) {
+    GroomFile file;
+    file.data = followData(kLookGraph);
+    EXPECT_EQ(groomFileToJson(file).find("followScalp"), std::string::npos);  // off: not written
+    EXPECT_FALSE(groomFileFromJson(groomFileToJson(file)).data.followScalp);
+    file.data.followScalp = true;
+    const GroomFile read = groomFileFromJson(groomFileToJson(file));
+    EXPECT_TRUE(read.data.followScalp);
+    // A session of the file follows: a moved scalp carries the groom at rest.
+    GroomEvaluator session(read.data);
+    EXPECT_TRUE(session.followScalp());
+    session.updateScalpPoints(deformedPoints(*read.data.scalp, 2));
+    session.evaluate(1.0f, 0.0);
+    EXPECT_TRUE(session.following());
 }
 
 }  // namespace

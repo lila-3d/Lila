@@ -25,6 +25,9 @@
 #include "groomlab/operators.h"
 #include "groomlab/scales.h"
 #include "test_helpers.h"
+#include "groom/GroomEvaluator.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -386,6 +389,67 @@ json birdGraph(double density, bool plumed, double affect = 1.0) {
         links.push_back({{"from", "feathers"}, {"to", "output"}, {"input", "strands"}});
     }
     return {{"version", 1}, {"nodes", nodes}, {"connections", links}, {"output", "output"}};
+}
+
+StrandsPtr evaluateGroom(const json& graph, const MeshPtr& scalp, double* ms = nullptr) {
+    GroomData d;
+    d.scalp = scalp;
+    d.graphJson = graph.dump();
+    GroomEvaluator groom(d);
+    GroomEvaluator::Request request;
+    request.wantBounds = false;
+    const auto t0 = std::chrono::steady_clock::now();
+    const GroomEvaluator::Result& result = groom.evaluate(request);
+    if (ms) *ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    if (!result.errors.empty()) throw GraphError(result.errors.front());
+    return result.strands;
+}
+
+TEST(Plume, BypassedOrAffectingNothingInAGroomIsTheFeathersAsGrown) {
+    const MeshPtr sphere = test::makeSphere(24, 48, 3.0f);
+    const StrandsPtr plain = evaluateGroom(birdGraph(3.0, false), sphere);
+    const StrandsPtr none = evaluateGroom(birdGraph(3.0, true, 0.0), sphere);
+    ASSERT_EQ(plain->pointCount(), none->pointCount());
+    EXPECT_EQ(std::memcmp(plain->positions().data(), none->positions().data(), plain->pointCount() * sizeof(Vec3f)), 0);
+    json bypassed = birdGraph(3.0, true);
+    for (json& n : bypassed["nodes"]) {
+        if (n["name"] == "plume") n["bypass"] = true;
+    }
+    const StrandsPtr off = evaluateGroom(bypassed, sphere);
+    EXPECT_EQ(std::memcmp(plain->positions().data(), off->positions().data(), plain->pointCount() * sizeof(Vec3f)), 0);
+    const StrandsPtr on = evaluateGroom(birdGraph(3.0, true), sphere);
+    EXPECT_NE(plain->positions(), on->positions());
+}
+
+TEST(Budget, PlumeBird) {
+    // About 3000 feathers on a body (a sphere of radius 3, area 113): Propagate, then Plume.
+    const MeshPtr sphere = test::makeSphere(48, 96, 3.0f);
+    double grown = 0.0, plumed = 0.0;
+    const StrandsPtr feathers = evaluateGroom(birdGraph(27.0, false), sphere, &grown);
+    const StrandsPtr out = evaluateGroom(birdGraph(27.0, true), sphere, &plumed);
+    const auto groups = groupsOf(*out);
+    std::printf("[ PLUME    ] %zu feathers, %zu strands, %zu points: Propagate %.0f ms, with Plume %.0f ms (Plume %.0f ms)\n",
+                groups.size(), out->strandCount(), out->pointCount(), grown, plumed, plumed - grown);
+    EXPECT_GT(groups.size(), 2000u);
+    EXPECT_LT(groups.size(), 5000u);
+    EXPECT_LT(plumed - grown, 20000.0);
+    // Off the body: every point past the root zones most of bodyOffset above the sphere's mesh.
+    auto height = [&](const Vec3f& p) {
+        const SurfacePoint sp = sphere->closestPoint(p);
+        return (p - sp.position).dot(sp.normal);
+    };
+    float lowest = std::numeric_limits<float>::max(), lowestBefore = lowest;
+    for (const auto& [id, g] : groups) {
+        for (const std::size_t k : g.strands) {
+            for (std::size_t i = 0; i < out->strandPointCount(k); ++i) {
+                if ((out->strandPoints(k)[i] - g.root).length() < 0.1f * g.reach) continue;
+                lowest = std::min(lowest, height(out->strandPoints(k)[i]));
+                lowestBefore = std::min(lowestBefore, height(feathers->strandPoints(k)[i]));
+            }
+        }
+    }
+    EXPECT_LT(lowestBefore, 0.0f);
+    EXPECT_GT(lowest, 0.4f * 0.005f);
 }
 
 // ---- Instance deform --------------------------------------------------------------------------

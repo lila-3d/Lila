@@ -15,6 +15,9 @@
 #include "groomlab/groom.h"
 #include "groomlab/operators.h"
 #include "test_helpers.h"
+#include "groom/GroomEvaluator.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -32,7 +35,201 @@ std::string graph(const std::string& scatterExtra, const std::string& lengthExtr
         {"from": "length", "to": "out", "input": "strands"})j" + extraLinks + "]}";
 }
 
+StrandsPtr run(const std::string& json) {
+    GroomData d;
+    d.scalp = test::makePlane(8);
+    d.graphJson = json;
+    return GroomEvaluator(d).evaluate(1.0f, 0.0);
+}
+
 float strandLength(const StrandSet& s, std::size_t i) { return arcLength(s.strandPoints(i), s.strandPointCount(i)); }
+
+TEST(Fields, MapDrivesAnExposedParam) {
+    // A "tint" color set on the scalp, green on x > 0.5 and blue below: the mask's luminance
+    // (green brighter than blue) drives Length, so strands on the green side are longer;
+    // min above max (inverted), the blue side is. A missing color set is an error naming it.
+    auto plane = std::make_shared<ScalpMesh>(test::makePlane(8)->points(), test::makePlane(8)->triangles());
+    std::vector<ScalpMesh::Color> tint;
+    for (const auto& tri : plane->triangles()) {
+        for (const std::int32_t v : tri) {
+            tint.push_back(plane->points()[v].x > 0.5f ? ScalpMesh::Color{0.0f, 1.0f, 0.0f, 1.0f}
+                                                       : ScalpMesh::Color{0.0f, 0.0f, 1.0f, 1.0f});
+        }
+    }
+    plane->setCornerColors("tint", tint);
+    auto lengths = [&](const std::string& maskParams) {
+        GroomData d;
+        d.scalp = plane;
+        d.graphJson = R"j({"version": 1, "output": "out", "nodes": [
+            {"name": "scalp", "type": "Scalp"},
+            {"name": "scatter", "type": "Scatter", "params": {"density": 60.0}},
+            {"name": "length", "type": "Transform", "params": {"scale": 1.0}, "paramInputs": ["scale"]},
+            {"name": "mask", "type": "Map", "params": {"name": "tint")j" + maskParams + R"j(}},
+            {"name": "out", "type": "Output"}],
+          "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+            {"from": "scatter", "to": "length", "input": "strands"}, {"from": "mask", "to": "length", "input": "scale"},
+            {"from": "length", "to": "out", "input": "strands"}]})j";
+        return GroomEvaluator(d).evaluate(1.0f, 0.0);
+    };
+    const StrandsPtr s = lengths(R"j(, "min": 0.2, "max": 1.0)j");
+    ASSERT_GT(s->strandCount(), 30u);
+    float green = 0.0f, blue = 0.0f;
+    for (std::size_t i = 0; i < s->strandCount(); ++i) {
+        const float x = s->strandPoints(i)[0].x;
+        if (std::abs(x - 0.5f) < 0.08f) continue;
+        (x > 0.5f ? green : blue) = std::max(x > 0.5f ? green : blue, strandLength(*s, i));
+    }
+    EXPECT_GT(green, blue + 0.2f);  // green luminance ~0.72, blue ~0.07
+    const StrandsPtr inverted = lengths(R"j(, "min": 1.0, "max": 0.2)j");
+    float greenInv = 0.0f, blueInv = 0.0f;
+    for (std::size_t i = 0; i < inverted->strandCount(); ++i) {
+        const float x = inverted->strandPoints(i)[0].x;
+        if (std::abs(x - 0.5f) < 0.08f) continue;
+        (x > 0.5f ? greenInv : blueInv) = std::max(x > 0.5f ? greenInv : blueInv, strandLength(*inverted, i));
+    }
+    EXPECT_GT(blueInv, greenInv + 0.2f);
+    GroomData d;
+    d.scalp = plane;
+    d.graphJson = R"j({"version": 1, "output": "out", "nodes": [
+        {"name": "scalp", "type": "Scalp"}, {"name": "scatter", "type": "Scatter", "params": {"density": 60.0}},
+        {"name": "length", "type": "Length", "params": {"keep": 1.0}, "paramInputs": ["keep"]},
+        {"name": "mask", "type": "Map", "params": {"name": "nope"}}, {"name": "out", "type": "Output"}],
+      "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+        {"from": "scatter", "to": "length", "input": "strands"}, {"from": "mask", "to": "length", "input": "keep"},
+        {"from": "length", "to": "out", "input": "strands"}]})j";
+    GroomEvaluator missing(d);
+    try {
+        missing.evaluate(1.0f, 0.0);
+        FAIL() << "no error for a color set the scalp doesn't have";
+    } catch (const GraphError& e) {
+        EXPECT_NE(std::string(e.what()).find("nope"), std::string::npos) << e.what();
+    }
+}
+
+TEST(Fields, NoiseDrivesAnExposedParam) {
+    const std::string json =
+        graph("", R"j(, "params": {"keep": 1.0}, "paramInputs": ["keep"])j",
+              R"j(, {"name": "noise", "type": "FieldNoise", "params": {"frequency": 3.0, "min": 0.2, "max": 1.0}})j",
+              R"j(, {"from": "noise", "to": "length", "input": "keep"})j");
+    const StrandsPtr s = run(json);
+    float lo = 10.0f, hi = 0.0f;
+    for (std::size_t i = 0; i < s->strandCount(); ++i) {
+        lo = std::min(lo, strandLength(*s, i));
+        hi = std::max(hi, strandLength(*s, i));
+    }
+    EXPECT_GE(lo, 0.2f - 1e-3f);
+    EXPECT_LE(hi, 1.0f + 1e-3f);
+    EXPECT_GT(hi - lo, 0.2f);  // it varies over the scalp
+
+    // The exposed param and its link survive a save and load.
+    const GraphDocument doc = loadGraphJson(json);
+    const std::string saved = saveGraphJson(doc);
+    EXPECT_NE(saved.find("\"paramInputs\""), std::string::npos);
+    const GraphDocument again = loadGraphJson(saved);
+    NodeId src = 0;
+    EXPECT_TRUE(again.graph.inputSource(again.node("length"), 1, &src));
+    EXPECT_EQ(src, again.node("noise"));
+}
+
+TEST(Fields, AMapNamedByAnImageReadsItAtTheScalpsUvs) {
+    // A plane with UVs (u = x) and an image, white on its left half and black on its right, as a
+    // Map's name feeding an Attribute: the left half's strands read 1, the right's 0.2.
+    const auto base = test::makePlane(8);
+    auto plane = std::make_shared<ScalpMesh>(base->points(), base->triangles());
+    std::vector<ScalpMesh::UV> uvs;
+    for (const auto& tri : plane->triangles()) {
+        for (const std::int32_t v : tri) uvs.push_back({plane->points()[v].x, plane->points()[v].z});
+    }
+    plane->setCornerUVs(uvs);
+    const std::string path = (std::filesystem::temp_directory_path() / "groomlab_map_image.ppm").generic_string();
+    {
+        std::ofstream f(path, std::ios::binary);
+        f << "P6\n16 16\n255\n";
+        for (int y = 0; y < 16; ++y) {
+            for (int x = 0; x < 16; ++x) {
+                for (int k = 0; k < 3; ++k) f.put(static_cast<char>(x < 8 ? 255 : 0));
+            }
+        }
+    }
+    GroomData d;
+    d.scalp = plane;
+    d.graphJson = R"j({"version": 1, "output": "out", "nodes": [
+        {"name": "scalp", "type": "Scalp"}, {"name": "scatter", "type": "Scatter", "params": {"density": 80.0}},
+        {"name": "attr", "type": "Attribute", "params": {"name": "m"}, "paramInputs": ["value"]},
+        {"name": "image", "type": "Map", "params": {"name": ")j" + path + R"j(", "min": 0.2, "max": 1.0}},
+        {"name": "out", "type": "Output"}],
+      "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+        {"from": "scatter", "to": "attr", "input": "strands"}, {"from": "image", "to": "attr", "input": "value"},
+        {"from": "attr", "to": "out", "input": "strands"}]})j";
+    const StrandsPtr s = GroomEvaluator(d).evaluate(1.0f, 0.0);
+    ASSERT_GT(s->strandCount(), 30u);
+    std::size_t checked = 0;
+    for (std::size_t i = 0; i < s->strandCount(); ++i) {
+        const float x = s->strandPoints(i)[0].x;
+        if (std::abs(x - 0.5f) < 0.1f || x < 0.05f || x > 0.95f) continue;  // the bilinear seams
+        EXPECT_NEAR((*s->strandChannel("m"))[i], x < 0.5f ? 1.0f : 0.2f, 1e-4f) << x;
+        ++checked;
+    }
+    EXPECT_GT(checked, 10u);
+    std::filesystem::remove(path);
+}
+
+TEST(Fields, AFieldNodeDrivesScatterDensityWithItsMaximum) {
+    // An expression map as a node, 1 on the left half and 0 on the right: Scatter's own density
+    // (400) multiplies it, so the left half scatters at 400 and the right not at all.
+    const std::string json = graph(R"j(, "paramInputs": ["density"])j", "",
+                                   R"j(, {"name": "left", "type": "Expression", "params": {"expression": "x < 0.5 ? 1 : 0"}})j",
+                                   R"j(, {"from": "left", "to": "scatter", "input": "density"})j");
+    const StrandsPtr s = run(json);
+    ASSERT_GT(s->strandCount(), 100u);
+    for (std::size_t i = 0; i < s->strandCount(); ++i) EXPECT_LT(s->strandPoints(i)[0].x, 0.5f);
+    // Same count as a plain half-plane at 400: the param's density times the field's 1.
+    EXPECT_NEAR(static_cast<float>(s->strandCount()), 200.0f, 40.0f);
+}
+
+TEST(Fields, RemapAndCombine) {
+    // length = invert(noise) * 0.5 on [0.1, 1]: never above 0.5.
+    const std::string json = graph(
+        "", R"j(, "paramInputs": ["keep"])j",
+        R"j(, {"name": "noise", "type": "FieldNoise", "params": {"frequency": 3.0}},
+              {"name": "remap", "type": "FieldRemap", "params": {"inMin": 1.0, "inMax": 0.0, "outMin": 0.1, "outMax": 1.0}},
+              {"name": "half", "type": "FieldCombine", "params": {"mode": "multiply", "b": 0.5}})j",
+        R"j(, {"from": "noise", "to": "remap", "input": "in"}, {"from": "remap", "to": "half", "input": "a"},
+              {"from": "half", "to": "length", "input": "keep"})j");
+    const StrandsPtr s = run(json);
+    for (std::size_t i = 0; i < s->strandCount(); ++i) {
+        EXPECT_GE(strandLength(*s, i), 0.05f - 1e-3f);
+        EXPECT_LE(strandLength(*s, i), 0.5f + 1e-3f);
+    }
+}
+
+TEST(Fields, LayersDriveAnExposedParam) {
+    // length's keep from a stack: layer 2 (white) over layer 1 (black), masked to 0.5 by an
+    // expression: every strand keeps half, as a keep of 0.5 does.
+    const StrandsPtr half = run(graph("", R"j(, "params": {"keep": 0.5})j", "", ""));
+    const StrandsPtr s = run(graph(
+        "", R"j(, "paramInputs": ["keep"])j",
+        R"j(, {"name": "mask", "type": "Expression", "params": {"expression": "0.5"}},
+              {"name": "stack", "type": "Layers", "paramInputs": ["layer2Opacity"]})j",
+        R"j(, {"from": "mask", "to": "stack", "input": "layer2Opacity"}, {"from": "stack", "to": "length", "input": "keep"})j"));
+    ASSERT_EQ(s->strandCount(), half->strandCount());
+    for (std::size_t i = 0; i < s->strandCount(); ++i) EXPECT_NEAR(strandLength(*s, i), strandLength(*half, i), 1e-4f);
+}
+
+TEST(Fields, AControlTakesTheHostsValue) {
+    // Length driven by a Control named "grow": its default until the host sets it.
+    GroomData d;
+    d.scalp = test::makePlane(8);
+    d.graphJson = graph("", R"j(, "paramInputs": ["keep"])j",
+                        R"j(, {"name": "grow", "type": "Control", "params": {"name": "grow", "default": 0.5}})j",
+                        R"j(, {"from": "grow", "to": "length", "input": "keep"})j");
+    GroomEvaluator groom(d);
+    EXPECT_NEAR(strandLength(*groom.evaluate(1.0f, 0.0), 0), 0.5f, 1e-3f);
+    groom.setControls({{"grow", 0.25f}});
+    EXPECT_NEAR(strandLength(*groom.evaluate(1.0f, 0.0), 0), 0.25f, 1e-3f);
+    groom.setControls({{"other", 2.0f}});  // not this control: the default again
+    EXPECT_NEAR(strandLength(*groom.evaluate(1.0f, 0.0), 0), 0.5f, 1e-3f);
+}
 
 TEST(Fields, ExposingIsChecked) {
     GraphDocument doc = loadGraphJson(graph("", "", "", ""));

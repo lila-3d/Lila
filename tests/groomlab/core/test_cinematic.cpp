@@ -25,9 +25,77 @@
 #include "groomlab/operators.h"
 #include "groomlab/presets.h"
 #include "test_helpers.h"
+#include "groom/GroomEvaluator.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
+
+// Scalp -> Scatter (-> Clump, picking its own centers) -> `op` -> Output on a plane; fur straight up.
+StrandsPtr run(const std::string& opJson, bool clumped = false) {
+    std::string nodes = R"j({"name": "scalp", "type": "Scalp"},
+        {"name": "scatter", "type": "Scatter", "params": {"density": 600.0}},
+        {"name": "length", "type": "Length", "params": {"keep": 1.0}},
+        {"name": "clump", "type": "Clump", "params": {"count": 20, "strength": 0.0}},
+        {"name": "out", "type": "Output"}, {"name": "resolution", "type": "Resample", "params": {"segments": 8}})j";
+    if (!opJson.empty()) nodes += ", " + opJson;
+    std::string links = R"j({"from": "scalp", "to": "scatter", "input": "scalp"},
+        {"from": "scatter", "to": "length", "input": "strands"},
+        {"from": "length", "to": "clump", "input": "strands"})j";
+    const std::string upstream = clumped ? "clump" : "length";
+    if (opJson.empty()) {
+        links += R"j(, {"from": ")j" + upstream + R"j(", "to": "out", "input": "strands"})j";
+    } else {
+        links += R"j(, {"from": ")j" + upstream + R"j(", "to": "op", "input": "strands"},
+                   {"from": "op", "to": "out", "input": "strands"})j";
+    }
+    GroomData d;
+    d.scalp = test::makePlane(8);
+    d.graphJson = R"j({"version": 1, "output": "out", "nodes": [)j" + nodes + R"j(], "connections": [)j" + links + "]}";
+    return GroomEvaluator(d).evaluate(1.0f, 0.0);
+}
+
+TEST(HairColor, MelaninVariesPerStrandAndSharesPerClump) {
+    const StrandsPtr s = run(R"j({"name": "op", "type": "HairColor",
+        "params": {"melanin": 0.5, "melaninRandom": 0.2, "clumpShare": 1.0, "greys": 0.0}})j", true);
+    const std::vector<float>* melanin = s->strandChannel("melanin");
+    const std::vector<float>* clumps = s->strandChannel("clumpId");
+    ASSERT_TRUE(melanin && clumps && s->strandChannel("melaninRedness"));
+    // All the variation shared: one value per clump, different between clumps.
+    std::map<int, float> perClump;
+    for (std::size_t i = 0; i < s->strandCount(); ++i) {
+        EXPECT_GE((*melanin)[i], 0.3f - 1e-5f);
+        EXPECT_LE((*melanin)[i], 0.7f + 1e-5f);
+        const int c = static_cast<int>((*clumps)[i]);
+        if (perClump.count(c)) EXPECT_FLOAT_EQ(perClump[c], (*melanin)[i]);
+        perClump[c] = (*melanin)[i];
+    }
+    ASSERT_GT(perClump.size(), 5u);
+    float lo = 1.0f, hi = 0.0f;
+    for (const auto& [c, m] : perClump) lo = std::min(lo, m), hi = std::max(hi, m);
+    EXPECT_GT(hi - lo, 0.1f);
+
+    // Greys: about the fraction asked for, nearly unpigmented.
+    const StrandsPtr g = run(R"j({"name": "op", "type": "HairColor", "params": {"melanin": 0.6, "melaninRandom": 0.0, "greys": 0.25}})j");
+    std::size_t greys = 0;
+    for (const float m : *g->strandChannel("melanin")) greys += m < 0.1f ? 1 : 0;
+    const float share = static_cast<float>(greys) / static_cast<float>(g->strandCount());
+    EXPECT_NEAR(share, 0.25f, 0.06f);
+
+    // The same strands as RGB: each one's melanin color, dyed (engines and exports read it).
+    const StrandsPtr c = run(R"j({"name": "op", "type": "HairColor", "params": {"melanin": 0.5, "dye": [1.0, 0.5, 0.5]}})j");
+    const std::vector<float>* m = c->strandChannel("melanin");
+    const std::vector<float>* r = c->strandChannel("melaninRedness");
+    ASSERT_TRUE(m && r && c->strandChannel("colorR") && c->strandChannel("colorG") && c->strandChannel("colorB"));
+    for (std::size_t i = 0; i < c->strandCount(); i += 7) {
+        const std::array<float, 3> dyed = melaninColor((*m)[i], (*r)[i], {1.0f, 0.5f, 0.5f});
+        EXPECT_FLOAT_EQ((*c->strandChannel("colorR"))[i], dyed[0]);
+        EXPECT_FLOAT_EQ((*c->strandChannel("colorG"))[i], dyed[1]);
+        EXPECT_FLOAT_EQ((*c->strandChannel("colorB"))[i], dyed[2]);
+        EXPECT_LT(dyed[1], melaninColor((*m)[i], (*r)[i])[1]);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // HairColor as RGB: dye, a map (an image, a color set), randomness, tip color
@@ -65,8 +133,213 @@ std::shared_ptr<const ScalpMesh> tintedPlane(int cells = 8) {
     return mesh;
 }
 
+// Scalp -> Scatter -> Length (-> Clump) -> HairColor(params) -> Output, as a GroomEvaluator (a live cache).
+struct ColorGroom {
+    GroomData d;
+    std::unique_ptr<GroomEvaluator> groom;
+    explicit ColorGroom(std::shared_ptr<const ScalpMesh> scalp, const std::string& params, bool clumped = false) {
+        const std::string nodes = R"j({"name": "scalp", "type": "Scalp"},
+            {"name": "scatter", "type": "Scatter", "params": {"density": 400.0}},
+            {"name": "length", "type": "Length", "params": {"keep": 1.0}},
+            {"name": "clump", "type": "Clump", "params": {"count": 12, "strength": 0.0}},
+            {"name": "op", "type": "HairColor", "params": )j" + params + R"j(},
+            {"name": "out", "type": "Output"}, {"name": "resolution", "type": "Resample", "params": {"segments": 4}})j";
+        const std::string upstream = clumped ? "clump" : "length";
+        const std::string links = R"j({"from": "scalp", "to": "scatter", "input": "scalp"},
+            {"from": "scatter", "to": "length", "input": "strands"},
+            {"from": "length", "to": "clump", "input": "strands"},
+            {"from": ")j" + upstream + R"j(", "to": "op", "input": "strands"},
+            {"from": "op", "to": "out", "input": "strands"})j";
+        d.scalp = std::move(scalp);
+        d.graphJson = R"j({"version": 1, "output": "out", "nodes": [)j" + nodes + R"j(], "connections": [)j" + links + "]}";
+        groom = std::make_unique<GroomEvaluator>(d);
+    }
+    StrandsPtr eval() { return groom->evaluate(1.0f, 0.0); }
+};
+
 std::array<float, 3> colorOf(const StrandSet& s, std::size_t i) {
     return {(*s.strandChannel("colorR"))[i], (*s.strandChannel("colorG"))[i], (*s.strandChannel("colorB"))[i]};
+}
+
+TEST(HairColorRgb, WritesTheBaseColorAndVariesItDeterministically) {
+    ColorGroom flat(test::makePlane(8), R"j({"melanin": 0.0, "melaninRandom": 0.0, "dye": [0.5, 0.25, 0.1]})j");
+    const StrandsPtr s = flat.eval();
+    ASSERT_GT(s->strandCount(), 50u);
+    ASSERT_TRUE(s->strandChannel("colorR") && s->strandChannel("colorG") && s->strandChannel("colorB"));
+    EXPECT_TRUE(s->pointChannel("colorR") == nullptr);  // no tip blend: per strand only
+    for (std::size_t i = 0; i < s->strandCount(); ++i) {
+        const std::array<float, 3> c = colorOf(*s, i);
+        EXPECT_FLOAT_EQ(c[0], 0.5f);
+        EXPECT_FLOAT_EQ(c[1], 0.25f);
+        EXPECT_FLOAT_EQ(c[2], 0.1f);
+    }
+    // Exporters read the channels as the strand color.
+    const std::vector<std::array<float, 3>> exported = strandColors(*s);
+    ASSERT_EQ(exported.size(), s->strandCount());
+    EXPECT_FLOAT_EQ(exported[0][1], 0.25f);
+
+    // Variation: different per strand, in range, the same for the same seed and different for another.
+    const char* varied = R"j({"mode": "color", "color": [0.5, 0.25, 0.1], "hueRandom": 0.1, "saturationRandom": 0.3, "valueRandom": 0.5, "seed": 4})j";
+    const StrandsPtr a = ColorGroom(test::makePlane(8), varied).eval();
+    const StrandsPtr b = ColorGroom(test::makePlane(8), varied).eval();
+    const StrandsPtr c = ColorGroom(test::makePlane(8), R"j({"mode": "color", "color": [0.5, 0.25, 0.1], "valueRandom": 0.5, "seed": 5})j").eval();
+    ASSERT_EQ(a->strandCount(), b->strandCount());
+    ASSERT_EQ(a->strandCount(), c->strandCount());
+    float lo = 1.0f, hi = 0.0f;
+    std::size_t differ = 0;
+    for (std::size_t i = 0; i < a->strandCount(); ++i) {
+        const std::array<float, 3> ca = colorOf(*a, i), cb = colorOf(*b, i), cc = colorOf(*c, i);
+        EXPECT_EQ(ca, cb);
+        if (ca != cc) ++differ;
+        lo = std::min(lo, ca[0]);
+        hi = std::max(hi, ca[0]);
+        for (const float v : ca) {
+            EXPECT_GE(v, 0.0f);
+            EXPECT_LE(v, 1.0f);
+        }
+    }
+    EXPECT_GT(hi - lo, 0.1f);
+    EXPECT_GT(differ, a->strandCount() / 2);
+}
+
+TEST(HairColorRgb, ClumpVariationIsSharedPerClump) {
+    ColorGroom g(test::makePlane(8), R"j({"mode": "color", "color": [0.5, 0.25, 0.1], "valueRandom": 0.5, "clumpShare": 1.0})j", true);
+    const StrandsPtr s = g.eval();
+    const std::vector<float>* clumps = s->strandChannel("clumpId");
+    ASSERT_TRUE(clumps);
+    std::map<int, std::array<float, 3>> perClump;
+    for (std::size_t i = 0; i < s->strandCount(); ++i) {
+        const int c = static_cast<int>((*clumps)[i]);
+        const std::array<float, 3> color = colorOf(*s, i);
+        if (perClump.count(c)) EXPECT_EQ(perClump[c], color);
+        perClump[c] = color;
+    }
+    ASSERT_GT(perClump.size(), 5u);
+    float lo = 1.0f, hi = 0.0f;
+    for (const auto& [c, color] : perClump) lo = std::min(lo, color[0]), hi = std::max(hi, color[0]);
+    EXPECT_GT(hi - lo, 0.05f);
+}
+
+TEST(HairColorRgb, AnImageAndAColorSetSampleTheScalpAtTheRoot) {
+    const std::string path = tempPath("groomlab_strand_color.ppm");
+    // Red on the left half (u < 0.5), white on the right.
+    writePpm(path, 32, 32, [](int x, int) { return x < 16 ? std::array<int, 3>{255, 0, 0} : std::array<int, 3>{255, 255, 255}; });
+    const std::string quoted = "\"" + path + "\"";  // generic_string: forward slashes, so no JSON escaping
+    {
+        ColorGroom g(tintedPlane(), R"j({"mode": "color", "map": )j" + quoted + R"j(})j");
+        const StrandsPtr s = g.eval();
+        ASSERT_GT(s->strandCount(), 50u);
+        std::size_t left = 0, right = 0;
+        for (std::size_t i = 0; i < s->strandCount(); ++i) {
+            const float x = s->strandPoints(i)[0].x;
+            if (std::abs(x - 0.5f) < 0.06f || x < 0.05f || x > 0.95f) continue;  // bilinear seams (the texture repeats)
+            const std::array<float, 3> c = colorOf(*s, i);
+            EXPECT_NEAR(c[0], 1.0f, 1e-5f);
+            EXPECT_NEAR(c[1], x < 0.5f ? 0.0f : 1.0f, 1e-5f) << "x " << x;
+            (x < 0.5f ? left : right)++;
+        }
+        EXPECT_GT(left, 10u);
+        EXPECT_GT(right, 10u);
+
+        // Rewriting the texture re-evaluates: all blue now.
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        writePpm(path, 32, 32, [](int, int) { return std::array<int, 3>{0, 0, 255}; });
+        const StrandsPtr again = g.eval();
+        EXPECT_NEAR(colorOf(*again, 0)[2], 1.0f, 1e-5f);
+        EXPECT_NEAR(colorOf(*again, 0)[0], 0.0f, 1e-5f);
+    }
+    // Mode melanin: the texture (blue) dyes the pigment's color.
+    {
+        ColorGroom g(tintedPlane(), R"j({"map": )j" + quoted + R"j(, "melanin": 0.0, "melaninRandom": 0.0, "dye": [1.0, 1.0, 0.5]})j");
+        const StrandsPtr s = g.eval();
+        EXPECT_NEAR(colorOf(*s, 0)[2], 0.5f, 1e-5f);
+        EXPECT_NEAR(colorOf(*s, 0)[0], 0.0f, 1e-5f);
+    }
+    std::remove(path.c_str());
+
+    // A color set, replacing the color: green right of x = 0.5, blue left.
+    {
+        ColorGroom g(tintedPlane(), R"j({"mode": "color", "map": "tint"})j");
+        const StrandsPtr s = g.eval();
+        std::size_t checked = 0;
+        for (std::size_t i = 0; i < s->strandCount(); ++i) {
+            const float x = s->strandPoints(i)[0].x;
+            if (std::abs(x - 0.5f) < 0.13f) continue;  // interpolated across the middle cells
+            const std::array<float, 3> c = colorOf(*s, i);
+            EXPECT_NEAR(c[1], x > 0.5f ? 1.0f : 0.0f, 1e-4f) << "x " << x;
+            EXPECT_NEAR(c[2], x > 0.5f ? 0.0f : 1.0f, 1e-4f) << "x " << x;
+            ++checked;
+        }
+        EXPECT_GT(checked, 20u);
+    }
+
+    // Errors are GraphErrors on the node: no UVs, a missing file, a name nothing has.
+    EXPECT_THROW(ColorGroom(test::makePlane(4), R"j({"map": )j" + quoted + "}").eval(), GraphError);
+    EXPECT_THROW(ColorGroom(tintedPlane(), R"j({"map": "groomlab_no_such_texture.ppm"})j").eval(), GraphError);
+    EXPECT_THROW(ColorGroom(tintedPlane(), R"j({"map": "nope"})j").eval(), GraphError);
+}
+
+TEST(HairColorRgb, TipBlendWritesPointChannels) {
+    ColorGroom g(test::makePlane(6), R"j({"melanin": 0.0, "melaninRandom": 0.0, "dye": [0.2, 0.2, 0.2], "tipColor": [1.0, 1.0, 1.0], "tipStrength": 0.5})j");
+    const StrandsPtr s = g.eval();
+    const std::vector<float>* r = s->pointChannel("colorR");
+    ASSERT_TRUE(r && s->pointChannel("colorG") && s->pointChannel("colorB"));
+    ASSERT_EQ(r->size(), s->pointCount());
+    for (std::size_t i = 0; i < s->strandCount(); ++i) {
+        const std::size_t n = s->strandPointCount(i), begin = s->strandBegin(i);
+        EXPECT_FLOAT_EQ((*r)[begin], 0.2f);           // root: the strand color
+        EXPECT_FLOAT_EQ((*r)[begin + n - 1], 0.6f);   // tip: halfway to white
+        EXPECT_FLOAT_EQ(colorOf(*s, i)[0], 0.2f);     // the per-strand value stays the root color
+    }
+}
+
+// mode color: the picked color as it is, whatever the pigment params say (white hair is white, not
+// a dyed brown).
+TEST(HairColorRgb, ColorModeIsThePickedColorWhateverThePigment) {
+    ColorGroom g(test::makePlane(6), R"j({"mode": "color", "color": [1.0, 1.0, 1.0], "melanin": 0.9, "redness": 0.8,
+        "dye": [0.3, 0.2, 0.1], "melaninRandom": 0.3, "greys": 0.5})j");
+    const StrandsPtr s = g.eval();
+    ASSERT_GT(s->strandCount(), 20u);
+    for (std::size_t i = 0; i < s->strandCount(); ++i) {
+        EXPECT_EQ(colorOf(*s, i), (std::array<float, 3>{1.0f, 1.0f, 1.0f}));
+        EXPECT_FLOAT_EQ((*s->strandChannel(kMelaninChannel))[i], 0.0f);
+        EXPECT_FLOAT_EQ((*s->strandChannel(kMelaninRednessChannel))[i], 0.0f);
+    }
+    // The same params in melanin mode: the pigment's brown, dyed.
+    ColorGroom natural(test::makePlane(6), R"j({"mode": "melanin", "color": [1.0, 1.0, 1.0], "melanin": 0.9, "redness": 0.8,
+        "dye": [0.3, 0.2, 0.1]})j");
+    EXPECT_LT(colorOf(*natural.eval(), 0)[0], 0.3f);
+    EXPECT_THROW(ColorGroom(test::makePlane(4), R"j({"mode": "rgb"})j").eval(), GraphError);
+}
+
+// Skin-toned roots, white tips and a little randomness: valueRandom lightens and darkens the
+// picked color itself (its hue kept: no melanin browns it), the tips vary with their strand, and
+// tipOffsetRandom moves where each strand's tip color starts.
+TEST(HairColorRgb, ColorModeRootsToWhiteTipsWithRandomness) {
+    const std::array<float, 3> skin{0.8f, 0.55f, 0.45f};
+    ColorGroom g(test::makePlane(6), R"j({"mode": "color", "color": [0.8, 0.55, 0.45], "tipColor": [1.0, 1.0, 1.0],
+        "tipStrength": 1.0, "tipProfile": [[0, 0], [0.5, 0], [1, 1]], "valueRandom": 0.2, "tipOffsetRandom": 0.3})j");
+    const StrandsPtr s = g.eval();
+    const std::vector<float>* r = s->pointChannel("colorR");
+    const std::vector<float>* gch = s->pointChannel("colorG");
+    ASSERT_TRUE(r && gch);
+    float rootLo = 1.0f, rootHi = 0.0f, middleLo = 1.0f, middleHi = 0.0f;
+    for (std::size_t i = 0; i < s->strandCount(); ++i) {
+        const std::size_t n = s->strandPointCount(i), begin = s->strandBegin(i);
+        const std::array<float, 3> root = colorOf(*s, i);
+        EXPECT_NEAR(root[1] / root[0], skin[1] / skin[0], 1e-4f);  // the hue kept
+        rootLo = std::min(rootLo, root[0]);
+        rootHi = std::max(rootHi, root[0]);
+        EXPECT_FLOAT_EQ((*r)[begin], root[0]);  // the root: the strand's color
+        // The tip: white, as light or dark as its strand (valueRandom scales the root too).
+        EXPECT_NEAR((*r)[begin + n - 1], (*gch)[begin + n - 1], 1e-5f);
+        EXPECT_NEAR((*r)[begin + n - 1], std::min(1.0f, root[0] / skin[0]), 1e-4f);
+        const float middle = (*gch)[begin + 3 * (n - 1) / 4];
+        middleLo = std::min(middleLo, middle - root[1]);
+        middleHi = std::max(middleHi, middle - root[1]);
+    }
+    EXPECT_GT(rootHi - rootLo, 0.05f);   // the roots vary
+    EXPECT_GT(middleHi - middleLo, 0.05f);  // the tip color starts at different places
 }
 
 TEST(HairColorRgb, ExportPrefersExplicitColorOverMelanin) {
@@ -107,6 +380,49 @@ TEST(HairColorRgb, ExportViewHasPointColorsOnlyWithAllThreePointChannels) {
     EXPECT_FLOAT_EQ(view.pointColors[4][0], 0.9f);
     EXPECT_FLOAT_EQ(view.pointColors[4][2], 0.5f);
     EXPECT_FLOAT_EQ(view.colors[1][0], 0.4f);  // the per-strand color stays
+}
+
+TEST(Flyaway, AFractionStraysFromMidLengthAndGrows) {
+    const StrandsPtr base = run("");
+    const StrandsPtr s = run(R"j({"name": "op", "type": "Flyaway",
+        "params": {"fraction": 0.2, "stray": 0.3, "start": 0.4, "lengthen": 0.2, "seed": 1}})j");
+    ASSERT_EQ(s->strandCount(), base->strandCount());
+    const std::vector<float>& flag = *s->strandChannel("flyaway");
+    std::size_t strays = 0;
+    for (std::size_t i = 0; i < s->strandCount(); ++i) {
+        const std::size_t n = s->strandPointCount(i);
+        const Vec3f* a = base->strandPoints(i);
+        const Vec3f* b = s->strandPoints(i);
+        if (flag[i] < 0.5f) {
+            for (std::size_t k = 0; k < n; ++k) EXPECT_LT((a[k] - b[k]).length(), 1e-6f);
+            continue;
+        }
+        ++strays;
+        EXPECT_LT((a[0] - b[0]).length(), 1e-6f);       // rooted
+        EXPECT_LT((a[2] - b[2]).length(), 0.3f * 0.3f);  // barely moved before start
+        EXPECT_GT(arcLength(b, n), arcLength(a, n) + 0.05f);  // longer
+    }
+    const float share = static_cast<float>(strays) / static_cast<float>(s->strandCount());
+    EXPECT_NEAR(share, 0.2f, 0.06f);
+}
+
+TEST(Tangle, StuckStrandsComeTogetherOverASpan) {
+    // Straight strands, tangled with their neighbors.
+    const StrandsPtr base = run("");
+    const StrandsPtr s = run(R"j({"name": "op", "type": "Tangle",
+        "params": {"fraction": 1.0, "radius": 0.2, "strength": 1.0, "start": 0.2, "span": 0.5, "seed": 2}})j");
+    ASSERT_EQ(s->strandCount(), base->strandCount());
+    std::size_t moved = 0;
+    for (std::size_t i = 0; i < s->strandCount(); ++i) {
+        const Vec3f* a = base->strandPoints(i);
+        const Vec3f* b = s->strandPoints(i);
+        EXPECT_LT((a[0] - b[0]).length(), 1e-6f);  // roots stay
+        float most = 0.0f;
+        for (std::size_t k = 0; k < s->strandPointCount(i); ++k) most = std::max(most, (a[k] - b[k]).length());
+        if (most > 1e-3f) ++moved;
+        EXPECT_LE(most, 0.2f + 1e-4f);  // at most onto a neighbor within 0.2
+    }
+    EXPECT_GT(moved, s->strandCount() * 9 / 10);
 }
 
 // Two straight strands 0.1 apart (100 points each, so a point sits near the span's

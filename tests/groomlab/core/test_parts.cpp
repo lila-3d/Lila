@@ -17,6 +17,9 @@
 #include "groomlab/operators.h"
 #include "groomlab/parts.h"
 #include "test_helpers.h"
+#include "groom/GroomEvaluator.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -135,6 +138,30 @@ float leftOfPartLean(const StrandSet& s) {
     }
     EXPECT_GT(n, 10);
     return sum / static_cast<float>(n);
+}
+
+TEST(Parts, InterpolateDoesNotBlendAcrossAPart) {
+    Scene scene;
+    auto run = [&](bool parts, bool respect) {
+        GroomData d;
+        d.scalp = scene.plane;
+        d.guides = scene.guides;
+        if (parts) d.partsJson = middlePart(*scene.plane).toJson();
+        std::string graph = defaultGraphJson();
+        const std::string interp = "\"type\": \"Interpolate\"";
+        graph.replace(graph.find(interp), interp.size(),
+                      interp + (respect ? ", \"params\": {\"neighbors\": 6}" : ", \"params\": {\"neighbors\": 6, \"respectParts\": false}"));
+        const std::string scatter = "\"type\": \"Scatter\"";
+        graph.replace(graph.find(scatter), scatter.size(), scatter + ", \"params\": {\"density\": 3000.0}");
+        d.graphJson = graph;
+        return GroomEvaluator(d).evaluate(1.0f, 0.0);
+    };
+    const float mixed = leftOfPartLean(*run(false, true));
+    const float parted = leftOfPartLean(*run(true, true));
+    const float ignored = leftOfPartLean(*run(true, false));
+    EXPECT_LT(parted, -0.4f);          // all from the left guides
+    EXPECT_GT(mixed, parted + 0.1f);   // without the part, right guides pull back
+    EXPECT_FLOAT_EQ(ignored, mixed);   // respectParts off: as if there were no part
 }
 
 TEST(Parts, PartOperatorOpensTheGap) {

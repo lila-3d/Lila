@@ -17,10 +17,13 @@
 #include "groomlab/frames.h"
 #include "groomlab/graph.h"
 #include "groomlab/groom.h"
+#include "groom/GroomEvaluator.h"
 #include "groomlab/guide_hierarchy.h"
 #include "groomlab/operators.h"
 #include "groomlab/scales.h"
 #include "test_helpers.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -501,6 +504,69 @@ Vec3f expectScalesAlongTheirStrands(const ScaleMesh& mesh, const StrandSet& stra
     }
     EXPECT_GT(checked, mesh.scales.size() * 3 / 4);
     return mean / static_cast<float>(std::max<std::size_t>(checked, 1));
+}
+
+TEST(Scales, TurnWithTheGuidesTheirBrushStrokesAndTheFlow) {
+    // Through the session (what every host evaluates, the rest pose included): guides driving the
+    // strands through Interpolate, then a stroke's working copy of them turned a quarter turn, then
+    // committed; the viewport's builder keeps nothing of the old directions. Then Flow's arrows.
+    const auto skin = test::makeSphere(32, 64);
+    GroomData d;
+    d.graphJson = scaleGroomGraph(
+        R"({"name": "guides", "type": "Guides"}, {"name": "shaped", "type": "Interpolate"})",
+        R"({"from": "scatter", "to": "shaped", "input": "strands"}, {"from": "guides", "to": "shaped", "input": "guides"},
+           {"from": "scalp", "to": "shaped", "input": "scalp"})");
+    d.hierarchyJson = guidesToward(*skin, {0, 0, 1})->toJson();
+    d.scalp = skin;
+    GroomEvaluator session(d);
+    ScaleMeshBuilder viewport;
+    const GroomEvaluator::Result& combed = session.evaluate(GroomEvaluator::Request{});
+    ASSERT_TRUE(combed.strands) << (combed.errors.empty() ? "" : combed.errors[0]);
+    const StrandsPtr before = combed.strands;
+    const auto first = viewport.build(*before, skin);
+    ASSERT_TRUE(first);
+    EXPECT_GT(expectScalesAlongTheirStrands(*first, *before, *skin).z, 0.5f);
+
+    // A stroke: the working copy of the guides, turned toward +X.
+    const auto stroke = guidesToward(*skin, {1, 0, 0});
+    const auto authored = session.authoredHierarchy();
+    ASSERT_EQ(authored->guides().size(), stroke->guides().size());
+    auto preview = std::make_shared<GuideHierarchy>(*authored);
+    for (std::size_t g = 0; g < authored->guides().size(); ++g) preview->setPoints(authored->guides()[g].id, stroke->guides()[g].points);
+    session.setPreviewHierarchy(preview);
+    const StrandsPtr during = session.evaluate(GroomEvaluator::Request{}).strands;
+    const auto dab = viewport.build(*during, skin);
+    EXPECT_GT(expectScalesAlongTheirStrands(*dab, *during, *skin).x, 0.5f);
+    EXPECT_LT(viewport.stats().kept, dab->scales.size() / 10);  // turned: bent again, not kept
+    EXPECT_EQ(dab->points, buildScaleMesh(*during, skin)->points);
+    // Released: the guides as brushed.
+    session.setPreviewHierarchy(nullptr);
+    session.setHierarchy(preview);
+    const StrandsPtr after = session.evaluate(GroomEvaluator::Request{}).strands;
+    const auto released = viewport.build(*after, skin);
+    EXPECT_GT(expectScalesAlongTheirStrands(*released, *after, *skin).x, 0.5f);
+    EXPECT_EQ(released->points, buildScaleMesh(*after, skin)->points);
+
+    // Flow: the arrows turn the strands and the scales with them.
+    FlowSet south, east;
+    for (const Vec3f at : {Vec3f{0, 0.8f, 0.6f}, Vec3f{0.6f, 0.8f, 0}, Vec3f{-0.6f, 0.8f, 0}, Vec3f{0, 0.8f, -0.6f}}) {
+        south.pins.push_back(FlowSet::makePin(*skin, skin->closestPoint(at), {0, 0, 1}));
+        east.pins.push_back(FlowSet::makePin(*skin, skin->closestPoint(at), {1, 0, 0}));
+    }
+    GroomData f;
+    f.graphJson = scaleGroomGraph(R"({"name": "shaped", "type": "Flow"})", R"({"from": "scatter", "to": "shaped", "input": "strands"})");
+    f.flowJson = south.toJson();
+    f.scalp = skin;
+    GroomEvaluator flowed(f);
+    ScaleMeshBuilder flowView;
+    const StrandsPtr alongZ = flowed.evaluate(GroomEvaluator::Request{}).strands;
+    ASSERT_TRUE(alongZ);
+    EXPECT_GT(expectScalesAlongTheirStrands(*flowView.build(*alongZ, skin), *alongZ, *skin).z, 0.5f);
+    flowed.setFlowJson(east.toJson());
+    const StrandsPtr alongX = flowed.evaluate(GroomEvaluator::Request{}).strands;
+    const auto turned = flowView.build(*alongX, skin);
+    EXPECT_GT(expectScalesAlongTheirStrands(*turned, *alongX, *skin).x, 0.5f);
+    EXPECT_EQ(turned->points, buildScaleMesh(*alongX, skin)->points);
 }
 
 // Past this share of a plate's length a scale following its strand is all the strand's (scales.cpp

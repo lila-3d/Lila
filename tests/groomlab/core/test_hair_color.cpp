@@ -2,7 +2,7 @@
 // Modified for Lila (2026).
 // HairColor, param by param: every param changes what the node writes (the RGB, per strand and per
 // point, the melanin, the highlight channels) and what the hosts read of the look
-// (GroomSession::hairLook); hue, saturation, melanin and value randomness vary each strand in both
+// (GroomEvaluator::hairLook); hue, saturation, melanin and value randomness vary each strand in both
 // modes, shared per clump by clumpShare; the hair colors' model (melaninColor is the color whose
 // absorption is the pigment's, varyHairColor's HSL turns).
 
@@ -24,8 +24,11 @@
 #include "groomlab/display.h"
 #include "groomlab/export_view.h"
 #include "groomlab/groom.h"
+#include "groom/GroomEvaluator.h"
 #include "groomlab/hair_color.h"
 #include "test_helpers.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -76,6 +79,8 @@ GroomData colorGroom(const json& params, bool clumped = true) {
     d.graphJson = graph.dump();
     return d;
 }
+
+StrandsPtr colored(const json& params, bool clumped = true) { return GroomEvaluator(colorGroom(params, clumped)).evaluate(1.0f, 0.0); }
 
 Rgb strandColor(const StrandSet& s, std::size_t i) {
     return {(*s.strandChannel("colorR"))[i], (*s.strandChannel("colorG"))[i], (*s.strandChannel("colorB"))[i]};
@@ -184,6 +189,10 @@ TEST(HairColorModel, TheAppearanceIsWhatTheHairLooksLike) {
     }
 }
 
+// What each consumer gets: renderers the base color, writers of a display or albedo color the
+// appearance (USD displayColor, Alembic Cd, Unreal's groom_color: describeExport's
+// kExportAppearanceColors), and the display's lit strands either, as the host draws them.
+
 // HSL turns, as PxrHairColor varies its dye: the hue turns with the lightness kept, the
 // saturation scales, grey and white stay neutral, the value scales it all.
 TEST(HairColorModel, VaryHairColorTurnsTheHueAndScalesTheSaturationInHsl) {
@@ -205,7 +214,317 @@ TEST(HairColorModel, VaryHairColorTurnsTheHueAndScalesTheSaturationInHsl) {
 
 // ---- Every param --------------------------------------------------------------------------------
 
+// Each param set off its default (on a base that lets it show) changes what HairColor writes.
+TEST(HairColor, EveryParamChangesWhatItWrites) {
+    struct Case {
+        std::string param;
+        json base;  // the other params (the param itself at its default unless set here)
+        json value;
+    };
+    const json melanin = {{"melaninRandom", 0.0}};
+    const json color = {{"mode", "color"}};
+    const json tipped = {{"melaninRandom", 0.0}, {"tipStrength", 1.0}};
+    const json random = {{"melaninRandom", 0.3}};
+    const std::vector<Case> cases = {
+        {"mode", melanin, "color"},
+        {"melanin", melanin, 0.7},
+        {"redness", melanin, 0.8},
+        {"dye", melanin, {1.0, 0.5, 0.4}},
+        {"color", color, {0.2, 0.5, 0.9}},
+        {"map", melanin, "tint"},
+        {"map", color, "tint"},
+        {"greys", melanin, 0.5},
+        {"melaninRandom", melanin, 0.3},
+        {"valueRandom", color, 0.5},
+        {"hueRandom", melanin, 0.5},
+        {"hueRandom", {{"mode", "color"}, {"color", {0.6, 0.4, 0.3}}}, 0.5},
+        {"saturationRandom", melanin, 0.5},
+        {"saturationRandom", {{"mode", "color"}, {"color", {0.6, 0.4, 0.3}}}, 0.5},
+        {"clumpShare", random, 1.0},
+        {"clumpChannel", {{"melaninRandom", 0.3}, {"clumpShare", 1.0}}, "nothing"},
+        {"seed", random, 7},
+        {"tipColor", tipped, {0.9, 0.1, 0.1}},
+        {"tipStrength", melanin, 0.6},
+        {"tipProfile", {{"melaninRandom", 0.0}, {"tipStrength", 0.5}}, {{0, 1}, {1, 1}}},
+        {"tipOffsetRandom", tipped, 0.4},
+        {"specular", melanin, 0.8},
+        {"specularRandom", melanin, 0.5},
+        {"roughness", melanin, 0.2},
+        {"roughnessRandom", melanin, 0.5},
+        {"tilt", melanin, 8.0},
+    };
+    std::set<std::string> covered;
+    for (const Case& c : cases) {
+        json set = c.base;
+        set[c.param] = c.value;
+        const StrandsPtr before = colored(c.base), after = colored(set);
+        ASSERT_TRUE(before && after);
+        EXPECT_GT(change(*before, *after), 0.01f) << c.param << " " << c.value.dump() << " on " << c.base.dump();
+        covered.insert(c.param);
+    }
+    // No param left out (Groom Tools' panels and the Attribute Editor show every one).
+    for (const ParamSpec& spec : OperatorRegistry::instance().create("HairColor")->paramSpecs()) {
+        EXPECT_TRUE(covered.count(spec.name)) << spec.name;
+    }
+}
+
+// The look the hosts shade and render by follows the highlight params, and every HairColor colors
+// by its RGB (the viewport's hairColorSigma, Arnold's base color, RenderMan's rman_color).
+TEST(HairColor, TheHostsLookFollowsItsParams) {
+    auto look = [](const json& params) {
+        GroomEvaluator session(colorGroom(params));
+        session.evaluate(GroomEvaluator::Request{});
+        return nlohmann::json::parse(session.hairLookJson());
+    };
+    const json plain = look(json::object());
+    EXPECT_TRUE(plain["colorsByRgb"].get<bool>());
+    EXPECT_EQ(plain["node"], "color");
+    for (const auto& [param, value] : std::map<std::string, double>{
+             {"specular", 0.8}, {"specularRandom", 0.4}, {"roughness", 0.2}, {"roughnessRandom", 0.4}, {"tilt", 7.0}}) {
+        const json changed = look({{param, value}});
+        EXPECT_NEAR(changed[param].get<double>(), value, 1e-6) << param;
+        EXPECT_NE(changed[param], plain[param]) << param;
+        EXPECT_NEAR(changed["hairColorParams"][param].get<double>(), value, 1e-6) << param;
+    }
+    EXPECT_NE(look({{"specular", 0.15}})["lobes"]["specularTint"], plain["lobes"]["specularTint"]);
+    EXPECT_NE(look({{"roughness", 0.9}})["lobes"]["roughness"], plain["lobes"]["roughness"]);
+    // Color params reach the hosts through the RGB, and the params as they are set.
+    EXPECT_TRUE(look({{"mode", "color"}, {"hueRandom", 0.3}})["colorsByRgb"].get<bool>());
+    EXPECT_NEAR(look({{"saturationRandom", 0.25}})["hairColorParams"]["saturationRandom"].get<double>(), 0.25, 1e-6);
+}
+
 // ---- Randomness ---------------------------------------------------------------------------------
+
+// Hue and saturation randomness vary each strand's hue and saturation, in both modes (the
+// pigment's color too: nothing is lost on the way to the hosts, which all shade the RGB).
+TEST(HairColor, HueAndSaturationRandomnessVaryEachStrandInBothModes) {
+    for (const json& base : {json{{"melaninRandom", 0.0}, {"clumpShare", 0.0}},
+                             json{{"mode", "color"}, {"color", {0.5, 0.3, 0.15}}, {"clumpShare", 0.0}}}) {
+        auto spread = [&](const char* param, int which) {
+            json set = base;
+            set[param] = 0.6;
+            const StrandsPtr s = colored(set);
+            float lo = 1e9f, hi = -1e9f;
+            for (std::size_t i = 0; i < s->strandCount(); ++i) {
+                float v = hueSaturation(strandColor(*s, i))[which];
+                if (which == 0 && v > 0.75f) v -= 1.0f;  // reds either side of 0
+                lo = std::min(lo, v);
+                hi = std::max(hi, v);
+            }
+            return hi - lo;
+        };
+        const StrandsPtr flat = colored(base);
+        for (std::size_t i = 1; i < flat->strandCount(); ++i) EXPECT_EQ(strandColor(*flat, i), strandColor(*flat, 0)) << base.dump();
+        EXPECT_GT(spread("hueRandom", 0), 0.3f) << base.dump();   // up to +/- 0.3 turns
+        EXPECT_GT(spread("saturationRandom", 1), 0.2f) << base.dump();
+        // ... and the absorption the hosts shade with differs strand to strand, beyond the brightness.
+        json hue = base;
+        hue["hueRandom"] = 0.6;
+        const StrandsPtr s = colored(hue);
+        std::set<int> ratios;
+        for (std::size_t i = 0; i < s->strandCount(); ++i) {
+            const Rgb sigma = hairColorAbsorption(strandColor(*s, i));
+            ratios.insert(static_cast<int>(std::round(10.0f * sigma[0] / std::max(sigma[2], 1e-4f))));
+        }
+        EXPECT_GT(ratios.size(), 4u) << base.dump();
+    }
+}
+
+// Melanin randomness (mode melanin) and value randomness (mode color) lighten and darken each
+// strand: its melanin within the randomness, its picked color scaled, the hue kept.
+TEST(HairColor, MelaninAndValueRandomnessLightenAndDarkenEachStrand) {
+    const StrandsPtr m = colored({{"melanin", 0.5}, {"melaninRandom", 0.2}, {"clumpShare", 0.0}});
+    std::set<float> melanins;
+    for (std::size_t i = 0; i < m->strandCount(); ++i) {
+        const float v = (*m->strandChannel(kMelaninChannel))[i];
+        EXPECT_GE(v, 0.3f - 1e-5f);
+        EXPECT_LE(v, 0.7f + 1e-5f);
+        melanins.insert(v);
+        const Rgb want = melaninColor(v, 0.2f);
+        for (int k = 0; k < 3; ++k) EXPECT_NEAR(strandColor(*m, i)[k], want[k], 1e-6f);
+    }
+    EXPECT_GT(melanins.size(), m->strandCount() / 2);
+    const StrandsPtr v = colored({{"mode", "color"}, {"color", {0.6, 0.3, 0.15}}, {"valueRandom", 0.4}, {"clumpShare", 0.0}});
+    float lo = 1.0f, hi = 0.0f;
+    for (std::size_t i = 0; i < v->strandCount(); ++i) {
+        const Rgb c = strandColor(*v, i);
+        EXPECT_NEAR(c[1] / c[0], 0.5f, 1e-4f);
+        lo = std::min(lo, c[0]);
+        hi = std::max(hi, c[0]);
+    }
+    EXPECT_LT(lo, 0.6f * 0.75f);
+    EXPECT_GT(hi, 0.6f * 1.25f);
+}
+
+// clumpShare: 1 every strand of a clump alike and the clumps apart, 0 each strand its own; between,
+// the spread over the groom stays the same while strands of one clump keep closer together. For
+// hue, saturation, melanin and value alike.
+TEST(HairColor, ClumpShareGivesEachClumpItsOwnColor) {
+    struct Case {
+        json params;
+        std::function<float(const StrandSet&, std::size_t)> measure;
+    };
+    const std::vector<Case> cases = {
+        {{{"melaninRandom", 0.3}}, [](const StrandSet& s, std::size_t i) { return (*s.strandChannel(kMelaninChannel))[i]; }},
+        {{{"melaninRandom", 0.0}, {"hueRandom", 0.5}}, [](const StrandSet& s, std::size_t i) {
+             const float h = hueSaturation(strandColor(s, i))[0];
+             return h > 0.75f ? h - 1.0f : h;
+         }},
+        {{{"mode", "color"}, {"color", {0.6, 0.4, 0.3}}, {"saturationRandom", 0.8}},
+         [](const StrandSet& s, std::size_t i) { return hueSaturation(strandColor(s, i))[1]; }},
+        {{{"mode", "color"}, {"valueRandom", 0.5}}, [](const StrandSet& s, std::size_t i) { return strandColor(s, i)[0]; }},
+    };
+    for (const Case& c : cases) {
+        // The spread within clumps (the mean distance from the clump's mean) and across them.
+        auto spreads = [&](double share) {
+            json set = c.params;
+            set["clumpShare"] = share;
+            const StrandsPtr s = colored(set);
+            const std::vector<float>& clumps = *s->strandChannel("clumpId");
+            std::map<int, std::vector<float>> by;
+            for (std::size_t i = 0; i < s->strandCount(); ++i) by[static_cast<int>(clumps[i])].push_back(c.measure(*s, i));
+            float within = 0.0f, lo = 1e9f, hi = -1e9f;
+            std::size_t n = 0;
+            for (const auto& [id, values] : by) {
+                float mean = 0.0f;
+                for (const float v : values) mean += v / static_cast<float>(values.size());
+                for (const float v : values) within += std::abs(v - mean), ++n;
+                lo = std::min(lo, mean);
+                hi = std::max(hi, mean);
+            }
+            EXPECT_GT(by.size(), 8u);
+            return std::make_pair(within / static_cast<float>(n), hi - lo);
+        };
+        const auto [ownWithin, ownAcross] = spreads(0.0);
+        const auto [halfWithin, halfAcross] = spreads(0.5);
+        const auto [allWithin, allAcross] = spreads(1.0);
+        EXPECT_LT(allWithin, 1e-5f) << c.params.dump();  // one color per clump
+        EXPECT_GT(allAcross, 2.5f * ownAcross) << c.params.dump();  // and the clumps apart
+        EXPECT_GT(ownWithin, 0.02f) << c.params.dump();
+        EXPECT_LT(halfWithin, 0.85f * ownWithin) << c.params.dump();
+        EXPECT_GT(halfAcross, 1.5f * ownAcross) << c.params.dump();
+    }
+}
+
+// Without a clump channel reaching it, clumpShare says so in the node's note (set off its default:
+// a fresh groom has no Clump) and each strand varies on its own.
+TEST(HairColor, ClumpShareWithoutAClumpSaysSo) {
+    auto noteOf = [](const json& params, bool clumped) {
+        GroomEvaluator session(colorGroom(params, clumped));
+        session.evaluate(GroomEvaluator::Request{});
+        for (const auto& [node, note] : session.nodeNotes()) {
+            if (node == "color") return note;
+        }
+        return std::string();
+    };
+    EXPECT_NE(noteOf({{"clumpShare", 1.0}}, false).find("clumpId"), std::string::npos);
+    EXPECT_EQ(noteOf({{"clumpShare", 1.0}}, true).find("clumpId"), std::string::npos);
+    EXPECT_EQ(noteOf(json::object(), false).find("clumpId"), std::string::npos);  // at its default: quiet
+    const StrandsPtr s = colored({{"clumpShare", 1.0}, {"melaninRandom", 0.3}}, false);
+    std::set<float> melanins(s->strandChannel(kMelaninChannel)->begin(), s->strandChannel(kMelaninChannel)->end());
+    EXPECT_GT(melanins.size(), s->strandCount() / 2);
+}
+
+// The tip color takes its strand's hue and saturation draws, and tipOffsetRandom moves where it
+// starts; the roots keep the strand's color.
+TEST(HairColor, TheTipsVaryWithTheirStrand) {
+    const StrandsPtr s = colored({{"mode", "color"}, {"color", {0.3, 0.3, 0.3}}, {"tipColor", {0.8, 0.4, 0.2}}, {"tipStrength", 1.0},
+                                  {"hueRandom", 0.4}, {"clumpShare", 0.0}});
+    std::set<int> tipHues;
+    for (std::size_t i = 0; i < s->strandCount(); ++i) {
+        const std::size_t tip = s->strandBegin(i) + s->strandPointCount(i) - 1;
+        const Rgb c{(*s->pointChannel("colorR"))[tip], (*s->pointChannel("colorG"))[tip], (*s->pointChannel("colorB"))[tip]};
+        tipHues.insert(static_cast<int>(std::round(100.0f * hueSaturation(c)[0])));
+        EXPECT_NEAR((*s->pointChannel("colorR"))[s->strandBegin(i)], 0.3f, 1e-5f);  // grey roots stay grey
+    }
+    EXPECT_GT(tipHues.size(), 10u);
+}
+
+// A Map node's rgb output colors a color param per strand: a texture red on the left half and green
+// on the right drives HairColor's color (mode color, times its own white), its dye (mode melanin)
+// and its tipColor, the hosts' RGB along.
+TEST(HairColor, AMapsRgbOutputColorsTheStrands) {
+    const auto path = (std::filesystem::temp_directory_path() / "groomlab_rgb_split.ppm").generic_string();
+    {
+        std::ofstream f(path, std::ios::binary);
+        f << "P6\n16 16\n255\n";
+        for (int y = 0; y < 16; ++y) {
+            for (int x = 0; x < 16; ++x) {
+                const char px[3] = {static_cast<char>(x < 8 ? 255 : 0), static_cast<char>(x < 8 ? 0 : 255), 0};
+                f.write(px, 3);
+            }
+        }
+    }
+    auto withMap = [&](const json& params, const std::string& param) {
+        json graph = json::parse(colorGroom(params, false).graphJson);
+        graph["nodes"].push_back({{"name", "paint"}, {"type", "Map"}, {"params", {{"name", path}}}});
+        for (json& n : graph["nodes"]) {
+            if (n["name"] == "color") n["paramInputs"] = {param};
+        }
+        graph["connections"].push_back({{"from", "paint"}, {"output", "rgb"}, {"to", "color"}, {"input", param}});
+        GroomData d;
+        d.scalp = tintedPlane();
+        d.graphJson = graph.dump();
+        GroomEvaluator session(d);
+        const GroomEvaluator::Result& view = session.evaluate(GroomEvaluator::Request{});
+        EXPECT_TRUE(view.errors.empty()) << (view.errors.empty() ? "" : view.errors[0]);
+        return view.strands;
+    };
+    auto sides = [](const StrandSet& s, const std::function<Rgb(std::size_t)>& colorOf) {
+        std::size_t left = 0, right = 0, wrong = 0;
+        for (std::size_t i = 0; i < s.strandCount(); ++i) {
+            const float x = s.strandPoints(i)[0].x;
+            if (std::abs(x - 0.5f) < 0.08f || x < 0.04f || x > 0.96f) continue;  // the texture's seams
+            const Rgb c = colorOf(i);
+            if (x < 0.5f) {
+                (c[0] > 0.5f && c[1] < 0.05f) ? ++left : ++wrong;
+            } else {
+                (c[1] > 0.5f && c[0] < 0.05f) ? ++right : ++wrong;
+            }
+        }
+        return std::array<std::size_t, 3>{left, right, wrong};
+    };
+    // Mode color: the map is the color (the param's white times it).
+    const StrandsPtr picked = withMap({{"mode", "color"}, {"color", {1.0, 1.0, 1.0}}}, "color");
+    ASSERT_TRUE(picked);
+    const auto p = sides(*picked, [&](std::size_t i) { return strandColor(*picked, i); });
+    EXPECT_GT(p[0], 20u);
+    EXPECT_GT(p[1], 20u);
+    EXPECT_EQ(p[2], 0u);
+    // The exporters' and renderers' colors are the same.
+    const std::vector<std::array<float, 3>> exported = strandColors(*picked);
+    for (std::size_t i = 0; i < picked->strandCount(); ++i) EXPECT_EQ(exported[i], strandColor(*picked, i));
+    // The param's own color multiplies it.
+    const StrandsPtr half = withMap({{"mode", "color"}, {"color", {0.5, 0.5, 0.5}}}, "color");
+    for (std::size_t i = 0; i < half->strandCount(); ++i) {
+        EXPECT_NEAR(std::max(strandColor(*half, i)[0], strandColor(*half, i)[1]),
+                    0.5f * std::max(strandColor(*picked, i)[0], strandColor(*picked, i)[1]), 1e-5f);
+    }
+    // Mode melanin: it dyes the pigment (no melanin: the dye itself).
+    const StrandsPtr dyed = withMap({{"melanin", 0.0}, {"melaninRandom", 0.0}}, "dye");
+    const auto d = sides(*dyed, [&](std::size_t i) { return strandColor(*dyed, i); });
+    EXPECT_GT(d[0], 20u);
+    EXPECT_GT(d[1], 20u);
+    EXPECT_EQ(d[2], 0u);
+    // tipColor: the tips take the map's color.
+    const StrandsPtr tipped = withMap({{"mode", "color"}, {"color", {0.2, 0.2, 0.2}}, {"tipColor", {1.0, 1.0, 1.0}},
+                                       {"tipStrength", 1.0}, {"tipProfile", {{0, 1}, {1, 1}}}},
+                                      "tipColor");
+    const auto t = sides(*tipped, [&](std::size_t i) {
+        const std::size_t at = tipped->strandBegin(i) + tipped->strandPointCount(i) - 1;
+        return Rgb{(*tipped->pointChannel("colorR"))[at], (*tipped->pointChannel("colorG"))[at], (*tipped->pointChannel("colorB"))[at]};
+    });
+    EXPECT_GT(t[0], 20u);
+    EXPECT_GT(t[1], 20u);
+    EXPECT_EQ(t[2], 0u);
+    // The spec says which params take a color field (the hosts offer exposing them).
+    std::set<std::string> colorParams;
+    for (const ParamSpec& spec : OperatorRegistry::instance().create("HairColor")->paramSpecs()) {
+        if (spec.colorField) colorParams.insert(spec.name);
+    }
+    EXPECT_EQ(colorParams, (std::set<std::string>{"color", "dye", "tipColor"}));
+    std::filesystem::remove(path);
+}
 
 }  // namespace
 }  // namespace groomlab

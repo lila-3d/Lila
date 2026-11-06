@@ -15,6 +15,9 @@
 #include "groomlab/guide_hierarchy.h"
 #include "groomlab/operators.h"
 #include "test_helpers.h"
+#include "groom/GroomEvaluator.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -125,6 +128,37 @@ TEST(Robustness, MissingMapsAreGraphErrors) {
     EXPECT_THROW(scatter->evaluate(ctx, {plane}), GraphError);  // plane has no UVs, or file is missing
     scatter->params().set("density", ParamValue(MapRef{MapRef::Source::ColorSet, "missing"}));
     EXPECT_THROW(scatter->evaluate(ctx, {plane}), GraphError);
+}
+
+TEST(Robustness, GroomsSurviveBadData) {
+    for (const auto& [name, scalp] : badMeshes()) {
+        SCOPED_TRACE(name);
+        GroomData d;
+        d.scalp = scalp;
+        d.hierarchyJson = R"({"version": 1, "groups": [], "guides": []})";
+        EXPECT_NO_THROW(GroomEvaluator(d).evaluate(1.0f, 0.0));
+    }
+    GroomData bad;
+    bad.graphJson = "{not json";
+    EXPECT_THROW(GroomEvaluator{bad}, GraphError);
+    bad.graphJson = R"({"version": 99})";
+    EXPECT_THROW(GroomEvaluator{bad}, GraphError);  // newer schema: a clear error
+    bad.graphJson = "";
+    bad.hierarchyJson = R"({"version": 1, "groups": [{"id": 1}]})";
+    EXPECT_THROW(GroomEvaluator{bad}, std::runtime_error);
+
+    // A hierarchy on degenerate scalps.
+    GuideHierarchy h;
+    const GroupId g = h.addGroup("primary");
+    h.addGuide(g, test::straightCurve({0, 0, 0}, {0, 1, 0}));
+    h.addGuide(g, {{0, 0, 0}, {0, 0, 0}});
+    ChildGenerationParams params;
+    h.generateChildren(g, "children", params);
+    for (const auto& [name, scalp] : badMeshes()) {
+        SCOPED_TRACE(name);
+        GuideHierarchy copy = h;
+        EXPECT_NO_THROW(copy.evaluate(scalp.get()));
+    }
 }
 
 TEST(Robustness, CurvesStayBetweenZeroAndOne) {

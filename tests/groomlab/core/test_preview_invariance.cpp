@@ -30,10 +30,13 @@
 #include "groomlab/groom.h"
 #include "groomlab/groom_file.h"
 #include "groomlab/guide_hierarchy.h"
+#include "groom/GroomEvaluator.h"
 #include "groomlab/presets.h"
 #include "groomlab/preview_core.h"
 #include "groomlab/random.h"
 #include "test_helpers.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -88,7 +91,89 @@ std::string strandDifference(const StrandSet& x, std::size_t a, const StrandSet&
     return {};
 }
 
+StrandsPtr evaluateAt(const GroomData& data, const std::string& directory, float density) {
+    GroomEvaluator groom(data);
+    groom.setPathResolver(searchPathResolver({directory, kShipped}));
+    return groom.evaluate(density, 0.0);
+}
+
 }  // namespace
+
+TEST(PreviewInvariance, EveryPresetShowsTheRendersStrandsThinnedById) {
+    const GroomFile reference = readGroomFile(std::string(GROOMLAB_TEST_DATA) + "/strokes/strokes.groom");
+    ASSERT_TRUE(reference.data.scalp);
+    const std::optional<double> size = presetScalpSize(*reference.data.scalp);
+    std::vector<PresetInfo> presets = listPresets({kShipped});
+    for (const PresetInfo& p : listPresets({std::string(GROOMLAB_TEST_DATA) + "/presets"})) presets.push_back(p);
+    ASSERT_GT(presets.size(), 30u);
+    for (const PresetInfo& p : presets) {
+        SCOPED_TRACE(p.name);
+        std::ifstream in(std::filesystem::u8path(p.path));
+        std::stringstream text;
+        text << in.rdbuf();
+        GroomData data = reference.data;
+        data.graphJson = thinnedGraph(presetGraphJson(text.str(), size));
+        test::paintRequiredMaps(text.str(), data);
+        StrandsPtr full;
+        try {
+            full = evaluateAt(data, reference.directory, 1.0f);
+        } catch (const std::exception& e) {  // a preset needing what the reference groom lacks (a painted map)
+            std::printf("[ preview ] %-26s not evaluated: %s\n", p.name.c_str(), e.what());
+            continue;
+        }
+        ASSERT_TRUE(full && !full->empty());
+        EXPECT_EQ(full->strandChannel(kPreviewChannel), nullptr) << "the roles never leave the graph";
+        std::unordered_map<StrandId, std::size_t> at;
+        for (std::size_t s = 0; s < full->strandCount(); ++s) at[full->ids()[s]] = s;
+        std::set<StrandId> above;  // what the preview at the density above showed
+        for (std::size_t s = 0; s < full->strandCount(); ++s) above.insert(full->ids()[s]);
+        const bool allowed = kAllowed.count(p.name) != 0;
+        for (const float density : {0.5f, 0.1f, 0.02f}) {
+            const StrandsPtr shown = evaluateAt(data, reference.directory, density);
+            ASSERT_TRUE(shown);
+            EXPECT_EQ(shown->strandChannel(kPreviewChannel), nullptr);
+            std::size_t different = 0, byId = 0;
+            std::string first;
+            std::set<StrandId> now;
+            for (std::size_t s = 0; s < shown->strandCount(); ++s) {
+                const StrandId id = shown->ids()[s];
+                now.insert(id);
+                byId += keepAtDensity(id, density) ? 1 : 0;
+                const auto it = at.find(id);
+                if (it == at.end()) {
+                    ++different;
+                    if (first.empty()) first = "a strand the render has not";
+                    continue;
+                }
+                const std::string why = strandDifference(*shown, s, *full, it->second);
+                if (!why.empty()) {
+                    ++different;
+                    if (first.empty()) first = why;
+                }
+                if (!above.count(id) && first.empty()) first = "a strand the preview above did not show";
+            }
+            // Thinned by ID: the strands whose ID falls under the density, when every strand shown
+            // is one (a Scatter's); else (barbs, copies: made from such) nested in the preview above.
+            std::size_t expected = 0;
+            for (std::size_t s = 0; s < full->strandCount(); ++s) expected += keepAtDensity(full->ids()[s], density) ? 1 : 0;
+            const bool scatterIds = byId == shown->strandCount();
+            const double share = static_cast<double>(shown->strandCount()) / static_cast<double>(full->strandCount());
+            std::printf("[ preview ] %-26s at %.2f: %zu of %zu shown (%.3f)%s, %zu differ%s%s\n", p.name.c_str(), density,
+                        shown->strandCount(), full->strandCount(), share, scatterIds ? ", by ID" : "", different,
+                        first.empty() ? "" : ": first ", first.c_str());
+            if (allowed) continue;
+            EXPECT_EQ(different, 0u) << "at density " << density << ": " << first;
+            if (share < 0.999) {  // thinned
+                if (scatterIds) {
+                    EXPECT_EQ(shown->strandCount(), expected) << "at density " << density;
+                }
+                EXPECT_NEAR(share, density, std::max(0.25 * density, 4.0 / std::sqrt(static_cast<double>(full->strandCount()))))
+                    << "at density " << density;
+            }
+            above = std::move(now);
+        }
+    }
+}
 
 // The nodes reading other strands that no preset above reads that way, in one graph on a sphere of
 // 100k strands (a core of a sixteenth): relaxed roots (randomness 0.6), a Clump's own centers and a Clump

@@ -17,6 +17,9 @@
 #include "groomlab/parts.h"
 #include "groomlab/random.h"
 #include "test_helpers.h"
+#include "groom/GroomEvaluator.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -273,6 +276,47 @@ TEST(Collide, SoftnessCurvesStrandsOntoTheSurfaceKeepingLengths) {
     const StrandsPtr scalpHard = run(0.0);
     EXPECT_NE(scalpHard->positions(), sinking->positions());
     EXPECT_EQ(run(0.6)->positions(), scalpHard->positions());
+}
+
+TEST(ColliderMesh, ReadsTheNamedMeshExternal) {
+    Harness h;
+    const MeshPtr ball = sphereAt({0.5f, 0.5f, 0.5f}, 0.3f);
+    auto op = OperatorRegistry::instance().create(op::kColliderMesh);
+    EXPECT_EQ(op->externalInputs(), std::vector<std::string>{"mesh:collider"});  // the default name
+    EXPECT_EQ(valueAs<MeshPtr>(op->evaluate(h.ctx, {})), nullptr);  // no such mesh yet
+    h.ext.set("mesh:collider", ball, ball->contentHash());
+    EXPECT_EQ(valueAs<MeshPtr>(op->evaluate(h.ctx, {})), ball);
+    op->params().set("name", std::string("hat"));
+    EXPECT_EQ(op->externalInputs(), std::vector<std::string>{"mesh:hat"});
+    EXPECT_EQ(valueAs<MeshPtr>(op->evaluate(h.ctx, {})), nullptr);
+
+    // Through a groom: GroomData::meshes reaches ColliderMesh, and Collide keeps the hair out of it.
+    const char* graph = R"({"version": 1, "output": "out", "nodes": [
+        {"name": "scalp", "type": "Scalp"},
+        {"name": "scatter", "type": "Scatter", "params": {"density": 400.0}},
+        {"name": "ball", "type": "ColliderMesh", "params": {"name": "collider"}},
+        {"name": "collide", "type": "Collide", "params": {"offset": 0.02}},
+        {"name": "out", "type": "Output"}],
+      "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+                      {"from": "scatter", "to": "collide", "input": "strands"},
+                      {"from": "scalp", "to": "collide", "input": "scalp"},
+                      {"from": "ball", "to": "collide", "input": "collider"},
+                      {"from": "collide", "to": "out", "input": "strands"}]})";
+    GroomData d;
+    d.scalp = h.scalp;
+    d.graphJson = graph;
+    GroomEvaluator groom(d);
+    const Vec3f center{0.5f, 0.5f, 0.5f};
+    auto insideCount = [&](const StrandsPtr& s) {
+        std::size_t inside = 0;
+        for (const Vec3f& p : s->positions()) inside += (p - center).length() < 0.3f;
+        return inside;
+    };
+    EXPECT_GT(insideCount(groom.evaluate(1.0f, 0.0)), 10u);  // no collider registered: hair through the ball
+    groom.setMesh("collider", ball);
+    EXPECT_EQ(insideCount(groom.evaluate(1.0f, 0.0)), 0u);
+    groom.setMesh("collider", nullptr);
+    EXPECT_GT(insideCount(groom.evaluate(1.0f, 0.0)), 10u);
 }
 
 // Straight strands of `segments` segments from roots at the given (x, z) on the plane, each along its `dir`.

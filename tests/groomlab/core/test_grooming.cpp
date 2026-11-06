@@ -13,6 +13,9 @@
 #include "groomlab/guide_hierarchy.h"
 #include "groomlab/guide_selection.h"
 #include "test_helpers.h"
+#include "groom/GroomEvaluator.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -136,6 +139,45 @@ TEST(Mirror, SymmetrySyncCopiesWholeTreesWithEditedChildren) {
     s.h.mirrorAll(0, 0.0f, false);
     EXPECT_EQ(s.h.guidesInGroup(s.children).size(), 18u);
     EXPECT_THROW(s.h.mirrorAll(5, 0.0f, true), std::invalid_argument);
+}
+
+TEST(Attributes, InheritAndFlowIntoStrands) {
+    Scene s;
+    const GuideId painted = s.h.guidesInGroup(s.primary)[0];
+    s.h.setAttribute(painted, "clump", 1.0f);
+    const GuideSet flat = s.h.flatten(-1);  // children
+    std::size_t inheriting = 0;
+    for (const Guide& g : flat.guides()) {
+        const bool child = s.h.guide(g.id)->parent == painted;
+        auto it = g.attributes.find("clump");
+        if (child) {
+            ASSERT_NE(it, g.attributes.end());
+            EXPECT_EQ(it->second, 1.0f);
+            ++inheriting;
+        } else {
+            EXPECT_EQ(it, g.attributes.end());
+        }
+    }
+    EXPECT_EQ(inheriting, 3u);
+    // A child's own value overrides the inherited one.
+    const GuideId child = s.h.childrenOf(painted)[0];
+    s.h.setAttribute(child, "clump", 0.25f);
+    EXPECT_EQ(s.h.effectiveAttributes(*s.h.guide(child)).at("clump"), 0.25f);
+
+    // Interpolate blends it into a strand channel, which a Clump map can read.
+    GroomData d;
+    d.scalp = s.scalp;
+    d.hierarchyJson = s.h.toJson();
+    const StrandsPtr strands = GroomEvaluator(d).evaluate(1.0f, 0.0);
+    const std::vector<float>* clump = strands->strandChannel("clump");
+    ASSERT_NE(clump, nullptr);
+    float lo = 1.0f, hi = 0.0f;
+    for (const float v : *clump) {
+        lo = std::min(lo, v);
+        hi = std::max(hi, v);
+    }
+    EXPECT_LT(lo, 0.05f);  // far from the painted guide
+    EXPECT_GT(hi, 0.9f);   // under it
 }
 
 TEST(Paint, AttributeBrushPaintsTowardTheValue) {

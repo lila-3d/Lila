@@ -27,6 +27,9 @@
 #include "groomlab/texture.h"
 #include "groomlab/usd_writer.h"
 #include "test_helpers.h"
+#include "groom/GroomEvaluator.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -314,6 +317,64 @@ void validate(const Glb& g) {
     for (const json& n : d["scenes"][0]["nodes"]) EXPECT_LT(n.get<std::size_t>(), d["nodes"].size());
 }
 
+StrandsPtr clumpedFur() {
+    GroomData d;
+    d.scalp = test::makePlane(16);
+    d.graphJson = R"j({"version": 1, "output": "out", "nodes": [
+        {"name": "scalp", "type": "Scalp"},
+        {"name": "scatter", "type": "Scatter", "params": {"density": 600.0}},
+        {"name": "clump", "type": "Clump", "params": {"count": 10, "strength": 0.8}},
+        {"name": "out", "type": "Output"}, {"name": "resolution", "type": "Resample", "params": {"segments": 10}}],
+      "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+        {"from": "scatter", "to": "clump", "input": "strands"},
+        {"from": "clump", "to": "out", "input": "strands"}]})j";
+    return GroomEvaluator(d).evaluate(1.0f, 0.0);
+}
+
+
+TEST(GameExports, ScalpCapIsTheSameForEveryHost) {
+    // The cap every host's cards export writes (gltf_writer.h): Maya's resolution (its own, else
+    // the cards', else 2048) and lift (0.4% of the scalp's size), the bake made from the strands.
+    EXPECT_EQ(scalpCapResolution(0, 0), 2048);
+    EXPECT_EQ(scalpCapResolution(0, 512), 512);
+    EXPECT_EQ(scalpCapResolution(64, 512), 64);
+    EXPECT_EQ(scalpCapResolution(4, 512), 16);
+    EXPECT_EQ(scalpCapResolution(1 << 20, 0), 16384);
+    const StrandsPtr s = clumpedFur();
+    auto plane = std::make_shared<ScalpMesh>(*test::makePlane(16));
+    std::vector<ScalpMesh::UV> uvs;
+    for (const auto& t : plane->triangles()) {
+        for (const std::int32_t i : t) uvs.push_back({plane->points()[static_cast<std::size_t>(i)].x, plane->points()[static_cast<std::size_t>(i)].z});
+    }
+    plane->setCornerUVs(uvs);
+    float lo = 1e9f, hi = -1e9f;
+    for (const Vec3f& p : plane->points()) {
+        lo = std::min(lo, p.x);
+        hi = std::max(hi, p.x);
+    }
+    EXPECT_GT(hi - lo, 0.0f);
+    EXPECT_NEAR(scalpCapLift(*plane), 0.004f * (hi - lo), 1e-6f);  // a square plane: x spans it
+
+    GltfDocument doc;
+    CardGltfSettings settings;
+    settings.name = "hair_scalpCap";
+    addScalpCapToGltf(doc, *s, *plane, 0, 32, settings);
+    const Glb g = parseGlb(encodeGlb(doc));
+    validate(g);
+    const json& d = g.doc;
+    ASSERT_EQ(d["meshes"].size(), 1u);
+    EXPECT_EQ(d["meshes"][0]["name"], "hair_scalpCap");
+    const json& cap = d["meshes"][0]["primitives"][0];
+    EXPECT_FALSE(cap["attributes"].contains("TEXCOORD_1"));  // no root-to-tip on the cap
+    const json& view = d["bufferViews"][d["images"][0]["bufferView"].get<int>()];
+    int w = 0, h = 0;
+    decodePng(g.bin.data() + view["byteOffset"].get<std::size_t>(), view["byteLength"], &w, &h, 4, "cap");
+    EXPECT_EQ(w, 32);
+    EXPECT_EQ(h, 32);
+    const std::vector<float> capPoints = floatsOf(g, cap["attributes"]["POSITION"]);
+    for (std::size_t i = 1; i < capPoints.size(); i += 3) EXPECT_NEAR(capPoints[i], scalpCapLift(*plane) * 0.01f, 1e-7f);
+}
+
 TEST(GameExports, FeatherCardsCarryTheirSpineIntoGltf) {
     // Feathers whose vanes lift: spine cards (three vertices a station, two quads a segment) go
     // out as they are, their per-half normals with them, TEXCOORD_1's x 0 on the left edge, 0.5 on
@@ -533,11 +594,59 @@ struct GameCardsGroom {
     std::shared_ptr<CardMesh> cards;
 };
 
+const GameCardsGroom& gameCardsGroom() {
+    static const GameCardsGroom g = [] {
+        auto plane = std::make_shared<ScalpMesh>(*test::makePlane(32, 20.0f));
+        std::vector<ScalpMesh::UV> uvs;
+        for (const auto& t : plane->triangles()) {
+            for (const std::int32_t i : t) {
+                const Vec3f& p = plane->points()[static_cast<std::size_t>(i)];
+                uvs.push_back({p.x / 20.0f, p.z / 20.0f});
+            }
+        }
+        plane->setCornerUVs(uvs);
+        GroomData d;
+        d.scalp = plane;
+        d.graphJson = R"j({"version": 1, "output": "output", "nodes": [
+            {"name": "scalp", "type": "Scalp"},
+            {"name": "scatter", "type": "Scatter", "params": {"density": 250.0, "length": 3.0}},
+            {"name": "clump", "type": "Clump", "params": {"count": 200, "strength": 0.85, "profile": [[0, 0], [0.3, 0.6], [1, 1]]}},
+            {"name": "color", "type": "HairColor", "params": {"melanin": 0.4, "redness": 0.25}},
+            {"name": "width", "type": "Width", "params": {"width": 0.007, "profile": [[0, 1], [1, 0.3]]}},
+            {"name": "resample", "type": "Resample", "params": {"segments": 12}},
+            {"name": "cards", "type": "Cards", "params": {"widthScale": 1.1, "cardsPerClump": 2, "layers": 1,
+              "flyawayCards": 0, "ruffle": 0.3, "segments": 8, "widthSegments": 2, "curvature": 0.3, "variations": 16,
+              "atlasSize": 2048, "maxCards": 468}},
+            {"name": "output", "type": "Output"}],
+          "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+            {"from": "scatter", "to": "clump", "input": "strands"},
+            {"from": "clump", "to": "color", "input": "strands"}, {"from": "color", "to": "width", "input": "strands"},
+            {"from": "width", "to": "resample", "input": "strands"}, {"from": "resample", "to": "cards", "input": "strands"},
+            {"from": "cards", "to": "output", "input": "strands"}]})j";
+        GameCardsGroom out;
+        out.scalp = plane;
+        out.strands = GroomEvaluator(d).evaluate(1.0f, 0.0, true);
+        out.cards = std::make_shared<CardMesh>(combineCardLayers(out.strands->cardLayers()));
+        layoutCards(*out.cards, out.cards->padding);
+        return out;
+    }();
+    return g;
+}
+
+CardTextures bakeGameCards() {
+    const GameCardsGroom& g = gameCardsGroom();
+    CardBakeSettings settings;
+    settings.size = 2048;
+    settings.scalp = g.scalp.get();
+    return bakeCardTextures(*g.strands, *g.cards, settings);
+}
+
 std::uint64_t texturesHash(const CardTextures& t) {
     std::uint64_t h = fnv1a(&t.size, sizeof(t.size));
     for (const auto* v : {&t.coverage, &t.depth, &t.tangent, &t.attribute, &t.color, &t.occlusion}) h = fnv1a(v->data(), v->size(), h);
     return h;
 }
+
 
 // Unity's seven card maps (groomLabBakeCards -layout unity) at 2048, as PNGs.
 std::vector<std::pair<int, std::vector<std::uint8_t>>> unityMaps(const CardTextures& t) {
@@ -554,6 +663,33 @@ std::vector<std::pair<int, std::vector<std::uint8_t>>> unityMaps(const CardTextu
         mask[4 * i + 3] = 166;
     }
     return {{4, baseColor}, {4, mask}, {1, t.occlusion}, {3, t.tangent}, {1, t.depth}, {4, t.attribute}, {3, cardNormalOpenGl(t)}};
+}
+
+TEST(Budget, SixUnityCardMapsEncodeAsPngAt2048) {
+    const CardTextures t = bakeGameCards();
+    const auto maps = unityMaps(t);
+    std::size_t raw = 0;
+    for (const auto& [channels, pixels] : maps) raw += pixels.size();
+    auto t0 = std::chrono::steady_clock::now();
+    std::vector<std::vector<std::uint8_t>> serial;
+    for (const auto& [channels, pixels] : maps) serial.push_back(encodePng(t.size, t.size, channels, pixels));
+    const double serialMs = millisecondsSince(t0);
+    std::uint64_t h = 1469598103934665603ull;
+    std::size_t bytes = 0;
+    for (const auto& png : serial) {
+        h = fnv1a(png.data(), png.size(), h);
+        bytes += png.size();
+    }
+    std::vector<PngImage> images;
+    for (const auto& [channels, pixels] : maps) images.push_back({t.size, t.size, channels, &pixels});
+    t0 = std::chrono::steady_clock::now();
+    const std::vector<std::vector<std::uint8_t>> together = encodePngs(images);
+    const double togetherMs = millisecondsSince(t0);
+    std::printf("[ budget ] 6 PNG maps at 2048 (%.1f MB raw): one by one %.0f ms, together %.0f ms, %.1f MB (pngs %016llx)\n",
+                static_cast<double>(raw) / 1e6, serialMs, togetherMs, static_cast<double>(bytes) / 1e6,
+                static_cast<unsigned long long>(h));
+    EXPECT_EQ(together, serial);
+    EXPECT_LT(bytes, raw / 2);
 }
 
 TEST(Budget, UsdFrameOfAMillionPoints) {

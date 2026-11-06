@@ -25,6 +25,9 @@
 #include "groomlab/map_ref.h"
 #include "groomlab/operators.h"
 #include "test_helpers.h"
+#include "groom/GroomEvaluator.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -143,6 +146,44 @@ TEST(Expression, SaysWhetherItReadsThePointsPositions) {
     EXPECT_FALSE(ScalarField(params, "width", nullptr).readsPositions());
 }
 
+TEST(Expression, TheNodeReadsItsVariables) {
+    const std::string json = R"j({"version": 1, "output": "out", "nodes": [
+        {"name": "scalp", "type": "Scalp"},
+        {"name": "scatter", "type": "Scatter", "params": {"density": 400.0}, "paramInputs": ["density"]},
+        {"name": "mask", "type": "Expression", "params": {"expression": "$x < $split ? $keep : 0",
+                                                          "variables": "{\"split\": 0.5, \"keep\": 1}"}},
+        {"name": "out", "type": "Output"}],
+      "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+        {"from": "mask", "to": "scatter", "input": "density"}, {"from": "scatter", "to": "out", "input": "strands"}]})j";
+    GroomData d;
+    d.scalp = test::makePlane(8);
+    d.graphJson = json;
+    const StrandsPtr s = GroomEvaluator(d).evaluate(1.0f, 0.0);
+    ASSERT_GT(s->strandCount(), 50u);
+    for (std::size_t i = 0; i < s->strandCount(); ++i) EXPECT_LT(s->strandPoints(i)[0].x, 0.5f + 1e-3f);
+    GroomData bad = d;
+    bad.graphJson.replace(bad.graphJson.find("{\\\"split\\\""), 1, "[");
+    EXPECT_THROW(GroomEvaluator(bad).evaluate(1.0f, 0.0), GraphError);
+
+    // A keyable variable: the host's control sets it (its value where there is none), and a
+    // new value re-evaluates the node.
+    GroomData keyed = d;
+    const std::string plain = "\\\"split\\\": 0.5";
+    keyed.graphJson.replace(keyed.graphJson.find(plain), plain.size(),
+                            "\\\"split\\\": {\\\"value\\\": 0.5, \\\"control\\\": \\\"mask_split\\\"}");
+    GroomEvaluator groom(keyed);
+    auto widest = [](const StrandSet& strands) {
+        float x = 0.0f;
+        for (std::size_t i = 0; i < strands.strandCount(); ++i) x = std::max(x, strands.strandPoints(i)[0].x);
+        return x;
+    };
+    EXPECT_NEAR(widest(*groom.evaluate(1.0f, 0.0)), 0.5f, 0.05f);  // no control: its value
+    groom.setControls({{"mask_split", 0.25f}});
+    EXPECT_NEAR(widest(*groom.evaluate(1.0f, 0.0)), 0.25f, 0.05f);
+    EXPECT_EQ(expressionVariableControls("{\"a\": 1, \"b\": {\"value\": 2, \"control\": \"n_b\"}}"),
+              (std::vector<std::pair<std::string, std::string>>{{"b", "n_b"}}));
+}
+
 TEST(Expression, PointVariablesEvaluatePerPoint) {
     StrandSet s;
     // Uneven spacing: t (arc length) and pt (index) differ.
@@ -235,6 +276,47 @@ TEST(Expression, LocalsThatDoubleEachLineAreAnErrorNotAHang) {
     std::string few = "$a0 = x;\n";
     for (int i = 1; i <= 8; ++i) few += "$a" + std::to_string(i) + " = $a" + std::to_string(i - 1) + " + $a" + std::to_string(i - 1) + ";\n";
     EXPECT_FLOAT_EQ(eval(few + "$a8"), 256.0f);
+}
+
+TEST(Expression, DrivesParametersInAGroom) {
+    // Length cut by an expression of the root height: shorter toward the bottom.
+    GroomData d;
+    d.scalp = test::makeSphere(24, 48, 1.0f);
+    std::string graph = defaultGraphJson();
+    const std::string from = "\"type\": \"Length\", \"params\": {\"fraction\": 1.0, \"randomness\": 0.2}";
+    ASSERT_NE(defaultGraphJson().find(from), std::string::npos);
+    graph.replace(graph.find(from), from.size(),
+                  "\"type\": \"Length\"" + std::string(R"j(, "params": {"keep": {"expression": "smoothstep(-1, 1, y)", "min": 0.2, "max": 1.0}})j"));
+    d.graphJson = graph;
+    const StrandsPtr strands = GroomEvaluator(d).evaluate(1.0f, 0.0);
+    ASSERT_GT(strands->strandCount(), 100u);
+    float topLength = 0, bottomLength = 10;
+    for (std::size_t s = 0; s < strands->strandCount(); ++s) {
+        const Vec3f* p = strands->strandPoints(s);
+        const float len = (p[strands->strandPointCount(s) - 1] - p[0]).length();
+        if (p[0].y > 0.9f) topLength = std::max(topLength, len);
+        if (p[0].y < -0.9f) bottomLength = std::min(bottomLength, len);
+    }
+    EXPECT_GT(topLength, 3.0f * bottomLength);
+
+    // A bad expression is a graph error on the node, with the position.
+    graph = defaultGraphJson();
+    graph.replace(graph.find(from), from.size(), R"j("type": "Length", "params": {"keep": {"expression": "y +"}})j");
+    d.graphJson = graph;
+    EXPECT_THROW(GroomEvaluator(d).evaluate(1.0f, 0.0), GraphError);
+    // An unknown name that is not a channel is caught before the loop.
+    graph = defaultGraphJson();
+    graph.replace(graph.find(from), from.size(), R"j("type": "Length", "params": {"keep": {"expression": "wobble"}})j");
+    d.graphJson = graph;
+    EXPECT_THROW(GroomEvaluator(d).evaluate(1.0f, 0.0), GraphError);
+    // Scatter density from an expression (evaluated at roots, before strands exist).
+    graph = defaultGraphJson();
+    const std::string scatter = "\"type\": \"Scatter\"";
+    graph.replace(graph.find(scatter), scatter.size(),
+                  scatter + R"j(, "params": {"density": {"expression": "y > 0 ? 1 : 0", "max": 200.0}})j");
+    d.graphJson = graph;
+    const StrandsPtr top = GroomEvaluator(d).evaluate(1.0f, 0.0);
+    for (std::size_t s = 0; s < top->strandCount(); ++s) EXPECT_GT(top->strandPoints(s)[0].y, -0.05f);
 }
 
 // ---------------------------------------------------------------------------
@@ -341,6 +423,45 @@ TEST(Expression, TimeComesFromTheEnvironmentItCompilesIn) {
     const ExpressionDependencies maps = scanExpression("map(\"mask\") * cmap('tint').x + map( \"mask\" , \"r\")");
     EXPECT_FALSE(maps.time);
     EXPECT_EQ(maps.maps, (std::vector<std::string>{"mask", "tint"}));
+}
+
+TEST(Expression, OnlyExpressionsReadingTheTimeEvaluateAgainOnAnotherFrame) {
+    GroomData d;
+    d.scalp = test::makePlane(8);
+    auto withFactor = [&](const std::string& expression) {
+        std::string graph = defaultGraphJson();
+        const std::string from = "\"type\": \"Length\", \"params\": {\"fraction\": 1.0, \"randomness\": 0.2}";
+        graph.replace(graph.find(from), from.size(),
+                      "\"type\": \"Length\", \"params\": {\"keep\": {\"expression\": \"" + expression + "\"}}");
+        GroomData data = d;
+        data.graphJson = graph;
+        return data;
+    };
+    {
+        GroomEvaluator groom(withFactor("0.5 + 0.25 * rand"));
+        const StrandsPtr a = groom.evaluate(1.0f, 0.0);
+        const StrandsPtr b = groom.evaluate(1.0f, 1.0);
+        EXPECT_EQ(a, b);  // the same result: nothing evaluated again
+    }
+    {
+        GroomEvaluator groom(withFactor("0.5 + 0.25 * sin($time * 3)"));
+        groom.setFramesPerSecond(24.0);
+        const StrandsPtr a = groom.evaluate(1.0f, 0.0);
+        const std::uint64_t first = a->contentHash();
+        const StrandsPtr b = groom.evaluate(1.0f, 1.0);
+        EXPECT_NE(first, b->contentHash());
+        EXPECT_EQ(groom.evaluate(1.0f, 0.0)->contentHash(), first);  // back on frame 0: the same strands
+    }
+    {
+        // $frame by the session's frame rate: 1 second at 24 fps is frame 24, at 30 frame 30.
+        GroomEvaluator groom(withFactor("$frame / 48"));
+        groom.setFramesPerSecond(24.0);
+        const std::uint64_t at24 = groom.evaluate(1.0f, 1.0)->contentHash();
+        groom.setFramesPerSecond(30.0);
+        EXPECT_NE(groom.evaluate(1.0f, 1.0)->contentHash(), at24);
+        GroomEvaluator half(withFactor("0.5"));
+        EXPECT_EQ(half.evaluate(1.0f, 0.0)->contentHash(), at24);  // 24 / 48
+    }
 }
 
 TEST(Expression, NoiseFamilyIsSeExprsAndSeeded) {
@@ -894,8 +1015,109 @@ TEST(Expression, TheDocsExamplesEvaluate) {
     EXPECT_FLOAT_EQ(Expression("$a = map('${DESC}/paintmaps/length/');  #3dpaint, 200\n$a").evaluate(s, 0, scalp.get()), 0.5f);
 }
 
+TEST(Expression, MapsReadTheGroomsMapsAtTheRoot) {
+    // A map the environment finds: its value at the strand's root.
+    struct Fake : ExpressionMap {
+        float at(const StrandRoot& root, int component) const override { return root.u + 0.1f * static_cast<float>(component); }
+    };
+    ExpressionEnvironment environment;
+    environment.map = [](const std::string& name) -> ExpressionMapPtr {
+        return name == "mask" ? std::make_shared<Fake>() : nullptr;
+    };
+    StrandSet s;
+    StrandRoot root;
+    root.face = 0;
+    root.u = 0.5f;
+    s.addStrand(1, {{0, 0, 0}, {0, 1, 0}}, {}, root);
+    {
+        const ExpressionEnvironmentScope scope(&environment);
+        EXPECT_FLOAT_EQ(Expression("map(\"mask\")").evaluate(s, 0, nullptr), 0.9f);  // luminance: component 4
+        EXPECT_FLOAT_EQ(Expression("map('mask', \"g\")").evaluate(s, 0, nullptr), 0.6f);
+        EXPECT_FLOAT_EQ(Expression("map(\"mask\", 3)").evaluate(s, 0, nullptr), 0.8f);
+        const Vec3f c = Expression("cmap(\"mask\")", {}, ExpressionType::Vector).evaluateVector(s, 0, nullptr);
+        expectVector(c, {0.5f, 0.6f, 0.7f});
+        EXPECT_FLOAT_EQ(Expression("map(\"mask\")").evaluateAt(root, nullptr), 0.9f);
+        EXPECT_THROW(Expression("map(\"other\")"), ExpressionError);  // no such map
+        EXPECT_THROW(Expression("map(\"mask\", \"q\")"), ExpressionError);
+        EXPECT_THROW(Expression("map(mask)"), ExpressionError);
+    }
+    EXPECT_FLOAT_EQ(Expression("map(\"mask\")").evaluate(s, 0, nullptr), 0.0f);  // no environment: 0
+
+    // In a groom: a vertex map on the scalp (the one a Map node reads) cuts the length by its
+    // green, as the color set's green as a map does.
+    auto scalp = std::make_shared<ScalpMesh>(*test::makePlane(8));
+    scalp->setCornerColors("cut", std::vector<ScalpMesh::Color>(scalp->triangleCount() * 3, ScalpMesh::Color{0.2f, 0.5f, 0.8f, 1.0f}));
+    GroomData d;
+    d.scalp = scalp;
+    std::string graph = defaultGraphJson();
+    const std::string from = "\"type\": \"Length\", \"params\": {\"fraction\": 1.0, \"randomness\": 0.2}";
+    graph.replace(graph.find(from), from.size(),
+                  R"j("type": "Length", "params": {"keep": {"expression": "map(\"cut\", \"g\")"}})j");
+    d.graphJson = graph;
+    GroomEvaluator painted(d);
+    const StrandsPtr mapped = painted.evaluate(1.0f, 0.0);
+    // Painted again (the color set's values change, the surface does not): the node reads the new map.
+    auto repainted = std::make_shared<ScalpMesh>(*scalp);
+    repainted->setCornerColors("cut", std::vector<ScalpMesh::Color>(scalp->triangleCount() * 3, ScalpMesh::Color{0.2f, 0.9f, 0.8f, 1.0f}));
+    painted.setScalp(repainted);
+    EXPECT_NE(painted.evaluate(1.0f, 0.0)->contentHash(), mapped->contentHash());
+    graph = defaultGraphJson();
+    const std::string colorSet = R"j("keep": {"colorSet": "cut", "component": "g"})j";
+    graph.replace(graph.find(from), from.size(), R"j("type": "Length", "params": {)j" + colorSet + "}");
+    d.graphJson = graph;
+    EXPECT_EQ(mapped->contentHash(), GroomEvaluator(d).evaluate(1.0f, 0.0)->contentHash());
+    // A map the groom does not have is the node's error.
+    graph.replace(graph.find(colorSet), colorSet.size(), R"j("keep": {"expression": "map(\"nothing\")"})j");
+    d.graphJson = graph;
+    EXPECT_THROW(GroomEvaluator(d).evaluate(1.0f, 0.0), GraphError);
+}
+
+TEST(Expression, VectorParamsTakeExpressions) {
+    // Gravity's direction per strand: an expression of [0, -1, 0] is the vec3 itself, bit for bit.
+    GroomData d;
+    d.scalp = test::makeSphere(12, 24, 1.0f);
+    const std::string base = defaultGraphJson();
+    const std::string from = "\"type\": \"Length\", \"params\": {\"fraction\": 1.0, \"randomness\": 0.2}";
+    auto withGravity = [&](const std::string& direction) {
+        std::string graph = base;
+        graph.replace(graph.find(from), from.size(),
+                      "\"type\": \"Gravity\", \"params\": {\"strength\": 0.6, \"direction\": " + direction + "}");
+        GroomData data = d;
+        data.graphJson = graph;
+        return GroomEvaluator(data).evaluate(1.0f, 0.0)->contentHash();
+    };
+    const std::uint64_t down = withGravity("[0, -1, 0]");
+    EXPECT_EQ(withGravity(R"j({"expression": "[0, -1, 0]"})j"), down);
+    EXPECT_EQ(withGravity(R"j({"expression": "[0, -0.5, 0] * 2"})j"), down);
+    EXPECT_NE(withGravity(R"j({"expression": "x > 0 ? [0, -1, 0] : [1, 0, 0]"})j"), down);
+    // A number where a vector is wanted, or a map that is not an expression: the node's error.
+    EXPECT_THROW(withGravity(R"j({"expression": "y"})j"), GraphError);
+    EXPECT_THROW(withGravity(R"j({"colorSet": "dir"})j"), GraphError);
+}
+
 #if GROOMLAB_HAS_TBB
+TEST(Expression, NewFunctionsMakeTheSameOnAnyThreadCount) {
+    GroomData d;
+    d.scalp = test::makeSphere(16, 32, 1.0f);
+    std::string graph = defaultGraphJson();
+    const std::string from = "\"type\": \"Length\", \"params\": {\"fraction\": 1.0, \"randomness\": 0.2}";
+    graph.replace(graph.find(from), from.size(),
+                  R"j("type": "Length", "params": {"keep": {"expression": "$c = voronoi(P * 4, 4); if ($c > 0.2) { $c = $c->contrast(0.7); } 0.4 + 0.3 * fbm(P * 3, 5) - 0.1 + $c * 0.2 + curve(pick(rand, 0, 4) / 4, 0, 0, 4, 1, 0.2, 4) + 0.05 * pnoise(P * 3, 2) + 0.05 * rand(-1, 1, 3)"}})j");
+    d.graphJson = graph;
+    const std::uint64_t all = GroomEvaluator(d).evaluate(1.0f, 0.0)->contentHash();
+    {
+        const tbb::global_control single(tbb::global_control::max_allowed_parallelism, 1);
+        EXPECT_EQ(GroomEvaluator(d).evaluate(1.0f, 0.0)->contentHash(), all);
+    }
+    {
+        const tbb::global_control pair(tbb::global_control::max_allowed_parallelism, 2);
+        EXPECT_EQ(GroomEvaluator(d).evaluate(1.0f, 0.0)->contentHash(), all);
+    }
+}
 #endif
 
+// Every builtin the editors list is named in the docs page's Functions section (in a `code` span,
+// alone or among others: `sin cos tan`) and described, and the GPU's codes (look.slang fieldCall's
+// cases) are one function's each.
 }  // namespace
 }  // namespace groomlab

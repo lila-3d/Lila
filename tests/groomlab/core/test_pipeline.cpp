@@ -35,6 +35,9 @@
 #include "groomlab/texture.h"
 #include "groomlab/usd_writer.h"
 #include "test_helpers.h"
+#include "groom/GroomEvaluator.h"
+
+using lila::groom::GroomEvaluator;
 
 namespace groomlab {
 namespace {
@@ -110,6 +113,29 @@ std::string readText(const fs::path& path) {
 
 // ---------------------------------------------------------------------------
 
+TEST(RestPose, KeepsTheSameStrandsOnADeformingScalp) {
+    const auto rest = sphere();
+    const StrandsPtr atRest = GroomEvaluator(groomData(rest)).evaluate(1.0f, 0.0);
+    ASSERT_GT(atRest->strandCount(), 500u);
+
+    // Without a rest pose the deformed areas change the strand count.
+    const auto moved = std::make_shared<ScalpMesh>(rest->withPoints(deformed(*rest)));
+    const StrandsPtr noRest = GroomEvaluator(groomData(moved)).evaluate(1.0f, 0.0);
+    EXPECT_NE(noRest->strandCount(), atRest->strandCount());
+
+    // With one, the same strands (IDs, roots) and the same clumps.
+    auto withRest = std::make_shared<ScalpMesh>(rest->withPoints(deformed(*rest)));
+    withRest->setRestPoints(rest->points());
+    const StrandsPtr blended = GroomEvaluator(groomData(withRest)).evaluate(1.0f, 0.0);
+    ASSERT_EQ(blended->strandCount(), atRest->strandCount());
+    EXPECT_EQ(blended->ids(), atRest->ids());
+    ASSERT_NE(blended->strandChannel("clumpId"), nullptr);
+    EXPECT_EQ(*blended->strandChannel("clumpId"), *atRest->strandChannel("clumpId"));
+    // And the strands moved with the scalp.
+    EXPECT_GT((blended->strandPoints(7)[0] - atRest->strandPoints(7)[0]).length(), 0.01f);
+    EXPECT_NEAR((blended->strandPoints(7)[0] - withRest->position(blended->roots()[7])).length(), 0.0f, 1e-5f);
+}
+
 TEST(RestPose, WithPointsKeepsMeshData) {
     auto mesh = std::make_shared<ScalpMesh>(*test::makePlane(2));
     std::vector<ScalpMesh::UV> uvs(mesh->triangleCount() * 3, {0.25f, 0.75f});
@@ -127,6 +153,61 @@ TEST(RestPose, WithPointsKeepsMeshData) {
     EXPECT_NE(moved.contentHash(), mesh->contentHash());
     EXPECT_THROW(mesh->setRestPoints({{0, 0, 0}}), std::invalid_argument);
     EXPECT_THROW((void)mesh->withPoints({{0, 0, 0}}), std::invalid_argument);
+}
+
+TEST(GroomFile, RoundTripsAndEvaluatesIdentically) {
+    auto scalp = std::make_shared<ScalpMesh>(sphere()->withPoints(deformed(*sphere())));
+    scalp->setRestPoints(sphere()->points());
+    std::vector<ScalpMesh::UV> uvs(scalp->triangleCount() * 3);
+    for (std::size_t i = 0; i < uvs.size(); ++i) uvs[i] = {0.001f * static_cast<float>(i % 997), 0.3f};
+    scalp->setCornerUVs(uvs);
+    scalp->setCornerColors("mask", std::vector<ScalpMesh::Color>(scalp->triangleCount() * 3, {0.1f, 0.2f, 0.3f, 1}));
+
+    GroomFile file;
+    file.data = groomData(scalp);
+    auto flat = std::make_shared<GuideSet>();
+    flat->add(77, test::straightCurve({0, -1, 0}, {0, -0.5f, 0.1f}, 5));
+    flat->rootOnMesh(*scalp);
+    file.data.guides = flat;
+    file.scalpCache = {"caches/scalp.abc", "headShape"};
+    file.framesPerSecond = 30.0;
+    file.source = "test";
+    // The painted maps' catalog: a gray vertex map, a color one (its channels kept, so it comes
+    // back as a color map however gray its values), a texture map's file.
+    file.data.maps["mask"] = {"vertices", "", 1};
+    file.data.maps["tint"] = {"vertices", "", 4};
+    file.data.maps["detail"] = {"texture", "masks/hair/detail.png", 1};
+
+    const std::string text = groomFileToJson(file);
+    const GroomFile back = groomFileFromJson(text, "C:/shots/a");
+    EXPECT_EQ(back.framesPerSecond, 30.0);
+    EXPECT_EQ(back.source, "test");
+    ASSERT_EQ(back.data.maps.size(), 3u);
+    EXPECT_EQ(back.data.maps.at("mask").channels, 1);
+    EXPECT_EQ(back.data.maps.at("tint").channels, 4);
+    EXPECT_EQ(back.data.maps.at("detail").kind, "texture");
+    EXPECT_EQ(back.data.maps.at("detail").texture, "masks/hair/detail.png");
+    EXPECT_EQ(fs::path(back.scalpCache.file), fs::path("C:/shots/a/caches/scalp.abc").lexically_normal());
+    EXPECT_EQ(back.scalpCache.object, "headShape");
+    EXPECT_TRUE(back.guideCache.empty());
+    ASSERT_TRUE(back.data.scalp);
+    EXPECT_EQ(back.data.scalp->contentHash(), scalp->contentHash());  // points, triangles, UVs, colors, rest
+    ASSERT_TRUE(back.data.guides);
+    EXPECT_EQ(back.data.guides->contentHash(), flat->contentHash());
+    EXPECT_EQ(groomFileToJson(groomFileFromJson(text)), text);  // exact text round trip
+
+    const StrandsPtr a = GroomEvaluator(file.data).evaluate(1.0f, 0.5);
+    const StrandsPtr b = GroomEvaluator(back.data).evaluate(1.0f, 0.5);
+    ASSERT_EQ(a->strandCount(), b->strandCount());
+    EXPECT_EQ(a->ids(), b->ids());
+    EXPECT_EQ(a->positions(), b->positions());  // exact, not approximate
+    EXPECT_EQ(a->widths(), b->widths());
+
+    const fs::path path = fs::temp_directory_path() / "groomlab_test.groom";
+    writeGroomFile(path.u8string(), file);
+    const GroomFile fromDisk = readGroomFile(path.u8string());
+    EXPECT_EQ(fromDisk.scalpCache.file, (path.parent_path() / "caches/scalp.abc").lexically_normal().string());
+    fs::remove(path);
 }
 
 TEST(Paths, OneRuleForStoredPaths) {
@@ -204,6 +285,59 @@ TEST(Paths, AGroomFilesPathsResolveThroughItsFolderAndSearchPaths) {
     fs::remove_all(root);
 }
 
+TEST(GroomFile, RejectsOtherFilesAndNewerVersions) {
+    EXPECT_THROW(groomFileFromJson("not json"), GroomFileError);
+    EXPECT_THROW(groomFileFromJson(R"({"version": 1})"), GroomFileError);
+    EXPECT_THROW(groomFileFromJson(R"({"format": "groomlab.groom", "version": 99})"), GroomFileError);
+    EXPECT_THROW(groomFileFromJson(R"({"format": "groomlab.groom", "version": 1, "scalp": {"points": [1, 2]}})"),
+                 GroomFileError);
+    EXPECT_THROW(readGroomFile("no/such/file.groom"), GroomFileError);
+    const GroomFile empty = groomFileFromJson(R"({"format": "groomlab.groom", "version": 1})");
+    EXPECT_FALSE(empty.data.scalp);
+    EXPECT_NO_THROW(GroomEvaluator{empty.data}.evaluate(1.0f, 0.0));  // default graph, nothing to grow on
+}
+
+TEST(GuidePoses, ChildrenFollowPosedParents) {
+    const auto scalp = sphere();
+    GuideHierarchy h = GuideHierarchy::fromJson(hierarchyJson());
+    h.evaluate(scalp.get());
+    const GuideHierarchy authored = h;
+
+    const HierarchyGuide& parent = h.guides().front();
+    ASSERT_FALSE(parent.isChild());
+    const std::vector<GuideId> children = h.childrenOf(parent.id);
+    ASSERT_FALSE(children.empty());
+
+    // Swing the parent's tip sideways, as a simulation would.
+    GuideSet poses;
+    std::vector<Vec3f> swung = parent.points;
+    for (std::size_t i = 1; i < swung.size(); ++i) swung[i] += Vec3f{0.5f, 0.0f, 0.0f} * (static_cast<float>(i) / (swung.size() - 1));
+    poses.add(parent.id, swung);
+    poses.add(999999, swung);  // unknown IDs are ignored
+    applyGuidePoses(h, poses, scalp.get());
+
+    EXPECT_EQ(h.guide(parent.id)->points, swung);
+    const Vec3f tipBefore = authored.guide(children[0])->points.back();
+    const Vec3f tipAfter = h.guide(children[0])->points.back();
+    EXPECT_GT(tipAfter.x - tipBefore.x, 0.3f);
+    // Guides under other parents are untouched.
+    const HierarchyGuide& other = h.guides()[1];
+    EXPECT_EQ(other.points, authored.guide(other.id)->points);
+
+    // A fresh evaluate restores the authored shape.
+    h.evaluate(scalp.get());
+    EXPECT_LT((h.guide(parent.id)->points.back() - authored.guide(parent.id)->points.back()).length(), 1e-5f);
+
+    // Through Groom: poses move the strands grown from the posed guides.
+    GroomData d = groomData(scalp);
+    GroomEvaluator groom(d);
+    const StrandsPtr before = groom.evaluate(1.0f, 0.0);
+    groom.setGuidePoses(std::make_shared<GuideSet>(poses));
+    const StrandsPtr after = groom.evaluate(1.0f, 0.0);
+    ASSERT_EQ(before->strandCount(), after->strandCount());
+    EXPECT_NE(before->positions(), after->positions());
+}
+
 // kLookGraph with an Instance node before the output: one instance per strand, 0.8 along it.
 // `extra`: more of its params (", \"name\": value...").
 std::string instanceGraph(bool pin, const std::string& extra = "") {
@@ -264,6 +398,66 @@ std::size_t expectInstancesAt(const StrandSet& rest, const StrandSet& now, bool 
     return changed;
 }
 
+TEST(InstancePinToRest, StretchedStrandsKeepTheirInstancesDistanceFromTheRoot) {
+    const auto scalp = sphere();
+    for (const bool pin : {false, true}) {
+        GroomData d = groomData(scalp);
+        d.graphJson = instanceGraph(pin);
+        GroomEvaluator groom(d);
+        const StrandsPtr rest = groom.evaluate(1.0f, 0.0);
+        ASSERT_TRUE(rest->instances());
+        // At rest, pinned or not, the instances sit at t.
+        expectInstancesAt(*rest, *rest, false, 2.0f);
+
+        // Stretched (a simulation, a cache): pinned, the same distance from the root; else they slide out.
+        groom.setGuidePoses(scaledPoses(scalp, 1.5f));
+        const StrandsPtr stretched = groom.evaluate(1.0f, 1.0 / 24.0);
+        ASSERT_EQ(stretched->ids(), rest->ids());
+        EXPECT_GT(expectInstancesAt(*rest, *stretched, pin, 1.2f), stretched->strandCount() / 2);
+
+        // Shrunk below the rest distance: pinned, at the tip.
+        groom.setGuidePoses(scaledPoses(scalp, 0.5f));
+        const StrandsPtr shrunk = groom.evaluate(1.0f, 2.0 / 24.0);
+        expectInstancesAt(*rest, *shrunk, pin, 0.0f);
+
+        // The rest pose doesn't change with the poses: evaluated once, when first needed.
+        EXPECT_EQ(groom.restEvaluations(), pin ? 1u : 0u);
+    }
+}
+
+TEST(InstancePinToRest, RestPoseIsEvaluatedOncePerEditNotPerFrame) {
+    // A deforming scalp with a rest pose, one-shot caching off (renders): the rest inputs'
+    // hash keeps the rest pose across motion keys and frames.
+    auto frame = [](float amount) {
+        auto s = std::make_shared<ScalpMesh>(sphere()->withPoints(deformed(*sphere())));
+        std::vector<Vec3f> pts = s->points();
+        for (Vec3f& p : pts) p = p * (1.0f + amount);
+        auto moved = std::make_shared<ScalpMesh>(s->withPoints(pts));
+        moved->setRestPoints(sphere()->points());
+        return moved;
+    };
+    GroomData d = groomData(frame(0.0f));
+    d.graphJson = instanceGraph(true);
+    GroomEvaluator groom(d);
+    groom.setCacheIntermediates(false);
+    StrandsPtr first = groom.evaluate(1.0f, 0.0);
+    for (int k = 1; k <= 3; ++k) {
+        groom.setScalp(frame(0.05f * k));
+        groom.setGuidePoses(scaledPoses(sphere(), 1.0f + 0.1f * k));
+        const StrandsPtr now = groom.evaluate(1.0f, k / 24.0);
+        ASSERT_EQ(now->ids(), first->ids());
+    }
+    EXPECT_EQ(groom.restEvaluations(), 1u);
+
+    // The rest pose is the groom's at rest: on the rest scalp, as authored. Pinned instances on
+    // the unposed groom evaluated on the rest scalp sit exactly at t.
+    GroomData atRest = groomData(sphere());
+    atRest.graphJson = instanceGraph(true);
+    const StrandsPtr restStrands = GroomEvaluator(atRest).evaluate(1.0f, 0.0);
+    const StrandsPtr moved = groom.evaluate(1.0f, 5.0 / 24.0);
+    expectInstancesAt(*restStrands, *moved, true, 2.0f);
+}
+
 // Checks each fitted instance of `now`: `fraction` of its strand's length in `rest` along +Y,
 // `aspect` of that across. Returns how many strands grew by more than `grew` from rest to now.
 std::size_t expectFittedToRest(const StrandSet& rest, const StrandSet& now, float fraction, float aspect, float grew) {
@@ -283,6 +477,62 @@ std::size_t expectFittedToRest(const StrandSet& rest, const StrandSet& now, floa
         EXPECT_NEAR(p.z.length(), aspect * p.y.length(), 1e-5f) << "strand " << id;
     }
     return changed;
+}
+
+TEST(InstanceFitStrand, SizeComesFromTheRestLengthWhileStrandsStretch) {
+    const auto scalp = sphere();
+    const std::string fit =
+        R"(, "sizeMode": "fitStrand", "fitScale": 0.5, "aspect": 0.2, "scaleRandom": 0.0, "scaleByWidth": false)";
+    GroomData d = groomData(scalp);
+    d.graphJson = instanceGraph(false, fit);
+    GroomEvaluator groom(d);
+    const StrandsPtr rest = groom.evaluate(1.0f, 0.0);
+    ASSERT_TRUE(rest->instances());
+    EXPECT_EQ(groom.restEvaluations(), 1u);  // fitStrand alone asks for the rest pose
+    expectFittedToRest(*rest, *rest, 0.5f, 0.2f, 2.0f);
+
+    // Fixed mode (the same node otherwise) never reads the rest pose, and keeps its size.
+    GroomData f = groomData(scalp);
+    f.graphJson = instanceGraph(false, R"(, "scaleRandom": 0.0, "scaleByWidth": false)");
+    GroomEvaluator fixed(f);
+    fixed.evaluate(1.0f, 0.0);
+
+    // Stretching guides (a simulation): the length now grows, the fitted size holds at the rest length.
+    for (int k = 1; k <= 3; ++k) {
+        groom.setGuidePoses(scaledPoses(scalp, 1.0f + 0.25f * k));
+        const StrandsPtr now = groom.evaluate(1.0f, k / 24.0);
+        ASSERT_EQ(now->ids(), rest->ids());
+        EXPECT_GT(expectFittedToRest(*rest, *now, 0.5f, 0.2f, 1.0f + 0.1f * k), now->strandCount() / 2);
+        fixed.setGuidePoses(scaledPoses(scalp, 1.0f + 0.25f * k));
+        const StrandsPtr still = fixed.evaluate(1.0f, k / 24.0);
+        for (const auto& p : still->instances()->resolve(*still)) {
+            EXPECT_NEAR(p.x.length(), 0.02f, 1e-6f);
+            EXPECT_NEAR(p.y.length(), 0.02f, 1e-6f);
+        }
+    }
+    EXPECT_EQ(groom.restEvaluations(), 1u);  // once, not per frame
+    EXPECT_EQ(fixed.restEvaluations(), 0u);
+
+    // Renders (caching off) on a deforming scalp with a rest pose: once across frames and motion keys.
+    auto frame = [](float amount) {
+        auto s = std::make_shared<ScalpMesh>(sphere()->withPoints(deformed(*sphere())));
+        std::vector<Vec3f> pts = s->points();
+        for (Vec3f& p : pts) p = p * (1.0f + amount);
+        auto moved = std::make_shared<ScalpMesh>(s->withPoints(pts));
+        moved->setRestPoints(sphere()->points());
+        return moved;
+    };
+    GroomData r = groomData(frame(0.0f));
+    r.graphJson = instanceGraph(false, fit);
+    GroomEvaluator render(r);
+    render.setCacheIntermediates(false);
+    for (int k = 0; k <= 4; ++k) {
+        render.setScalp(frame(0.05f * k));
+        render.setGuidePoses(scaledPoses(sphere(), 1.0f + 0.1f * k));
+        const StrandsPtr now = render.evaluate(1.0f, (k / 2) / 24.0 + (k % 2) * 0.01);
+        expectFittedToRest(*rest, *now, 0.5f, 0.2f, 100.0f);  // the same rest pose as the undeformed groom's
+    }
+    EXPECT_EQ(render.restEvaluations(), 1u);
 }
 
 TEST(UsdWriter, WritesInstancesAsAPointInstancer) {
@@ -397,6 +647,51 @@ TEST(UsdWriter, GivesPrototypesUniquePrimNamesAndQuotesNothing) {
     EXPECT_NE(text.find("def Xform \"a_b_2\" (\n                doc = \"GroomLab prototype 'a_b': "), std::string::npos) << text;
     EXPECT_NE(text.find("doc = \"GroomLab prototype 'say 'hi' ': "), std::string::npos) << text;
     EXPECT_NE(text.find(": shot '12' line two\"\n"), std::string::npos) << text;
+}
+
+TEST(UsdWriter, WritesTimeSampledBasisCurves) {
+    const auto rest = sphere();
+    auto scalp = std::make_shared<ScalpMesh>(*rest);
+    scalp->setCornerUVs(std::vector<ScalpMesh::UV>(scalp->triangleCount() * 3, {0.5f, 0.25f}));
+    GroomEvaluator groom(groomData(scalp));
+    const StrandsPtr f1 = groom.evaluate(0.2f, 1.0 / 24.0);
+
+    const fs::path path = fs::temp_directory_path() / "groomlab_test.usda";
+    {
+        UsdCurvesWriter::Options options;
+        options.comment = "shot \"010\"";
+        UsdCurvesWriter w(path.u8string(), "groom:1", options);
+        w.writeFrame(1.0, *f1, scalp.get());
+        w.writeFrame(2.0, *f1, scalp.get());
+        EXPECT_THROW(w.writeFrame(2.0, *f1, scalp.get()), UsdError);
+        EXPECT_EQ(w.frameCount(), 2u);
+    }  // closed by the destructor
+    const std::string text = readText(path);
+    EXPECT_EQ(text.rfind("#usda 1.0\n", 0), 0u);
+    EXPECT_NE(text.find("defaultPrim = \"groom_1\""), std::string::npos);
+    EXPECT_NE(text.find("doc = \"GroomLab"), std::string::npos);
+    EXPECT_NE(text.find("startTimeCode = 1\n"), std::string::npos);
+    EXPECT_NE(text.find("endTimeCode = 2\n"), std::string::npos);
+    EXPECT_NE(text.find("def BasisCurves \"strands\""), std::string::npos);
+    EXPECT_NE(text.find("uniform token type = \"linear\""), std::string::npos);
+    EXPECT_NE(text.find("point3f[] points.timeSamples = {\n        1: [("), std::string::npos);
+    EXPECT_NE(text.find("        2: [("), std::string::npos);
+    EXPECT_NE(text.find("int64[] primvars:strandId (\n            interpolation = \"uniform\""), std::string::npos);
+    EXPECT_NE(text.find("texCoord2f[] primvars:st.timeSamples = {\n        1: [(0.5, 0.25)"), std::string::npos);
+    EXPECT_NE(text.find("float[] primvars:clumpId"), std::string::npos);
+    EXPECT_NE(text.find("float[] widths (\n            interpolation = \"vertex\""), std::string::npos);
+    // One count per strand in the first sample.
+    const std::size_t counts = text.find("int[] curveVertexCounts.timeSamples = {\n        1: [");
+    ASSERT_NE(counts, std::string::npos);
+    const std::size_t lineEnd = text.find('\n', counts + 45);
+    const std::string line = text.substr(counts, lineEnd - counts);
+    EXPECT_EQ(static_cast<std::size_t>(std::count(line.begin(), line.end(), ',')), f1->strandCount());
+
+    for (const auto& entry : fs::directory_iterator(path.parent_path())) {
+        EXPECT_EQ(entry.path().filename().u8string().find("groomlab_test.usda.spool"), std::string::npos);
+    }
+    fs::remove(path);
+    EXPECT_EQ(usdIdentifier("9lives:a|b"), "_9lives_a_b");
 }
 
 TEST(UsdWriter, WritesDisplayColorAndUniquePrimvarNames) {
@@ -553,6 +848,73 @@ TEST(GroomFile, WritesItsUpAxisAndCardBake) {
     EXPECT_THROW(groomFileFromJson(R"({"format": "groomlab.groom", "version": 1, "upAxis": "up"})"), GroomFileError);
 }
 
+TEST(GroomFile, TurnsIntoAnotherUpAxis) {
+    // A Z-up file read Y-up: the scalp, its rest pose, the flat guides and the hierarchy turn a
+    // quarter about X, rooted guides (their shapes in their roots' frames) and unrooted ones (world
+    // shapes) alike; the groom grows the same, turned.
+    auto scalp = std::make_shared<ScalpMesh>(sphere()->withPoints(deformed(*sphere())));
+    scalp->setRestPoints(sphere()->points());
+    scalp->setCornerUVs(std::vector<ScalpMesh::UV>(scalp->triangleCount() * 3, {0.25f, 0.5f}));
+    GroomFile file;
+    file.data = groomData(scalp);
+    file.upAxis = "Z";
+    auto flat = std::make_shared<GuideSet>();
+    flat->add(77, test::straightCurve({0, -1, 0}, {0, -0.5f, 0.1f}, 5));
+    file.data.guides = flat;
+    auto turn = [](const Vec3f& p) { return Vec3f(p.x, p.z, -p.y); };
+
+    for (const bool rooted : {true, false}) {
+        GroomFile z = file;
+        if (!rooted) {  // world shapes only (as a host writes guides it never bound)
+            GuideHierarchy h;
+            const GroupId g = h.addGroup("primary");
+            for (int i = 0; i < 6; ++i) {
+                const float a = 6.2831853f * static_cast<float>(i) / 6.0f;
+                const Vec3f n = Vec3f{std::cos(a) * 0.5f, 0.85f, std::sin(a) * 0.5f}.normalized();
+                h.addGuide(g, test::straightCurve(n, n * 0.7f + Vec3f{0.1f, 0.0f, 0.1f}, 5));
+            }
+            z.data.hierarchyJson = h.toJson();
+        }
+        GroomFile y = z;
+        convertUpAxis(y, "Y");
+        EXPECT_EQ(y.upAxis, "Y");
+        ASSERT_EQ(y.data.scalp->pointCount(), scalp->pointCount());
+        for (std::size_t i = 0; i < scalp->pointCount(); ++i) {
+            EXPECT_EQ(y.data.scalp->points()[i], turn(scalp->points()[i]));
+            EXPECT_EQ(y.data.scalp->restPoints()[i], turn(scalp->restPoints()[i]));
+        }
+        EXPECT_EQ(y.data.scalp->triangles(), scalp->triangles());
+        EXPECT_EQ(y.data.scalp->cornerUVs(), scalp->cornerUVs());
+        EXPECT_EQ(y.data.guides->guides()[0].points[4], turn(flat->guides()[0].points[4]));
+
+        const StrandsPtr a = GroomEvaluator(z.data).evaluate(1.0f, 0.5);
+        const StrandsPtr b = GroomEvaluator(y.data).evaluate(1.0f, 0.5);
+        ASSERT_GT(a->strandCount(), 100u);
+        ASSERT_EQ(a->ids(), b->ids());
+        // (Interpolate keeps its strands clear of the bent scalp through its rest pose's field, each
+        // point taken there by its nearest vertex's frame: where two vertices are about as near,
+        // rounding picks one, and the lift differs by the bend between them. A few points near
+        // the skin, by a percent of the radius at most.)
+        float worst = 0.0f;
+        std::size_t apart = 0;
+        for (std::size_t i = 0; i < a->positions().size(); ++i) {
+            const float d = (b->positions()[i] - turn(a->positions()[i])).length();
+            worst = std::max(worst, d);
+            if (d >= 1e-3f) ++apart;
+        }
+        EXPECT_LT(worst, 0.02f) << (rooted ? "rooted" : "unrooted");
+        EXPECT_LT(apart, a->positions().size() / 200) << (rooted ? "rooted" : "unrooted");
+
+        // And back: the points exactly as they were (a turn swaps and negates).
+        convertUpAxis(y, "Z");
+        EXPECT_EQ(y.data.scalp->contentHash(), z.data.scalp->contentHash());
+        EXPECT_EQ(GuideHierarchy::fromJson(y.data.hierarchyJson).toJson(), GuideHierarchy::fromJson(z.data.hierarchyJson).toJson());
+        convertUpAxis(y, "Z");  // already: nothing
+        EXPECT_EQ(y.data.scalp->contentHash(), z.data.scalp->contentHash());
+    }
+    EXPECT_THROW(convertUpAxis(file, "W"), GroomFileError);
+}
+
 // The look graph with a Gravity (straight down in a Z-up world, as a Z-up host writes it), a
 // Direction leaving its direction out (its default, Y-up's down: a direction of that file's world
 // all the same) and (with `collide`) a ColliderMesh "ball" through a Collide, before the widths.
@@ -600,6 +962,159 @@ nlohmann::json nodeParams(const std::string& graphJson, const std::string& node)
         if (n["name"] == node) return n.value("params", nlohmann::json::object());
     }
     return nullptr;
+}
+
+TEST(GroomFile, TurnsWorldDirectionsWithItsPoints) {
+    // Every param that is a world direction says so in its spec (worldDirection), and turns with
+    // the points: a Z-up groom read Y-up grows the same hair, turned, Gravity and Direction (by its
+    // default) included; a collider of the file's turns with it. (Collide itself is left out of the
+    // comparison: a point deep in a mesh is pushed out by its nearest side, which a rounding can flip.)
+    const auto specs = nlohmann::json::parse(operatorSpecsJson());
+    std::set<std::string> flagged;
+    for (const auto& op : specs) {
+        for (const auto& p : op["params"]) {
+            if (p.value("worldDirection", false)) flagged.insert(op["type"].get<std::string>() + "." + p["name"].get<std::string>());
+        }
+    }
+    EXPECT_EQ(flagged, (std::set<std::string>{"Displace.direction", "Gravity.direction", "Clump.flatDirection",
+                                              "Mirror.axis", "Simulate.currentDirection", "Simulate.gravityDirection",
+                                              "Simulate.windDirection", "Wind.direction", "Bend.direction", "Direction.direction", "Plume.direction",
+                                              "Transform.pivot", "Curl.weightDirection"}));
+
+    auto scalp = std::make_shared<ScalpMesh>(sphere()->withPoints(sphere()->points()));
+    GroomFile z;
+    z.data = groomData(scalp);
+    z.data.graphJson = worldDirectionGraph(false);
+    z.data.meshes["ball"] = ball();
+    z.upAxis = "Z";
+    GroomFile y = z;
+    convertUpAxis(y, "Y");
+    auto turn = [](const Vec3f& p) { return Vec3f(p.x, p.z, -p.y); };
+    EXPECT_EQ(nodeParams(y.data.graphJson, "gravity")["direction"], nlohmann::json::array({0.0, -1.0, -0.0}));
+    EXPECT_EQ(nodeParams(y.data.graphJson, "comb")["direction"], nlohmann::json::array({0.0, 0.0, 1.0}));  // its default, turned
+    ASSERT_TRUE(y.data.meshes.count("ball"));
+    const ScalpMesh& b = *y.data.meshes.at("ball");
+    EXPECT_EQ(b.points()[3], turn(z.data.meshes.at("ball")->points()[3]));
+    EXPECT_EQ(b.restPoints()[3], turn(z.data.meshes.at("ball")->restPoints()[3]));
+
+    const StrandsPtr a = GroomEvaluator(z.data).evaluate(1.0f, 0.5);
+    const StrandsPtr c = GroomEvaluator(y.data).evaluate(1.0f, 0.5);
+    ASSERT_GT(a->strandCount(), 100u);
+    ASSERT_EQ(a->ids(), c->ids());
+    float worst = 0.0f;
+    for (std::size_t i = 0; i < a->positions().size(); ++i) worst = std::max(worst, (c->positions()[i] - turn(a->positions()[i])).length());
+    EXPECT_LT(worst, 1e-3f);
+    // Without turning the params, Gravity would pull sideways in the turned world.
+    GroomFile unturned = y;
+    unturned.data.graphJson = z.data.graphJson;
+    const StrandsPtr wrong = GroomEvaluator(unturned.data).evaluate(1.0f, 0.5);
+    float off = 0.0f;
+    for (std::size_t i = 0; i < a->positions().size(); ++i) off = std::max(off, (wrong->positions()[i] - turn(a->positions()[i])).length());
+    EXPECT_GT(off, 0.05f);
+
+    // And back: the params as they were (a turn swaps and negates).
+    convertUpAxis(y, "Z");
+    EXPECT_EQ(nodeParams(y.data.graphJson, "gravity")["direction"], nlohmann::json::array({0.0, 0.0, -1.0}));
+    EXPECT_EQ(nodeParams(y.data.graphJson, "comb")["direction"], nlohmann::json::array({0.0, -1.0, 0.0}));
+    EXPECT_EQ(y.data.meshes.at("ball")->contentHash(), z.data.meshes.at("ball")->contentHash());
+}
+
+
+TEST(GroomFile, KeepsColliders) {
+    // The ColliderMesh nodes' meshes are stored with the groom (points, triangles, polygons, the
+    // render's subdivision, the rest pose): a reader's Collide is the writer's, bit for bit.
+    auto scalp = std::make_shared<ScalpMesh>(sphere()->withPoints(sphere()->points()));
+    GroomFile file;
+    file.data = groomData(scalp);
+    file.data.graphJson = worldDirectionGraph(true);
+    auto collider = std::make_shared<ScalpMesh>(*ball());
+    collider->setRenderSubdivision(1, "test");
+    file.data.meshes["ball"] = collider;
+    const GroomFile back = groomFileFromJson(groomFileToJson(file));
+    ASSERT_EQ(back.data.meshes.size(), 1u);
+    const ScalpMesh& b = *back.data.meshes.at("ball");
+    EXPECT_EQ(b.contentHash(), collider->contentHash());
+    EXPECT_EQ(b.restPoints(), collider->restPoints());
+    EXPECT_EQ(b.renderSubdivision(), 1);
+    const StrandsPtr written = GroomEvaluator(file.data).evaluate(1.0f, 0.0);
+    const StrandsPtr read = GroomEvaluator(back.data).evaluate(1.0f, 0.0);
+    ASSERT_EQ(written->positions().size(), read->positions().size());
+    EXPECT_EQ(0, std::memcmp(written->positions().data(), read->positions().data(), written->positions().size() * sizeof(Vec3f)));
+    GroomData without = file.data;
+    without.meshes.clear();
+    EXPECT_NE(GroomEvaluator(without).evaluate(1.0f, 0.0)->positions(), written->positions());  // the ball does push the hair
+    EXPECT_EQ(groomFileToJson(GroomFile{}).find("colliders"), std::string::npos);  // none: not written
+}
+
+TEST(GroomFile, KnowsTheScalpItWasMadeOn) {
+    // The scalp's fingerprint (its point count and triangles) is written with it; a session fed
+    // a scalp of another vertex order or triangulation says so in its errors, a deformed one of the
+    // same topology does not.
+    const auto scalp = sphere();
+    GroomFile file;
+    file.data = groomData(scalp);
+    const std::string text = groomFileToJson(file);
+    EXPECT_NE(text.find("\"topology\":\"" + scalpFingerprintText(scalp->topologyFingerprint()) + "\""), std::string::npos);
+    const GroomFile back = groomFileFromJson(text);
+    EXPECT_EQ(back.data.scalpFingerprint, scalp->topologyFingerprint());
+    EXPECT_EQ(parseScalpFingerprint(scalpFingerprintText(back.data.scalpFingerprint)), back.data.scalpFingerprint);
+
+    auto errorsWith = [&](MeshPtr fed) {
+        GroomEvaluator session(back.data);
+        session.setScalp(std::move(fed));
+        GroomEvaluator::Request request;
+        return session.evaluate(request).errors;
+    };
+    auto has = [](const std::vector<std::string>& errors) {
+        return std::find(errors.begin(), errors.end(), std::string(lila::groom::kScalpTopologyChanged)) != errors.end();
+    };
+    EXPECT_FALSE(has(errorsWith(scalp)));
+    EXPECT_FALSE(has(errorsWith(std::make_shared<ScalpMesh>(scalp->withPoints(deformed(*scalp))))));  // a pose
+    // Each triangle's corners turned (the same faces, another corner first): other triangles.
+    std::vector<ScalpMesh::Triangle> turned = scalp->triangles();
+    for (auto& t : turned) t = {t[1], t[2], t[0]};
+    const std::vector<std::string> errors = errorsWith(std::make_shared<ScalpMesh>(scalp->points(), turned));
+    EXPECT_TRUE(has(errors));
+    // The strands come all the same.
+    GroomEvaluator session(back.data);
+    session.setScalp(std::make_shared<ScalpMesh>(scalp->points(), turned));
+    GroomEvaluator::Request request;
+    EXPECT_GT(session.evaluate(request).strands->strandCount(), 100u);
+    session.setScalpFingerprint(0);  // moved there on purpose: not known, nothing said
+    EXPECT_FALSE(has(session.evaluate(request).errors));
+    // A file whose scalp has no stored fingerprint takes its own.
+    nlohmann::json j = nlohmann::json::parse(text);
+    j["scalp"].erase("topology");
+    EXPECT_EQ(groomFileFromJson(j.dump()).data.scalpFingerprint, scalp->topologyFingerprint());
+}
+
+TEST(FrameTime, OneRuleForEveryHost) {
+    // frame / fps, an NTSC rate exact however it is spelled: Maya's 23.976023976..., a typed 23.976.
+    for (const double fps : {24.0, 25.0, 30.0, 12.5}) {
+        for (int f = -10; f <= 500; ++f) EXPECT_EQ(frameToSeconds(f, fps), f / fps);
+        EXPECT_EQ(canonicalFramesPerSecond(fps), fps);
+    }
+    const struct {
+        double spelled, base;
+    } ntsc[] = {{23.976, 24.0}, {24000.0 / 1001.0, 24.0}, {23.976023976023978, 24.0}, {29.97, 30.0}, {30000.0 / 1001.0, 30.0},
+                {59.94, 60.0}, {47.952, 48.0}, {119.88, 120.0}};
+    for (const auto& r : ntsc) {
+        EXPECT_EQ(canonicalFramesPerSecond(r.spelled), r.base * 1000.0 / 1001.0) << r.spelled;
+        for (int f = -10; f <= 2000; ++f) {
+            const double seconds = frameToSeconds(f, r.spelled);
+            EXPECT_EQ(seconds, f * 1001.0 / (r.base * 1000.0)) << r.spelled << " " << f;
+            EXPECT_EQ(std::lround(secondsToFrame(seconds, r.spelled)), f);
+            EXPECT_NEAR(secondsToFrame(seconds, r.spelled), f, 1e-9);
+        }
+        EXPECT_EQ(frameToSeconds(7.25, r.spelled), 7.25 * 1001.0 / (r.base * 1000.0));  // a motion key
+    }
+    EXPECT_EQ(frameToSeconds(48.0, 0.0), 2.0);  // a bad rate is 24
+    EXPECT_EQ(frameToSeconds(48.0, -5.0), 2.0);
+    EXPECT_EQ(canonicalFramesPerSecond(23.98), 23.98);  // not an NTSC rate
+    // The session's rate is the rule's (Simulate's steps are the same whoever set it).
+    GroomEvaluator session;
+    session.setFramesPerSecond(23.976);
+    EXPECT_EQ(session.framesPerSecond(), 24000.0 / 1001.0);
 }
 
 TEST(GroomFile, PaintedMapsComeBackFromTheScalp) {
@@ -788,6 +1303,66 @@ void expectSameCards(const StrandSet& a, const StrandSet& b, const std::string& 
         EXPECT_EQ(x.u, y.u) << what;
         EXPECT_EQ(x.v, y.v) << what;
         for (std::size_t c = 0; c < x.cards.size(); ++c) EXPECT_EQ(x.cards[c].strands, y.cards[c].strands) << what;
+    }
+}
+
+TEST(Groom, SwappedLodGraphsReuseWhatComesBeforeTheirCards) {
+    // An export's LODs through one Groom: each the same as a fresh Groom of that graph makes, and
+    // only Cards and the output run again (Scatter, Interpolate and the clumps are adopted).
+    GroomData data = groomData(sphere());
+    data.graphJson = cardLod(40);
+    GroomEvaluator groom(data);
+    const StrandsPtr first = groom.evaluate(1.0f, 0.0, true);
+    ASSERT_TRUE(first);
+    ASSERT_FALSE(first->cardLayers().empty());
+    for (const int maxCards : {20, 8, 40}) {
+        groom.setGraphJson(cardLod(maxCards));
+        EXPECT_EQ(groom.data().graphJson, cardLod(maxCards));
+        const StrandsPtr swapped = groom.evaluate(1.0f, 0.0, true);
+        EXPECT_EQ(groom.evaluationCount(), 2u) << "LOD " << maxCards << ": more than Cards and the output ran";
+        GroomData fresh = data;
+        fresh.graphJson = cardLod(maxCards);
+        const StrandsPtr expected = GroomEvaluator(fresh).evaluate(1.0f, 0.0, true);
+        ASSERT_TRUE(swapped && expected);
+        expectSameCards(*swapped, *expected, "LOD " + std::to_string(maxCards));
+        EXPECT_LE(swapped->cardLayers()[0]->cards.size(), static_cast<std::size_t>(maxCards));
+    }
+    // A graph that does not load leaves the groom as it was.
+    EXPECT_THROW(groom.setGraphJson("{not json"), GraphError);
+    EXPECT_EQ(groom.data().graphJson, cardLod(40));
+    const StrandsPtr again = groom.evaluate(1.0f, 0.0, true);
+    EXPECT_EQ(groom.evaluationCount(), 2u);  // the last LOD's results, all cached
+    expectSameCards(*again, *first, "after a bad graph");
+    // A change upstream runs from there on: Scatter and everything after it.
+    std::string denser = cardLod(40);
+    const std::string density = R"("density": 300.0)";
+    denser.replace(denser.find(density), density.size(), R"("density": 320.0)");
+    groom.setGraphJson(denser);
+    ASSERT_TRUE(groom.evaluate(1.0f, 0.0, true));
+    EXPECT_EQ(groom.evaluationCount(), 6u);  // scatter, interpolate, clump, width, cards, output
+}
+
+TEST(Groom, ASwappedGraphCarriesTheRestPoseAlong) {
+    // Instances pinned to rest: after a swap the rest pose is the new graph's, as a fresh Groom's.
+    GroomData data = groomData(sphere());
+    data.graphJson = instanceGraph(true);
+    GroomEvaluator groom(data);
+    groom.setGuidePoses(scaledPoses(sphere(), 1.5f));
+    ASSERT_TRUE(groom.evaluate(1.0f, 0.0));
+    EXPECT_EQ(groom.restEvaluations(), 1u);
+    const std::string other = instanceGraph(true, R"(, "count": 2)");
+    groom.setGraphJson(other);
+    const StrandsPtr swapped = groom.evaluate(1.0f, 0.0);
+    GroomData fresh = data;
+    fresh.graphJson = other;
+    GroomEvaluator expectedGroom(fresh);
+    expectedGroom.setGuidePoses(scaledPoses(sphere(), 1.5f));
+    const StrandsPtr expected = expectedGroom.evaluate(1.0f, 0.0);
+    ASSERT_TRUE(swapped && expected && swapped->instances() && expected->instances());
+    ASSERT_EQ(swapped->instances()->instances.size(), expected->instances()->instances.size());
+    for (std::size_t i = 0; i < swapped->instances()->instances.size(); ++i) {
+        EXPECT_EQ(swapped->instances()->instances[i].restDistance, expected->instances()->instances[i].restDistance);
+        EXPECT_EQ(swapped->instances()->instances[i].t, expected->instances()->instances[i].t);
     }
 }
 

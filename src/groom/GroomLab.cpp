@@ -5,12 +5,10 @@
 #include "curve/NodeHelpers.h"
 #include "geo/Mesh.h"
 #include "groom/Attrs.h"
+#include "groom/GroomEvaluator.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 
-#include <groomlab/graph.h>
-#include <groomlab/graph_io.h>
-#include <groomlab/groom.h>
 #include <groomlab/guide_set.h>
 #include <groomlab/scalp_mesh.h>
 #include <groomlab/strand_set.h>
@@ -89,49 +87,43 @@ Splines toSplines(const groomlab::StrandSet& strands)
     }
     return out;
 }
+
+GrownStrands grow(GroomEvaluator& evaluator, const geo::Mesh& scalp, const Splines& guides, const std::string& graphJson,
+                  double seconds)
+{
+    try
+    {
+        evaluator.setGraphJson(graphJson);
+    }
+    catch (const std::exception& e)
+    {
+        throw std::runtime_error(std::string("groom graph: ") + e.what());
+    }
+    // Sizes stay in scene units: a reference area isn't stored with the scene, so the first one measured would differ
+    // after a reload.
+    evaluator.setScaleWithScalp(false);
+    const std::shared_ptr<const groomlab::ScalpMesh> mesh = scalpMesh(scalp);
+    evaluator.setScalp(mesh);
+    evaluator.setGuides(guides.empty() ? nullptr : guideSet(guides, *mesh));
+    GroomEvaluator::Request request;
+    request.time = seconds;
+    const GroomEvaluator::Result& result = evaluator.evaluate(request);
+    if (!result.strands)
+        throw std::runtime_error(result.errors.empty() ? std::string("groom graph: its output makes no strands") : result.errors.front());
+    GrownStrands out;
+    out.strands = toSplines(*result.strands);
+    out.warnings = result.errors;
+    for (const auto& [name, note] : evaluator.nodeNotes())
+        out.warnings.push_back(name + ": " + note);
+    return out;
+}
 } // namespace groomLabBridge
 
 GrownStrands growStrands(const geo::Mesh& scalp, const Splines& guides, const std::string& graphJson, double seconds)
 {
     LILA_ZONE();
-    using namespace groomLabBridge;
-    groomlab::GraphDocument doc = [&] {
-        try
-        {
-            return groomlab::loadGraphJson(graphJson.empty() ? groomlab::defaultGraphJson() : graphJson);
-        }
-        catch (const std::exception& e)
-        {
-            throw std::runtime_error(std::string("groom graph: ") + e.what());
-        }
-    }();
-    const std::shared_ptr<const groomlab::ScalpMesh> mesh = scalpMesh(scalp);
-    groomlab::ExternalInputs externals;
-    groomlab::setGroomExternals(externals, mesh, guides.empty() ? nullptr : guideSet(guides, *mesh), nullptr);
-    groomlab::EvalContext ctx;
-    ctx.externals = &externals;
-    ctx.time = seconds;
-
-    const groomlab::Value result = doc.graph.evaluate(doc.output, ctx);
-    GrownStrands out;
-    if (const groomlab::StrandsPtr strands = groomlab::valueAs<groomlab::StrandsPtr>(result))
-        out.strands = toSplines(*strands);
-    else if (const groomlab::GuidesPtr g = groomlab::valueAs<groomlab::GuidesPtr>(result))
-    {
-        groomlab::StrandSet asStrands;
-        for (const groomlab::Guide& guide : g->guides())
-            asStrands.addStrand(guide.id, guide.points, {}, guide.root);
-        out.strands = toSplines(asStrands);
-    }
-    else
-        throw std::runtime_error("groom graph: its output makes neither strands nor guides");
-
-    std::map<groomlab::NodeId, std::string> names;
-    for (const auto& [name, id] : doc.nodesByName)
-        names[id] = name;
-    for (const auto& [id, note] : doc.graph.lastNotes())
-        out.warnings.push_back(names[id] + ": " + note);
-    return out;
+    GroomEvaluator evaluator;
+    return groomLabBridge::grow(evaluator, scalp, guides, graphJson, seconds);
 }
 
 namespace
@@ -158,7 +150,10 @@ public:
                 for (geo::Index p = 0; p < world.pointCapacity(); ++p)
                     if (world.pointValid(p))
                         world.setPosition(p, D3(mm * glm::dvec4(world.position(p), 1.0)));
-                GrownStrands grown = growStrands(world, curve::splinesOf(value(idx(*this, "inCurve"))), s(*this, "graph"));
+                if (!mEvaluator)
+                    mEvaluator = std::make_unique<GroomEvaluator>();
+                GrownStrands grown =
+                    groomLabBridge::grow(*mEvaluator, world, curve::splinesOf(value(idx(*this, "inCurve"))), s(*this, "graph"), 0.0);
                 strands = std::move(grown.strands);
                 for (const std::string& w : grown.warnings)
                     warning += (warning.empty() ? "" : "; ") + w;
@@ -174,6 +169,10 @@ public:
         setOutput(idx(*this, "outCurve"), curve::makeCurveData(std::move(strands)));
         setOutput(idx(*this, "warning"), warning);
     }
+
+private:
+    /** Keeps the graph's results between evaluations, so an edit re-runs only the nodes it reaches. */
+    std::unique_ptr<GroomEvaluator> mEvaluator;
 };
 } // namespace
 
