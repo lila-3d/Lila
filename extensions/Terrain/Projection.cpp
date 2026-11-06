@@ -18,8 +18,8 @@ namespace terrain
 {
 namespace projdetail
 {
-constexpr double kPi = 3.14159265358979323846;
-constexpr double kDeg = kPi / 180.0;
+constexpr double kProjectionPi = 3.14159265358979323846;
+constexpr double kDeg = kProjectionPi / 180.0;
 constexpr double kA = 6378137.0;
 constexpr double kF = 1.0 / 298.257223563;
 constexpr double kE2 = kF * (2.0 - kF);
@@ -125,7 +125,7 @@ LatLon inverseTransverseMercator(glm::dvec2 en, double lon0, double k0, double f
     for (int it = 0; it < 30; ++it)
     {
         const double es = s.e * std::sin(phi);
-        const double next = 2.0 * std::atan(std::tan(kPi / 4 + chi / 2) * std::pow((1 + es) / (1 - es), s.e / 2)) - kPi / 2;
+        const double next = 2.0 * std::atan(std::tan(kProjectionPi / 4 + chi / 2) * std::pow((1 + es) / (1 - es), s.e / 2)) - kProjectionPi / 2;
         if (std::abs(next - phi) < 1e-15)
         {
             phi = next;
