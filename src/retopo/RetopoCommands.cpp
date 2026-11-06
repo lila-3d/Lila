@@ -301,6 +301,7 @@ std::vector<FlagDef> remeshFlags()
              "Local face size as {position: world [x, y, z], radius, scale}: scale times the edge length at the centre (0.35 to 2.8), easing out to the radius."},
             {"pureQuads", "", T::Bool, true, "All quads; false allows a few triangles and pentagons."},
             {"jointDensity", "", T::Float, 0.5, "Extra faces at joints, armpits and finger webs, where the mesh bends: 0 none, 1 about three times as dense there.", {}, {}, 0.0, 1.0},
+            {"jointDensityReach", "", T::Float, 6.0, "How far Joint Density's extra faces reach from a fold, in faces; lower keeps them tight to the joint.", {}, {}, 1.0, 12.0},
             {"jointPoleAvoidance", "", T::Float, 30.0, "Keeps poles out of joints, armpits and finger webs; higher pushes them further onto flatter parts. 0 off.", {}, {}, 0.0, 100.0},
             {"edgesAround", "", T::Int, 12, "Thin round parts of a closed shape, like fingers, get at least this many edges round them, at the cost of faces elsewhere; 0 off.", {}, {}, 0.0, 64.0},
             {"resolveGaps", "", T::Bool, true, "Finer where the surface comes close to itself across a gap (a ball in a pocket), so the gap isn't bridged; costs faces."},
@@ -338,6 +339,7 @@ QuadRemeshOptions remeshOptions(const Args& given, const Node& src, const char* 
     o.resolveGaps = a.get<bool>("resolveGaps", true);
     o.edgesAround = std::clamp(a.get<int>("edgesAround", 12), 0, 64);
     o.jointDensity = std::clamp(a.get<double>("jointDensity", 0.5), 0.0, 1.0);
+    o.jointDensityReach = std::clamp(a.get<double>("jointDensityReach", 6.0), 1.0, 12.0);
     o.jointPoleAvoidance = std::clamp(a.get<double>("jointPoleAvoidance", 30.0), 0.0, 100.0);
     if (a.has("poles") && !a.flags["poles"].is_null())
         o.poles = polesFor(a.flags["poles"], src, cmd);

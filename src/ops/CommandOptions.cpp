@@ -45,7 +45,7 @@ void registerBuiltinOverrides(std::map<std::string, Override, std::less<>>& m)
     remesh.choices["method"] = {{"field", "Field (Flowing Loops)"}, {"grid", "Grid (Open Sheets)"}};
     remesh.choiceDocs["method"] = {{"field", "Quads follow curvature, creases and guides, with poles where the flow turns."},
                                    {"grid", "A straight grid seen down the sheet's normal, for terrain tiles and panels. Closed shapes fall back to Field."}};
-    for (const char* f : {"targetFaces", "countTolerance", "targetEdgeLength", "adaptivity", "jointDensity", "edgesAround"})
+    for (const char* f : {"targetFaces", "countTolerance", "targetEdgeLength", "adaptivity", "jointDensity", "jointDensityReach", "edgesAround"})
         remesh.sections[f] = "Density";
     for (const char* f : {"useHardEdges", "sharpAngle", "jointPoleAvoidance", "symmetry", "pureQuads", "relaxIterations"})
         remesh.sections[f] = "Edge Flow";
@@ -58,6 +58,7 @@ void registerBuiltinOverrides(std::map<std::string, Override, std::less<>>& m)
     remesh.labels["countTolerance"] = "Count Tolerance";
     remesh.labels["edgesAround"] = "Edges Around Thin Parts";
     remesh.ranges["jointDensity"] = {0.0, 1.0, 0.05, ""};
+    remesh.ranges["jointDensityReach"] = {1.0, 12.0, 0.5, ""};
     remesh.ranges["jointPoleAvoidance"] = {0.0, 100.0, 1.0, ""};
     m["quadRemesh"] = std::move(remesh);
 

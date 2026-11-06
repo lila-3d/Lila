@@ -1252,8 +1252,7 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
             std::vector<double> joint = saddleAmount(s, cf * h0);
             const double perCell = std::max(1.0, cf * h0 / std::max(s.meanEdgeLength(), 1e-12));
             const double decay = std::pow(0.5, 1.0 / (2.0 * perCell));
-            const double reach = std::getenv("LILA_JOINT_REACH") ? std::atof(std::getenv("LILA_JOINT_REACH")) : 6.0;
-            const int rings = int(std::min(80.0, reach * perCell));
+            const int rings = int(std::min(80.0, opts.jointDensityReach * perCell));
             for (int it = 0; it < rings; ++it)
             {
                 std::vector<double> next = joint;

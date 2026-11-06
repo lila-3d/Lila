@@ -163,6 +163,8 @@ struct QuadRemeshOptions
     double jointPoleAvoidance = 30.0;
     /** Extra faces at joints (crotch, armpits, finger webs), where the mesh bends: 0 none, 1 about three times as dense there. */
     double jointDensity = 0.5;
+    /** How far Joint Density's extra faces reach from a fold, in faces; they halve every two. */
+    double jointDensityReach = 6.0;
     /** Align to edges flagged "hard". */
     bool useHardEdges = true;
     /** Also align to edges whose faces meet sharper than this many degrees; negative disables. */
