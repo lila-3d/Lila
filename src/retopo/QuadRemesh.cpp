@@ -320,6 +320,74 @@ void removeValence2(geo::Mesh& m, std::vector<FeatureKind>& feature)
 }
 
 /**
+ * Splits each inner point of more than eight edges (close poles merged into one) into two, with a quad between them
+ * across the middle of its fan: valence 10 becomes two of 6, and the two spokes the quad spans gain one edge each.
+ */
+void splitHighValence(geo::Mesh& m, std::vector<FeatureKind>& feature)
+{
+    LILA_ZONE();
+
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+    {
+        if (!m.pointValid(p) || m.isBoundaryPoint(p) || m.pointValence(p) <= 8 || (p < feature.size() && feature[p] != FeatureKind::None))
+            continue;
+        // The fan in order: each face's corner after p is the spoke the next face starts from.
+        const std::vector<Index> faces = m.pointFaces(p);
+        std::vector<std::vector<Index>> pts;
+        bool quads = true;
+        for (Index f : faces)
+        {
+            pts.push_back(m.facePoints(f));
+            quads = quads && pts.back().size() == 4;
+        }
+        if (!quads)
+            continue;
+        auto around = [&](size_t i, int step) {
+            const std::vector<Index>& fp = pts[i];
+            const size_t at = size_t(std::find(fp.begin(), fp.end(), p) - fp.begin());
+            return fp[(at + 4 + step) % 4];
+        };
+        std::vector<size_t> order = {0};
+        for (size_t guard = 0; order.size() < faces.size() && guard < faces.size(); ++guard)
+        {
+            const Index spoke = around(order.back(), 1);
+            for (size_t j = 0; j < faces.size(); ++j)
+                if (around(j, -1) == spoke && std::find(order.begin(), order.end(), j) == order.end())
+                {
+                    order.push_back(j);
+                    break;
+                }
+        }
+        if (order.size() != faces.size())
+            continue;
+        const size_t k = order.size(), half = k / 2;
+        const Index n0 = around(order[0], -1), nm = around(order[half], -1);
+        glm::dvec3 sideA(0.0), sideB(0.0);
+        for (size_t i = 0; i < k; ++i)
+            (i < half ? sideA : sideB) += m.position(around(order[i], 1));
+        const glm::dvec3 at = m.position(p);
+        const Index q = m.addPoint(at);
+        if (feature.size() < m.pointCapacity())
+            feature.resize(m.pointCapacity(), FeatureKind::None);
+        std::vector<std::vector<Index>> rebuilt;
+        for (size_t i = 0; i < k; ++i)
+        {
+            std::vector<Index> fp = pts[order[i]];
+            if (i >= half)
+                std::replace(fp.begin(), fp.end(), p, q);
+            rebuilt.push_back(std::move(fp));
+        }
+        for (Index f : faces)
+            m.removeFace(f);
+        for (const auto& fp : rebuilt)
+            m.addFace(fp);
+        m.addFace({p, n0, q, nm});
+        m.setPosition(p, glm::mix(at, sideA / double(half), 0.25));
+        m.setPosition(q, glm::mix(at, sideB / double(k - half), 0.25));
+    }
+}
+
+/**
  * On the half of a symmetric remesh, folds each quad with three corners in a row on the seam (the middle one with no
  * other edge) into its fourth corner's row: the outer two seam corners merge at their midpoint. Left in, the middle
  * corner mirrors into a valence 2 point and the fourth into a valence 6 pair, a diamond on the seam. The rows round each
@@ -1369,6 +1437,7 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         int relaxIterations = opts.relaxIterations;
         if (const char* e = std::getenv("LILA_PATCH_RELAX"); e && std::string_view(layout) == "patches")
             relaxIterations = std::atoi(e);
+        splitHighValence(m, feature);
         relaxAlongFeatures(m, feature, bvh, lines, h, relaxIterations, symmetric ? opts.symmetryAxis : -1);
         untangle(m, feature, src, bvh, lines, h);
         clock.lap("refine");
