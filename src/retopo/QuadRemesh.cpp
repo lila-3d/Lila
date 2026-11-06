@@ -1177,6 +1177,8 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         geo::Mesh& m = ex.mesh;
         std::vector<FeatureKind>& feature = ex.feature;
         std::vector<uint8_t>& boundary = ex.boundary;
+        feature.resize(m.pointCapacity(), FeatureKind::None);
+        boundary.resize(m.pointCapacity(), 0);
         removeValence2(m, feature);
         geo::conformNormals(m);
         fillHoles(m, boundary, &bvh);
@@ -1189,8 +1191,8 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
             qo.maxFaceAngle = 60.0;
             geo::quadrangulateFaces(m, tris, qo);
         }
-        removeValence2(m, feature);
         feature.resize(m.pointCapacity(), FeatureKind::None);
+        removeValence2(m, feature);
         boundary.resize(m.pointCapacity(), 0);
         compactTagged(m, feature, boundary);
         geo::conformNormals(m);
