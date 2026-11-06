@@ -37,6 +37,16 @@ inline constexpr const char* kDefaultTabExtent = "lilaDefaultTabExtent";
 /** Dynamic property on a dock: shown, it takes the narrowest width its column allows, whatever it was before. */
 inline constexpr const char* kHugTabExtent = "lilaHugTabExtent";
 
+/** Dynamic property on a dock: set by keepOwnColumn. */
+inline constexpr const char* kOwnColumn = "lilaOwnColumn";
+
+/**
+ * Docked in a side area, the dock (a wide editor such as the UV editor or Sculpt) always takes a full-height column of
+ * its own on the viewport side, tabbed with any other such dock, while the area's other panels keep their columns.
+ * Applies wherever it is opened or dropped in that area; tabbed in with ordinary panels, it stays in their column.
+ */
+LILA_UI_API void keepOwnColumn(QDockWidget* dock);
+
 /** Gives the dock's title bar a help button opening a docs page ("topology", "curves?id=pipe"); empty removes it. */
 LILA_UI_API void setDockDocs(QDockWidget* dock, const std::string& page);
 

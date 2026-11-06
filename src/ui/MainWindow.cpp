@@ -225,7 +225,7 @@ void MainWindow::registerPanels()
                  .area = Qt::BottomDockWidgetArea, .icon = "terminal-2"});
     // The UV editor opens as its own column left of the channel box.
     panels::add({.id = kUvEditorDock, .title = "UV Editor", .create = make([](QWidget* p) { return new UvEditor(p); }),
-                 .area = Qt::RightDockWidgetArea, .icon = "cube-unfolded"});
+                 .area = Qt::RightDockWidgetArea, .icon = "cube-unfolded", .place = [](QDockWidget* uv) { keepOwnColumn(uv); }});
     panels::add({.id = kChannelBoxDock, .title = "Channel Box", .create = make([](QWidget* p) { return new ChannelBox(p); }),
                  .area = Qt::RightDockWidgetArea, .icon = "list", .place = [this, dock](QDockWidget* channels) {
                      // Back to its narrowest when its tab is picked after a wider one, such as the modeling toolkit.

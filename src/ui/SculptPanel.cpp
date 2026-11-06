@@ -164,14 +164,10 @@ QDockWidget* sculptDock(bool create)
     scroll->setWidget(new SculptPanel(scroll));
     dock->setWidget(scroll);
     setDockDocs(dock, "sculpting");
+    keepOwnColumn(dock);
     mw->addDockWidget(Qt::RightDockWidgetArea, dock);
-    if (auto* toolkit = mw->findChild<QDockWidget*>(kModelingToolkitDock); toolkit && !toolkit->isFloating() && toolkit->isVisible())
-        mw->tabifyDockWidget(toolkit, dock);
-    // Wide enough for five brush columns with their labels and the session rows. Set as the tab extent too, or picking
-    // the tab in a narrower group keeps the group's width.
-    const int width = std::max(dock->sizeHint().width(), dock->fontMetrics().averageCharWidth() * 88);
-    dock->setProperty(kDefaultTabExtent, width);
-    mw->resizeDocks({dock}, {width}, Qt::Horizontal);
+    // Wide enough for five brush columns with their labels and the session rows; its own column opens at this width.
+    dock->setProperty(kDefaultTabExtent, std::max(dock->sizeHint().width(), dock->fontMetrics().averageCharWidth() * 88));
     return dock;
 }
 
@@ -969,6 +965,16 @@ void SculptPanel::refreshSession()
 void registerSculptUi()
 {
     installSculptDrawer();
+    // Leaving sculpt mode, however it is left, closes the panel entering opened.
+    sculpt::addListener([] {
+        QTimer::singleShot(0, QCoreApplication::instance(), [] {
+            static bool wasActive = false;
+            const bool active = sculpt::active() != nullptr;
+            if (QDockWidget* d = sculptDock(false); wasActive && !active && d && d->isVisible())
+                d->close();
+            wasActive = active;
+        });
+    });
 
     ops::registerCommand({
         .name = "sculptBrush",

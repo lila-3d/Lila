@@ -26,6 +26,8 @@
 
 #include <algorithm>
 #include <climits>
+#include <map>
+#include <set>
 
 namespace lila::ui
 {
@@ -159,6 +161,283 @@ void releaseFocus(QMainWindow* window, QDockWidget* dock)
     if (QWidget* focus = QApplication::focusWidget(); focus && dock->isAncestorOf(focus))
         if (QWidget* central = window ? window->centralWidget() : nullptr)
             central->setFocus(Qt::OtherFocusReason);
+}
+
+/** A docked tab group of a side area with a panel open, and where it sits. */
+struct DockGroup
+{
+    QList<QDockWidget*> docks;
+    QDockWidget* current = nullptr;
+    QRect rect;
+    bool ownColumn = false;
+};
+
+bool keepsOwnColumn(const QDockWidget* d) { return d->property(kOwnColumn).toBool(); }
+
+std::vector<DockGroup> openGroups(QMainWindow* window, Qt::DockWidgetArea area)
+{
+    std::vector<DockGroup> out;
+    std::set<QDockWidget*> seen;
+    for (QDockWidget* d : window->findChildren<QDockWidget*>(Qt::FindDirectChildrenOnly))
+    {
+        if (seen.count(d) || d->isFloating() || window->dockWidgetArea(d) != area)
+            continue;
+        DockGroup g;
+        g.docks = {d};
+        g.docks += window->tabifiedDockWidgets(d);
+        // Background tabs count as visible but sit off the window, so the group's place is its showing tab's.
+        for (QDockWidget* m : g.docks)
+        {
+            seen.insert(m);
+            if (m->isVisible() && (!g.current || dockShowing(m)))
+                g.current = m;
+        }
+        if (!g.current)
+            continue;
+        g.rect = g.current->geometry();
+        g.ownColumn = std::all_of(g.docks.begin(), g.docks.end(), keepsOwnColumn);
+        out.push_back(std::move(g));
+    }
+    return out;
+}
+
+/** The other groups split into the columns they stand in, left to right, each top to bottom. */
+std::vector<std::vector<DockGroup>> columnsOf(std::vector<DockGroup> groups)
+{
+    std::sort(groups.begin(), groups.end(), [](const DockGroup& a, const DockGroup& b) { return a.rect.left() < b.rect.left(); });
+    std::vector<std::vector<DockGroup>> columns;
+    int right = INT_MIN;
+    for (DockGroup& g : groups)
+    {
+        if (columns.empty() || g.rect.left() > right)
+            columns.emplace_back();
+        right = std::max(right, g.rect.right());
+        columns.back().push_back(std::move(g));
+    }
+    for (auto& c : columns)
+        std::sort(c.begin(), c.end(), [](const DockGroup& a, const DockGroup& b) { return a.rect.top() < b.rect.top(); });
+    return columns;
+}
+
+/** Set while the side area is rebuilt and until its signals have run, so the rebuild doesn't start another. */
+bool gArrangingColumns = false;
+
+/** An own-column dock's width and its neighbour columns' when it closed, for it to open at again. */
+struct ClosedColumns
+{
+    int own = 0;
+    std::vector<QPointer<QDockWidget>> heads;
+    QList<int> widths;
+};
+std::map<const QDockWidget*, ClosedColumns> gClosedColumns;
+
+/** Reopened where it closed, Qt splits the area's current width; this gives every column back the width it had. */
+void restoreClosedWidths(QMainWindow* window, QDockWidget* dock)
+{
+    auto it = gClosedColumns.find(dock);
+    if (it == gClosedColumns.end())
+        return;
+    ClosedColumns closed = std::move(it->second);
+    gClosedColumns.erase(it);
+    QList<QDockWidget*> docks{dock};
+    QList<int> widths{std::max(closed.own, dock->property(kDefaultTabExtent).toInt())};
+    for (size_t i = 0; i < closed.heads.size(); ++i)
+        if (QDockWidget* h = closed.heads[i]; h && h->isVisible() && !h->isFloating() && window->dockWidgetArea(h) == window->dockWidgetArea(dock))
+        {
+            docks.push_back(h);
+            widths.push_back(closed.widths[qsizetype(i)]);
+        }
+    window->resizeDocks(docks, widths, Qt::Horizontal);
+}
+
+/**
+ * Gives an own-column dock a full-height column on the viewport side of its area, tabbed with any other own-column
+ * dock there. Qt's side areas stack their root vertically, so a panel dropped or opened there otherwise lands above or
+ * below the panels it should stand beside.
+ */
+void arrangeOwnColumn(QDockWidget* dock)
+{
+    auto* window = qobject_cast<QMainWindow*>(dock->parentWidget());
+    if (gArrangingColumns || !window || !window->isVisible() || dock->isFloating() || !dock->isVisible())
+        return;
+    const Qt::DockWidgetArea area = window->dockWidgetArea(dock);
+    if (area != Qt::LeftDockWidgetArea && area != Qt::RightDockWidgetArea)
+        return;
+    // Tabbed in with ordinary panels on purpose: leave it in their column.
+    const QList<QDockWidget*> tabs = window->tabifiedDockWidgets(dock);
+    if (!std::all_of(tabs.begin(), tabs.end(), keepsOwnColumn))
+        return;
+    window->layout()->activate();
+    const bool right = area == Qt::RightDockWidgetArea;
+    std::vector<DockGroup> own, others;
+    for (DockGroup& g : openGroups(window, area))
+        (g.ownColumn ? own : others).push_back(std::move(g));
+    auto mine = std::find_if(own.begin(), own.end(), [dock](const DockGroup& g) { return g.docks.contains(dock); });
+    if (mine == own.end())
+        return;
+    const QRect at = mine->rect;
+    bool placed = own.size() == 1;
+    for (const DockGroup& g : others)
+        if ((g.rect.left() <= at.right() && at.left() <= g.rect.right()) || (right ? g.rect.left() < at.left() : g.rect.right() > at.right()))
+            placed = false;
+    if (placed)
+    {
+        restoreClosedWidths(window, dock);
+        return;
+    }
+    gClosedColumns.erase(dock);
+
+    gArrangingColumns = true;
+    DockGroup column{.docks = {}, .current = dock, .rect = at, .ownColumn = true};
+    for (const DockGroup& g : own)
+        column.docks += g.docks;
+    column.docks.removeAll(dock);
+    column.docks.prepend(dock);
+    std::vector<std::vector<DockGroup>> columns = columnsOf(std::move(others));
+    // The other columns keep their widths; the own column takes the rest of the area, and at least its default.
+    int areaLeft = at.left(), areaRight = at.right(), othersWidth = 0;
+    for (const auto& c : columns)
+    {
+        int width = 0;
+        for (const DockGroup& g : c)
+        {
+            areaLeft = std::min(areaLeft, g.rect.left());
+            areaRight = std::max(areaRight, g.rect.right());
+            width = std::max(width, g.rect.width());
+        }
+        othersWidth += width;
+    }
+    const int handles = int(columns.size()) * window->style()->pixelMetric(QStyle::PM_DockWidgetSeparatorExtent, nullptr, window);
+    column.rect.setWidth(std::max(areaRight - areaLeft + 1 - othersWidth - handles, dock->property(kDefaultTabExtent).toInt()));
+    columns.insert(right ? columns.begin() : columns.end(), std::vector<DockGroup>{column});
+
+    // Shown again straight away: Qt places hidden docks unreliably, and the moves below carry shown ones.
+    std::map<QDockWidget*, bool> shown;
+    for (const auto& c : columns)
+        for (const DockGroup& g : c)
+            for (QDockWidget* d : g.docks)
+            {
+                shown[d] = !d->isHidden();
+                window->removeDockWidget(d);
+                d->show();
+            }
+    QDockWidget* previous = nullptr;
+    for (const auto& c : columns)
+    {
+        QDockWidget* top = nullptr;
+        QDockWidget* above = nullptr;
+        for (const DockGroup& g : c)
+        {
+            QDockWidget* head = g.docks.front();
+            if (!top && !previous)
+                window->addDockWidget(area, head, Qt::Horizontal);
+            else if (!top)
+                window->splitDockWidget(previous, head, Qt::Horizontal);
+            else
+                window->splitDockWidget(above, head, Qt::Vertical);
+            top = top ? top : head;
+            above = head;
+        }
+        previous = top;
+    }
+    // Tabs join after every split: splitting from a dock already in a tab group nests the new one inside the group.
+    for (const auto& c : columns)
+        for (const DockGroup& g : c)
+            for (QDockWidget* t : g.docks.mid(1))
+                window->tabifyDockWidget(g.docks.front(), t);
+    for (auto& [d, on] : shown)
+        d->setVisible(on);
+
+    struct Sizes
+    {
+        std::vector<QPointer<QDockWidget>> docks;
+        QList<int> sizes;
+    };
+    Sizes widths;
+    std::vector<Sizes> heights;
+    std::vector<QPointer<QDockWidget>> currents;
+    for (const auto& c : columns)
+    {
+        Sizes& stack = heights.emplace_back();
+        int width = 0;
+        for (const DockGroup& g : c)
+        {
+            stack.docks.emplace_back(g.docks.front());
+            stack.sizes.push_back(g.rect.height());
+            width = std::max(width, g.rect.width());
+            currents.emplace_back(g.current);
+        }
+        widths.docks.push_back(stack.docks.front());
+        widths.sizes.push_back(width);
+    }
+    // Sized and raised once the dock layout has updated: a dock just re-added or re-tabbed has no item or tab before.
+    QTimer::singleShot(0, window, [window, currents, widths, heights] {
+        auto resize = [window](const Sizes& s, Qt::Orientation o) {
+            QList<QDockWidget*> docks;
+            for (const QPointer<QDockWidget>& d : s.docks)
+            {
+                if (!d)
+                    return;
+                docks.push_back(d);
+            }
+            if (docks.size() > 1)
+                window->resizeDocks(docks, s.sizes, o);
+        };
+        for (const QPointer<QDockWidget>& d : currents)
+            if (d)
+                d->raise();
+        for (const Sizes& s : heights)
+            resize(s, Qt::Vertical);
+        resize(widths, Qt::Horizontal);
+        gArrangingColumns = false;
+    });
+}
+/**
+ * An own-column dock closing hands its width back to the viewport rather than to the columns beside it. Called as it
+ * hides, while the other columns still have their widths.
+ */
+void keepColumnWidths(QDockWidget* dock)
+{
+    auto* window = qobject_cast<QMainWindow*>(dock->parentWidget());
+    if (gArrangingColumns || !window || !window->isVisible() || dock->isFloating())
+        return;
+    const Qt::DockWidgetArea area = window->dockWidgetArea(dock);
+    if (area != Qt::LeftDockWidgetArea && area != Qt::RightDockWidgetArea)
+        return;
+    std::vector<DockGroup> others;
+    for (DockGroup& g : openGroups(window, area))
+        if (!g.ownColumn)
+            others.push_back(std::move(g));
+    std::vector<QPointer<QDockWidget>> heads;
+    QList<int> widths;
+    for (const auto& c : columnsOf(std::move(others)))
+    {
+        int width = 0;
+        for (const DockGroup& g : c)
+            width = std::max(width, g.rect.width());
+        heads.emplace_back(c.front().docks.front());
+        widths.push_back(width);
+    }
+    if (heads.empty())
+        return;
+    const int own = dock->width();
+    QTimer::singleShot(0, window, [window, area, own, d = QPointer<QDockWidget>(dock), heads, widths] {
+        // Still open behind another tab, or another own-column dock still holds the column.
+        if (!d || !d->isHidden())
+            return;
+        for (QDockWidget* o : window->findChildren<QDockWidget*>(Qt::FindDirectChildrenOnly))
+            if (o != d && keepsOwnColumn(o) && o->isVisible() && !o->isFloating() && window->dockWidgetArea(o) == area)
+                return;
+        QList<QDockWidget*> docks;
+        for (const QPointer<QDockWidget>& h : heads)
+        {
+            if (!h)
+                return;
+            docks.push_back(h);
+        }
+        window->resizeDocks(docks, widths, Qt::Horizontal);
+        gClosedColumns[d.data()] = {own, heads, widths};
+    });
 }
 } // namespace
 
@@ -621,6 +900,24 @@ void toggleDock(QDockWidget* dock)
         sidebars->collapse(dock);
     else
         dock->hide();
+}
+
+void keepOwnColumn(QDockWidget* dock)
+{
+    dock->setProperty(kOwnColumn, true);
+    QObject::connect(dock, &QObject::destroyed, [dock] { gClosedColumns.erase(dock); });
+    auto later = [dock] { QTimer::singleShot(0, dock, [dock] { arrangeOwnColumn(dock); }); };
+    QObject::connect(dock, &QDockWidget::dockLocationChanged, dock, later);
+    QObject::connect(dock, &QDockWidget::topLevelChanged, dock, [later](bool floating) {
+        if (!floating)
+            later();
+    });
+    QObject::connect(dock, &QDockWidget::visibilityChanged, dock, [dock, later](bool visible) {
+        if (visible)
+            later();
+        else
+            keepColumnWidths(dock);
+    });
 }
 
 bool DockSidebars::placeStrip(Qt::DockWidgetArea area, QToolBar* bar)
