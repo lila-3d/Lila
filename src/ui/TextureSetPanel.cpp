@@ -411,6 +411,25 @@ struct Thumb
     texPreview::Request request;
     QString fallback;
 };
+/** Texture Graph editors on another set switch to set, so the graph, the panel and the viewport show one set. */
+void showInTextureGraphs(const std::string& set)
+{
+    if (set.empty())
+        return;
+    for (NodeEditor* e : NodeEditor::all())
+        if (e->backend().id() == kTextureGraphBackend && e->group().toStdString() != set)
+            e->setGroup(QString::fromStdString(set));
+}
+
+/** The set the first Texture Graph editor shows, or empty. */
+std::string textureGraphSet()
+{
+    for (NodeEditor* e : NodeEditor::all())
+        if (e->backend().id() == kTextureGraphBackend && !e->group().isEmpty())
+            return e->group().toStdString();
+    return {};
+}
+
 } // namespace
 
 // Panel ----------------------------------------------------------------------------------------------------------------
@@ -445,6 +464,7 @@ struct TextureSetPanel::Impl
     QTimer* refreshTimer = nullptr;
     int sceneListener = 0;
     int activeListener = 0;
+    int graphListener = 0;
     std::vector<Thumb> thumbs;
 
     // Reading ------------------------------------------------------------------------------------------------------------
@@ -1899,6 +1919,7 @@ TextureSetPanel::TextureSetPanel(QWidget* parent) : QWidget(parent), d(std::make
                     if (!o.group.empty() && o.group != d->set)
                     {
                         d->set = o.group;
+                        showInTextureGraphs(o.group);
                         d->selLayer.clear();
                         d->selMask.clear();
                         d->scheduleRefresh();
@@ -1927,11 +1948,27 @@ TextureSetPanel::TextureSetPanel(QWidget* parent) : QWidget(parent), d(std::make
         d->scheduleRefresh();
     });
 
+    // A Texture Graph editor switching sets takes this panel along.
+    d->graphListener = NodeEditor::addGroupListener([this, guard](NodeEditor& e) {
+        if (!guard || e.backend().id() != kTextureGraphBackend)
+            return;
+        const std::string group = e.group().toStdString();
+        if (group.empty() || group == d->set)
+            return;
+        d->set = group;
+        d->selLayer.clear();
+        d->selMask.clear();
+        d->scheduleRefresh();
+    });
+
     QTimer::singleShot(0, this, [this] {
         if (GraphBackendPtr b = graphBackends::find(kTextureGraphBackend))
             if (GraphBackend::Owner o = b->followSelection(scene::Graph::current()); !o.group.empty())
                 d->set = o.group;
+        if (d->set.empty())
+            d->set = textureGraphSet();
         d->refresh();
+        showInTextureGraphs(d->set);
     });
     d->refresh();
     connect(qApp, &QApplication::focusChanged, this, [this](QWidget*, QWidget* now) {
@@ -1944,6 +1981,7 @@ TextureSetPanel::~TextureSetPanel()
 {
     scene::Graph::current().removeListener(d->sceneListener);
     textureSets::removeActiveLayerListener(d->activeListener);
+    NodeEditor::removeGroupListener(d->graphListener);
     std::erase(panelList(), this);
     if (lastFocusedPanel() == this)
         lastFocusedPanel() = nullptr;
@@ -1957,6 +1995,7 @@ void TextureSetPanel::setTextureSet(const std::string& set)
     d->selLayer.clear();
     d->selMask.clear();
     d->refresh();
+    showInTextureGraphs(set);
 }
 
 std::string TextureSetPanel::textureSet() const { return d->set; }

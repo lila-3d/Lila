@@ -58,6 +58,11 @@ public:
 
     /** The editor the nodeEditor.* actions act on: the focused one, else the last focused. */
     static NodeEditor* active();
+    /** Every open editor. */
+    static const std::vector<NodeEditor*>& all();
+    /** Hears an editor change the group it shows, from its picker, the selection or setGroup. Returns an id. */
+    static int addGroupListener(std::function<void(NodeEditor&)> fn);
+    static void removeGroupListener(int id);
 
     /** Add-node search under the cursor. While a wire is dragged it lists only nodes that connect to it, and links the new one. */
     void addNodeAtCursor();
@@ -154,6 +159,7 @@ private:
 
     GraphBackendPtr mBackend;
     QString mGroup;
+    QString mAnnouncedGroup;
     QString mSelectedNode;
     /** The owner the selection led to; Parameters edit its values, which are what the scene uses, not the group's defaults. */
     QString mOwner;

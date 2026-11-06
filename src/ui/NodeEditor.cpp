@@ -97,6 +97,12 @@ std::vector<NodeEditor*>& editors()
     return list;
 }
 
+std::map<int, std::function<void(NodeEditor&)>>& groupListeners()
+{
+    static std::map<int, std::function<void(NodeEditor&)>> list;
+    return list;
+}
+
 NodeEditor*& lastFocused()
 {
     static NodeEditor* e = nullptr;
@@ -680,6 +686,17 @@ void NodeEditor::showNode(const QString& group, const std::string& node)
 
 void NodeEditor::frameAll() { mCanvas->frame(false); }
 
+const std::vector<NodeEditor*>& NodeEditor::all() { return editors(); }
+
+int NodeEditor::addGroupListener(std::function<void(NodeEditor&)> fn)
+{
+    static int next = 1;
+    groupListeners()[next] = std::move(fn);
+    return next++;
+}
+
+void NodeEditor::removeGroupListener(int id) { groupListeners().erase(id); }
+
 void NodeEditor::frameSelected() { mCanvas->frame(true); }
 
 NodeEditor* NodeEditor::active()
@@ -1040,6 +1057,14 @@ void NodeEditor::refreshGroups()
         mGroup = names.empty() ? QString() : qs(names.front());
     mGroups->setCurrentText(mGroup);
     mRefreshing = false;
+    if (mGroup != mAnnouncedGroup)
+    {
+        mAnnouncedGroup = mGroup;
+        // A copy: a listener may set the group of this or another editor, which announces again.
+        const auto listeners = groupListeners();
+        for (const auto& [id, fn] : listeners)
+            fn(*this);
+    }
 }
 
 void NodeEditor::refresh(bool panel)
