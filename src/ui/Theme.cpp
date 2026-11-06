@@ -353,6 +353,7 @@ QString appStyleSheet(const themes::Theme& t)
         QStatusBar { background: %5; }
         QStatusBar QToolButton { border: none; padding: 1px 8px; }
         QStatusBar QToolButton:checked { background: %6; }
+        QToolBar#sidebarStatus QToolButton:checked { background: %10; }
         QTabBar#shelfTabs::tab { background: transparent; border: none; border-bottom: 2px solid transparent;
                                  padding: 4px 10px 3px; margin-right: 2px; color: %7; }
         QTabBar#shelfTabs::tab:hover { color: %8; }
