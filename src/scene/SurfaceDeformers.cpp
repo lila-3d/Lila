@@ -4,6 +4,7 @@
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "deform/Deform.h"
+#include "deform/RigidBind.h"
 #include "deform/Surface.h"
 #include "geo/Mesh.h"
 #include "geo/Topology.h"
@@ -138,6 +139,38 @@ struct ProximityData final : Data
             d->bind.influences.push_back(inf);
         }
         sanitizeOffsets(d->bind.offsets, n);
+        return d;
+    }
+};
+
+/** A rigid bind's point binding plus each piece's rest normal and height above the drivers. */
+struct RigidBindData final : Data
+{
+    deform::RigidBindBinding bind;
+    const char* kind() const override { return "rigidBindSetuping"; }
+    size_t bytes() const override
+    {
+        return bind.wrap.offsets.size() * 4 + bind.wrap.influences.size() * sizeof(deform::ProximityBinding::Influence) +
+               bind.restNormal.size() * sizeof(glm::dvec3) + bind.restHeight.size() * 8;
+    }
+    json toJson() const override
+    {
+        ProximityData wrap;
+        wrap.bind = bind.wrap;
+        json j = wrap.toJson();
+        j["kind"] = kind();
+        j["restNormal"] = flatten(bind.restNormal);
+        j["restHeight"] = bind.restHeight;
+        return j;
+    }
+    static DataPtr fromJson(const json& j)
+    {
+        auto d = std::make_shared<RigidBindData>();
+        d->bind.wrap = std::static_pointer_cast<const ProximityData>(ProximityData::fromJson(j))->bind;
+        std::vector<double> normals;
+        readArray(j, "restNormal", normals);
+        d->bind.restNormal = unflatten(normals);
+        readArray(j, "restHeight", d->bind.restHeight);
         return d;
     }
 };
@@ -685,6 +718,108 @@ private:
     mutable AdjacencyCache mAdj;
 };
 
+/** Piece per point: the int point attribute "piece" when the mesh has one, else its connected parts. */
+std::vector<int32_t> piecesOf(const geo::Mesh& m, const deform::Adjacency& adj)
+{
+    std::span<const int32_t> attr = m.pointAttrs().get<int32_t>("piece");
+    if (attr.size() == m.pointCapacity() && !attr.empty())
+        return {attr.begin(), attr.end()};
+    return deform::connectedRegions(adj);
+}
+
+/** Every connected wrap-style driver's mesh and world points, by slot. */
+struct DriverState
+{
+    std::vector<MeshPtr> meshes;
+    std::vector<std::vector<glm::dvec3>> points;
+};
+
+DriverState driverState(const DeformerNode& d, std::span<const uint32_t> driverPoints)
+{
+    DriverState s;
+    for (size_t k = 0; k < driverPoints.size(); ++k)
+    {
+        const MeshPtr& m = d.elementOr<MeshPtr>(d.attr("drivers.mesh"), int(k));
+        if (!m)
+            throw std::runtime_error(k == 0 ? std::string("no driver connected") : std::format("driver {} is not connected", k));
+        if (m->pointCapacity() != driverPoints[k])
+            throw std::runtime_error("a driver's points changed since binding: run rebindDeformer");
+        s.meshes.push_back(m);
+        s.points.push_back(toWorld(d.elementOr<glm::dmat4>(d.attr("drivers.matrix"), int(k)), m->positions()));
+    }
+    return s;
+}
+
+class RigidBindNode : public DeformerNode
+{
+public:
+    void deform(const geo::Mesh& in, std::vector<glm::dvec3>& points) const override
+    {
+        LILA_ZONE();
+
+        const RestShape& rest = restOf(*this, points.size());
+        const auto* b = dynamic_cast<const RigidBindData*>(as<DataPtr>(attr("binding")).get());
+        if (!b || b->bind.wrap.driverPoints.empty())
+            throw Unbound();
+        const DriverState drv = driverState(*this, b->bind.wrap.driverPoints);
+        const glm::dmat4 geom = matrix("geomMatrix");
+        const glm::dmat4 geomInv = safeInverse(geom, "the mesh");
+        const std::vector<glm::dvec3> restWorld = toWorld(geom, rest.points);
+        const deform::RigidBindRig& rig = rigFor(in, restWorld);
+        if (rig.pieces() != b->bind.restNormal.size())
+            throw std::runtime_error("the mesh's pieces changed since binding: run rebindDeformer");
+
+        std::vector<std::span<const glm::dvec3>> spans(drv.points.begin(), drv.points.end());
+        std::vector<glm::dvec3> moved = deform::rigidBindApply(b->bind, rig, spans, restWorld, params());
+        toLocal(geomInv, moved, points);
+    }
+
+    deform::RigidBindParams params() const
+    {
+        deform::RigidBindParams o;
+        o.normalOffset = num("normalOffset");
+        o.rotationStrength = num("rotationStrength");
+        o.tangentBlend = num("tangentBlend");
+        o.rotationSmoothing = num("rotationSmoothing");
+        o.relaxation = num("relaxation");
+        o.relaxIterations = int(std::clamp<int64_t>(integer("relaxIterations"), 0, 1000));
+        o.attachment = num("attachment");
+        o.collisionStrength = num("collisionStrength");
+        o.collisionIterations = int(std::clamp<int64_t>(integer("collisionIterations"), 0, 1000));
+        o.collisionLift = num("collisionLift");
+        o.collisionSoftness = num("collisionSoftness");
+        o.thickness = num("thickness");
+        o.collideDriver = as<bool>(attr("collideDriver"));
+        o.reach = num("reach");
+        o.maxSlide = num("maxSlide");
+        o.maxLift = num("maxLift");
+        return o;
+    }
+
+    /** The pieces and their collision shapes, rebuilt when the rest, the pieces or the shape settings change. */
+    const deform::RigidBindRig& rigFor(const geo::Mesh& in, const std::vector<glm::dvec3>& restWorld) const
+    {
+        auto shape = deform::RigidShape(std::clamp<int64_t>(integer("collisionShape"), 0, 3));
+        const double scale = num("collisionScale");
+        std::vector<int32_t> pieces = piecesOf(in, mAdj.get(in));
+        if (!mRig || pieces != mPieces || restWorld != mRest || shape != mRig->shape || scale != mScale)
+        {
+            mRig = std::make_shared<deform::RigidBindRig>(deform::rigidBindRig(restWorld, pieces, shape, scale));
+            mPieces = std::move(pieces);
+            mRest = restWorld;
+            mScale = scale;
+        }
+        return *mRig;
+    }
+
+private:
+    mutable AdjacencyCache mAdj;
+    mutable std::shared_ptr<deform::RigidBindRig> mRig;
+    mutable std::vector<int32_t> mPieces;
+    mutable std::vector<glm::dvec3> mRest;
+    mutable double mScale = 0.0;
+};
+
 class SkinSlideNode : public DeformerNode
 {
 public:
@@ -929,6 +1064,170 @@ void bindWrapImpl(Graph& graph, DeformerNode& d)
     graph.setValue({d.id(), d.attr("binding"), -1}, DataPtr(std::move(data)));
 }
 
+/** Binds a rigid bind to its drivers at their current shape, with the captured rest. */
+void bindRigidBind(Graph& graph, DeformerNode& d)
+{
+    int slots = wrapSlotsUsed(graph, d);
+    if (slots == 0)
+        throw CommandError(d.name() + ": no driver mesh connected");
+    std::vector<geo::Mesh> worlds;
+    for (int s = 0; s < slots; ++s)
+    {
+        graph.evaluate();
+        const MeshPtr& m = d.elementOr<MeshPtr>(d.attr("drivers.mesh"), s);
+        worlds.push_back(m ? worldMesh(*m, d.elementOr<glm::dmat4>(d.attr("drivers.matrix"), s)) : geo::Mesh());
+    }
+    std::vector<const geo::Mesh*> ptrs;
+    for (const geo::Mesh& m : worlds)
+        ptrs.push_back(&m);
+    MeshPtr in;
+    inputWorld(graph, d, &in);
+    const std::vector<glm::dvec3> rest = toWorld(d.as<glm::dmat4>(d.attr("geomMatrix")), restOf(d, in->pointCapacity()).points);
+    const deform::RigidBindRig rig = static_cast<RigidBindNode&>(d).rigFor(*in, rest);
+    if (rig.pieces() == 0)
+        throw CommandError(d.name() + ": the mesh has no pieces");
+    deform::ProximityParams o;
+    o.maxDrivers = int(d.integer("maxDrivers"));
+    o.falloff = d.num("falloff");
+    auto data = std::make_shared<RigidBindData>();
+    data->bind = deform::rigidBindSetup(ptrs, rest, rig, o);
+    graph.setValue({d.id(), d.attr("binding"), -1}, DataPtr(std::move(data)));
+}
+
+/** The rigid bind named, or the one in the named mesh's stack. */
+DeformerNode& rigidBindNamed(Graph& graph, const std::string& name, const char* cmd)
+{
+    Node& n = nodeNamed(name, cmd);
+    if (isDeformer(n) && n.type().name == "rigidBind")
+        return static_cast<DeformerNode&>(n);
+    if (n.type().isA("mesh"))
+        for (NodeId id : list(graph, n.id()))
+            if (graph.node(id)->type().name == "rigidBind")
+                return static_cast<DeformerNode&>(*graph.node(id));
+    throw CommandError(std::string(cmd) + ": " + name + " is neither a rigid bind nor a mesh with one");
+}
+
+/**
+ * Replaces a rigid bind with a skinCluster whose weights give every point of a piece the driver's skin weights under
+ * the piece, bound with the driver skin's bind matrices. Returns the new skinCluster's name.
+ */
+std::string rigidBindToSkin(Graph& graph, const std::string& name, int maxInfluences)
+{
+    constexpr const char* cmd = "rigidBindToSkin";
+    DeformerNode& d = rigidBindNamed(graph, name, cmd);
+    const auto* b = dynamic_cast<const RigidBindData*>(d.as<DataPtr>(d.attr("binding")).get());
+    if (!b || b->bind.wrap.driverPoints.empty())
+        throw CommandError(std::format("{}: {} is not bound", cmd, d.name()));
+    const NodeId mesh = modifiers::meshOf(graph, d.id());
+    MeshPtr in;
+    inputWorld(graph, d, &in);
+    const std::vector<glm::dvec3> rest = toWorld(d.as<glm::dmat4>(d.attr("geomMatrix")), restOf(d, in->pointCapacity()).points);
+    const deform::RigidBindRig rig = static_cast<RigidBindNode&>(d).rigFor(*in, rest);
+
+    int slot = -1;
+    NodeId driverSkin = kNoNode;
+    for (int s = 0; s < int(b->bind.wrap.driverPoints.size()) && slot < 0; ++s)
+        if (auto src = graph.source({d.id(), d.attr("drivers.mesh"), -1, s}))
+            if (NodeId sk = skin::find(graph, src->node); sk != kNoNode)
+                slot = s, driverSkin = sk;
+    if (slot < 0)
+        throw CommandError(std::format("{}: none of {}'s drivers is skinned", cmd, d.name()));
+    const WeightTable driverWeights = skin::table(graph, driverSkin);
+    if (driverWeights.points.size() != b->bind.wrap.driverPoints[size_t(slot)])
+        throw CommandError(std::format("{}: the driver's skin doesn't match the points {} was bound to: rebind it", cmd, d.name()));
+
+    // Sum the driver weights under a set of points, through their wrap influences on the skinned driver.
+    auto gather = [&](std::span<const uint32_t> ids, std::map<uint32_t, double>& sum) {
+        for (uint32_t p : ids)
+        {
+            if (p + 1 >= b->bind.wrap.offsets.size())
+                continue;
+            for (uint32_t k = b->bind.wrap.offsets[p]; k < b->bind.wrap.offsets[p + 1]; ++k)
+            {
+                const deform::ProximityBinding::Influence& inf = b->bind.wrap.influences[k];
+                if (int(inf.driver) != slot)
+                    continue;
+                for (int c = 0; c < 3; ++c)
+                    if (inf.tri[c] < driverWeights.points.size())
+                        for (const auto& [joint, w] : driverWeights.points[inf.tri[c]])
+                            sum[joint] += inf.weight * inf.bary[c] * w;
+            }
+        }
+    };
+    WeightTable source;
+    source.points.resize(in->pointCapacity());
+    auto assign = [&](std::span<const uint32_t> ids) {
+        std::map<uint32_t, double> sum;
+        gather(ids, sum);
+        std::vector<WeightTable::Entry> entries;
+        for (const auto& [joint, w] : sum)
+            if (w > 0.0)
+                entries.push_back({joint, float(w)});
+        for (uint32_t p : ids)
+            source.points[p] = entries;
+    };
+    std::vector<uint8_t> inPiece(in->pointCapacity(), 0);
+    for (size_t i = 0; i < rig.pieces(); ++i)
+    {
+        std::span<const uint32_t> ids(rig.points.data() + rig.offsets[i], rig.offsets[i + 1] - rig.offsets[i]);
+        assign(ids);
+        for (uint32_t p : ids)
+            inPiece[p] = 1;
+    }
+    for (uint32_t p = 0; p < in->pointCapacity(); ++p)
+        if (!inPiece[p])
+            assign(std::span<const uint32_t>(&p, 1));
+
+    const std::vector<skin::Influence> driverInfs = skin::influences(graph, driverSkin);
+    std::map<uint32_t, const skin::Influence*> byIndex;
+    for (const skin::Influence& inf : driverInfs)
+        byIndex[inf.index] = &inf;
+    std::vector<uint32_t> used;
+    for (const auto& pt : source.points)
+        for (const auto& [joint, w] : pt)
+            if (std::find(used.begin(), used.end(), joint) == used.end())
+                used.push_back(joint);
+    std::sort(used.begin(), used.end());
+    json args = json::array();
+    for (uint32_t j : used)
+    {
+        auto it = byIndex.find(j);
+        if (it == byIndex.end() || it->second->joint == kNoNode)
+            throw CommandError(std::format("{}: the driver skin's influence {} has no joint", cmd, j));
+        args.push_back(graph.node(it->second->joint)->path());
+    }
+    if (args.empty())
+        throw CommandError(std::format("{}: no driver skin weights reach {}'s pieces", cmd, d.name()));
+    const std::string meshPath = graph.node(mesh)->path();
+    args.push_back(meshPath);
+
+    ops::execute("removeModifier", {{"args", json::array({d.name()})}});
+    const std::string skinName = ops::execute("skinCluster", {{"args", args}, {"bindTo", "selected"}, {"maxInfluences", maxInfluences}}).get<std::string>();
+    const NodeId newSkin = skin::resolve(graph, skinName, cmd);
+
+    const std::vector<skin::Influence> newInfs = skin::influences(graph, newSkin);
+    WeightTable t;
+    t.points.resize(source.points.size());
+    for (size_t p = 0; p < source.points.size(); ++p)
+    {
+        for (const auto& [joint, w] : source.points[p])
+        {
+            const NodeId jn = byIndex[joint]->joint;
+            for (const skin::Influence& ni : newInfs)
+                if (ni.joint == jn)
+                    t.points[p].push_back({ni.index, w});
+        }
+        t.prune(p, maxInfluences, 0.0f, {});
+    }
+    skin::setWeights(graph, newSkin, t);
+    // Bind like the driver, so the pieces sit where they were wrapped whatever pose the joints are in now.
+    for (const skin::Influence& ni : newInfs)
+        for (const skin::Influence& di : driverInfs)
+            if (di.joint == ni.joint && di.link != kNoNode && ni.link != kNoNode)
+                setPlug(graph, ni.link, "bindPreMatrix", graph.node(di.link)->as<glm::dmat4>(SkinInfluenceNode::kBindPreMatrix));
+    return graph.node(newSkin)->name();
+}
+
 /** Point ids of mesh's members in a component list, mapped from edges and faces through the mesh. */
 std::vector<geo::Index> pointsOfMember(const geo::Mesh& m, ComponentMode kind, const components::Ids& ids)
 {
@@ -1134,6 +1433,11 @@ bool rebindSurface(Graph& graph, DeformerNode& d)
         bindSurface(graph, d);
     else if (t == "rigidify" || t == "skinSlide")
         captureRest(graph, d);
+    else if (t == "rigidBind")
+    {
+        captureRest(graph, d);
+        bindRigidBind(graph, d);
+    }
     else if (t != "shrinkwrap" && t != "collision")
         return false;
     return true;
@@ -1146,6 +1450,7 @@ void registerSurfaceTypes()
     data::registerKind("restShape", &RestShape::fromJson);
     data::registerKind("rigidRegions", &RegionIds::fromJson);
     data::registerKind("proximityBinding", &ProximityData::fromJson);
+    data::registerKind("rigidBindSetuping", &RigidBindData::fromJson);
     data::registerKind("wrapBinding", &ProximityData::fromJson);
     data::registerKind("surfaceBinding", &SurfaceData::fromJson);
     data::registerKind("pointCapture", &CaptureData::fromJson);
@@ -1248,6 +1553,41 @@ void registerSurfaceTypes()
                        hiddenStored("regions", PlugType::Data, DataPtr(), "Region per point, for stored mode."),
                        hiddenStored("rest", PlugType::Data, DataPtr(), "The rest shape captured at bind time.")},
                       [] { return std::make_unique<RigidifyNode>(); }});
+
+    std::vector<AttrDef> rigidBind = {
+        element("drivers.mesh", PlugType::Mesh, MeshPtr(), false, "Each driver's outMesh, from element 0.", ""),
+        element("drivers.matrix", PlugType::Matrix, glm::dmat4(1.0), false, "Each driver's worldMatrix.", ""),
+        geomMatrixAttr(),
+        stored("maxDrivers", PlugType::Int, int64_t(4), "Driver triangles each point follows, 1 to 32, across all drivers. Used when binding.", 1.0, 32.0),
+        stored("falloff", PlugType::Float, 2.0, "Triangles within this many times the nearest distance count; higher is smoother. Used when binding.", 1.0),
+        keyable("normalOffset", PlugType::Float, 0.0, "Moves every piece along the surface normal, cm."),
+        keyable("rotationStrength", PlugType::Float, 1.0, "0 to 1: how far pieces turn with the surface; 0 keeps their rest orientation.", 0.0, 1.0),
+        keyable("tangentBlend", PlugType::Float, 0.0, "0 to 1: pieces turn only to follow the normal, ignoring twist and shear along the surface.", 0.0, 1.0),
+        keyable("rotationSmoothing", PlugType::Float, 0.5, "0 to 1: each piece turns with the surface under it and its neighbours rather than only its own patch, which stays steady where the surface folds.", 0.0, 1.0),
+        keyable("relaxation", PlugType::Float, 0.0, "0 to 1: pieces slide along the surface to keep their rest spacing.", 0.0, 1.0),
+        keyable("relaxIterations", PlugType::Int, int64_t(4), "Relaxation passes.", 0.0, 1000.0),
+        keyable("attachment", PlugType::Float, 0.0, "0 to 1: each relaxation and collision pass pulls pieces back toward their wrapped place.", 0.0, 1.0),
+        enumAttr("collisionShape", 3, {"off", "sphere", "capsule", "box"},
+                 "The shape pieces collide as: off, or a sphere, capsule or box fitted to each piece at rest."),
+        keyable("collisionScale", PlugType::Float, 1.0, "Grows or shrinks every collision shape.", 0.01),
+        keyable("collisionStrength", PlugType::Float, 1.0, "0 to 1: how much of each overlap a pass resolves.", 0.0, 1.0),
+        keyable("collisionIterations", PlugType::Int, int64_t(4), "Collision passes.", 0.0, 1000.0),
+        keyable("collisionLift", PlugType::Float, 0.5, "0 to 1: overlaps resolve by sliding along the surface (0) or by the upper piece lifting over the lower (1).", 0.0, 1.0),
+        keyable("collisionSoftness", PlugType::Float, 0.1, "Overlaps shallower than this fraction of a piece's size are only partly resolved, easing contacts in.", 0.0),
+        keyable("thickness", PlugType::Float, 0.0, "Gap kept between pieces that were apart at rest, cm.", 0.0),
+        stored("collideDriver", PlugType::Bool, true, "Pieces never sink deeper into the drivers than they sat at rest."),
+        keyable("reach", PlugType::Float, 0.5, "Farthest relaxation and collision move a piece from its place on the surface, as a fraction of the piece's size; 0 for no limit.", 0.0),
+        keyable("maxSlide", PlugType::Float, 0.0, "Farthest a piece slides from its wrapped place, cm; 0 for no limit.", 0.0),
+        keyable("maxLift", PlugType::Float, 0.0, "Farthest a piece lifts off its wrapped place, cm; 0 for no limit.", 0.0),
+        hiddenStored("binding", PlugType::Data, DataPtr(), "Each point's driver triangles, and each piece's rest normal and height."),
+        hiddenStored("rest", PlugType::Data, DataPtr(), "The rest shape captured at bind time."),
+    };
+    registerDeformer({"rigidBind", "puzzle",
+                      "Makes separate pieces (scales, armour plates, shingles, strips) ride a deforming driver without bending: each "
+                      "piece moves by the best rigid fit to the surface under it, then neighbours relax their spacing and push apart "
+                      "where they would pass through each other or the driver. Pieces are the mesh's int point attribute 'piece', "
+                      "else its connected parts.",
+                      std::move(rigidBind), [] { return std::make_unique<RigidBindNode>(); }});
 
     registerDeformer({"skinSlide", "arrows-move",
                       "Makes skin slide over the rest form instead of stretching: the deformation is moved along the rest surface and "
@@ -1563,6 +1903,76 @@ void registerSurfaceCommands()
             }
             return out;
         },
+    });
+
+    ops::registerCommand({
+        .name = "rigidBind",
+        .doc = "Add a rigid bind: separate pieces (scales, plates, shingles) ride the driver's surface without bending, relaxing "
+               "their spacing and pushing apart where they would pass through each other or the driver. Pieces are the int "
+               "point attribute 'piece', else each mesh's connected parts. Give the piece meshes first and the driver last; "
+               "more drivers with drivers=. Returns the deformers.",
+        .positionalDoc = "meshes..., driver",
+        .flags = {nodeFlag({"drivers", "", T::List, nullptr, "More driver meshes, up to 8 in all."}, "mesh"),
+                  {"maxDrivers", "", T::Int, 4, "Driver triangles each point follows, 1 to 32.", {}, {}, 1.0, 32.0},
+                  {"falloff", "", T::Float, 2.0, "Triangles within this many times the nearest distance count; higher is smoother.", {}, {}, 1.0},
+                  {"collisionShape", "", T::String, "box", "off | sphere | capsule | box", {"off", "sphere", "capsule", "box"}},
+                  {"params", "", T::Any, nullptr, "{param: value} for any other attribute."},
+                  {"name", "", T::String, nullptr, "Name for the deformer."}},
+        .run = [](const Args& a) -> json {
+            Graph& graph = Graph::current();
+            auto [meshes, driver] = meshesAndLast(a.objects(), "rigidBind", "driver");
+            std::vector<Node*> drivers = {driver};
+            if (a.has("drivers"))
+                for (const json& j : a.flags["drivers"])
+                    drivers.push_back(&nodeNamed(j.get<std::string>(), "rigidBind"));
+            if (drivers.size() > 8)
+                throw CommandError("rigidBind: at most 8 drivers");
+            for (Node* dn : drivers)
+                if (!dn->type().isA("mesh") || std::find(meshes.begin(), meshes.end(), dn->id()) != meshes.end())
+                    throw CommandError("rigidBind: " + dn->name() + " can't drive: it is not a mesh, or it is one of the deformed meshes");
+            json out = json::array();
+            for (NodeId mesh : meshes)
+            {
+                DeformerNode& d = addOne(graph, "rigidBind", mesh, a, "RigidBind");
+                for (size_t s = 0; s < drivers.size(); ++s)
+                {
+                    connectElement(graph, drivers[s]->id(), "outMesh", d.id(), "drivers.mesh", int(s));
+                    connectElement(graph, drivers[s]->id(), "worldMatrix", d.id(), "drivers.matrix", int(s));
+                }
+                setPlug(graph, d.id(), "maxDrivers", int64_t(a.get<int>("maxDrivers")));
+                setPlug(graph, d.id(), "falloff", a.get<double>("falloff"));
+                setEnum(graph, d, "collisionShape", a.get<std::string>("collisionShape"), "rigidBind");
+                captureRest(graph, d);
+                bindRigidBind(graph, d);
+                out.push_back(d.name());
+            }
+            return out;
+        },
+        .examples = {"rigidBind('Scales', 'Arm', params={'collisionLift': 1.0, 'thickness': 0.05})"},
+    });
+
+    ops::registerCommand({
+        .name = "rigidBindToSkin",
+        .doc = "Turn a rigid bind into skin weights for games: every point of a piece takes the driver's skin weights where the "
+               "piece sits, so each piece moves with the driver's joints as one rigid-looking part, with no extra joints and no "
+               "bake. Relaxation and collision are dropped. The driver must be skinned; the rigid bind is replaced by a "
+               "skinCluster bound like the driver's. Returns the skinClusters.",
+        .positionalDoc = "rigid binds or meshes (default the selection)",
+        .flags = {{"maxInfluences", "", T::Int, 4, "Joints per piece.", {}, {}, 1.0, 16.0}},
+        .run = [](const Args& a) -> json {
+            Graph& graph = Graph::current();
+            std::vector<std::string> objs = a.objects();
+            if (objs.empty())
+                for (NodeId id : graph.selection())
+                    objs.push_back(graph.node(id)->name());
+            if (objs.empty())
+                throw CommandError("rigidBindToSkin: give or select a rigid bind or its mesh");
+            json out = json::array();
+            for (const std::string& name : objs)
+                out.push_back(rigidBindToSkin(graph, name, a.get<int>("maxInfluences")));
+            return out;
+        },
+        .examples = {"rigidBindToSkin('Scales', maxInfluences=4)"},
     });
 
     ops::registerCommand({

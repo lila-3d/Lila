@@ -7,6 +7,8 @@ lila_module(lila_deform Scene
     EigenGlm.h
     Handles.cpp
     Handles.h
+    RigidBind.cpp
+    RigidBind.h
     Shape.cpp
     Shape.h
     Skinning.cpp

@@ -6,6 +6,7 @@ add_executable(lila_deform_tests
     test_fields.cpp
     test_mesh_cache.cpp
     test_morphs.cpp
+    test_rigid_bind.cpp
     test_shape.cpp
     test_shape_deformers.cpp
     test_skin_bake.cpp

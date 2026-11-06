@@ -7243,6 +7243,33 @@ def revolve(*objects: Any, axisOrigin: Sequence[float] | None = None, axis: Sequ
         name: Mesh name; made unique. Short form n.
     """
 
+def rigidBind(*objects: Any, drivers: Sequence[Any] | None = None, maxDrivers: int | None = None, falloff: float | None = None, collisionShape: str | None = None, params: Any | None = None, name: str | None = None) -> Any:
+    """Add a rigid bind: separate pieces (scales, plates, shingles) ride the driver's surface without bending, relaxing their spacing and pushing apart where they would pass through each other or the driver. Pieces are the int point attribute 'piece', else each mesh's connected parts. Give the piece meshes first and the driver last; more drivers with drivers=. Returns the deformers.
+
+    Args:
+        objects: meshes..., driver.
+        drivers: More driver meshes, up to 8 in all.
+        maxDrivers: Driver triangles each point follows, 1 to 32. Default 4.
+        falloff: Triangles within this many times the nearest distance count; higher is smoother. Default 2.0.
+        collisionShape: off | sphere | capsule | box. One of 'off', 'sphere', 'capsule', 'box'. Default 'box'.
+        params: {param: value} for any other attribute.
+        name: Name for the deformer.
+
+    Examples:
+        rigidBind('Scales', 'Arm', params={'collisionLift': 1.0, 'thickness': 0.05})
+    """
+
+def rigidBindToSkin(*objects: Any, maxInfluences: int | None = None) -> Any:
+    """Turn a rigid bind into skin weights for games: every point of a piece takes the driver's skin weights where the piece sits, so each piece moves with the driver's joints as one rigid-looking part, with no extra joints and no bake. Relaxation and collision are dropped. The driver must be skinned; the rigid bind is replaced by a skinCluster bound like the driver's. Returns the skinClusters.
+
+    Args:
+        objects: rigid binds or meshes (default the selection).
+        maxInfluences: Joints per piece. Default 4.
+
+    Examples:
+        rigidBindToSkin('Scales', maxInfluences=4)
+    """
+
 def rigidify(*objects: Any, regions: str | None = None, sets: Sequence[Any] | None = None, blendRings: int | None = None, name: str | None = None) -> Any:
     """Add a rigidify deformer: regions of the meshes keep their rest shape and move rigidly with the deformation under them. Regions are the meshes' islands, the selected components (each connected patch one region), sets, or the painted weights. Returns the deformers.
 

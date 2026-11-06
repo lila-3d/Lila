@@ -1814,7 +1814,7 @@ void registerBuiltins()
     registerWorldAttrs("skinCluster", {.matrices = {"geomMatrix"}});
     registerWorldAttrs("skinInfluence", {.inverseMatrices = {"bindPreMatrix"}});
     for (const char* t : {"arap", "bbw", "laplacianDeform", "rigidify", "skinSlide", "inflate", "collision", "cage", "shrinkwrap", "surfaceDeform",
-                          "wrap", "bendDeformer", "cast", "shearDeformer", "sineDeformer", "squashDeformer", "taperDeformer", "twistDeformer",
+                          "wrap", "rigidBind", "bendDeformer", "cast", "shearDeformer", "sineDeformer", "squashDeformer", "taperDeformer", "twistDeformer",
                           "waveDeformer", "warp"})
         registerWorldAttrs(t, {.matrices = {"geomMatrix"}});
     registerWorldAttrs("ffd", {.matrices = {"geomMatrix", "baseMatrix"}});

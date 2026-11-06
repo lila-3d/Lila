@@ -894,3 +894,34 @@ TEST_CASE("exportVertexAnimation auto picks rigid only for a piece attribute tha
     CHECK(ops::execute("exportVertexAnimation", {{"args", {plain}}, {"folder", dir.generic_string()}, {"name", "plain"}})["meta"]["mode"] == "constant");
     fs::remove_all(dir);
 }
+
+TEST_CASE("rigidBind pieces bake to joints and to a rigid VAT without residual")
+{
+    setup();
+    fs::path dir = tempDir("rigidbind");
+    ops::execute("newScene", json::object());
+    ops::execute("playbackOptions", {{"fps", 30.0}, {"minTime", 1.0 / 30.0}, {"maxTime", 6.0 / 30.0}});
+    const std::string body = ops::execute("polyPlane", {{"name", "Body"}, {"width", 20}, {"depth", 20}, {"subdivisionsX", 10}, {"subdivisionsZ", 10}})[0];
+    json cubes = json::array();
+    for (int i = 0; i < 3; ++i)
+    {
+        const std::string c = ops::execute("polyCube", {{"width", 1.6}, {"height", 0.4}, {"depth", 1.6}})[0];
+        ops::execute("move", {{"args", {c}}, {"to", {-2.0 + 2.0 * i, 0.3, 0.0}}});
+        cubes.push_back(c);
+    }
+    const std::string scales = ops::execute("polyCombine", {{"args", cubes}, {"name", "Scales"}}).get<std::string>();
+    ops::execute("rigidBind", {{"args", {scales, body}}});
+    ops::execute("setKeyframe", {{"args", {body + ".rz"}}, {"time", 1.0 / 30.0}, {"value", 0.0}});
+    ops::execute("setKeyframe", {{"args", {body + ".rz"}}, {"time", 6.0 / 30.0}, {"value", 60.0}});
+    ops::execute("setKeyframe", {{"args", {body + ".ty"}}, {"time", 6.0 / 30.0}, {"value", 30.0}});
+
+    json vat = ops::execute("exportVertexAnimation", {{"args", {scales}}, {"folder", dir.generic_string()}, {"name", "scales"}, {"mode", "rigid"}});
+    CHECK(vat["meta"]["mode"] == "rigid");
+    CHECK(vat["meta"]["pieceCount"] == 3);
+    CHECK(vat["meta"]["rigid"]["maxResidual"].get<double>() < seq::kVatRigidTolerance);
+
+    json joints = ops::execute("bakePiecesToJoints", {{"args", {scales}}});
+    CHECK(joints["joints"].size() == 3);
+    CHECK(joints["residual"].get<double>() < 1e-3);
+    fs::remove_all(dir);
+}

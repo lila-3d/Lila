@@ -41,6 +41,11 @@ void registerDeformActions()
         "Select a collision deformer, then more colliders.");
     addDeformCommand("deform.rigidify", "Rigidify", "rigidify", {{"regions", "selection"}}, "rigidify(regions=\"selection\")",
         "Select components: each connected patch keeps its shape and moves rigidly with the deformation under it.");
+    addDeformCommand("deform.rigidBind", "Rigid Bind", "rigidBind", nlohmann::json::object(), "rigidBind()",
+        "Select the piece meshes, then the driver last: each piece rides the surface without bending, and pieces push apart instead of "
+        "passing through each other.");
+    addDeformCommand("deform.rigidBindToSkin", "Rigid Bind to Skin Weights", "rigidBindToSkin", nlohmann::json::object(), "rigidBindToSkin()",
+        "Replaces the selected rigid binds with skin weights copied from the skinned driver under each piece: no extra joints, no bake.");
     addDeformCommand("deform.skinSlide", "Skin Slide", "skinSlide", nlohmann::json::object(), "skinSlide()",
         "Makes the deformation below slide along the rest surface instead of stretching it.");
     addDeformCommand("deform.uvPin", "UV Pin", "surfacePin", {{"mode", "uv"}}, "surfacePin(mode=\"uv\")",

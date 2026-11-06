@@ -270,7 +270,7 @@ void MainWindow::buildMenus()
                                        "deform.tension"});
     addSubmenu("Deform", "Surface");
     menus::addActions("Deform/Surface", {"deform.shrinkwrap", "deform.surfaceDeform", "deform.addWrapDriver", "", "deform.collision", "deform.addCollider", "",
-                                         "deform.rigidify", "deform.skinSlide", "", "deform.uvPin", "deform.proximityPin"});
+                                         "deform.rigidify", "deform.rigidBind", "deform.skinSlide", "", "deform.uvPin", "deform.proximityPin"});
     menus::addActions("Deform", {"deform.correction", "deform.editCorrection"});
     addSubmenu("Deform", "Fields");
     menus::addActions("Deform/Fields", {"deform.field", "deform.addFieldLayer", "deform.connectField", "deform.disconnectField", "", "deform.softSelectField"});
@@ -282,7 +282,7 @@ void MainWindow::buildMenus()
     menus::addActions("Deform", {"", "deform.rebind", "#Secondary Motion", "deform.jiggle"});
     addSubmenu("Deform", "Bake for Unreal");
     menus::addActions("Deform/Bake for Unreal", {"deform.bakeSkinWeights", "deform.bakeHelperJoints", "deform.bakeCorrectiveMorphs", "",
-                                                 "deform.rangeOfMotion", "deform.exportMLDeformer", "", "deform.bakeTension", "deform.bakeSurfacePin"});
+                                                 "deform.rangeOfMotion", "deform.exportMLDeformer", "", "deform.bakeTension", "deform.bakeSurfacePin", "deform.rigidBindToSkin"});
 
     menu(levelToolkit::kMenu, "Level", Area::MenuBar, {}, "", {"Level"});
     menus::addActions(levelToolkit::kMenu, {"window.levelToolkit"});

@@ -906,6 +906,8 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"deform.collision", "shield"},
     {"deform.addCollider", "shield"},
     {"deform.rigidify", "lock"},
+    {"deform.rigidBind", "puzzle"},
+    {"deform.rigidBindToSkin", "bone"},
     {"deform.skinSlide", "arrows-move"},
     {"deform.uvPin", "pin"},
     {"deform.proximityPin", "pin"},
