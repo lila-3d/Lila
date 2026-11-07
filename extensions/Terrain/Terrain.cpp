@@ -1,6 +1,7 @@
 // Terrain: heightfield terrain as geometry nodes, with commands that build and read it and their UI.
 
 #include "ExportEngines.h"
+#include "Http.h"
 #include "Roads.h"
 #include "LandformCommands.h"
 #include "MaterialNodes.h"
@@ -29,4 +30,9 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(lila::ext::Context& ctx)
     terrain::registerSpec(ctx);
     terrain::registerWedge(ctx);
     return 0;
+}
+
+LILA_EXTENSION_EXPORT void lilaExtensionUninit(lila::ext::Context&)
+{
+    terrain::httpShutdown();
 }

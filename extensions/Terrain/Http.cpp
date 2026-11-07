@@ -18,6 +18,9 @@ namespace terrain
 {
 namespace httpdetail
 {
+/** The application object made here when the host had none. */
+QCoreApplication* ownedApp = nullptr;
+
 /** Qt Network needs an application object; lilabatch and test runners may have none. */
 void ensureApp()
 {
@@ -26,7 +29,7 @@ void ensureApp()
     static int argc = 1;
     static char name[] = "lila";
     static char* argv[] = {name, nullptr};
-    static std::unique_ptr<QCoreApplication> app = std::make_unique<QCoreApplication>(argc, argv);
+    ownedApp = new QCoreApplication(argc, argv);
 }
 
 /** Runs one GET, handing each chunk of a 200 or 206 answer to sink; false from sink aborts. range is a Range header value. */
@@ -126,5 +129,11 @@ int httpGetRange(const std::string& url, uint64_t offset, uint64_t count, std::v
     if (status == 0 && out->size() >= count)
         return 206;
     return status;
+}
+
+void httpShutdown()
+{
+    delete httpdetail::ownedApp;
+    httpdetail::ownedApp = nullptr;
 }
 } // namespace terrain

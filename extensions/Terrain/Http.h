@@ -21,4 +21,7 @@ int httpGetText(const std::string& url, std::string* body, std::string* why);
 
 /** GET count bytes of url from offset (an HTTP Range request); returns 206 or 200 when out has them, as httpGet otherwise. */
 int httpGetRange(const std::string& url, uint64_t offset, uint64_t count, std::vector<uint8_t>* out, std::string* why);
+
+/** Destroys the application object httpGet made when the host had none; called while the extension unloads, before its DLL goes. */
+void httpShutdown();
 } // namespace terrain
