@@ -237,9 +237,11 @@ protected:
 
     void mousePressEvent(QMouseEvent* e) override
     {
-        if (e->button() == Qt::LeftButton)
+        // MMB moves the time but holds the pose, so a key set next copies it there (Maya's MMB drag).
+        if (e->button() == Qt::LeftButton || e->button() == Qt::MiddleButton)
         {
             mScrubbing = true;
+            mHoldPose = e->button() == Qt::MiddleButton;
             scrubTo(e->position().x());
         }
         else if (e->button() == Qt::RightButton)
@@ -271,7 +273,7 @@ private:
         double t = anim::secondsOf(fr);
         if (std::abs(t - Graph::current().time()) < 1e-9)
             return;
-        ops::execute("currentTime", {{"args", {t}}});
+        ops::execute("currentTime", {{"args", {t}}, {"update", !mHoldPose}});
         notifyTimeChanged();
         audio::scrubbed(t);
     }
@@ -306,6 +308,7 @@ private:
     std::vector<double> mLoopKeys;
     bool mKeysValid = false;
     bool mScrubbing = false;
+    bool mHoldPose = false;
     int mPrefListener = 0;
 
 public:

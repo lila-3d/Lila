@@ -2,12 +2,14 @@
 
 #include "core/Profile.h"
 #include "scene/AnimInterpolator.h"
+#include "scene/CurveModifiers.h"
 #include "scene/Graph.h"
 #include "scene/RotationCurve.h"
 
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <unordered_map>
 
 namespace lila::scene::anim
 {
@@ -301,6 +303,8 @@ json Curve::keysToJson() const
             j["interp"] = k.interpolator;
         if (k.breakdown)
             j["bd"] = true;
+        if (k.broken)
+            j["br"] = true;
         out.push_back(std::move(j));
     }
     return out;
@@ -325,6 +329,7 @@ std::vector<Key> Curve::keysFromJson(const json& j)
         if (e.contains("o"))
             k.out = tangentFromName(e["o"].get<std::string>());
         k.breakdown = e.value("bd", false);
+        k.broken = e.value("br", false);
         k.inAngle = e.value("ia", 0.0);
         k.outAngle = e.value("oa", 0.0);
         k.inWeight = e.value("iw", 1.0);
@@ -357,12 +362,75 @@ void CurveNode::compute(const EvalContext& ctx)
     mCached.post = Infinity(std::clamp<int64_t>(as<int64_t>(kPostInfinity), 0, 4));
     mCached.weighted = as<bool>(kWeighted);
     mCached.loop = as<bool>(kLoop);
-    setOutput(kOutput, mCached.evaluate(as<bool>(kMute) ? as<double>(kMuteTime) : ctx.time));
+    if (const std::string& mods = as<std::string>(kModifiers); mods != mModifiersText)
+    {
+        mModifiersText = mods;
+        mModifiers = modifiersFromText(mods);
+    }
+    const double t = as<bool>(kMute) ? as<double>(kMuteTime) : heldTime().value_or(ctx.time);
+    const Curve& c = previewOf(id()) ? *previewOf(id()) : mCached;
+    setOutput(kOutput, mModifiers.empty() ? c.evaluate(t) : evaluateModified(c, mModifiers, t));
 }
 
 bool isCurve(const Node& n)
 {
     return n.type().isA("animCurve");
+}
+
+namespace
+{
+std::optional<double>& held()
+{
+    static std::optional<double> t;
+    return t;
+}
+} // namespace
+
+std::optional<double> heldTime()
+{
+    return held();
+}
+
+std::unordered_map<NodeId, Curve>& scalarPreviews()
+{
+    static std::unordered_map<NodeId, Curve> m;
+    return m;
+}
+
+const Curve* previewOf(NodeId curve)
+{
+    auto& m = scalarPreviews();
+    if (m.empty())
+        return nullptr;
+    auto it = m.find(curve);
+    return it == m.end() ? nullptr : &it->second;
+}
+
+void setPreview(Graph& g, NodeId curve, const Curve& c)
+{
+    scalarPreviews()[curve] = c;
+    g.touch(curve);
+}
+
+void clearPreviews(Graph& g)
+{
+    for (auto& [id, c] : scalarPreviews())
+        if (g.node(id))
+            g.touch(id);
+    scalarPreviews().clear();
+    clearRotationPreviews(g);
+}
+
+void setHeldTime(Graph& g, std::optional<double> t)
+{
+    if (held() == t)
+        return;
+    held() = t;
+    for (NodeId id : g.nodes())
+        if (Node* n = g.node(id); n && isAnyCurve(*n))
+            g.touch(id);
+    if (g.cachedPlayback())
+        g.clearPlaybackCache();
 }
 
 Curve curveOf(const Node& n)
@@ -445,6 +513,8 @@ void registerTypes()
          .doc = "Hold the value at muteTime instead of playing the curve (the Channel Box's Mute)."},
         {.name = "muteTime", .shortName = "mut", .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrInput | AttrStorable | AttrHidden,
          .doc = "Seconds: the time a muted curve holds."},
+        {.name = "modifiers", .shortName = "mods", .type = PlugType::String, .defaultValue = std::string(),
+         .flags = AttrInput | AttrStorable | AttrHidden, .doc = "Non-destructive modifiers as JSON; see the curveModifier command."},
     };
     const NodeType& b = types::registerType(std::move(base));
     for (const char* name : {"animCurveTL", "animCurveTA", "animCurveTU"})

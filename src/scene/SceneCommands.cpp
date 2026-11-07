@@ -1179,13 +1179,20 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "currentTime",
-        .doc = "Query or set the current time in seconds.",
+        .doc = "Query or set the current time in seconds. update=False moves the time but holds the pose (animation keeps "
+               "evaluating at the time it held), so keys set next copy that pose to the new time.",
         .positionalDoc = "seconds",
+        .flags = {{"update", "u", ArgType::Bool, true, "False holds the current pose while the time moves."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
             if (!a.positional.empty())
-                Graph::current().setTime(a.positional[0].get<double>());
-            return Graph::current().time();
+            {
+                const bool update = a.get<bool>("update", true);
+                anim::setHeldTime(g, update ? std::nullopt : std::optional<double>(anim::heldTime().value_or(g.time())));
+                g.setTime(a.positional[0].get<double>());
+            }
+            return g.time();
         },
     });
 }

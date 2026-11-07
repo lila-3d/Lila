@@ -7,6 +7,7 @@
 #include <cmath>
 #include <set>
 #include <stdexcept>
+#include <unordered_map>
 
 namespace lila::scene::anim
 {
@@ -457,6 +458,8 @@ json RotationCurve::keysToJson() const
             j["ow"] = k.outWeight;
         if (k.breakdown)
             j["bd"] = true;
+        if (k.broken)
+            j["br"] = true;
         out.push_back(std::move(j));
     }
     return out;
@@ -509,6 +512,7 @@ std::vector<RotKey> RotationCurve::keysFromJson(const json& j, RotateOrder order
         k.inWeight = e.value("iw", 1.0);
         k.outWeight = e.value("ow", 1.0);
         k.breakdown = e.value("bd", false);
+        k.broken = e.value("br", false);
         out.push_back(k);
     }
     std::stable_sort(out.begin(), out.end(), [](const RotKey& a, const RotKey& b) { return a.time < b.time; });
@@ -539,7 +543,46 @@ void RotationCurveNode::compute(const EvalContext& ctx)
     mCached.weighted = as<bool>(kWeighted);
     mCached.interp = RotInterp(std::clamp<int64_t>(as<int64_t>(kInterpolation), 0, 1));
     mCached.loop = as<bool>(kLoop);
-    setOutput(kOutput, mCached.evaluate(as<bool>(kMute) ? as<double>(kMuteTime) : ctx.time));
+    if (const std::string& mods = as<std::string>(kModifiers); mods != mModifiersText)
+    {
+        mModifiersText = mods;
+        mModifiers = modifiersFromText(mods);
+    }
+    const double t = as<bool>(kMute) ? as<double>(kMuteTime) : heldTime().value_or(ctx.time);
+    const RotationCurve& c = rotationPreviewOf(id()) ? *rotationPreviewOf(id()) : mCached;
+    setOutput(kOutput, mModifiers.empty() ? c.evaluate(t) : evaluateModified(c, mModifiers, t));
+}
+
+namespace
+{
+std::unordered_map<NodeId, RotationCurve>& rotationPreviews()
+{
+    static std::unordered_map<NodeId, RotationCurve> m;
+    return m;
+}
+} // namespace
+
+const RotationCurve* rotationPreviewOf(NodeId curve)
+{
+    auto& m = rotationPreviews();
+    if (m.empty())
+        return nullptr;
+    auto it = m.find(curve);
+    return it == m.end() ? nullptr : &it->second;
+}
+
+void setPreview(Graph& g, NodeId curve, const RotationCurve& c)
+{
+    rotationPreviews()[curve] = c;
+    g.touch(curve);
+}
+
+void clearRotationPreviews(Graph& g)
+{
+    for (auto& [id, c] : rotationPreviews())
+        if (g.node(id))
+            g.touch(id);
+    rotationPreviews().clear();
 }
 
 bool isRotationCurve(const Node& n)
@@ -871,6 +914,8 @@ void registerRotationCurveType()
          .doc = "Hold the value at muteTime instead of playing the curve (the Channel Box's Mute)."},
         {.name = "muteTime", .shortName = "mut", .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrInput | AttrStorable | AttrHidden,
          .doc = "Seconds: the time a muted curve holds."},
+        {.name = "modifiers", .shortName = "mods", .type = PlugType::String, .defaultValue = std::string(),
+         .flags = AttrInput | AttrStorable | AttrHidden, .doc = "Non-destructive modifiers as JSON; see the curveModifier command."},
     };
     t.create = [] { return std::make_unique<RotationCurveNode>(); };
     types::registerType(std::move(t));

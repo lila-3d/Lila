@@ -4,6 +4,8 @@ lila_module(lila_scene Scene
     AnimLayer.cpp
     AnimInterpolator.cpp
     RotationCurve.cpp
+    CurveModifiers.cpp
+    AnimKeyOps.cpp
     RotationCommands.cpp
     Repeat.cpp
     ArrayGroup.cpp ArrayGroup.h

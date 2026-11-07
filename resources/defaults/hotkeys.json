@@ -74,6 +74,8 @@
       "Shift+,": "select.shrink",
       "[": "viewport.cameraUndo",
       "]": "viewport.cameraRedo",
+      "Alt+C": "anim.prevKey",
+      "Alt+B": "anim.nextKey",
       "Alt+V": "anim.play",
       "Ctrl+Shift+T": "window.modelingToolkit",
       "Ctrl+T": "window.searchMenus",
@@ -232,6 +234,10 @@
     },
     "graphEditor": {
       "F": "graphEditor.frameSelected",
+      "W": {"press": "graphEditor.moveToolDown", "release": "graphEditor.toolKeyUp"},
+      "E": {"press": "graphEditor.rotateToolDown", "release": "graphEditor.toolKeyUp"},
+      "R": {"press": "graphEditor.scaleToolDown", "release": "graphEditor.toolKeyUp"},
+      "B": {"press": "graphEditor.falloffKeyDown", "release": "graphEditor.falloffKeyUp"},
       "A": "graphEditor.frameAll",
       "Esc": "anim.stop"
     }

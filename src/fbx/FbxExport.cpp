@@ -1739,7 +1739,8 @@ std::optional<std::array<anim::Curve, 9>> directCurves(Graph& g, NodeId id, doub
                 return std::nullopt;
             // FBX has only Euler curves: the rotation curve's own keys, plus frames only where those miss it.
             anim::RotationCurve rc = anim::rotationCurveOf(*cn).looped();
-            if (rc.keys.empty())
+            // Modifiers change the output away from the keys, so such curves export sampled.
+            if (rc.keys.empty() || !anim::modifiersOf(*cn).empty())
                 return std::nullopt;
             bool covered = rc.keys.front().time <= start + 1e-9 && rc.keys.back().time >= end - 1e-9;
             if (!covered && (rc.pre != anim::Infinity::Constant || rc.post != anim::Infinity::Constant))
@@ -1772,7 +1773,7 @@ std::optional<std::array<anim::Curve, 9>> directCurves(Graph& g, NodeId id, doub
             if (!anim::isCurve(*cn))
                 return std::nullopt;
             curve = anim::curveOf(*cn).looped();
-            if (curve.keys.empty())
+            if (curve.keys.empty() || !anim::modifiersOf(*cn).empty())
                 return std::nullopt;
             bool covered = curve.keys.front().time <= start + 1e-9 && curve.keys.back().time >= end - 1e-9;
             if (!covered && (curve.pre != anim::Infinity::Constant || curve.post != anim::Infinity::Constant))

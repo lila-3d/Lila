@@ -6,6 +6,7 @@
 #include "core/PrefStore.h"
 #include "core/Progress.h"
 #include "core/Profile.h"
+#include "scene/AnimKeyOps.h"
 #include "scene/AnimLayer.h"
 #include "scene/Graph.h"
 #include "scene/RigUtil.h"
@@ -176,6 +177,29 @@ Tangent tangentArg(const Args& a, const char* flag)
 double degreesOf(double slope)
 {
     return std::atan(slope) * 180.0 / 3.14159265358979323846;
+}
+
+/** Locks or breaks key i's handles. Locking a key whose sides differ fixes both to their average. */
+void unify(Curve& c, size_t i, bool lock)
+{
+    Key& k = c.keys[i];
+    k.broken = !lock;
+    const double in = c.inSlope(i), out = c.outSlope(i);
+    if (!lock || (k.in == k.out && std::abs(in - out) < 1e-9))
+        return;
+    k.in = k.out = Tangent::Fixed;
+    k.inAngle = k.outAngle = degreesOf(0.5 * (in + out));
+}
+
+void unify(RotationCurve& rc, size_t i, bool lock)
+{
+    const glm::dvec3 in = glm::degrees(rc.inVelocity(i)), out = glm::degrees(rc.outVelocity(i));
+    RotKey& k = rc.keys[i];
+    k.broken = !lock;
+    if (!lock || (k.in == k.out && glm::length(in - out) < 1e-9))
+        return;
+    k.in = k.out = Tangent::Fixed;
+    k.inVelocity = k.outVelocity = 0.5 * (in + out);
 }
 
 int copyKeys(Graph& g, const Args& a)
@@ -354,6 +378,7 @@ void setPlaybackDriver(PlaybackDriver driver)
 
 void play(int direction)
 {
+    setHeldTime(Graph::current(), std::nullopt);
     State& s = state();
     const bool wasStopped = s.direction == 0;
     s.direction = direction >= 0 ? 1 : -1;
@@ -595,6 +620,7 @@ void registerCommands()
 {
     using T = ArgType;
     registerTypes();
+    registerKeyOpCommands();
 
     {
         State& s = state();
@@ -1109,6 +1135,7 @@ void registerCommands()
             {"inWeight", "iw", T::Float, nullptr, "Handle length, 1 = a third of the segment.", {}, {}, 0.0, 3.0},
             {"outWeight", "ow", T::Float, nullptr, "Handle length, 1 = a third of the segment.", {}, {}, 0.0, 3.0},
             {"weightedTangents", "wt", T::Bool, nullptr, "Make the curves weighted or not."},
+            {"lock", "l", T::Bool, nullptr, "True unifies each key's in and out handles (they move together), False breaks them."},
         },
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
@@ -1207,6 +1234,8 @@ void registerCommands()
                         k.inWeight = std::clamp(a.get<double>("inWeight"), 0.0, 3.0);
                     if (a.has("outWeight"))
                         k.outWeight = std::clamp(a.get<double>("outWeight"), 0.0, 3.0);
+                    if (a.has("lock"))
+                        unify(rc, i, a.get<bool>("lock"));
                 }
                 setRotationCurve(g, t.curve, rc);
             }
@@ -1251,6 +1280,8 @@ void registerCommands()
                         k.inWeight = std::clamp(a.get<double>("inWeight"), 0.0, 3.0);
                     if (a.has("outWeight"))
                         k.outWeight = std::clamp(a.get<double>("outWeight"), 0.0, 3.0);
+                    if (a.has("lock"))
+                        unify(cv, i, a.get<bool>("lock"));
                 }
                 setCurve(g, t.curve, cv);
             }

@@ -1004,6 +1004,12 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         }
     });
 
+    builtIn(r, "graphEditor", "Graph Editor", "graphEditor", [](Page& graph) {
+        sectionHeader(graph, "Tool Keys");
+        // A tap only switches the tool; the drag starts once the key is held and the mouse travels.
+        toggleField(graph, "Hold W, E, R to drag keys", "/holdToDrag", true);
+    });
+
     builtIn(r, "naming", "Naming", "naming", [](Page& naming) {
         sectionHeader(naming, "Conventions");
         toggleField(naming, "Enforce conventions", "/enabled", false);

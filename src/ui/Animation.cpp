@@ -1,6 +1,7 @@
 #include "ui/Animation.h"
 
 #include "ops/Command.h"
+#include "ops/CommandOptions.h"
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "scene/Anim.h"
@@ -229,6 +230,108 @@ void notifyTimeChanged()
     hub().fire();
 }
 
+namespace
+{
+void withGraphEditor(const std::function<void(GraphEditor&)>& fn)
+{
+    if (GraphEditor* ge = GraphEditor::instance())
+        fn(*ge);
+}
+
+void registerGraphEditorActions()
+{
+    auto add = [](const char* id, const char* label, std::function<void()> run, const char* doc, const char* iconName = "") {
+        actions::add({.id = id, .label = label, .category = "Graph Editor", .run = std::move(run), .doc = doc, .icon = iconName});
+    };
+    // Key commands run on the graph editor's selected keys, with the option box values.
+    auto addKeyCommand = [](const char* id, const char* label, const char* command, json call, const char* doc, bool curves = false) {
+        actions::add({.id = id,
+                      .label = label,
+                      .category = "Graph Editor",
+                      .run = [command, call, curves] { withGraphEditor([&](GraphEditor& ge) { curves ? ge.runOnCurves(command, call) : ge.runOnKeys(command, call); }); },
+                      .doc = doc,
+                      .command = command,
+                      .call = call});
+    };
+    add("graphEditor.moveTool", "Move Keys", [] { withGraphEditor([](GraphEditor& ge) { ge.setTool(0); }); },
+        "Drag keys to move them; the box around several keys scales them from its edges.", "arrows-move");
+    add("graphEditor.rotateTool", "Rotate Tangents", [] { withGraphEditor([](GraphEditor& ge) { ge.setTool(1); }); },
+        "Drag sideways to turn each selected key's tangents about the key.", "rotate-2");
+    add("graphEditor.scaleTool", "Scale Keys", [] { withGraphEditor([](GraphEditor& ge) { ge.setTool(2); }); },
+        "Drag to scale the selected keys about the pivot: sideways for time, up and down for value.", "resize");
+    add("graphEditor.toggleFalloff", "Falloff", [] { withGraphEditor([](GraphEditor& ge) { ge.toggleFalloff(); }); },
+        "Keys near the selection follow value changes, less with distance.", "ripple");
+    const char* toolLabels[] = {"Move Keys Key Down", "Rotate Tangents Key Down", "Scale Keys Key Down"};
+    const char* toolIds[] = {"graphEditor.moveToolDown", "graphEditor.rotateToolDown", "graphEditor.scaleToolDown"};
+    for (int i = 0; i < 3; ++i)
+        add(toolIds[i], toolLabels[i], [i] { withGraphEditor([i](GraphEditor& ge) { ge.toolKeyDown(i); }); },
+            "Press half of a tool key: switches the tool, and while held, moving the mouse drags the selected keys.");
+    add("graphEditor.toolKeyUp", "Tool Key Up", [] { withGraphEditor([](GraphEditor& ge) { ge.toolKeyUp(); }); },
+        "Release half of a tool key: places keys dragged while it was held.");
+    add("graphEditor.falloffKeyDown", "Falloff Key Down", [] { withGraphEditor([](GraphEditor& ge) { ge.falloffKeyDown(); }); },
+        "Press half of the falloff key: hold and drag to set the radius (MMB drags from zero).");
+    add("graphEditor.falloffKeyUp", "Falloff Key Up", [] { withGraphEditor([](GraphEditor& ge) { ge.falloffKeyUp(); }); },
+        "Release half of the falloff key: a tap without a drag toggles falloff.");
+    add("graphEditor.absoluteView", "Absolute View", [] { withGraphEditor([](GraphEditor& ge) { ge.setViewMode(0); }); },
+        "Curves at their values.", "chart-line");
+    add("graphEditor.stackedView", "Stacked View", [] { withGraphEditor([](GraphEditor& ge) { ge.setViewMode(1); }); },
+        "Each curve in a band of its own, scaled to fit.", "layout-rows");
+    add("graphEditor.normalizedView", "Normalized View", [] { withGraphEditor([](GraphEditor& ge) { ge.setViewMode(2); }); },
+        "Every curve scaled to -1..1, on top of each other.", "arrows-diff");
+    add("graphEditor.breakTangents", "Break Tangents", [] { withGraphEditor([](GraphEditor& ge) { ge.lockTangents(false); }); },
+        "The selected keys' in and out handles move apart.", "unlink");
+    add("graphEditor.unifyTangents", "Unify Tangents", [] { withGraphEditor([](GraphEditor& ge) { ge.lockTangents(true); }); },
+        "The selected keys' in and out handles move together.", "link");
+    add("graphEditor.snapshotBuffer", "Snapshot Buffer", [] { withGraphEditor([](GraphEditor& ge) { ge.snapshotBuffer(); }); },
+        "Remember the curves as they are now, drawn behind them to compare.", "photo");
+    add("graphEditor.swapBuffer", "Swap Buffer", [] { withGraphEditor([](GraphEditor& ge) { ge.swapBuffer(); }); },
+        "Swap the curves with their snapshot.", "arrows-exchange");
+    addKeyCommand("graphEditor.butterworth", "Butterworth Filter", "filterCurve", {{"filter", "butterworth"}},
+                  "Smooth out jitter faster than the cutoff; leaves a key on every frame.");
+    addKeyCommand("graphEditor.gaussian", "Gaussian Smooth", "filterCurve", {{"filter", "gaussian"}},
+                  "Smooth the selected keys' values, keeping the keys.");
+    addKeyCommand("graphEditor.simplify", "Simplify", "filterCurve", {{"filter", "simplify"}},
+                  "The fewest keys that stay within the tolerance of the curve.");
+    addKeyCommand("graphEditor.resample", "Resample", "filterCurve", {{"filter", "resample"}}, "A key every few frames.");
+    actions::add({.id = "graphEditor.eulerFilter",
+                  .label = "Euler Filter",
+                  .category = "Graph Editor",
+                  .doc = "Remove flips and 360-degree jumps from the selection's Euler rotate curves.",
+                  .command = "eulerFilter"});
+    addKeyCommand("graphEditor.noise", "Noise", "curveModifier", {{"type", "noise"}}, "Add or edit smooth noise on the curves' output.", true);
+    addKeyCommand("graphEditor.stepped", "Stepped", "curveModifier", {{"type", "stepped"}}, "Hold the curves' output for a few frames at a time.", true);
+    addKeyCommand("graphEditor.limits", "Limits", "curveModifier", {{"type", "limits"}}, "Keep the curves' output between a lowest and highest value.", true);
+    addKeyCommand("graphEditor.removeModifiers", "Remove Modifiers", "curveModifier", {{"remove", true}}, "Remove every modifier from the curves.", true);
+
+    namespace opt = ops::options;
+    for (const char* command : {"transformKeys", "blendKeys", "filterCurve"})
+    {
+        opt::Override o = opt::findOverride(command) ? *opt::findOverride(command) : opt::Override{};
+        o.hidden = {"keys", "time"};
+        if (std::string_view(command) == "filterCurve")
+        {
+            o.hidden.push_back("filter");
+            o.ranges["cutoff"] = {0.1, 60.0, 0.5, " Hz"};
+            o.ranges["width"] = {0.1, 50.0, 0.5, " f"};
+            o.ranges["step"] = {0.1, 1000.0, 1.0, " f"};
+            o.sections = {{"cutoff", "Butterworth"}, {"width", "Gaussian"}, {"tolerance", "Simplify"}, {"step", "Resample"}};
+        }
+        opt::setOverride(command, std::move(o));
+    }
+    {
+        opt::Override o;
+        o.hidden = {"type", "remove", "query"};
+        o.sections = {{"amplitude", "Noise"}, {"period", "Noise"}, {"phase", "Noise"}, {"seed", "Noise"}, {"octaves", "Noise"},
+                      {"step", "Stepped"}, {"offset", "Stepped"}, {"min", "Limits"}, {"max", "Limits"}};
+        o.ranges["period"] = {0.1, 1000.0, 1.0, " f"};
+        o.ranges["phase"] = {-1e6, 1e6, 1.0, " f"};
+        o.ranges["step"] = {0.1, 1000.0, 1.0, " f"};
+        o.ranges["offset"] = {-1e6, 1e6, 1.0, " f"};
+        opt::setOverride("curveModifier", std::move(o));
+    }
+}
+} // namespace
+
 void registerAnimationUi()
 {
     hub();
@@ -303,5 +406,6 @@ void registerAnimationUi()
             if (GraphEditor* ge = GraphEditor::instance())
                 ge->frame(false);
         }, "Fit the graph editor to every curve shown.", "");
+    registerGraphEditorActions();
 }
 } // namespace lila::ui

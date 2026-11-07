@@ -61,7 +61,9 @@ lila_module(lila_ui UI
     Ghosting.cpp Ghosting.h
     GnViewerDraw.cpp GnViewerDraw.h
     GnSpreadsheet.cpp GnSpreadsheet.h
-    GraphEditor.cpp GraphEditor.h
+    GraphEditor.cpp GraphEditor.h GraphEditorCommon.h
+    GraphCurveView.cpp GraphCurveView.h
+    GraphMotion.cpp GraphMotion.h
     PoseLibrary.cpp PoseLibrary.h
     ControlPicker.cpp ControlPicker.h
     HotkeyBindings.cpp HotkeyBindings.h

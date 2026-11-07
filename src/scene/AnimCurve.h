@@ -2,8 +2,10 @@
 
 #include "core/Export.h"
 
+#include "scene/CurveModifiers.h"
 #include "scene/Node.h"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -49,6 +51,8 @@ struct Key
     std::string interpolator;
     /** A breakdown key (Maya's): editors mark it apart from the others. */
     bool breakdown = false;
+    /** In and out handles move independently in editors; slopes come from in/out as always. */
+    bool broken = false;
 
     bool operator==(const Key&) const = default;
 };
@@ -112,6 +116,7 @@ public:
         kLoop,
         kMute,
         kMuteTime,
+        kModifiers,
         kCount
     };
 
@@ -120,6 +125,8 @@ public:
 private:
     std::string mCachedText;
     Curve mCached;
+    std::string mModifiersText;
+    std::vector<Modifier> mModifiers;
 };
 
 /** Reads a curve node's keys and settings. Malformed keys read as none. */
@@ -128,6 +135,23 @@ LILA_SCENE_API Curve curveOf(const Node& n);
 LILA_SCENE_API void setCurve(Graph& g, NodeId curveNode, const Curve& c);
 
 LILA_SCENE_API bool isCurve(const Node& n);
+
+/**
+ * While set, every animation curve evaluates at this time instead of the scene's, so the pose holds while the current
+ * time moves (Maya's currentTime -update false, the time slider's MMB drag). Keys set meanwhile record the held pose.
+ */
+LILA_SCENE_API std::optional<double> heldTime();
+/** Sets or clears the held time and dirties every curve in g so it re-evaluates. */
+LILA_SCENE_API void setHeldTime(Graph& g, std::optional<double> t);
+
+/**
+ * An editor's drag preview: the curve node evaluates c instead of its keys until cleared, so the scene follows the drag
+ * live. Not saved and not undoable; the edit itself is committed through a command after clearPreviews.
+ */
+LILA_SCENE_API void setPreview(Graph& g, NodeId curve, const Curve& c);
+/** Drops every preview (scalar and rotation) and dirties those curves. */
+LILA_SCENE_API void clearPreviews(Graph& g);
+const Curve* previewOf(NodeId curve);
 
 LILA_SCENE_API void registerTypes();
 } // namespace lila::scene::anim

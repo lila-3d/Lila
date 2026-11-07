@@ -44,6 +44,8 @@ struct RotKey
     double inWeight = 1.0; // handle length relative to a third of the segment; only on weighted curves
     double outWeight = 1.0;
     bool breakdown = false;
+    /** In and out handles move independently in editors. */
+    bool broken = false;
 
     bool operator==(const RotKey&) const = default;
 };
@@ -127,6 +129,7 @@ public:
         kOutput,
         kMute,
         kMuteTime,
+        kModifiers,
         kCount
     };
 
@@ -135,6 +138,8 @@ public:
 private:
     std::string mCachedText;
     RotationCurve mCached;
+    std::string mModifiersText;
+    std::vector<Modifier> mModifiers;
 };
 
 LILA_SCENE_API bool isRotationCurve(const Node& n);
@@ -142,6 +147,11 @@ LILA_SCENE_API bool isRotationCurve(const Node& n);
 LILA_SCENE_API bool isAnyCurve(const Node& n);
 /** Malformed keys read as none. */
 LILA_SCENE_API RotationCurve rotationCurveOf(const Node& n);
+/** The rotation half of setPreview (AnimCurve.h): the node evaluates c until clearPreviews. */
+LILA_SCENE_API void setPreview(Graph& g, NodeId curve, const RotationCurve& c);
+void clearRotationPreviews(Graph& g);
+const RotationCurve* rotationPreviewOf(NodeId curve);
+
 /** Writes c into an animCurveRQ through the graph (undoable). */
 LILA_SCENE_API void setRotationCurve(Graph& g, NodeId curveNode, const RotationCurve& c);
 

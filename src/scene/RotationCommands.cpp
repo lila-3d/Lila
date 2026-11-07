@@ -190,9 +190,10 @@ std::vector<double> curveKeyTimes(const Node& curve)
 
 double curveValueAt(const Node& curve, int component, double t)
 {
+    std::vector<Modifier> mods = modifiersOf(curve);
     if (isRotationCurve(curve))
-        return rotationCurveOf(curve).evaluate(t)[std::clamp(component, 0, 2)];
-    return curveOf(curve).evaluate(t);
+        return evaluateModified(rotationCurveOf(curve), mods, t)[std::clamp(component, 0, 2)];
+    return evaluateModified(curveOf(curve), mods, t);
 }
 
 bool convertRotationCurves(Graph& g, NodeId node, RotationInterpolation to)

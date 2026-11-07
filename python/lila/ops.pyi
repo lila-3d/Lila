@@ -1253,6 +1253,7 @@ def blendInfo(*objects: Any, path: str | None = None) -> Any:
         path: The .blend file (or pass it first).
     """
 
+def blendKeys(*objects: Any, keys: Any | None = None, time: Any | None = None, mode: str | None = None, amount: float | None = None, k: Any | None = None, t: Any | None = None, m: str | None = None, a: float | None = None) -> Any:
 def blendOpen(*objects: Any, path: str | None = None, force: bool | None = None, namespace: str | None = None, collections: bool | None = None, materials: bool | None = None, skins: bool | None = None, morphs: bool | None = None, animation: bool | None = None, modifiers: bool | None = None, hidden: bool | None = None, evaluate: str | None = None, blenderPath: str | None = None, setPlayback: bool | None = None, textureDir: str | None = None, f: bool | None = None, ns: str | None = None, anim: bool | None = None) -> Any:
     """Open a Blender .blend file as a new, untitled scene (save it to keep it as .lila). Not undoable. Returns the import report.
 
@@ -2137,7 +2138,7 @@ def curlCurve(*objects: Any, amplitude: float | None = None, turns: float | None
 def currentTheme() -> Any:
     """The current interface theme's name."""
 
-def currentTime(*objects: Any) -> Any:
+def currentTime(*objects: Any, update: bool | None = None, u: bool | None = None) -> Any:
     """Query or set the current time in seconds.
 
     Args:
@@ -2235,6 +2236,7 @@ def curveEP(points: Sequence[Any] | None = None, degree: int | None = None, clos
         name: Name; made unique. Short form n.
     """
 
+def curveModifier(*objects: Any, type: str | None = None, remove: bool | None = None, query: bool | None = None, amplitude: float | None = None, period: float | None = None, phase: float | None = None, seed: int | None = None, octaves: int | None = None, step: float | None = None, offset: float | None = None, min: float | None = None, max: float | None = None, typ: str | None = None, rm: bool | None = None, q: bool | None = None, amp: float | None = None, per: float | None = None, ph: float | None = None, sd: int | None = None, oct: int | None = None, st: float | None = None, of: float | None = None, mn: float | None = None, mx: float | None = None) -> Any:
 def curveNetwork(*objects: Any, tolerance: float | None = None, spansU: int | None = None, spansV: int | None = None, uCurves: Sequence[Any] | None = None, vCurves: Sequence[Any] | None = None, flip: bool | None = None, constructionHistory: bool | None = None, name: str | None = None, tol: float | None = None, su: int | None = None, sv: int | None = None, ch: bool | None = None, n: str | None = None) -> Any:
     """Surface a network of crossing curves with quads, live: the curves sort into U and V families (or uCurves/vCurves say), become edge loops, and the surface stays smooth across them. Every U curve must cross every V curve; three-sided patches where one family meets at a point are fine. Returns [mesh, curveNetwork].
 
@@ -3343,6 +3345,7 @@ def filletCurve(*objects: Any, mode: str | None = None, radius: float | None = N
         name: Name of a new curve. Short form n.
     """
 
+def filterCurve(*objects: Any, keys: Any | None = None, time: Any | None = None, filter: str | None = None, cutoff: float | None = None, width: float | None = None, tolerance: float | None = None, step: float | None = None, k: Any | None = None, t: Any | None = None, f: str | None = None, co: float | None = None, w: float | None = None, tol: float | None = None, st: float | None = None) -> Any:
 def findComponents(*objects: Any, kind: str | None = None, normal: Sequence[float] | None = None, angle: float | None = None, side: str | None = None, box: Sequence[Any] | None = None, direction: Sequence[float] | None = None, near: Sequence[float] | None = None, radius: float | None = None, extreme: str | None = None, count: int | None = None, border: bool | None = None, shell: int | None = None, fromSelection: bool | None = None, tolerance: float | None = None, k: str | None = None, n: Sequence[float] | None = None, s: str | None = None, b: Sequence[Any] | None = None, dir: Sequence[float] | None = None, r: float | None = None, x: str | None = None, c: int | None = None, fs: bool | None = None, t: float | None = None) -> Any:
     """Ids of a mesh's vertices, edges or faces matching every predicate given (normal direction, side of the symmetry plane, box, distance, extreme along an axis, open border). Ids index the editable cage, like selectComponents. Changes nothing; see selectComponentsWhere to select them.
 
@@ -4632,7 +4635,7 @@ def kelvinlet(*objects: Any, position: Sequence[float] | None = None, radius: fl
         name: Name for the deformer.
     """
 
-def keyTangent(*objects: Any, attribute: Any | None = None, time: Any | None = None, query: bool | None = None, inTangentType: str | None = None, outTangentType: str | None = None, inAngle: float | None = None, outAngle: float | None = None, inWeight: float | None = None, outWeight: float | None = None, weightedTangents: bool | None = None, at: Any | None = None, t: Any | None = None, q: bool | None = None, itt: str | None = None, ott: str | None = None, ia: float | None = None, oa: float | None = None, iw: float | None = None, ow: float | None = None, wt: bool | None = None) -> Any:
+def keyTangent(*objects: Any, attribute: Any | None = None, time: Any | None = None, query: bool | None = None, inTangentType: str | None = None, outTangentType: str | None = None, inAngle: float | None = None, outAngle: float | None = None, inWeight: float | None = None, outWeight: float | None = None, weightedTangents: bool | None = None, lock: bool | None = None, at: Any | None = None, t: Any | None = None, q: bool | None = None, itt: str | None = None, ott: str | None = None, ia: float | None = None, oa: float | None = None, iw: float | None = None, ow: float | None = None, wt: bool | None = None, l: bool | None = None) -> Any:
     """Query or set tangents of keys (all, or those in time). Setting an angle makes that side fixed. query=True returns [{time, in, out, inAngle, outAngle, inWeight, outWeight}].
 
     Args:
@@ -9651,6 +9654,7 @@ def transferSource(*objects: Any) -> Any:
         objects: modifiers..., source.
     """
 
+def transformKeys(*objects: Any, keys: Any | None = None, time: Any | None = None, timeOffset: float | None = None, timeScale: float | None = None, timePivot: float | None = None, valueOffset: float | None = None, valueScale: float | None = None, valuePivot: float | None = None, falloff: float | None = None, snap: bool | None = None, k: Any | None = None, t: Any | None = None, to: float | None = None, ts: float | None = None, tp: float | None = None, vo: float | None = None, vs: float | None = None, vp: float | None = None, fo: float | None = None, sn: bool | None = None) -> Any:
 def trimCurve(*objects: Any, point: Sequence[float] | None = None, parameter: float | None = None, spline: int | None = None, cutters: Sequence[Any] | None = None, tolerance: float | None = None, direction: Sequence[float] | None = None, p: Sequence[float] | None = None, u: float | None = None, tol: float | None = None, dir: Sequence[float] | None = None) -> Any:
     """Delete the stretch of a curve between the intersections around a point (or parameter): with other curves (cutters, default every other visible curve), in 3D or as seen along direction. A curve meeting nothing is deleted. Returns what is left.
 

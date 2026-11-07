@@ -4,7 +4,8 @@ add_executable(lila_anim_tests
     test_keys.cpp
     test_layers.cpp
     test_playback.cpp
-    test_rotation.cpp)
+    test_rotation.cpp
+    test_key_ops.cpp)
 target_link_libraries(lila_anim_tests PRIVATE LilaScene doctest::doctest)
 add_test(NAME lila_anim_tests COMMAND lila_anim_tests)
 

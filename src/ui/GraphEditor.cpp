@@ -1,5 +1,4 @@
 #include "ui/GraphEditor.h"
-#include "ui/AttrView.h"
 
 #include "ops/Command.h"
 #include "ops/Undo.h"
@@ -8,1112 +7,359 @@
 #include "core/Profile.h"
 #include "scene/Anim.h"
 #include "scene/Graph.h"
-#include "scene/RotationCurve.h"
+#include "ui/Actions.h"
 #include "ui/Animation.h"
-#include "ui/AudioUi.h"
+#include "ui/AttrView.h"
 #include "ui/Deletion.h"
+#include "ui/GraphCurveView.h"
 #include "ui/Icons.h"
+#include "ui/Menus.h"
 #include "ui/Theme.h"
 #include "ui/UiCommon.h"
-#include "ui/ViewportDisplay.h"
 
+#include <QActionGroup>
+#include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QHBoxLayout>
-#include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
-#include <QMouseEvent>
 #include <QPainter>
-#include <QPainterPath>
+#include <QSlider>
 #include <QSplitter>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
-#include <QWheelEvent>
+#include <QWidgetAction>
 
 #include <cmath>
-#include <functional>
-#include <map>
-#include <set>
 
 namespace lila::ui
 {
+using namespace graphed;
+using scene::Graph;
+
 namespace
 {
-namespace anim = scene::anim;
-using scene::Graph;
-using scene::NodeId;
-using scene::PlugRef;
-
-constexpr double kEps = 1e-6;
-constexpr int kRulerHeight = 18;
-constexpr double kHandleLength = 36.0;
-
-GraphEditor*& current()
+GraphEditor*& currentGraphEditor()
 {
     static GraphEditor* e = nullptr;
     return e;
 }
 
-/** Smallest of 1, 2, 5 x 10^n at least rough. */
-double niceNumber(double rough)
+QToolButton* toolButton(QWidget* parent, const char* iconName, const QString& tip, bool checkable = false)
 {
-    if (rough <= 0.0 || !std::isfinite(rough))
-        return 1.0;
-    double base = std::pow(10.0, std::floor(std::log10(rough)));
-    for (double m : {1.0, 2.0, 5.0, 10.0})
-        if (base * m >= rough)
-            return base * m;
-    return base * 10.0;
+    auto* b = new QToolButton(parent);
+    b->setIcon(icon(iconName));
+    b->setToolTip(tip);
+    b->setAutoRaise(true);
+    b->setCheckable(checkable);
+    b->setFocusPolicy(Qt::NoFocus);
+    return b;
 }
 
-QString formatValue(double v)
+QFrame* separator(QWidget* parent)
 {
-    if (std::abs(v) < 5e-7)
-        v = 0.0;
-    QString s = QString::number(v, 'f', 3);
-    while (s.contains('.') && (s.endsWith('0') || s.endsWith('.')))
-        s.chop(1);
+    auto* s = new QFrame(parent);
+    s->setFrameShape(QFrame::VLine);
+    s->setFixedWidth(9);
+    s->setStyleSheet(QString("color: %1;").arg(gray(60).name()));
     return s;
 }
 
-/** Runs a command quietly; callers group several into one undo chunk. */
-bool runUnechoed(const char* command, const json& call)
+/** 0..3 from the tool row, then the views, pivots, quantities and rotation displays: names for prefs. */
+constexpr const char* kViewNames[] = {"absolute", "stacked", "normalized"};
+constexpr const char* kToolNames[] = {"move", "rotate", "scale"};
+constexpr const char* kPivotNames[] = {"selection", "click", "currentFrame", "firstKey", "lastKey"};
+constexpr const char* kQuantityNames[] = {"channels", "worldSpeed", "worldAngularSpeed"};
+constexpr const char* kRotationNames[] = {"euler", "quaternion", "both"};
+
+template <size_t N> int indexOf(const char* const (&names)[N], const std::string& name, int fallback)
 {
-    try
+    for (size_t i = 0; i < N; ++i)
+        if (name == names[i])
+            return int(i);
+    return fallback;
+}
+
+QString unitOf(const scene::Node& curve)
+{
+    const std::string& t = curve.type().name;
+    if (t == "animCurveTA" || t == "animCurveRQ")
+        return QStringLiteral("°");
+    if (t == "animCurveTL")
+        return QStringLiteral("cm");
+    return {};
+}
+
+/** "+=5", "-=5", "*=2", "/=2" or a plain number: the operator ('=' for plain) and the number. */
+std::optional<std::pair<char, double>> parseEntry(QString text)
+{
+    text = text.trimmed();
+    char op = '=';
+    if (text.size() > 2 && text[1] == '=' && QString("+-*/").contains(text[0]))
     {
-        ops::execute(command, call);
-        return true;
+        op = char(text[0].toLatin1());
+        text = text.mid(2).trimmed();
     }
-    catch (const CommandError& e)
-    {
-        log::error("{}", e.what());
-        return false;
-    }
+    bool ok = false;
+    double x = text.toDouble(&ok);
+    if (!ok || (op == '/' && x == 0.0))
+        return std::nullopt;
+    return std::pair{op, x};
 }
 
-struct Channel
-{
-    PlugRef plug;
-    NodeId curve = scene::kNoNode;
-    std::string curveName;
-    QString label;
-    int level = 180; // gray
-    Qt::PenStyle dash = Qt::SolidLine;
-    int axis = -1; // 0..2 for an X, Y or Z component, which can draw in its axis colour
-    bool shown = true;
-};
-
-bool axisColors() { return viewportDisplay::accentColors(viewportDisplay::kGraphAxisColors); }
-
-/** The channel's gray at this level, or its axis colour brightened or dimmed to match. */
-QColor channelColor(const Channel& ch, int level)
-{
-    if (ch.axis < 0 || !axisColors())
-        return gray(level);
-    glm::vec3 c = viewportDisplay::axisColor(ch.axis);
-    float k = float(level) / 210.0f;
-    c = k <= 1.0f ? c * k : glm::mix(c, glm::vec3(1.0f), std::min(1.0f, (k - 1.0f) * 1.5f));
-    return QColor::fromRgbF(c.r, c.g, c.b);
-}
-
-/** 0..2 when the plug is the X, Y or Z child of a three-component attribute, else -1. */
-int axisOf(const scene::AttrDef& a, int component)
-{
-    if (component < 0 || a.childNames.size() != 3 || a.childNames[size_t(component)].empty())
-        return -1;
-    char last = char(std::toupper(static_cast<unsigned char>(a.childNames[size_t(component)].back())));
-    return last == 'X' + component ? component : -1;
-}
-
-struct KeySel
-{
-    NodeId curve = scene::kNoNode;
-    double time = 0.0;
-};
-
-/**
- * A rotation curve shows as several channels, each with an id of its own: the curve's id with the channel's slot in
- * the top byte. Slots 0..2 are the Euler X, Y, Z it outputs, 3..6 the quaternion W, X, Y, Z.
- */
-constexpr int kSlotShift = 56;
-NodeId slotId(NodeId curve, int slot) { return curve | (NodeId(slot + 1) << kSlotShift); }
-NodeId realCurve(NodeId id) { return id & ((NodeId(1) << kSlotShift) - 1); }
-/** -1 for a scalar curve's channel. */
-int slotOf(NodeId id) { return int(id >> kSlotShift) - 1; }
-
-double quatComponent(const glm::dquat& q, int c) { return c == 0 ? q.w : c == 1 ? q.x : c == 2 ? q.y : q.z; }
-
-/** A rotation channel as a scalar curve: its keys' values, with fixed tangents matching the slopes it really has. */
-anim::Curve derivedChannel(const anim::RotationCurve& rc, int slot)
-{
-    anim::Curve out;
-    glm::dquat ref = rc.keys.empty() ? glm::dquat(1.0, 0.0, 0.0, 0.0) : rc.keys.front().q;
-    auto quatAt = [&](double t) {
-        glm::dquat q = rc.evaluateQuat(t);
-        return quatComponent(glm::dot(q, ref) < 0.0 ? -q : q, slot - 3);
-    };
-    for (size_t i = 0; i < rc.keys.size(); ++i)
-    {
-        const anim::RotKey& k = rc.keys[i];
-        anim::Key d{.time = k.time, .in = anim::Tangent::Fixed, .out = anim::Tangent::Fixed};
-        double inSlope, outSlope;
-        if (slot < 3)
-        {
-            d.value = k.euler[slot];
-            inSlope = rc.eulerSlope(i, slot, false);
-            outSlope = rc.eulerSlope(i, slot, true);
-        }
-        else
-        {
-            constexpr double h = 1e-4;
-            d.value = quatAt(k.time);
-            inSlope = (d.value - quatAt(k.time - h)) / h;
-            outSlope = (quatAt(k.time + h) - d.value) / h;
-        }
-        d.inAngle = std::atan(inSlope) * 180.0 / 3.14159265358979323846;
-        d.outAngle = std::atan(outSlope) * 180.0 / 3.14159265358979323846;
-        out.keys.push_back(d);
-    }
-    return out;
-}
-
-QIcon channelSwatch(const Channel& ch)
-{
-    QPixmap pm(28, 12);
-    pm.fill(Qt::transparent);
-    QPainter p(&pm);
-    p.setPen(QPen(channelColor(ch, ch.level), 2, ch.dash, Qt::FlatCap));
-    p.drawLine(2, 6, 26, 6);
-    return QIcon(pm);
-}
+const char* const kTweenModes[] = {"neighbour", "ease", "pushPull", "smooth", "default"};
 } // namespace
-
-class CurveView : public QWidget
-{
-public:
-    explicit CurveView(GraphEditor* editor) : QWidget(editor), mEditor(editor)
-    {
-        setObjectName("curveView");
-        setMinimumSize(200, 120);
-        setFocusPolicy(Qt::ClickFocus);
-        setContextMenuPolicy(Qt::PreventContextMenu);
-        mAxisColors = axisColors();
-        mPrefListener = PrefStore::get().onChanged([this](const std::string& file) {
-            if (file != "general" || axisColors() == mAxisColors)
-                return;
-            mAxisColors = !mAxisColors;
-            mEditor->scheduleRebuild();
-        });
-    }
-    ~CurveView() override { PrefStore::get().removeOnChanged(mPrefListener); }
-
-    std::vector<Channel> channels;
-    /** Keyed by channel id; a rotation channel's holds its derived keys. */
-    std::map<NodeId, anim::Curve> curves;
-    /** Rotation curves by their own node id, loop applied. */
-    std::map<NodeId, anim::RotationCurve> rotations;
-    /** Channels whose curve has a loop key. */
-    std::set<NodeId> loopCurves;
-    /** Rotation curves show as W, X, Y, Z (read only) instead of Euler X, Y, Z. */
-    bool quatView = false;
-
-    /** What commands call a channel: its curve node, or for a rotation channel its plug. Empty when read only. */
-    std::string commandTarget(NodeId id) const
-    {
-        Graph& g = Graph::current();
-        int slot = slotOf(id);
-        if (slot < 0)
-        {
-            scene::Node* n = g.node(id);
-            return n ? n->path() : std::string();
-        }
-        if (slot > 2 || !g.node(realCurve(id)))
-            return {};
-        const Channel* ch = channelOf(id);
-        return ch ? g.plugName(ch->plug) : std::string();
-    }
-
-    /** The channel's value over time as drawn: rotation channels evaluate their rotation curve, with any drag applied. */
-    std::function<double(double)> sampler(NodeId id, const anim::Curve& c) const
-    {
-        int slot = slotOf(id);
-        auto it = rotations.find(realCurve(id));
-        if (slot < 0 || it == rotations.end())
-            return [&c](double t) { return c.evaluate(t); };
-        anim::RotationCurve rc = previewRotation(id, it->second);
-        if (slot < 3)
-            return [rc, slot](double t) { return rc.evaluate(t)[slot]; };
-        glm::dquat ref = rc.keys.empty() ? glm::dquat(1.0, 0.0, 0.0, 0.0) : rc.keys.front().q;
-        return [rc, slot, ref](double t) {
-            glm::dquat q = rc.evaluateQuat(t);
-            return quatComponent(glm::dot(q, ref) < 0.0 ? -q : q, slot - 3);
-        };
-    }
-    std::vector<KeySel> sel;
-    NodeId activeCurve = scene::kNoNode;
-
-    bool isSelected(NodeId curve, double t) const
-    {
-        for (const KeySel& k : sel)
-            if (k.curve == curve && std::abs(k.time - t) <= kEps)
-                return true;
-        return false;
-    }
-
-    const Channel* channelOf(NodeId curve) const
-    {
-        for (const Channel& c : channels)
-            if (c.curve == curve)
-                return &c;
-        return nullptr;
-    }
-
-    /** Curves edits apply to: those with selected keys, else the clicked one, else every shown one. */
-    std::vector<NodeId> targetCurves() const
-    {
-        std::vector<NodeId> out;
-        for (const KeySel& k : sel)
-            if (std::find(out.begin(), out.end(), k.curve) == out.end())
-                out.push_back(k.curve);
-        if (out.empty() && activeCurve && channelOf(activeCurve))
-            out.push_back(activeCurve);
-        if (out.empty())
-            for (const Channel& c : channels)
-                if (c.shown)
-                    out.push_back(c.curve);
-        return out;
-    }
-
-    void dropMissing()
-    {
-        std::erase_if(sel, [&](const KeySel& k) {
-            auto it = curves.find(k.curve);
-            return it == curves.end() || it->second.find(k.time) < 0 || !channelOf(k.curve) || !channelOf(k.curve)->shown;
-        });
-        if (activeCurve && !channelOf(activeCurve))
-            activeCurve = scene::kNoNode;
-    }
-
-    void frame(bool selectedOnly)
-    {
-        double t0 = 1e300, t1 = -1e300, v0 = 1e300, v1 = -1e300;
-        auto grow = [&](double t, double v) {
-            t0 = std::min(t0, t);
-            t1 = std::max(t1, t);
-            v0 = std::min(v0, v);
-            v1 = std::max(v1, v);
-        };
-        if (selectedOnly && !sel.empty())
-        {
-            for (const KeySel& k : sel)
-                if (auto it = curves.find(k.curve); it != curves.end())
-                    if (int i = it->second.find(k.time); i >= 0)
-                        grow(k.time, it->second.keys[size_t(i)].value);
-        }
-        else
-            for (const Channel& ch : channels)
-            {
-                auto it = curves.find(ch.curve);
-                if (!ch.shown || it == curves.end() || it->second.keys.empty())
-                    continue;
-                const anim::Curve& c = it->second;
-                auto eval = sampler(ch.curve, c);
-                double a = c.keys.front().time, b = c.keys.back().time;
-                for (int s = 0; s <= 64; ++s)
-                {
-                    double t = a + (b - a) * s / 64.0;
-                    grow(t, eval(t));
-                }
-                for (const anim::Key& k : c.keys)
-                    grow(k.time, k.value);
-            }
-        if (t0 > t1)
-            return;
-        double fps = anim::playback().fps;
-        if (t1 - t0 < 10.0 / fps)
-        {
-            t0 -= 5.0 / fps;
-            t1 += 5.0 / fps;
-        }
-        if (v1 - v0 < 1e-3)
-        {
-            v0 -= 1.0;
-            v1 += 1.0;
-        }
-        double mx = 0.08 * (t1 - t0), my = 0.12 * (v1 - v0);
-        t0 -= mx;
-        t1 += mx;
-        v0 -= my;
-        v1 += my;
-        double w = std::max(1, width()), h = std::max(1, height() - kRulerHeight);
-        mSx = w / (t1 - t0);
-        mSy = h / (v1 - v0);
-        mT0 = t0;
-        mV0 = v0;
-        update();
-    }
-
-protected:
-    void paintEvent(QPaintEvent*) override
-    {
-        LILA_ZONE();
-
-        QPainter p(this);
-        int w = width(), h = height();
-        p.fillRect(rect(), gray(28));
-        const anim::Playback& pb = anim::playback();
-        double rx0 = std::max(0.0, xOf(pb.minTime)), rx1 = std::min(double(w), xOf(pb.maxTime));
-        if (rx1 > rx0)
-            p.fillRect(QRectF(rx0, 0, rx1 - rx0, h), gray(34));
-
-        QFont f = font();
-        f.setPointSizeF(f.pointSizeF() * 0.9);
-        p.setFont(f);
-
-        // Grid: frames across, values up.
-        double fps = pb.fps;
-        double fStep = std::max(1.0, niceNumber(70.0 / (mSx / fps)));
-        for (double fr = std::floor(timeAt(0) * fps / fStep) * fStep; xOf(fr / fps) < w; fr += fStep)
-        {
-            double x = xOf(fr / fps);
-            p.setPen(gray(42));
-            p.drawLine(QPointF(x, kRulerHeight), QPointF(x, h));
-            p.setPen(gray(120));
-            p.drawText(QPointF(x + 3, 13), QString::number(fr, 'f', 0));
-        }
-        double vStep = niceNumber(40.0 / mSy);
-        for (double v = std::floor(valueAt(h) / vStep) * vStep; yOf(v) > kRulerHeight; v += vStep)
-        {
-            double y = yOf(v);
-            p.setPen(std::abs(v) < vStep * 1e-3 ? gray(70) : gray(42));
-            p.drawLine(QPointF(0, y), QPointF(w, y));
-            p.setPen(gray(110));
-            p.drawText(QPointF(4, y - 3), formatValue(std::abs(v) < vStep * 1e-3 ? 0.0 : v));
-        }
-        p.fillRect(QRectF(0, 0, w, kRulerHeight), gray(24, 200));
-        audio::drawWaveform(p, QRectF(0, h - 52, w, 48), timeAt(0), timeAt(w), QColor(90, 160, 120, 110));
-
-        // Current time.
-        double tx = xOf(Graph::current().time());
-        p.setPen(QPen(gray(190), 1));
-        p.drawLine(QPointF(tx, 0), QPointF(tx, h));
-        QString frameLabel = QString::number(std::lround(anim::frameOf(Graph::current().time())));
-        QRectF lr = QRectF(p.fontMetrics().boundingRect(frameLabel).adjusted(-4, -1, 4, 1));
-        lr.moveTopLeft(QPointF(tx + 2, 1));
-        p.fillRect(lr, gray(200));
-        p.setPen(gray(20));
-        p.drawText(lr, Qt::AlignCenter, frameLabel);
-
-        p.setRenderHint(QPainter::Antialiasing);
-        std::map<NodeId, anim::Curve> shownCurves;
-        for (const Channel& ch : channels)
-            if (ch.shown && curves.contains(ch.curve))
-                shownCurves[ch.curve] = preview(ch.curve);
-
-        std::vector<NodeId> active = activeSet();
-        auto isActive = [&](NodeId c) { return std::find(active.begin(), active.end(), c) != active.end(); };
-        // Active curves draw last so they sit on top.
-        for (int pass = 0; pass < 2; ++pass)
-            for (const Channel& ch : channels)
-            {
-                if (!ch.shown || !shownCurves.contains(ch.curve) || isActive(ch.curve) != (pass == 1))
-                    continue;
-                drawCurve(p, shownCurves[ch.curve], ch, pass == 1, sampler(ch.curve, shownCurves[ch.curve]));
-            }
-
-        // Keys, then the tangent handles of selected ones.
-        for (const Channel& ch : channels)
-        {
-            if (!ch.shown || !shownCurves.contains(ch.curve))
-                continue;
-            const anim::Curve& c = shownCurves[ch.curve];
-            for (size_t i = 0; i < c.keys.size(); ++i)
-            {
-                const anim::Key& k = c.keys[i];
-                QPointF pt(xOf(k.time), yOf(k.value));
-                bool selected = isSelected(ch.curve, keyTimeBeforeDrag(ch.curve, k.time));
-                if (selected)
-                {
-                    p.setPen(QPen(gray(150), 1));
-                    QPointF in = pt - handleDir(c.inSlope(i));
-                    QPointF out = pt + handleDir(c.outSlope(i));
-                    p.drawLine(in, out);
-                    p.setBrush(gray(170));
-                    p.drawEllipse(in, 3, 3);
-                    p.drawEllipse(out, 3, 3);
-                }
-                p.setPen(QPen(selected ? gray(255) : channelColor(ch, isActive(ch.curve) ? 230 : ch.level), 1));
-                p.setBrush(selected ? gray(255) : gray(22));
-                p.drawRect(QRectF(pt.x() - 3, pt.y() - 3, 6, 6));
-                // A loop key is ringed: it mirrors the first key.
-                if (i + 1 == c.keys.size() && i > 0 && loopCurves.contains(ch.curve))
-                {
-                    p.setBrush(Qt::NoBrush);
-                    p.drawEllipse(pt, 6.5, 6.5);
-                }
-            }
-        }
-
-        if (mDrag == Drag::Box)
-        {
-            p.setRenderHint(QPainter::Antialiasing, false);
-            p.setPen(QPen(gray(210), 1, Qt::DashLine));
-            p.setBrush(gray(255, 20));
-            p.drawRect(QRectF(mPress, mLast).normalized());
-        }
-    }
-
-    void resizeEvent(QResizeEvent* e) override
-    {
-        QWidget::resizeEvent(e);
-        if (!mFramed && !channels.empty())
-        {
-            mFramed = true;
-            frame(false);
-        }
-    }
-
-    void mousePressEvent(QMouseEvent* e) override
-    {
-        mPress = mLast = e->position();
-        mMoved = false;
-        bool alt = e->modifiers() & Qt::AltModifier;
-        bool shift = e->modifiers() & Qt::ShiftModifier;
-        bool ctrl = e->modifiers() & Qt::ControlModifier;
-        mDrag = Drag::None;
-
-        if (alt && e->button() == Qt::MiddleButton)
-        {
-            mDrag = Drag::Pan;
-            return;
-        }
-        if (alt && e->button() == Qt::RightButton)
-        {
-            mDrag = Drag::Zoom;
-            mZoomAnchorT = timeAt(mPress.x());
-            mZoomAnchorV = valueAt(mPress.y());
-            mZoomSx = mSx;
-            mZoomSy = mSy;
-            return;
-        }
-        if (e->button() == Qt::RightButton)
-        {
-            showMenu(e->globalPosition().toPoint());
-            return;
-        }
-        if (e->button() == Qt::MiddleButton)
-        {
-            if (!sel.empty())
-                beginMove();
-            return;
-        }
-        if (e->button() != Qt::LeftButton)
-            return;
-
-        if (mPress.y() < kRulerHeight)
-        {
-            mDrag = Drag::Time;
-            scrubTo(mPress.x());
-            return;
-        }
-        if (hitHandle(mPress))
-        {
-            mDrag = Drag::Tangent;
-            mTangentAngle = std::nan("");
-            return;
-        }
-        if (auto hit = hitKey(mPress))
-        {
-            bool was = isSelected(hit->curve, hit->time);
-            if (ctrl)
-                std::erase_if(sel, [&](const KeySel& k) { return k.curve == hit->curve && std::abs(k.time - hit->time) <= kEps; });
-            else if (shift)
-            {
-                if (was)
-                    std::erase_if(sel, [&](const KeySel& k) { return k.curve == hit->curve && std::abs(k.time - hit->time) <= kEps; });
-                else
-                    sel.push_back(*hit);
-            }
-            else if (!was)
-                sel = {*hit};
-            activeCurve = hit->curve;
-            if (!ctrl && isSelected(hit->curve, hit->time))
-                beginMove();
-            selectionChanged();
-            return;
-        }
-        if (NodeId c = hitCurve(mPress))
-        {
-            activeCurve = c;
-            if (!shift)
-                sel.clear();
-            selectionChanged();
-            return;
-        }
-        mDrag = Drag::Box;
-        mBoxMode = shift ? 1 : ctrl ? -1 : 0;
-    }
-
-    void mouseMoveEvent(QMouseEvent* e) override
-    {
-        QPointF pos = e->position();
-        QPointF d = pos - mLast;
-        if ((pos - mPress).manhattanLength() > 3)
-            mMoved = true;
-        switch (mDrag)
-        {
-        case Drag::Pan:
-            mT0 -= d.x() / mSx;
-            mV0 += d.y() / mSy;
-            break;
-        case Drag::Zoom:
-        {
-            QPointF total = pos - mPress;
-            mSx = std::clamp(mZoomSx * std::exp(total.x() * 0.01), 1e-3, 1e7);
-            mSy = std::clamp(mZoomSy * std::exp(-total.y() * 0.01), 1e-6, 1e9);
-            mT0 = mZoomAnchorT - mPress.x() / mSx;
-            mV0 = mZoomAnchorV - (height() - mPress.y()) / mSy;
-            break;
-        }
-        case Drag::Time: scrubTo(pos.x()); break;
-        case Drag::Move:
-        {
-            if (!mMoved)
-                break;
-            double fps = anim::playback().fps;
-            double dt = std::round((timeAt(pos.x()) - timeAt(mPress.x())) * fps) / fps;
-            double dv = valueAt(pos.y()) - valueAt(mPress.y());
-            // Shift locks to the axis the drag mostly follows.
-            if (e->modifiers() & Qt::ShiftModifier)
-            {
-                QPointF total = pos - mPress;
-                if (std::abs(total.x()) > std::abs(total.y()))
-                    dv = 0.0;
-                else
-                    dt = 0.0;
-            }
-            mMoveDt = dt;
-            mMoveDv = dv;
-            break;
-        }
-        case Drag::Tangent: mTangentAngle = angleFor(pos); break;
-        default: break;
-        }
-        mLast = pos;
-        update();
-    }
-
-    void mouseReleaseEvent(QMouseEvent*) override
-    {
-        Drag drag = mDrag;
-        mDrag = Drag::None;
-        switch (drag)
-        {
-        case Drag::Box: finishBox(); break;
-        case Drag::Move: commitMove(); break;
-        case Drag::Tangent: commitTangent(); break;
-        default: break;
-        }
-        update();
-    }
-
-    void wheelEvent(QWheelEvent* e) override
-    {
-        double f = std::pow(1.0015, e->angleDelta().y());
-        QPointF pos = e->position();
-        double t = timeAt(pos.x()), v = valueAt(pos.y());
-        mSx = std::clamp(mSx * f, 1e-3, 1e7);
-        mSy = std::clamp(mSy * f, 1e-6, 1e9);
-        mT0 = t - pos.x() / mSx;
-        mV0 = v - (height() - pos.y()) / mSy;
-        update();
-    }
-
-private:
-    enum class Drag
-    {
-        None,
-        Pan,
-        Zoom,
-        Box,
-        Move,
-        Tangent,
-        Time,
-    };
-
-    double xOf(double t) const { return (t - mT0) * mSx; }
-    double yOf(double v) const { return height() - (v - mV0) * mSy; }
-    double timeAt(double x) const { return mT0 + x / mSx; }
-    double valueAt(double y) const { return mV0 + (height() - y) / mSy; }
-
-    QPointF handleDir(double slope) const
-    {
-        QPointF d(mSx, -slope * mSy);
-        double len = std::hypot(d.x(), d.y());
-        return len > 0 ? d * (kHandleLength / len) : QPointF(kHandleLength, 0);
-    }
-
-    std::vector<NodeId> activeSet() const
-    {
-        std::vector<NodeId> out;
-        for (const KeySel& k : sel)
-            if (std::find(out.begin(), out.end(), k.curve) == out.end())
-                out.push_back(k.curve);
-        if (activeCurve && std::find(out.begin(), out.end(), activeCurve) == out.end())
-            out.push_back(activeCurve);
-        return out;
-    }
-
-    /** During a key drag the selection still holds the old times; maps a previewed key back. */
-    double keyTimeBeforeDrag(NodeId curve, double t) const
-    {
-        if (mDrag != Drag::Move || !mMoved)
-            return t;
-        double back = t - mMoveDt;
-        return isSelected(curve, back) ? back : t + 1e9;
-    }
-
-    /** A rotation channel's curve with the key drag in progress applied to its axis. */
-    anim::RotationCurve previewRotation(NodeId id, anim::RotationCurve rc) const
-    {
-        int slot = slotOf(id);
-        if (mDrag != Drag::Move || !mMoved || slot < 0 || slot > 2 || (mMoveDt == 0.0 && mMoveDv == 0.0))
-            return rc;
-        for (size_t i = 0; i < rc.keys.size(); ++i)
-            if (isSelected(id, rc.keys[i].time))
-            {
-                glm::dvec3 e = rc.keys[i].euler;
-                e[slot] += mMoveDv;
-                rc.setEuler(i, e);
-                rc.keys[i].time += mMoveDt;
-            }
-        rc.sort();
-        return rc;
-    }
-
-    /** The curve as it would be with the drag in progress applied. */
-    anim::Curve preview(NodeId id) const
-    {
-        anim::Curve c = curves.at(id);
-        if (mDrag == Drag::Move && mMoved && (mMoveDt != 0.0 || mMoveDv != 0.0))
-        {
-            std::vector<anim::Key> moved, kept;
-            for (const anim::Key& k : c.keys)
-            {
-                if (isSelected(id, k.time))
-                {
-                    anim::Key m = k;
-                    m.time += mMoveDt;
-                    m.value += mMoveDv;
-                    moved.push_back(m);
-                }
-                else
-                    kept.push_back(k);
-            }
-            c.keys = kept;
-            for (const anim::Key& m : moved)
-            {
-                if (int i = c.find(m.time); i >= 0)
-                    c.keys[size_t(i)] = m;
-                else
-                    c.insert(m);
-            }
-        }
-        if (mDrag == Drag::Tangent && mTangent.curve == id && !std::isnan(mTangentAngle))
-            if (int i = c.find(mTangent.time); i >= 0)
-            {
-                anim::Key& k = c.keys[size_t(i)];
-                k.in = k.out = anim::Tangent::Fixed;
-                k.inAngle = k.outAngle = mTangentAngle;
-            }
-        return c;
-    }
-
-    void drawCurve(QPainter& p, const anim::Curve& c, const Channel& ch, bool active, const std::function<double(double)>& eval)
-    {
-        if (c.keys.empty())
-            return;
-        int level = active ? 255 : ch.level;
-        double w = width();
-        double xFirst = xOf(c.keys.front().time), xLast = xOf(c.keys.back().time);
-        // Regular samples plus both sides of every key, so steps and corners land on the keys.
-        auto path = [&](double x0, double x1) {
-            std::vector<double> xs;
-            for (double x = x0; x < x1; x += 2.0)
-                xs.push_back(x);
-            xs.push_back(x1);
-            for (const anim::Key& k : c.keys)
-            {
-                double kx = xOf(k.time);
-                if (kx > x0 && kx < x1)
-                {
-                    xs.push_back(kx - 0.01);
-                    xs.push_back(kx);
-                }
-            }
-            std::sort(xs.begin(), xs.end());
-            QPainterPath out;
-            for (double x : xs)
-            {
-                QPointF pt(x, yOf(eval(timeAt(x))));
-                if (out.elementCount() == 0)
-                    out.moveTo(pt);
-                else
-                    out.lineTo(pt);
-            }
-            return out;
-        };
-        p.setBrush(Qt::NoBrush);
-        p.setPen(QPen(channelColor(ch, int(level * 0.5)), 1, Qt::DotLine));
-        if (xFirst > 0.0)
-            p.drawPath(path(-2.0, std::min(xFirst, w + 2.0)));
-        if (xLast < w)
-            p.drawPath(path(std::max(xLast, -2.0), w + 2.0));
-        if (xLast >= -2.0 && xFirst <= w + 2.0)
-        {
-            p.setPen(QPen(channelColor(ch, level), active ? 2.0 : 1.4, ch.dash));
-            p.drawPath(path(std::max(xFirst, -2.0), std::min(xLast, w + 2.0)));
-        }
-    }
-
-    std::optional<KeySel> hitKey(QPointF pos) const
-    {
-        std::optional<KeySel> best;
-        double bestD = 7.0;
-        for (const Channel& ch : channels)
-        {
-            if (!ch.shown || !curves.contains(ch.curve))
-                continue;
-            for (const anim::Key& k : curves.at(ch.curve).keys)
-            {
-                double d = std::hypot(xOf(k.time) - pos.x(), yOf(k.value) - pos.y());
-                if (d < bestD)
-                {
-                    bestD = d;
-                    best = KeySel{ch.curve, k.time};
-                }
-            }
-        }
-        return best;
-    }
-
-    bool hitHandle(QPointF pos)
-    {
-        for (const KeySel& s : sel)
-        {
-            auto it = curves.find(s.curve);
-            if (it == curves.end())
-                continue;
-            const anim::Curve& c = it->second;
-            int i = c.find(s.time);
-            if (i < 0)
-                continue;
-            QPointF pt(xOf(s.time), yOf(c.keys[size_t(i)].value));
-            QPointF in = pt - handleDir(c.inSlope(size_t(i)));
-            QPointF out = pt + handleDir(c.outSlope(size_t(i)));
-            for (auto [h, side] : {std::pair{in, -1}, std::pair{out, 1}})
-                if (std::hypot(h.x() - pos.x(), h.y() - pos.y()) < 6.0)
-                {
-                    mTangent = s;
-                    mTangentSide = side;
-                    return true;
-                }
-        }
-        return false;
-    }
-
-    NodeId hitCurve(QPointF pos) const
-    {
-        double t = timeAt(pos.x());
-        for (const Channel& ch : channels)
-            if (ch.shown && curves.contains(ch.curve) && std::abs(yOf(sampler(ch.curve, curves.at(ch.curve))(t)) - pos.y()) < 5.0)
-                return ch.curve;
-        return scene::kNoNode;
-    }
-
-    double angleFor(QPointF pos) const
-    {
-        const anim::Curve& c = curves.at(mTangent.curve);
-        int i = c.find(mTangent.time);
-        if (i < 0)
-            return 0.0;
-        QPointF pt(xOf(mTangent.time), yOf(c.keys[size_t(i)].value));
-        double dx = pos.x() - pt.x(), dy = pos.y() - pt.y();
-        // The in handle sits left of the key; dragging it past the key flips nothing.
-        if (mTangentSide > 0)
-            dx = std::max(dx, 1.0);
-        else
-            dx = std::min(dx, -1.0);
-        double slope = (-dy / mSy) / (dx / mSx);
-        return std::clamp(std::atan(slope) * 180.0 / 3.14159265358979323846, -89.9, 89.9);
-    }
-
-    void scrubTo(double x)
-    {
-        double t = anim::snapToFrame(timeAt(x));
-        if (std::abs(t - Graph::current().time()) < kEps)
-            return;
-        ops::execute("currentTime", {{"args", {t}}});
-        notifyTimeChanged();
-    }
-
-    void beginMove()
-    {
-        mDrag = Drag::Move;
-        mMoveDt = mMoveDv = 0.0;
-    }
-
-    void finishBox()
-    {
-        if (!mMoved)
-        {
-            if (mBoxMode == 0)
-            {
-                sel.clear();
-                activeCurve = scene::kNoNode;
-                selectionChanged();
-            }
-            return;
-        }
-        QRectF box = QRectF(mPress, mLast).normalized();
-        if (mBoxMode == 0)
-            sel.clear();
-        for (const Channel& ch : channels)
-        {
-            if (!ch.shown || !curves.contains(ch.curve))
-                continue;
-            for (const anim::Key& k : curves.at(ch.curve).keys)
-            {
-                if (!box.contains(QPointF(xOf(k.time), yOf(k.value))))
-                    continue;
-                bool was = isSelected(ch.curve, k.time);
-                if (mBoxMode < 0)
-                    std::erase_if(sel, [&](const KeySel& s) { return s.curve == ch.curve && std::abs(s.time - k.time) <= kEps; });
-                else if (!was)
-                    sel.push_back({ch.curve, k.time});
-            }
-        }
-        selectionChanged();
-    }
-
-    void commitMove()
-    {
-        double dt = mMoveDt, dv = mMoveDv;
-        mMoveDt = mMoveDv = 0.0;
-        if (!mMoved || (dt == 0.0 && dv == 0.0))
-            return;
-        std::map<NodeId, std::vector<double>> byCurve;
-        for (const KeySel& k : sel)
-            byCurve[k.curve].push_back(k.time);
-        {
-            UndoChunk chunk("Move Keys");
-            // Rotation keys move in time whole: each axis takes its value change, then each curve moves once.
-            std::map<NodeId, std::set<double>> rotationTimes;
-            for (auto& [curve, times] : byCurve)
-            {
-                // Move the leading keys first so none lands on a selected key that hasn't moved yet.
-                std::sort(times.begin(), times.end());
-                if (dt > 0.0)
-                    std::reverse(times.begin(), times.end());
-                std::string name = commandTarget(curve);
-                if (name.empty())
-                    continue;
-                bool rotation = slotOf(curve) >= 0;
-                for (double t : times)
-                {
-                    if (rotation)
-                    {
-                        rotationTimes[realCurve(curve)].insert(t);
-                        if (dv != 0.0)
-                            runUnechoed("keyframe", {{"args", {name}}, {"time", t}, {"valueChange", dv}, {"relative", true}});
-                        continue;
-                    }
-                    runUnechoed("keyframe",
-                             {{"args", {name}}, {"time", t}, {"timeChange", dt}, {"valueChange", dv}, {"relative", true}});
-                }
-            }
-            if (dt != 0.0)
-                for (auto& [curve, set] : rotationTimes)
-                {
-                    std::vector<double> times(set.begin(), set.end());
-                    if (dt > 0.0)
-                        std::reverse(times.begin(), times.end());
-                    if (scene::Node* n = Graph::current().node(curve))
-                        for (double t : times)
-                            runUnechoed("keyframe", {{"args", {n->path()}}, {"time", t}, {"timeChange", dt}, {"relative", true}});
-                }
-        }
-        log::write(LogLevel::Echo, "# moved " + std::to_string(sel.size()) + " keys\n");
-        for (KeySel& k : sel)
-            k.time += dt;
-        selectionChanged();
-    }
-
-    void commitTangent()
-    {
-        if (std::isnan(mTangentAngle) || !mMoved)
-            return;
-        std::string name = commandTarget(mTangent.curve);
-        if (name.empty())
-            return;
-        try
-        {
-            ops::execute("keyTangent", {{"args", {name}}, {"time", mTangent.time}, {"inAngle", mTangentAngle}, {"outAngle", mTangentAngle}},
-                          CallSource::UI);
-        }
-        catch (const CommandError& e)
-        {
-            log::error("{}", e.what());
-        }
-        mTangentAngle = std::nan("");
-    }
-
-    void selectionChanged()
-    {
-        mEditor->refreshKeyFields();
-        update();
-    }
-
-    void showMenu(QPoint at)
-    {
-        QMenu menu(this);
-        QMenu* tangents = menu.addMenu("Tangents");
-        for (const char* t : {"auto", "spline", "linear", "flat", "step", "clamped"})
-            tangents->addAction(niceName(t), [this, t] { mEditor->applyTangent(t); });
-        for (bool pre : {true, false})
-        {
-            QMenu* inf = menu.addMenu(pre ? "Pre Infinity" : "Post Infinity");
-            for (const char* m : {"constant", "linear", "cycle", "cycleRelative", "oscillate"})
-                inf->addAction(QString(m) == "cycleRelative" ? QString("Cycle with Offset") : niceName(m),
-                               [this, pre, m] { mEditor->applyInfinity(pre, m); });
-        }
-        menu.addAction("Loop Key", [this] { loopKeys(true); });
-        menu.addAction("Clear Loop Key", [this] { loopKeys(false); });
-        menu.addSeparator();
-        menu.addAction("Delete Keys", [this] { mEditor->deleteSelectedKeys(); })->setEnabled(!sel.empty());
-        menu.addAction("Frame Selection", [this] { frame(true); });
-        menu.addAction("Frame All", [this] { frame(false); });
-        menu.exec(at);
-    }
-
-public:
-    /** setLoopKey or clearLoopKey on the curves edits apply to. */
-    void loopKeys(bool on)
-    {
-        Graph& g = Graph::current();
-        json names = json::array();
-        std::set<NodeId> done;
-        for (NodeId c : targetCurves())
-            if (scene::Node* n = g.node(realCurve(c)); n && done.insert(n->id()).second)
-                names.push_back(n->path());
-        if (names.empty())
-            return;
-        try
-        {
-            ops::execute(on ? "setLoopKey" : "clearLoopKey", {{"args", names}}, CallSource::UI);
-        }
-        catch (const CommandError& e)
-        {
-            log::error("{}", e.what());
-        }
-    }
-
-private:
-    GraphEditor* mEditor;
-    double mT0 = -0.2; // time at the left edge
-    double mV0 = -5.0; // value at the bottom edge
-    double mSx = 200.0; // pixels per second
-    double mSy = 10.0; // pixels per unit
-    bool mFramed = false;
-    bool mAxisColors = true;
-    int mPrefListener = 0;
-
-    Drag mDrag = Drag::None;
-    QPointF mPress;
-    QPointF mLast;
-    bool mMoved = false;
-    int mBoxMode = 0; // 1 add, -1 remove, 0 replace
-    double mZoomAnchorT = 0.0, mZoomAnchorV = 0.0, mZoomSx = 1.0, mZoomSy = 1.0;
-    double mMoveDt = 0.0, mMoveDv = 0.0;
-    KeySel mTangent;
-    int mTangentSide = 1;
-    double mTangentAngle = std::nan("");
-
-    friend class GraphEditor;
-};
 
 GraphEditor::GraphEditor(QWidget* parent) : QWidget(parent)
 {
-    current() = this;
+    currentGraphEditor() = this;
     setProperty("hotkeyContext", "graphEditor");
     deletion::claim(this, [this] { deleteSelectedKeys(); });
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(2, 2, 2, 2);
     layout->setSpacing(2);
+    mView = new CurveView(this);
+
+    // Settings first, so the toolbar is built showing them.
+    {
+        PrefStore& prefs = PrefStore::get();
+        ViewSettings& s = mView->settings;
+        s.view = ViewMode(indexOf(kViewNames, prefs.value<std::string>("graphEditor", "/view", ""), 0));
+        s.tool = Tool(indexOf(kToolNames, prefs.value<std::string>("graphEditor", "/tool", ""), 0));
+        s.pivot = Pivot(indexOf(kPivotNames, prefs.value<std::string>("graphEditor", "/pivot", ""), 0));
+        s.quantity = Quantity(indexOf(kQuantityNames, prefs.value<std::string>("graphEditor", "/quantity", ""), 0));
+        s.rotation = RotationDisplay(indexOf(kRotationNames, prefs.value<std::string>("graphEditor", "/rotation", ""), 0));
+        s.falloff = prefs.value<bool>("graphEditor", "/falloff", false);
+        s.falloffFrames = std::clamp(prefs.value<double>("graphEditor", "/falloffFrames", 6.0), 0.5, 1000.0);
+        s.speedStrip = prefs.value<bool>("graphEditor", "/speedStrip", false);
+        s.accelStrip = prefs.value<bool>("graphEditor", "/accelerationStrip", false);
+        s.targetSpeed = std::max(0.0, prefs.value<double>("graphEditor", "/targetSpeed", 0.0));
+        s.showBuffer = prefs.value<bool>("graphEditor", "/showBuffer", true);
+    }
 
     auto* bar = new QHBoxLayout();
     bar->setSpacing(2);
+
+    const char* toolIcons[] = {"arrows-move", "rotate-2", "resize"};
+    const QString toolTips[] = {"Move keys (W). Drag the box's edges to scale the selection.",
+                                "Rotate tangents (E): turns each selected key's handles about the key.",
+                                "Scale keys (R) about the pivot. Drag sideways for time, up and down for value."};
+    for (int i = 0; i < 3; ++i)
+    {
+        mToolButtons[i] = toolButton(this, toolIcons[i], toolTips[i], true);
+        connect(mToolButtons[i], &QToolButton::clicked, this, [this, i] { setTool(i); });
+        bar->addWidget(mToolButtons[i]);
+    }
+    auto* pivot = toolButton(this, "focus-centered", "Scale pivot");
+    pivot->setPopupMode(QToolButton::InstantPopup);
+    auto* pivotMenu = new QMenu(pivot);
+    auto* pivotGroup = new QActionGroup(pivotMenu);
+    const char* pivotLabels[] = {"Selection Centre", "Click Point", "Current Frame", "First Key", "Last Key"};
+    for (int i = 0; i < 5; ++i)
+    {
+        QAction* a = pivotMenu->addAction(pivotLabels[i], this, [this, i] {
+            mView->settings.pivot = Pivot(i);
+            saveSettings();
+        });
+        a->setCheckable(true);
+        a->setChecked(int(mView->settings.pivot) == i);
+        pivotGroup->addAction(a);
+    }
+    pivot->setMenu(pivotMenu);
+    bar->addWidget(pivot);
+    mFalloff = toolButton(this, "ripple", "Falloff (B): keys near the selection follow value changes, less with distance", true);
+    connect(mFalloff, &QToolButton::clicked, this, [this] { toggleFalloff(); });
+    bar->addWidget(mFalloff);
+    mFalloffRadius = new QDoubleSpinBox(this);
+    mFalloffRadius->setRange(0.5, 1000.0);
+    mFalloffRadius->setDecimals(1);
+    mFalloffRadius->setSuffix(" f");
+    mFalloffRadius->setToolTip("Falloff radius in frames");
+    mFalloffRadius->setFixedWidth(62);
+    mFalloffRadius->setValue(mView->settings.falloffFrames);
+    connect(mFalloffRadius, &QDoubleSpinBox::valueChanged, this, [this](double v) {
+        mView->settings.falloffFrames = v;
+        saveSettings();
+    });
+    bar->addWidget(mFalloffRadius);
+    bar->addWidget(separator(this));
+
     for (const char* t : {"auto", "spline", "linear", "flat", "step", "clamped"})
     {
-        auto* b = new QToolButton(this);
-        b->setIcon(icon(QString("curve-tangent-%1").arg(t)));
-        b->setToolTip(QString("%1: set the selected keys' tangents to %2").arg(niceName(t), t));
-        b->setAutoRaise(true);
-        b->setFocusPolicy(Qt::NoFocus);
+        auto* b = toolButton(this, QString("curve-tangent-%1").arg(t).toUtf8().constData(),
+                             QString("%1 tangents on the selected keys").arg(niceName(t)));
         connect(b, &QToolButton::clicked, this, [this, t] { applyTangent(t); });
         bar->addWidget(b);
     }
-    auto* infinity = new QToolButton(this);
-    infinity->setIcon(icon("infinity"));
-    infinity->setToolTip("Pre and post infinity: how the curve continues before its first key and after its last");
-    infinity->setAutoRaise(true);
+    auto* breakB = toolButton(this, "unlink", "Break tangents: in and out handles move apart");
+    connect(breakB, &QToolButton::clicked, this, [this] { lockTangents(false); });
+    bar->addWidget(breakB);
+    auto* unify = toolButton(this, "link", "Unify tangents: in and out handles move together");
+    connect(unify, &QToolButton::clicked, this, [this] { lockTangents(true); });
+    bar->addWidget(unify);
+    auto* infinity = toolButton(this, "infinity", "Pre and post infinity: how the curve continues before its first key and after its last");
     infinity->setPopupMode(QToolButton::InstantPopup);
-    infinity->setFocusPolicy(Qt::NoFocus);
     auto* infMenu = new QMenu(infinity);
     for (bool pre : {true, false})
     {
         QMenu* sub = infMenu->addMenu(pre ? "Pre Infinity" : "Post Infinity");
         for (const char* m : {"constant", "linear", "cycle", "cycleRelative", "oscillate"})
-            sub->addAction(QString(m) == "cycleRelative" ? QString("Cycle with Offset") : niceName(m),
-                           [this, pre, m] { applyInfinity(pre, m); });
+            sub->addAction(QString(m) == "cycleRelative" ? QString("Cycle with Offset") : niceName(m), [this, pre, m] { applyInfinity(pre, m); });
     }
     infinity->setMenu(infMenu);
     bar->addWidget(infinity);
-    auto* loop = new QToolButton(this);
-    loop->setIcon(icon("repeat"));
-    loop->setToolTip("Make the last key a loop key: it mirrors the first key and the curve cycles after it");
-    loop->setAutoRaise(true);
-    loop->setFocusPolicy(Qt::NoFocus);
+    auto* loop = toolButton(this, "repeat", "Make the last key a loop key: it mirrors the first key and the curve cycles after it");
     connect(loop, &QToolButton::clicked, this, [this] { mView->loopKeys(true); });
     bar->addWidget(loop);
-    auto* quat = new QToolButton(this);
-    quat->setIcon(icon("rotate-3d"));
-    quat->setToolTip("Show rotation curves as quaternion W, X, Y, Z (read only) instead of Euler X, Y, Z");
-    quat->setCheckable(true);
-    quat->setAutoRaise(true);
-    quat->setFocusPolicy(Qt::NoFocus);
-    connect(quat, &QToolButton::toggled, this, [this](bool on) {
-        mView->quatView = on;
-        mView->sel.clear();
-        rebuild();
+    bar->addWidget(separator(this));
+
+    mTweenMode = new QComboBox(this);
+    mTweenMode->addItems({"Neighbour", "Ease", "Push/Pull", "Smooth", "Default"});
+    mTweenMode->setItemData(0, "Towards the key before (left) or after (right) the selection", Qt::ToolTipRole);
+    mTweenMode->setItemData(1, "Onto an ease-in (left) or ease-out (right) between the neighbouring keys", Qt::ToolTipRole);
+    mTweenMode->setItemData(2, "Onto (left) or away from (right) the line between the neighbouring keys", Qt::ToolTipRole);
+    mTweenMode->setItemData(3, "Towards (right) or away from (left) the average of each key's neighbours", Qt::ToolTipRole);
+    mTweenMode->setItemData(4, "Towards (right) or away from (left) the channel's default value", Qt::ToolTipRole);
+    mTweenMode->setFocusPolicy(Qt::NoFocus);
+    mTweenMode->setCurrentIndex(indexOf(kTweenModes, PrefStore::get().value<std::string>("graphEditor", "/tween", ""), 0));
+    mTweenMode->setToolTip("Tween: what the slider blends the selected keys towards");
+    connect(mTweenMode, &QComboBox::currentIndexChanged, this, [this] { saveSettings(); });
+    bar->addWidget(mTweenMode);
+    mTween = new QSlider(Qt::Horizontal, this);
+    mTween->setRange(-100, 100);
+    mTween->setFixedWidth(110);
+    mTween->setFocusPolicy(Qt::NoFocus);
+    mTween->setToolTip("Drag to blend the selected keys; it springs back to the middle on release");
+    connect(mTween, &QSlider::sliderPressed, this, [this] { mView->beginTween(anim::BlendMode(mTweenMode->currentIndex())); });
+    connect(mTween, &QSlider::valueChanged, this, [this](int v) { mView->setTween(v / 100.0); });
+    connect(mTween, &QSlider::sliderReleased, this, [this] {
+        mView->endTween();
+        QSignalBlocker block(mTween);
+        mTween->setValue(0);
     });
-    bar->addWidget(quat);
+    bar->addWidget(mTween);
+    bar->addWidget(separator(this));
+
+    auto* curveMenuButton = toolButton(this, "adjustments-horizontal", "Filters, modifiers and buffer curves");
+    curveMenuButton->setPopupMode(QToolButton::InstantPopup);
+    auto* curveMenu = new QMenu(curveMenuButton);
+    connect(curveMenu, &QMenu::aboutToShow, this, [this, curveMenu] {
+        curveMenu->clear();
+        fillCurveMenu(curveMenu);
+    });
+    curveMenuButton->setMenu(curveMenu);
+    bar->addWidget(curveMenuButton);
+
+    const char* viewIcons[] = {"chart-line", "layout-rows", "arrows-diff"};
+    const QString viewTips[] = {"Absolute: curves at their values", "Stacked: each curve in a band of its own, scaled to fit",
+                                "Normalized: every curve scaled to -1..1 on top of each other"};
+    for (int i = 0; i < 3; ++i)
+    {
+        mViewButtons[i] = toolButton(this, viewIcons[i], viewTips[i], true);
+        connect(mViewButtons[i], &QToolButton::clicked, this, [this, i] { setViewMode(i); });
+        bar->addWidget(mViewButtons[i]);
+    }
+
+    auto* motion = toolButton(this, "activity", "Speed and acceleration strips under the curves");
+    motion->setPopupMode(QToolButton::InstantPopup);
+    auto* motionMenu = new QMenu(motion);
+    QAction* speed = motionMenu->addAction("Speed");
+    speed->setCheckable(true);
+    speed->setChecked(mView->settings.speedStrip);
+    connect(speed, &QAction::toggled, this, [this](bool on) {
+        mView->settings.speedStrip = on;
+        saveSettings();
+        mView->update();
+    });
+    QAction* accel = motionMenu->addAction("Acceleration");
+    accel->setCheckable(true);
+    accel->setChecked(mView->settings.accelStrip);
+    connect(accel, &QAction::toggled, this, [this](bool on) {
+        mView->settings.accelStrip = on;
+        saveSettings();
+        mView->update();
+    });
+    motionMenu->addSection("Of");
+    auto* quantityGroup = new QActionGroup(motionMenu);
+    const char* quantityLabels[] = {"Curves", "World Speed (selected objects)", "World Angular Speed (selected objects)"};
+    const char* quantityTips[] = {"Each shown curve's rate of change, in its own units per second",
+                                  "How fast each selected object moves through the world, parent motion included, cm/s",
+                                  "How fast each selected object turns in the world, parent motion included, degrees/s"};
+    for (int i = 0; i < 3; ++i)
+    {
+        QAction* a = motionMenu->addAction(quantityLabels[i], this, [this, i] {
+            mView->settings.quantity = Quantity(i);
+            mView->invalidateMotion();
+            saveSettings();
+            mView->update();
+        });
+        a->setToolTip(quantityTips[i]);
+        a->setCheckable(true);
+        a->setChecked(int(mView->settings.quantity) == i);
+        quantityGroup->addAction(a);
+    }
+    motionMenu->setToolTipsVisible(true);
+    motionMenu->addSeparator();
+    auto* targetRow = new QWidget(motionMenu);
+    auto* targetLayout = new QHBoxLayout(targetRow);
+    targetLayout->setContentsMargins(24, 2, 8, 2);
+    targetLayout->addWidget(new QLabel("Target Speed", targetRow));
+    auto* target = new QDoubleSpinBox(targetRow);
+    target->setRange(0.0, 1e6);
+    target->setDecimals(1);
+    target->setSpecialValueText("None");
+    target->setToolTip("A reference line on the speed strip, in its units (a locomotion speed, say)");
+    target->setValue(mView->settings.targetSpeed);
+    connect(target, &QDoubleSpinBox::valueChanged, this, [this](double v) {
+        mView->settings.targetSpeed = v;
+        saveSettings();
+        mView->update();
+    });
+    targetLayout->addWidget(target);
+    auto* targetAction = new QWidgetAction(motionMenu);
+    targetAction->setDefaultWidget(targetRow);
+    motionMenu->addAction(targetAction);
+    motion->setMenu(motionMenu);
+    bar->addWidget(motion);
+
+    auto* rotation = toolButton(this, "rotate-3d", "Rotation curves as Euler angles, quaternion components (read only), or both");
+    rotation->setPopupMode(QToolButton::InstantPopup);
+    auto* rotationMenu = new QMenu(rotation);
+    auto* rotationGroup = new QActionGroup(rotationMenu);
+    const char* rotationLabels[] = {"Euler", "Quaternion", "Euler and Quaternion"};
+    for (int i = 0; i < 3; ++i)
+    {
+        QAction* a = rotationMenu->addAction(rotationLabels[i], this, [this, i] {
+            mView->settings.rotation = RotationDisplay(i);
+            mView->sel.clear();
+            saveSettings();
+            rebuild();
+        });
+        a->setCheckable(true);
+        a->setChecked(int(mView->settings.rotation) == i);
+        rotationGroup->addAction(a);
+    }
+    rotation->setMenu(rotationMenu);
+    bar->addWidget(rotation);
+
     bar->addStretch(1);
     bar->addWidget(new QLabel("Frame", this));
     mKeyTime = new QLineEdit(this);
     mKeyTime->setFixedWidth(60);
+    mKeyTime->setToolTip("Selected key's frame. +=, -=, *= or /= shift or scale several keys (scaling is about the first one).");
     bar->addWidget(mKeyTime);
     bar->addWidget(new QLabel("Value", this));
     mKeyValue = new QLineEdit(this);
     mKeyValue->setFixedWidth(70);
+    mKeyValue->setToolTip("Selected keys' value. +=, -=, *= or /= change each key from its own value.");
     bar->addWidget(mKeyValue);
-    auto* frameAll = new QToolButton(this);
-    frameAll->setIcon(icon("zoom-scan"));
-    frameAll->setToolTip("Frame All");
-    frameAll->setAutoRaise(true);
-    frameAll->setFocusPolicy(Qt::NoFocus);
+    mValueUnit = new QLabel(this);
+    mValueUnit->setMinimumWidth(16);
+    bar->addWidget(mValueUnit);
+    auto* frameAll = toolButton(this, "zoom-scan", "Frame All");
     connect(frameAll, &QToolButton::clicked, this, [this] { frame(false); });
     bar->addWidget(frameAll);
     layout->addLayout(bar);
@@ -1126,7 +372,6 @@ GraphEditor::GraphEditor(QWidget* parent) : QWidget(parent)
     mChannels->setSelectionMode(QAbstractItemView::ExtendedSelection);
     mChannels->setIconSize(QSize(28, 12));
     mChannels->setFocusPolicy(Qt::ClickFocus);
-    mView = new CurveView(this);
     split->addWidget(mChannels);
     split->addWidget(mView);
     split->setStretchFactor(1, 1);
@@ -1136,9 +381,12 @@ GraphEditor::GraphEditor(QWidget* parent) : QWidget(parent)
     mSyncListener = attrView::addListener([this] { applyVisibility(); });
 
     mListener = Graph::current().addListener([this](scene::Change c, NodeId id) {
+        mView->invalidateMotion();
         if (c == scene::Change::Value)
         {
-            if ((mView->curves.contains(id) || mView->rotations.contains(id)) && !mCurvesQueued)
+            if ((mView->curves.contains(id) || mView->rotations.contains(id) ||
+                 std::any_of(mView->channels.begin(), mView->channels.end(), [&](const Channel& ch) { return realCurve(ch.curve) == id; })) &&
+                !mCurvesQueued)
             {
                 mCurvesQueued = true;
                 QTimer::singleShot(0, this, [this] {
@@ -1146,11 +394,14 @@ GraphEditor::GraphEditor(QWidget* parent) : QWidget(parent)
                     reloadCurves();
                 });
             }
+            else if (mView->settings.quantity != Quantity::Channels && (mView->settings.speedStrip || mView->settings.accelStrip))
+                mView->update();
             return;
         }
         scheduleRebuild();
     });
     onTimeChanged(this, [this] { mView->update(); });
+    syncToolbar();
     rebuild();
 }
 
@@ -1158,24 +409,106 @@ GraphEditor::~GraphEditor()
 {
     attrView::removeListener(mSyncListener);
     Graph::current().removeListener(mListener);
-    if (current() == this)
-        current() = nullptr;
+    if (currentGraphEditor() == this)
+        currentGraphEditor() = nullptr;
 }
 
 GraphEditor* GraphEditor::instance()
 {
-    return current();
+    return currentGraphEditor();
 }
 
 void GraphEditor::focusInEvent(QFocusEvent* e)
 {
-    current() = this;
+    currentGraphEditor() = this;
     QWidget::focusInEvent(e);
 }
 
 void GraphEditor::frame(bool selectedOnly)
 {
     mView->frame(selectedOnly);
+}
+
+void GraphEditor::setTool(int tool)
+{
+    mView->settings.tool = Tool(std::clamp(tool, 0, 2));
+    syncToolbar();
+    saveSettings();
+    mView->update();
+}
+
+void GraphEditor::toolKeyDown(int tool)
+{
+    mView->toolKeyDown(Tool(std::clamp(tool, 0, 2)), PrefStore::get().value<bool>("graphEditor", "/holdToDrag", true));
+    syncToolbar();
+    saveSettings();
+}
+
+void GraphEditor::toolKeyUp()
+{
+    mView->toolKeyUp();
+}
+
+void GraphEditor::falloffKeyDown()
+{
+    mView->falloffKeyDown();
+}
+
+void GraphEditor::falloffKeyUp()
+{
+    if (!mView->falloffKeyUp())
+        toggleFalloff();
+}
+
+void GraphEditor::toggleFalloff()
+{
+    mView->settings.falloff = !mView->settings.falloff;
+    syncToolbar();
+    saveSettings();
+}
+
+void GraphEditor::setViewMode(int mode)
+{
+    mView->settings.view = ViewMode(std::clamp(mode, 0, 2));
+    mView->updateMaps();
+    syncToolbar();
+    saveSettings();
+    mView->frame(false);
+}
+
+void GraphEditor::syncToolbar()
+{
+    for (int i = 0; i < 3; ++i)
+    {
+        mToolButtons[i]->setChecked(int(mView->settings.tool) == i);
+        mViewButtons[i]->setChecked(int(mView->settings.view) == i);
+    }
+    mFalloff->setChecked(mView->settings.falloff);
+    mFalloffRadius->setEnabled(mView->settings.falloff);
+    if (std::abs(mFalloffRadius->value() - mView->settings.falloffFrames) > 1e-9)
+    {
+        QSignalBlocker block(mFalloffRadius);
+        mFalloffRadius->setValue(mView->settings.falloffFrames);
+    }
+}
+
+void GraphEditor::saveSettings()
+{
+    const ViewSettings& s = mView->settings;
+    PrefStore& prefs = PrefStore::get();
+    prefs.set("graphEditor", "/view", kViewNames[int(s.view)]);
+    prefs.set("graphEditor", "/tool", kToolNames[int(s.tool)]);
+    prefs.set("graphEditor", "/pivot", kPivotNames[int(s.pivot)]);
+    prefs.set("graphEditor", "/quantity", kQuantityNames[int(s.quantity)]);
+    prefs.set("graphEditor", "/rotation", kRotationNames[int(s.rotation)]);
+    prefs.set("graphEditor", "/falloff", s.falloff);
+    prefs.set("graphEditor", "/falloffFrames", s.falloffFrames);
+    prefs.set("graphEditor", "/speedStrip", s.speedStrip);
+    prefs.set("graphEditor", "/accelerationStrip", s.accelStrip);
+    prefs.set("graphEditor", "/targetSpeed", s.targetSpeed);
+    prefs.set("graphEditor", "/showBuffer", s.showBuffer);
+    if (mTweenMode)
+        prefs.set("graphEditor", "/tween", kTweenModes[std::clamp(mTweenMode->currentIndex(), 0, 4)]);
 }
 
 void GraphEditor::scheduleRebuild()
@@ -1201,6 +534,7 @@ void GraphEditor::rebuild()
     std::vector<Channel> channels;
     QSignalBlocker block(mChannels);
     mChannels->clear();
+    const RotationDisplay rotationDisplay = mView->settings.rotation;
     for (NodeId id : g.selection())
     {
         scene::Node* n = g.node(id);
@@ -1215,20 +549,40 @@ void GraphEditor::rebuild()
         QFont f = top->font(0);
         f.setWeight(QFont::DemiBold);
         top->setFont(0, f);
-        auto addChannel = [&](const anim::AnimatedPlug& ap, NodeId id, const QString& label, int axis) {
+        auto addChannel = [&](const anim::AnimatedPlug& ap, NodeId cid, const QString& label, int axis) {
             Channel ch;
             ch.plug = ap.plug;
-            ch.curve = id;
-            ch.curveName = g.node(ap.curve)->path();
+            ch.curve = cid;
+            scene::Node* curveNode = g.node(ap.curve);
+            ch.curveName = curveNode->path();
             ch.label = label;
+            ch.unit = slotOf(cid) >= 3 ? QString() : unitOf(*curveNode);
             ch.axis = axis;
+            ch.modifiers = anim::modifiersOf(*curveNode);
             // Neighbouring channels never share a look: gray level and dash both cycle, at different periods.
             static constexpr int kLevels[] = {210, 150, 180, 120};
             static constexpr Qt::PenStyle kDashes[] = {Qt::SolidLine, Qt::DashLine, Qt::DotLine};
             ch.level = kLevels[channels.size() % 4];
             ch.dash = kDashes[channels.size() % 3];
-            auto* item = new QTreeWidgetItem(top, {ch.label});
-            item->setIcon(0, channelSwatch(ch));
+            QString text = ch.label;
+            if (!ch.modifiers.empty())
+            {
+                QStringList names;
+                for (const anim::Modifier& m : ch.modifiers)
+                    names << anim::modifierTypeName(m.type);
+                text += "  ·  " + names.join(", ");
+            }
+            auto* item = new QTreeWidgetItem(top, {text});
+            item->setIcon(0, [&] {
+                QPixmap pm(28, 12);
+                pm.fill(Qt::transparent);
+                QPainter p(&pm);
+                p.setPen(QPen(channelColor(ch, ch.level), 2, ch.dash, Qt::FlatCap));
+                p.drawLine(2, 6, 26, 6);
+                return QIcon(pm);
+            }());
+            if (!ch.modifiers.empty())
+                item->setToolTip(0, "Modifiers change this curve's output: " + text.section("  ·  ", 1));
             item->setData(0, Qt::UserRole, int(channels.size()));
             item->setData(0, Qt::UserRole + 1, QString::fromStdString(g.plugName(ap.plug)) + ch.label);
             channels.push_back(std::move(ch));
@@ -1237,15 +591,17 @@ void GraphEditor::rebuild()
         {
             const scene::AttrDef& a = g.attr(ap.plug);
             bool rotation = anim::isRotationCurve(*g.node(ap.curve));
-            if (rotation && mView->quatView)
-            {
-                if (ap.plug.component == 0)
-                    for (int s = 3; s < 7; ++s)
-                        addChannel(ap, slotId(ap.curve, s), niceName(a.name) + " " + QChar("WXYZ"[s - 3]), -1);
-                continue;
-            }
             std::string attr = ap.plug.component >= 0 ? a.childNames[ap.plug.component] : a.name;
-            addChannel(ap, rotation ? slotId(ap.curve, ap.plug.component) : ap.curve, niceName(attr), axisOf(a, ap.plug.component));
+            if (!rotation || rotationDisplay != RotationDisplay::Quaternion)
+                addChannel(ap, rotation ? slotId(ap.curve, ap.plug.component) : ap.curve, niceName(attr), [&] {
+                    if (ap.plug.component < 0 || a.childNames.size() != 3 || a.childNames[size_t(ap.plug.component)].empty())
+                        return -1;
+                    char last = char(std::toupper(static_cast<unsigned char>(a.childNames[size_t(ap.plug.component)].back())));
+                    return last == 'X' + ap.plug.component ? ap.plug.component : -1;
+                }());
+            if (rotation && rotationDisplay != RotationDisplay::Euler && ap.plug.component == 2)
+                for (int s = 3; s < 7; ++s)
+                    addChannel(ap, slotId(ap.curve, s), niceName(a.name) + " " + QChar("WXYZ"[s - 3]), -1);
         }
         top->setExpanded(true);
     }
@@ -1255,6 +611,7 @@ void GraphEditor::rebuild()
 
     bool wasEmpty = mView->channels.empty();
     mView->channels = std::move(channels);
+    mView->invalidateMotion();
     reloadCurves();
     applyVisibility();
     if (wasEmpty && !mView->channels.empty() && mView->isVisible())
@@ -1270,11 +627,12 @@ void GraphEditor::reloadCurves()
     mView->curves.clear();
     mView->rotations.clear();
     mView->loopCurves.clear();
-    for (const Channel& ch : mView->channels)
+    for (Channel& ch : mView->channels)
     {
         scene::Node* n = g.node(realCurve(ch.curve));
         if (!n)
             continue;
+        ch.modifiers = anim::modifiersOf(*n);
         if (anim::curveLoops(*n))
             mView->loopCurves.insert(ch.curve);
         try
@@ -1296,6 +654,7 @@ void GraphEditor::reloadCurves()
         }
     }
     mView->dropMissing();
+    mView->updateMaps();
     refreshKeyFields();
     mView->update();
 }
@@ -1317,6 +676,9 @@ void GraphEditor::applyVisibility()
         mView->channels[i].shown = sync ? std::find(synced.begin(), synced.end(), mView->channels[i].plug) != synced.end()
                                         : picked.empty() || std::find(picked.begin(), picked.end(), i) != picked.end();
     mView->dropMissing();
+    mView->updateMaps();
+    if (mView->settings.view != ViewMode::Absolute)
+        mView->frame(false);
     refreshKeyFields();
     mView->update();
 }
@@ -1346,6 +708,22 @@ void GraphEditor::applyTangent(const char* type)
                 runUnechoed("keyTangent", call);
             }
     log::write(LogLevel::Echo, std::string("# tangents: ") + type + "\n");
+}
+
+void GraphEditor::lockTangents(bool lock)
+{
+    if (mView->sel.empty())
+    {
+        log::warn("{} tangents: select keys first", lock ? "Unify" : "Break");
+        return;
+    }
+    {
+        UndoChunk chunk(lock ? "Unify Tangents" : "Break Tangents");
+        for (const KeySel& k : mView->sel)
+            if (std::string name = mView->commandTarget(k.curve); !name.empty())
+                runUnechoed("keyTangent", {{"args", {name}}, {"time", k.time}, {"lock", lock}});
+    }
+    log::write(LogLevel::Echo, std::string("# tangents ") + (lock ? "unified\n" : "broken\n"));
 }
 
 void GraphEditor::applyInfinity(bool pre, const char* mode)
@@ -1384,11 +762,166 @@ void GraphEditor::deleteSelectedKeys()
     refreshKeyFields();
 }
 
+void GraphEditor::runOnKeys(const std::string& command, const json& call)
+{
+    json full = call;
+    if (!mView->sel.empty())
+        full["keys"] = mView->keysArgument();
+    else
+        full["args"] = mView->targetNames();
+    if (full.contains("args") && full["args"].empty())
+    {
+        log::warn("{}: no curves in the graph editor", command);
+        return;
+    }
+    actions::runWithOptions(command, full);
+}
+
+void GraphEditor::runOnCurves(const std::string& command, const json& call)
+{
+    Graph& g = Graph::current();
+    json names = json::array();
+    for (NodeId c : mView->targetCurves())
+    {
+        std::string target = slotOf(c) < 0 ? mView->commandTarget(c) : (g.node(realCurve(c)) ? g.node(realCurve(c))->path() : "");
+        if (!target.empty() && std::find(names.begin(), names.end(), target) == names.end())
+            names.push_back(target);
+    }
+    if (names.empty())
+    {
+        log::warn("{}: no curves in the graph editor", command);
+        return;
+    }
+    json full = call;
+    full["args"] = names;
+    actions::runWithOptions(command, full);
+}
+
+void GraphEditor::snapshotBuffer()
+{
+    Graph& g = Graph::current();
+    int count = 0;
+    for (NodeId c : mView->targetCurves())
+    {
+        scene::Node* n = g.node(realCurve(c));
+        if (!n)
+            continue;
+        Buffer b;
+        b.rotation = anim::isRotationCurve(*n);
+        if (b.rotation)
+            b.rotationCurve = anim::rotationCurveOf(*n);
+        else
+            b.curve = anim::curveOf(*n);
+        mView->buffers[n->id()] = std::move(b);
+        ++count;
+    }
+    log::info("Buffer: snapshot of {} curve{}", count, count == 1 ? "" : "s");
+    mView->update();
+}
+
+void GraphEditor::swapBuffer()
+{
+    Graph& g = Graph::current();
+    int count = 0;
+    {
+        UndoChunk chunk("Swap Buffer Curves");
+        std::set<NodeId> done;
+        for (NodeId c : mView->targetCurves())
+        {
+            const NodeId id = realCurve(c);
+            auto it = mView->buffers.find(id);
+            scene::Node* n = g.node(id);
+            if (!n || it == mView->buffers.end() || !done.insert(id).second)
+                continue;
+            Buffer now;
+            now.rotation = anim::isRotationCurve(*n);
+            if (now.rotation != it->second.rotation)
+                continue;
+            if (now.rotation)
+            {
+                now.rotationCurve = anim::rotationCurveOf(*n);
+                anim::setRotationCurve(g, id, it->second.rotationCurve);
+            }
+            else
+            {
+                now.curve = anim::curveOf(*n);
+                anim::setCurve(g, id, it->second.curve);
+            }
+            it->second = std::move(now);
+            ++count;
+        }
+    }
+    if (count == 0)
+        log::warn("Swap Buffer: no snapshot of these curves yet (Snapshot Buffer first)");
+    else
+        log::write(LogLevel::Echo, "# swapped " + std::to_string(count) + " buffer curves\n");
+}
+
+void GraphEditor::fillCurveMenu(QMenu* menu)
+{
+    menu->setToolTipsVisible(true);
+    menu->addSection("Filters");
+    for (const char* id : {"graphEditor.butterworth", "graphEditor.gaussian", "graphEditor.simplify", "graphEditor.resample", "graphEditor.eulerFilter"})
+        menus::addActionRow(menu, id);
+    menu->addSection("Modifiers");
+    for (const char* id : {"graphEditor.noise", "graphEditor.stepped", "graphEditor.limits", "graphEditor.removeModifiers"})
+        menus::addActionRow(menu, id);
+    menu->addSection("Buffer");
+    menus::addActionRow(menu, "graphEditor.snapshotBuffer");
+    menus::addActionRow(menu, "graphEditor.swapBuffer");
+    QAction* show = menu->addAction("Show Buffer Curves");
+    show->setCheckable(true);
+    show->setChecked(mView->settings.showBuffer);
+    connect(show, &QAction::toggled, this, [this](bool on) {
+        mView->settings.showBuffer = on;
+        saveSettings();
+        mView->update();
+    });
+}
+
+void GraphEditor::fillContextMenu(QMenu* menu)
+{
+    QMenu* tangents = menu->addMenu("Tangents");
+    for (const char* t : {"auto", "spline", "linear", "flat", "step", "clamped"})
+        tangents->addAction(icon(QString("curve-tangent-%1").arg(t)), niceName(t), [this, t] { applyTangent(t); });
+    tangents->addSeparator();
+    tangents->addAction(icon("unlink"), "Break", [this] { lockTangents(false); });
+    tangents->addAction(icon("link"), "Unify", [this] { lockTangents(true); });
+    tangents->addSeparator();
+    tangents->addAction("Weighted", [this] {
+        UndoChunk chunk("Weighted Tangents");
+        for (NodeId c : mView->targetCurves())
+            if (std::string name = mView->commandTarget(c); !name.empty())
+                runUnechoed("keyTangent", {{"args", {name}}, {"weightedTangents", true}});
+    });
+    tangents->addAction("Non-Weighted", [this] {
+        UndoChunk chunk("Non-Weighted Tangents");
+        for (NodeId c : mView->targetCurves())
+            if (std::string name = mView->commandTarget(c); !name.empty())
+                runUnechoed("keyTangent", {{"args", {name}}, {"weightedTangents", false}});
+    });
+    for (bool pre : {true, false})
+    {
+        QMenu* inf = menu->addMenu(pre ? "Pre Infinity" : "Post Infinity");
+        for (const char* m : {"constant", "linear", "cycle", "cycleRelative", "oscillate"})
+            inf->addAction(QString(m) == "cycleRelative" ? QString("Cycle with Offset") : niceName(m), [this, pre, m] { applyInfinity(pre, m); });
+    }
+    menu->addAction("Loop Key", [this] { mView->loopKeys(true); });
+    menu->addAction("Clear Loop Key", [this] { mView->loopKeys(false); });
+    fillCurveMenu(menu->addMenu("Curves"));
+    menu->addSeparator();
+    menu->addAction("Delete Keys", [this] { deleteSelectedKeys(); })->setEnabled(!mView->sel.empty());
+    menu->addAction("Frame Selection", [this] { frame(true); });
+    menu->addAction("Frame All", [this] { frame(false); });
+}
+
 void GraphEditor::refreshKeyFields()
 {
     const auto& sel = mView->sel;
     std::optional<double> t, v;
     bool sameT = true, sameV = true;
+    QString unit;
+    bool sameUnit = true;
     for (const KeySel& k : sel)
     {
         auto it = mView->curves.find(k.curve);
@@ -1402,38 +935,88 @@ void GraphEditor::refreshKeyFields()
             sameT = false;
         if (v && std::abs(*v - value) > 1e-9)
             sameV = false;
+        if (const Channel* ch = mView->channelOf(k.curve))
+        {
+            if (t && ch->unit != unit)
+                sameUnit = false;
+            unit = ch->unit;
+        }
         t = k.time;
         v = value;
     }
-    mKeyTime->setEnabled(sel.size() == 1);
+    mKeyTime->setEnabled(!sel.empty());
     mKeyValue->setEnabled(!sel.empty());
     mKeyTime->setText(t && sameT ? formatValue(anim::frameOf(*t)) : QString());
     mKeyValue->setText(v && sameV ? formatValue(*v) : QString());
+    mKeyTime->setPlaceholderText(t && !sameT ? "mixed" : QString());
+    mKeyValue->setPlaceholderText(v && !sameV ? "mixed" : QString());
+    mValueUnit->setText(sameUnit ? unit : QString());
 }
 
 void GraphEditor::editKeyField(bool time)
 {
     QLineEdit* field = time ? mKeyTime : mKeyValue;
-    bool ok = false;
-    double x = field->text().toDouble(&ok);
-    if (!ok || mView->sel.empty())
+    auto entry = parseEntry(field->text());
+    if (!entry || mView->sel.empty())
         return;
+    auto [op, x] = *entry;
     if (time)
     {
-        if (mView->sel.size() != 1)
+        std::vector<double> times;
+        for (const KeySel& k : mView->sel)
+            times.push_back(k.time);
+        const double first = *std::min_element(times.begin(), times.end());
+        const bool allSame = std::all_of(times.begin(), times.end(), [&](double s) { return std::abs(s - first) <= kEps; });
+        json call = {{"keys", mView->keysArgument()}};
+        switch (op)
+        {
+        case '=':
+            if (!allSame)
+            {
+                log::warn("Frame: the selected keys are at different frames; use += or -= to shift them");
+                refreshKeyFields();
+                return;
+            }
+            call["timeOffset"] = anim::secondsOf(x) - first;
+            break;
+        case '+': call["timeOffset"] = anim::secondsOf(x) - anim::secondsOf(0.0); break;
+        case '-': call["timeOffset"] = anim::secondsOf(0.0) - anim::secondsOf(x); break;
+        case '*':
+        case '/':
+            call["timeScale"] = op == '*' ? x : 1.0 / x;
+            call["timePivot"] = first;
+            call["snap"] = true;
+            break;
+        }
+        try
+        {
+            ops::execute("transformKeys", call, CallSource::UI);
+        }
+        catch (const CommandError& e)
+        {
+            log::error("{}", e.what());
             return;
-        KeySel& k = mView->sel[0];
-        double to = anim::secondsOf(x);
-        if (std::abs(to - k.time) < kEps)
-            return;
-        if (std::string name = mView->commandTarget(k.curve); !name.empty())
-            if (runUnechoed("keyframe", {{"args", {name}}, {"time", k.time}, {"timeChange", to}}))
-                k.time = to;
+        }
+        anim::KeyTransform xf{.timeOffset = call.value("timeOffset", 0.0), .timeScale = call.value("timeScale", 1.0), .timePivot = first,
+                              .snap = call.contains("snap")};
+        for (KeySel& k : mView->sel)
+            k.time = xf.time(k.time, anim::playback().fps);
+        refreshKeyFields();
         return;
     }
     UndoChunk chunk("Key Values");
     for (const KeySel& k : mView->sel)
-        if (std::string name = mView->commandTarget(k.curve); !name.empty())
-            runUnechoed("keyframe", {{"args", {name}}, {"time", k.time}, {"valueChange", x}});
+    {
+        std::string name = mView->commandTarget(k.curve);
+        auto it = mView->curves.find(k.curve);
+        if (name.empty() || it == mView->curves.end())
+            continue;
+        const int i = it->second.find(k.time);
+        if (i < 0)
+            continue;
+        const double v = it->second.keys[size_t(i)].value;
+        const double to = op == '=' ? x : op == '+' ? v + x : op == '-' ? v - x : op == '*' ? v * x : v / x;
+        runUnechoed("keyframe", {{"args", {name}}, {"time", k.time}, {"valueChange", to}});
+    }
 }
 } // namespace lila::ui
