@@ -77,9 +77,16 @@ void routeDrainage(const Heightfield& h, Drainage& d)
             }
         }
     });
-    for (auto it = d.order.rbegin(); it != d.order.rend(); ++it)
-        if (const uint32_t r = d.receiver[*it]; r != *it)
-            d.area[r] += d.area[*it];
+    walkDrainage(
+        d.order, d.receiver, true,
+        [&](uint32_t i) {
+            prefetchLine(&d.area[i]);
+            prefetchLine(&d.area[d.receiver[i]]);
+        },
+        [&](uint32_t i) {
+            if (const uint32_t r = d.receiver[i]; r != i)
+                d.area[r] += d.area[i];
+        });
 }
 } // namespace
 
