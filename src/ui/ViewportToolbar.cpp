@@ -730,7 +730,6 @@ ViewportToolbar::ViewportToolbar(ViewportWidget* view, QWidget* parent) : QWidge
     separator();
     actionButton("viewport.frameSelected", "focus-centered");
     actionButton("viewport.frameAll", "arrows-maximize");
-    actionButton("viewport.frameUnderCursor", "focus");
 
     mChevron = makeChevron(this, "More viewport options");
     QMenu* overflow = mChevron->menu();

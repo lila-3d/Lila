@@ -76,7 +76,7 @@ void MainWindow::registerActions()
                       view->frameUnderCursor();
                   },
                   nullptr,
-                  "Centres the view on the surface under the cursor, keeping its distance unless Preferences > Viewport sets it to zoom in too. From a button, click the surface "
+                  "Centres the view on the surface under the cursor, keeping its distance unless Preferences > Viewport sets it to zoom in too. From the menu, click the surface "
                   "afterwards."});
     actions::add({"viewport.cameraUndo", "Undo View Change", "View", [this] { mViewports->active()->cameraUndo(); }, nullptr,
                   "Puts the active view's camera back where it was before its last move. Separate from scene undo."});
