@@ -4,7 +4,8 @@ namespace lila::ui
 {
 void UvView::drawBackground(QPainter& p)
 {
-    int tilesU = mUdim ? 10 : 1, tilesV = mUdim ? 2 : 1;
+    const bool udim = mUdim && !mPackPreview;
+    int tilesU = udim ? 10 : 1, tilesV = udim ? 2 : 1;
     for (int tv = 0; tv < tilesV; ++tv)
         for (int tu = 0; tu < tilesU; ++tu)
         {
@@ -20,13 +21,14 @@ void UvView::drawBackground(QPainter& p)
                                               toScreen({tu + double(x + 1) / n, tv + double(y) / n})),
                                        gray(64));
             }
-            if (mUdim)
+            if (udim)
             {
                 p.setPen(gray(110));
                 p.drawText(tile.adjusted(4, 2, -4, -2), Qt::AlignLeft | Qt::AlignTop, QString::number(1001 + tu + 10 * tv));
             }
         }
-    mTexPaint.drawBackground(p, rect(), [this](const glm::dvec2& uv) { return toScreen(uv); }, uvOf(), mUdim);
+    if (!mPackPreview)
+        mTexPaint.drawBackground(p, rect(), [this](const glm::dvec2& uv) { return toScreen(uv); }, uvOf(), mUdim);
     // Tenths grid inside the tiles, tile borders brighter.
     p.setPen(QPen(gray(58), 0));
     for (int i = 1; i < 10 * tilesU; ++i)
@@ -208,7 +210,7 @@ void UvView::drawManipulator(QPainter& p)
 
 void UvView::drawStacks(QPainter& p)
 {
-    if (!mShowStacks)
+    if (!mShowStacks || mPackPreview)
         return;
     std::vector<StackBadges> next;
     for (const MeshUv& mu : mMeshes)
@@ -278,7 +280,7 @@ void UvView::drawHud(QPainter& p)
     }
     if (meshes.isEmpty())
         meshes = "select a mesh";
-    QString text = QString::fromStdString(uv::currentUvSet()) + "   " + meshes + "   " + tool;
+    QString text = QString::fromStdString(uv::currentUvSet()) + (mPackPreview ? mPackFailed ? "   Pack Preview failed: real UVs   " : "   Pack Preview (view only)   " : "   ") + meshes + "   " + tool;
     for (const MeshUv& mu : mMeshes)
         if (scene::Node* n = scene::Graph::current().node(mu.node); n && uv::uvSymmetryAxis(*n) >= 0)
         {
@@ -288,6 +290,9 @@ void UvView::drawHud(QPainter& p)
     if (missing)
         text += "   (no uvs in this set)";
     p.drawText(QRectF(8, 4, width() - 16, 20), Qt::AlignLeft | Qt::AlignVCenter, text);
+    // Preview positions are not real uvs.
+    if (mPackPreview)
+        return;
     glm::dvec2 at = toUv(mMousePos);
     p.setPen(gray(140));
     p.drawText(QRectF(8, height() - 22, width() - 16, 18), Qt::AlignLeft | Qt::AlignVCenter,

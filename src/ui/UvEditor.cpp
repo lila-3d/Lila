@@ -236,6 +236,11 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     flow->addWidget(twoColour);
     QToolButton* udim = uvKitPush("UDIM", "UDIM: show the UDIM tiles", this, true, false);
     flow->addWidget(udim);
+    QToolButton* packPreview = uvKitPush("Pack Preview",
+                                         "Pack Preview: show the shown objects' islands as if packed together, with the Pack options' "
+                                         "padding and rotation. View and select only; the UVs stay as they are",
+                                         this, true, false);
+    flow->addWidget(packPreview);
     // A texture set channel under the UVs, and the texture paint brush in UV space.
     QToolButton* texture = uvKitPush("Texture", "Texture: show a texture set channel under the UVs (drawn on the GPU at the view's resolution)", this);
     texture->setPopupMode(QToolButton::InstantPopup);
@@ -561,6 +566,13 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
         mView->setDisplay(UvView::Display(i));
     });
     connect(udim, &QToolButton::toggled, this, [this](bool on) { mView->setShowUdim(on); });
+    connect(packPreview, &QToolButton::toggled, this, [this, tools, udim, paint](bool on) {
+        if (on)
+            paint->setChecked(false);
+        tools->setEnabled(!on);
+        udim->setEnabled(!on);
+        mView->setPackPreview(on);
+    });
     connect(mSet, &QComboBox::textActivated, this, [this](const QString& s) {
         if (!s.isEmpty())
             UvView::safeRun("uvSetCurrent", {{"args", {s.toStdString()}}}, CallSource::UI);

@@ -1,5 +1,6 @@
 #include "ui/UvEditorInternal.h"
 
+
 namespace lila::ui
 {
 QColor UvView::gray(int v, int a)
@@ -73,6 +74,77 @@ void UvView::setShowStacks(bool on)
 {
     mShowStacks = on;
     update();
+}
+
+void UvView::setPackPreview(bool on)
+{
+    if (mPackPreview == on)
+        return;
+    mPackPreview = on;
+    mPackDirty = true;
+    mPackFailed = false;
+    // Rebuilt from the meshes, so the real uvs come back when it turns off.
+    mMeshes.clear();
+    mDrag = Handle::None;
+    mSew = {};
+    mLiveDrag = {};
+    if (on)
+        changeTool(Tool::Select);
+    frameAll();
+}
+
+void UvView::packShown()
+{
+    LILA_ZONE();
+
+    mPackDirty = false;
+    scene::Graph& g = scene::Graph::current();
+    std::vector<geo::Mesh> copies;
+    std::vector<size_t> packed;
+    copies.reserve(mMeshes.size());
+    for (size_t mi = 0; mi < mMeshes.size(); ++mi)
+        if (!mMeshes[mi].corner.empty())
+        {
+            copies.push_back(*mMeshes[mi].mesh);
+            packed.push_back(mi);
+        }
+    std::vector<uv::PackTarget> targets(packed.size());
+    for (size_t i = 0; i < packed.size(); ++i)
+    {
+        const MeshUv& mu = mMeshes[packed[i]];
+        targets[i].mesh = &copies[i];
+        targets[i].faces = mu.only;
+        if (scene::Node* n = g.node(mu.node))
+            targets[i].linear = glm::dmat3(n->as<glm::dmat4>(scene::Transform::kWorldMatrix));
+    }
+    const json o = uvPackOptions();
+    auto opt = [&](const char* key, auto fallback) { return o.is_object() && o.contains(key) ? o[key].get<decltype(fallback)>() : fallback; };
+    uv::PackOptions p;
+    p.resolution = std::max(4, opt("resolution", 1024));
+    p.padding = std::max(0.0, opt("padding", 4.0));
+    p.rotateStep = std::clamp(opt("rotateStep", 90), 0, 180);
+    p.freeRotation = opt("freeRotation", false);
+    p.flip = opt("flip", false);
+    p.preOrient = opt("orient", true);
+    p.stack = opt("stack", false);
+    // A preview: the quickest search, which lands within a few percent of a full pack's density.
+    p.effort = 0;
+    uv::PackResult r = uv::packMeshes(targets, mMeshes.empty() ? std::string() : mMeshes.front().set, p);
+    if (!r.ok)
+    {
+        log::warn("UV Editor: Pack Preview could not pack the shown islands; showing the real uvs");
+        mPackFailed = true;
+        return;
+    }
+    mPackFailed = false;
+    for (size_t i = 0; i < packed.size(); ++i)
+    {
+        MeshUv& mu = mMeshes[packed[i]];
+        std::span<const glm::vec2> uv = copies[i].cornerAttrs().get<glm::vec2>(mu.set);
+        for (size_t k = 0; k < mu.corner.size(); ++k)
+            mu.uv[k] = glm::dvec2(uv[mu.corner[k]]);
+        mu.distortionValid = false;
+    }
 }
 
 void UvView::frameAll()
@@ -151,8 +223,9 @@ void UvView::paintEvent(QPaintEvent*)
     drawManipulator(p);
     drawSewDrag(p);
     drawBrush(p);
-    mTexPaint.drawCursor(p, mMousePos);
-    if (uvTools::UvTool* t = uvTools::active())
+    if (!mPackPreview)
+        mTexPaint.drawCursor(p, mMousePos);
+    if (uvTools::UvTool* t = uvTools::active(); t && !mPackPreview)
         t->draw(p, canvas());
     drawStacks(p);
     drawTabBadges(p);
@@ -178,7 +251,7 @@ void UvView::mousePressEvent(QMouseEvent* e)
     mPressPos = mMousePos = e->position();
     mLastPos = e->position();
     bool alt = e->modifiers() & Qt::AltModifier;
-    if (e->button() == Qt::MiddleButton && !alt && mTool != Tool::Select && mTool != Tool::Brush && hasSelection())
+    if (e->button() == Qt::MiddleButton && !alt && !mPackPreview && mTool != Tool::Select && mTool != Tool::Brush && hasSelection())
     {
         beginDrag(Handle::Free);
         return;
@@ -208,6 +281,13 @@ void UvView::mousePressEvent(QMouseEvent* e)
                                                    e->modifiers() & Qt::ControlModifier);
         mTabStroke.begin(m == tabSelect::Mode::Select ? paintSelect::Stroke::Op::Add : paintSelect::Stroke::Op::Remove, pickMode());
         tabPaint(e->position(), e->position());
+        return;
+    }
+    // Pack Preview shows the uvs away from where they are, so editing on the canvas waits until it is off.
+    if (mPackPreview)
+    {
+        mMods = e->modifiers();
+        mMarquee = true;
         return;
     }
     if (mTexPaint.mousePress(e, uvOf(), mZoom))
@@ -270,13 +350,13 @@ void UvView::mouseMoveEvent(QMouseEvent* e)
         update();
         return;
     }
-    if (mTexPaint.mouseMove(e, uvOf(), mZoom) || mTexPaint.painting())
+    if (!mPackPreview && (mTexPaint.mouseMove(e, uvOf(), mZoom) || mTexPaint.painting()))
     {
         update();
         if (e->buttons() & Qt::LeftButton)
             return;
     }
-    if (uvTools::UvTool* t = uvTools::active(); t && (mUvToolDrag || !(e->buttons() & Qt::LeftButton)) && t->mouseMove(e, canvas()))
+    if (uvTools::UvTool* t = uvTools::active(); t && !mPackPreview && (mUvToolDrag || !(e->buttons() & Qt::LeftButton)) && t->mouseMove(e, canvas()))
     {
         update();
         return;
@@ -448,7 +528,7 @@ bool UvView::event(QEvent* e)
 
 void UvView::keyPressEvent(QKeyEvent* e)
 {
-    if (uvTools::UvTool* t = uvTools::active(); t && t->keyPress(e, canvas()))
+    if (uvTools::UvTool* t = uvTools::active(); t && !mPackPreview && t->keyPress(e, canvas()))
     {
         update();
         return;
@@ -458,12 +538,12 @@ void UvView::keyPressEvent(QKeyEvent* e)
     switch (e->key())
     {
     case Qt::Key_Q: changeTool(Tool::Select); break;
-    case Qt::Key_W: changeTool(Tool::Move); break;
-    case Qt::Key_E: changeTool(Tool::Rotate); break;
-    case Qt::Key_R: changeTool(Tool::Scale); break;
+    case Qt::Key_W: if (!mPackPreview) changeTool(Tool::Move); break;
+    case Qt::Key_E: if (!mPackPreview) changeTool(Tool::Rotate); break;
+    case Qt::Key_R: if (!mPackPreview) changeTool(Tool::Scale); break;
     case Qt::Key_F: frameSelection(); break;
     case Qt::Key_A: frameAll(); break;
-    case Qt::Key_P: togglePinAt(mMousePos); break;
+    case Qt::Key_P: if (!mPackPreview) togglePinAt(mMousePos); break;
     default: QWidget::keyPressEvent(e); return;
     }
 }
@@ -538,8 +618,12 @@ void UvView::sync()
         changed = true;
         next.push_back(build(id, n->path(), mesh, set, std::move(faces)));
     }
+    changed |= next.size() != mMeshes.size();
     mMeshes = std::move(next);
-    applyLive();
+    if (mPackPreview && (changed || mPackDirty))
+        packShown();
+    else if (!mPackPreview)
+        applyLive();
     // A mesh newly shown (a new selection) is framed, so its uvs never open off screen; so is an edit, such as a pack, that
     // leaves none of them in view.
     if (mFramed && (added || (changed && !mMeshes.empty() && !anyShownInView())))

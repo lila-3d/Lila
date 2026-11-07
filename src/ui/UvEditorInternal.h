@@ -110,6 +110,9 @@ public:
     void setDisplay(Display d);
     void setShowUdim(bool on);
     void setShowStacks(bool on);
+    /** Shows the shown meshes' islands as if packed together into 0-1; view and select only, the uvs are untouched. */
+    void setPackPreview(bool on);
+    bool packPreview() const { return mPackPreview; }
     void invalidate() { update(); }
     std::function<void(Tool)> onToolChanged;
 
@@ -210,6 +213,9 @@ private:
 
     /** Shows the live solver's latest uvs and pins in place of the mesh's while a session matches it. */
     void applyLive();
+
+    /** Packs copies of the shown meshes together with the last uvPack options and shows their uvs in place of the real ones. */
+    void packShown();
 
     /** In face mode with faces selected, the selected faces of each mesh (none for a mesh without any); empty otherwise. */
     static std::vector<std::vector<Index>> shownFaces(const std::vector<scene::NodeId>& meshes);
@@ -436,6 +442,9 @@ private:
     Display mDisplay = Display::Checker;
     bool mUdim = false;
     bool mShowStacks = false;
+    bool mPackPreview = false;
+    bool mPackDirty = false;
+    bool mPackFailed = false;
     /** Stacked islands per shown mesh: a badge position (uv) and how many islands share it. */
     struct StackBadges
     {
