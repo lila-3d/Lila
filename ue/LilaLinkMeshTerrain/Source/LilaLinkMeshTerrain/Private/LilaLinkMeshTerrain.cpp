@@ -4,11 +4,15 @@
 
 #include "Dom/JsonObject.h"
 #include "DynamicMesh/DynamicMesh3.h"
+#include "DynamicMesh/DynamicMeshAttributeSet.h"
 #include "Editor.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "Materials/MaterialInterface.h"
 #include "MeshPartition.h"
+#include "MeshPartitionChannel.h"
+#include "MeshPartitionDefinition.h"
+#include "Misc/FileHelper.h"
 #include "MeshPartitionEditorComponent.h"
 #include "MeshPartitionEditorSubsystem.h"
 #include "MeshPartitionHeightmapImporter.h"
@@ -21,6 +25,7 @@
 namespace
 {
 using UE::MeshPartition::AMeshPartition;
+using UE::MeshPartition::UMeshPartitionDefinition;
 using UE::MeshPartition::UMeshPartitionEditorComponent;
 using UE::MeshPartition::UMeshProviderModifier;
 using UE::MeshPartition::UModifierComponent;
@@ -110,6 +115,120 @@ void NotifyMoved(AMeshPartition* Mesh, const TArray<FBox>& Bounds)
 	}
 }
 
+/** A paint layer as a Mesh Partition channel: its name and one weight byte per heightmap mesh vertex. */
+struct FLilaChannel
+{
+	FName Name;
+	TArray<uint8> Weights;
+};
+
+bool ReadChannels(const TSharedPtr<FJsonObject>& Params, FInt32Point Resolution, TArray<FLilaChannel>& Out, FString& OutError)
+{
+	const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
+	if (!Params->TryGetArrayField(TEXT("channels"), Values))
+	{
+		return true;
+	}
+	const int64 Expected = int64(Resolution.X + 1) * int64(Resolution.Y + 1);
+	for (const TSharedPtr<FJsonValue>& Value : *Values)
+	{
+		const TSharedPtr<FJsonObject>* Object = nullptr;
+		FString Name, File;
+		if (!Value.IsValid() || !Value->TryGetObject(Object) || !(*Object)->TryGetStringField(TEXT("name"), Name) || !(*Object)->TryGetStringField(TEXT("file"), File))
+		{
+			OutError = TEXT("setMeshTerrain: each channel needs name and file");
+			return false;
+		}
+		FLilaChannel& C = Out.AddDefaulted_GetRef();
+		C.Name = FName(*Name);
+		if (!FFileHelper::LoadFileToArray(C.Weights, *File) || C.Weights.Num() != Expected)
+		{
+			OutError = FString::Printf(TEXT("setMeshTerrain: channel %s: %s is not %lld bytes"), *Name, *File, Expected);
+			return false;
+		}
+	}
+	return true;
+}
+
+/**
+ * Declares the channels on the terrain's definition, so they are rasterized for materials to sample. The engine's default
+ * definition is shared, so a terrain still on it gets its own copy first.
+ */
+void DeclareChannels(AMeshPartition* Mesh, const TArray<FLilaChannel>& Channels, TArray<FString>& Warnings)
+{
+	if (!Mesh || Channels.IsEmpty())
+	{
+		return;
+	}
+	UMeshPartitionDefinition* Definition = Mesh->GetMeshPartitionDefinition();
+	if (!Definition || Definition == UMeshPartitionDefinition::GetDefaultMegaMeshDefinition())
+	{
+		const UMeshPartitionDefinition* Source = Definition ? Definition : UMeshPartitionDefinition::GetDefaultMegaMeshDefinition();
+		Definition = DuplicateObject<UMeshPartitionDefinition>(Source, Mesh, MakeUniqueObjectName(Mesh, UMeshPartitionDefinition::StaticClass(), TEXT("LilaDefinition")));
+		Mesh->Modify();
+		Mesh->SetMeshPartitionDefinition(Definition);
+	}
+	// The channel list has no setter; it is reached through reflection like the details panel does.
+	FStructProperty* MapProperty = FindFProperty<FStructProperty>(UMeshPartitionDefinition::StaticClass(), TEXT("ChannelMap"));
+	FArrayProperty* DescsProperty = MapProperty ? FindFProperty<FArrayProperty>(MapProperty->Struct, TEXT("ChannelDescs")) : nullptr;
+	if (!DescsProperty)
+	{
+		Warnings.Add(TEXT("this engine's Mesh Partition definition has no ChannelMap.ChannelDescs, so the channels were written to the mesh but not declared"));
+		return;
+	}
+	Definition->Modify();
+	void* Map = MapProperty->ContainerPtrToValuePtr<void>(Definition);
+	TArray<UE::MeshPartition::FChannelDesc>& Descs = *DescsProperty->ContainerPtrToValuePtr<TArray<UE::MeshPartition::FChannelDesc>>(Map);
+	for (const FLilaChannel& C : Channels)
+	{
+		if (!Descs.ContainsByPredicate([&](const UE::MeshPartition::FChannelDesc& D) { return D.Name == C.Name; }))
+		{
+			if (Descs.Num() >= UE::MeshPartition::FChannelPacking::MaxNumberPackedChannels)
+			{
+				Warnings.Add(FString::Printf(TEXT("channel %s left out: the definition already has %d channels"), *C.Name.ToString(), Descs.Num()));
+				continue;
+			}
+			Descs.AddDefaulted_GetRef().Name = C.Name;
+		}
+	}
+	FPropertyChangedEvent Changed(MapProperty);
+	Definition->PostEditChangeProperty(Changed);
+}
+
+/** Writes the channels into a section's base mesh as weight layers, sampled at each vertex's place in the heightmap mesh. */
+void WriteChannels(AActor* Section, const TArray<FLilaChannel>& Channels, FInt32Point Resolution, const FVector& MeshSize)
+{
+	UMeshProviderModifier* Provider = Section ? Section->FindComponentByClass<UMeshProviderModifier>() : nullptr;
+	if (!Provider || !Provider->GetMesh() || Channels.IsEmpty())
+	{
+		return;
+	}
+	UE::Geometry::FDynamicMesh3 Mesh(*Provider->GetMesh());
+	Mesh.EnableAttributes();
+	Mesh.Attributes()->SetNumWeightLayers(Channels.Num());
+	const FTransform ToImport = Section->GetActorTransform();
+	const int32 Stride = Resolution.X + 1;
+	for (int32 Index = 0; Index < Channels.Num(); ++Index)
+	{
+		UE::Geometry::FDynamicMeshWeightAttribute* Layer = Mesh.Attributes()->GetWeightLayer(Index);
+		Layer->SetName(Channels[Index].Name);
+		const TArray<uint8>& W = Channels[Index].Weights;
+		for (const int32 Vid : Mesh.VertexIndicesItr())
+		{
+			// The importer's mesh is centred on the origin: vertex k of Resolution.X sits at (k / X - 0.5) * MeshSize.X.
+			const FVector P = ToImport.TransformPosition(Mesh.GetVertex(Vid));
+			const double K = FMath::Clamp((P.X / MeshSize.X + 0.5) * Resolution.X, 0.0, double(Resolution.X));
+			const double L = FMath::Clamp((P.Y / MeshSize.Y + 0.5) * Resolution.Y, 0.0, double(Resolution.Y));
+			const int32 K0 = FMath::Min(int32(K), Resolution.X - 1), L0 = FMath::Min(int32(L), Resolution.Y - 1);
+			const double FK = K - K0, FL = L - L0;
+			auto At = [&](int32 X, int32 Y) { return double(W[Y * Stride + X]) / 255.0; };
+			const float Value = float(FMath::Lerp(FMath::Lerp(At(K0, L0), At(K0 + 1, L0), FK), FMath::Lerp(At(K0, L0 + 1), At(K0 + 1, L0 + 1), FK), FL));
+			Layer->SetValue(Vid, &Value);
+		}
+	}
+	Provider->SetMesh(MoveTemp(Mesh), false);
+}
+
 TSharedPtr<FJsonValue> SetMeshTerrain(const TSharedPtr<FJsonObject>& Params, FString& OutError)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMeshTerrain::SetMeshTerrain);
@@ -135,6 +254,11 @@ TSharedPtr<FJsonValue> SetMeshTerrain(const TSharedPtr<FJsonObject>& Params, FSt
 	Params->TryGetStringField(TEXT("material"), MaterialPath);
 	bool bSaveAndUnload = false;
 	Params->TryGetBoolField(TEXT("saveAndUnload"), bSaveAndUnload);
+	TArray<FLilaChannel> Channels;
+	if (!ReadChannels(Params, MeshResolution, Channels, OutError))
+	{
+		return nullptr;
+	}
 	UWorld* World = EditorWorld();
 	if (!World)
 	{
@@ -190,6 +314,11 @@ TSharedPtr<FJsonValue> SetMeshTerrain(const TSharedPtr<FJsonObject>& Params, FSt
 		{
 			NewSections.Add(*It);
 		}
+	}
+
+	for (AActor* Section : NewSections)
+	{
+		WriteChannels(Section, Channels, MeshResolution, MeshSize);
 	}
 
 	const FTransform Place(FRotator(PitchYawRoll.X, PitchYawRoll.Y, PitchYawRoll.Z), Location);
@@ -299,8 +428,16 @@ TSharedPtr<FJsonValue> SetMeshTerrain(const TSharedPtr<FJsonObject>& Params, FSt
 		NotifyMoved(Made, Moved);
 	}
 
+	DeclareChannels(Result, Channels, Warnings);
+
 	TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
 	Out->SetStringField(TEXT("actor"), Result ? Result->GetActorLabel() : FString());
+	TArray<TSharedPtr<FJsonValue>> ChannelValues;
+	for (const FLilaChannel& C : Channels)
+	{
+		ChannelValues.Add(MakeShared<FJsonValueString>(C.Name.ToString()));
+	}
+	Out->SetArrayField(TEXT("channels"), ChannelValues);
 	Out->SetBoolField(TEXT("created"), bCreated);
 	Out->SetNumberField(TEXT("sections"), NewSections.Num());
 	TArray<TSharedPtr<FJsonValue>> WarningValues;

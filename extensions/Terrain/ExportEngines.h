@@ -127,11 +127,18 @@ struct MeshTerrainOptions
 {
     /** Quads per Mesh Partition section side. */
     int sectionQuads = 256;
+    /** Masks sent as Mesh Partition channels (per-vertex weights); empty sends every mask but holes. */
+    EngineLayers layers;
 };
+
+/** The most channels a Mesh Partition carries. */
+inline constexpr size_t kMeshTerrainMaxChannels = 24;
 
 /**
  * Unreal Mesh Terrain (UE 5.8 Mesh Partition): <name>_meshterrain.png, a 16-bit greyscale heightmap laid out so the
- * engine's FHeightmapImporter puts every mesh vertex exactly on a terrain sample, and <name>_meshterrain.json with
+ * engine's FHeightmapImporter puts every mesh vertex exactly on a terrain sample, a <name>_meshterrain_<channel>.raw
+ * per layer (8-bit, one byte per mesh vertex, rows along Y, listed under "channels"; masks past the 24 channel limit and
+ * holes are listed under "leftOut"), and <name>_meshterrain.json with
  * the mesh resolution, sections, size and the placement (Unreal axes, cm) LilaLink applies after the import.
  */
 nlohmann::json exportUnrealMeshTerrain(const Heightfield& h, const glm::dmat4& world, const std::filesystem::path& folder, const std::string& name,

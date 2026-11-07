@@ -870,6 +870,29 @@ json exportUnrealMeshTerrain(const Heightfield& h, const glm::dmat4& world, cons
     const fs::path png = folder / (name + "_meshterrain.png");
     writeGray16Png(png, w, ht, pixels);
 
+    // Channels: per mesh vertex (k along Unreal X, l along Unreal Y), the same vertices the heights land on.
+    json channels = json::array(), leftOut = json::array();
+    if (h.findMask("holes"))
+        leftOut.push_back({{"mask", "holes"}, {"why", "Mesh Terrain has no holes; cut them with a volume split or a Mesh Partition modifier"}});
+    for (const auto& [mask, channel] : chosenLayers(h, o.layers))
+    {
+        if (mask == "holes")
+            continue;
+        if (channels.size() >= kMeshTerrainMaxChannels)
+        {
+            leftOut.push_back({{"mask", mask}, {"why", "past the 24 channels a Mesh Partition carries"}});
+            continue;
+        }
+        const std::vector<float>& values = *h.findMask(mask);
+        std::vector<uint8_t> bytes(size_t(quadsX + 1) * size_t(quadsY + 1));
+        for (int l = 0; l <= quadsY; ++l)
+            for (int k = 0; k <= quadsX; ++k)
+                bytes[size_t(l) * size_t(quadsX + 1) + size_t(k)] = uint8_t(std::lround(std::clamp(values[h.index(h.nx - 1 - l, k)], 0.0f, 1.0f) * 255.0f));
+        const fs::path raw = folder / (name + "_meshterrain_" + channel + ".raw");
+        writeBytes(raw, bytes.data(), bytes.size());
+        channels.push_back({{"mask", mask}, {"name", channel}, {"file", raw.generic_string()}});
+    }
+
     const glm::dvec3 colX(world[0]), colY(world[1]), colZ(world[2]);
     const glm::dvec2 e = h.extent();
     const glm::dvec3 centre(world * glm::dvec4(h.origin.x + e.x * 0.5, r.x, h.origin.y + e.y * 0.5, 1.0));
@@ -884,6 +907,8 @@ json exportUnrealMeshTerrain(const Heightfield& h, const glm::dmat4& world, cons
                 {"heightRange", json::array({r.x, r.y})},
                 {"pngSize", json::array({w, ht})},
                 {"cellSize", h.cell},
+                {"channels", channels},
+                {"leftOut", leftOut},
                 {"layout",
                  "16-bit greyscale PNG, pngSize = 2 x meshResolution; FHeightmapImporter builds a mesh centred on the origin from Z 0 to "
                  "meshSize.z, X along Lila +Z and Y along Lila -X; location is that centre's place (the terrain's middle at its lowest "
@@ -1336,6 +1361,10 @@ json sendEngineVariant(const Args& a, const Heightfield& local, const glm::dmat4
         json settings;
         try
         {
+            mo.layers = layersFromArgs(a);
+            mo.layers.baseLayer = false;
+            if (mo.layers.masks.size() == 1 && mo.layers.masks[0].empty())
+                mo.layers.masks.clear();
             settings = exportUnrealMeshTerrain(local, world, cache / "terrain", name, mo);
         }
         catch (const std::exception& e)
@@ -1350,7 +1379,8 @@ json sendEngineVariant(const Args& a, const Heightfield& local, const glm::dmat4
                        {"meshSize", settings["meshSize"]},
                        {"location", settings["location"]},
                        {"rotation", settings["rotation"]},
-                       {"saveAndUnload", a.get<bool>("saveAndUnload", false)}};
+                       {"saveAndUnload", a.get<bool>("saveAndUnload", false)},
+                       {"channels", settings["channels"]}};
         if (a.has("material") && !a.get<std::string>("material", "").empty())
             params["material"] = a.get<std::string>("material", "");
         link::RpcResult r = client->call("setMeshTerrain", params, timeoutMs);
@@ -1359,6 +1389,16 @@ json sendEngineVariant(const Args& a, const Heightfield& local, const glm::dmat4
         json out = r.result;
         out["kind"] = "meshTerrain";
         out["settings"] = settings;
+        json warnings = out.value("warnings", json::array());
+        // A plugin built before channels were sent says nothing about them; the layers did not arrive.
+        if (!settings["channels"].empty() && !out.contains("channels"))
+            warnings.push_back("the LilaLinkMeshTerrain plugin in Unreal predates paint layers, so none were sent: rebuild it from Lila's ue/LilaLinkMeshTerrain");
+        for (const json& l : settings["leftOut"])
+            warnings.push_back("mask " + l["mask"].get<std::string>() + " left out: " + l["why"].get<std::string>());
+        for (const json& w : warnings)
+            log::warn("terrainSendToUnreal: {}", w.get<std::string>());
+        out["warnings"] = warnings;
+        out["leftOut"] = settings["leftOut"];
         return out;
     }
 

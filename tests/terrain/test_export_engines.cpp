@@ -407,6 +407,39 @@ TEST_CASE("terrain export: the Mesh Terrain heightmap puts every FHeightmapImpor
     fs::remove_all(dir, ec);
 }
 
+TEST_CASE("terrain export: Mesh Terrain channels carry each mask per mesh vertex and name what was left out")
+{
+    geo::Heightfield h = hills(40, 30, 100.0, {-2000.0, -1500.0});
+    std::vector<float>& rock = h.mask("rock");
+    std::vector<float>& holes = h.mask("holes");
+    for (int z = 0; z < h.nz; ++z)
+        for (int x = 0; x < h.nx; ++x)
+            rock[h.index(x, z)] = float(x) / float(h.nx - 1) * float(z) / float(h.nz - 1);
+    holes[h.index(3, 3)] = 1.0f;
+    const fs::path dir = scratch("lila_terrain_meshterrain_channels");
+    json s = terrain::exportUnrealMeshTerrain(h, glm::dmat4(1.0), dir, "C", {});
+    INFO(s.dump());
+    const int mx = s["meshResolution"][0], my = s["meshResolution"][1];
+    REQUIRE(s["channels"].size() == 2);
+    const json& channel = s["channels"][0]["name"] == "rock" ? s["channels"][0] : s["channels"][1];
+    CHECK(channel["name"] == "rock");
+    REQUIRE(s["leftOut"].size() == 1);
+    CHECK(s["leftOut"][0]["mask"] == "holes");
+    std::ifstream f(channel["file"].get<std::string>(), std::ios::binary);
+    const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    REQUIRE(bytes.size() == size_t(mx + 1) * size_t(my + 1));
+    for (int l = 0; l <= my; l += 7)
+        for (int k = 0; k <= mx; k += 5)
+            CHECK(bytes[size_t(l) * size_t(mx + 1) + size_t(k)] == uint8_t(std::lround(rock[h.index(h.nx - 1 - l, k)] * 255.0f)));
+
+    terrain::MeshTerrainOptions only;
+    only.layers.masks = {"holes"};
+    CHECK(terrain::exportUnrealMeshTerrain(h, glm::dmat4(1.0), dir, "C", only)["channels"].empty());
+    std::error_code ec;
+    f.close();
+    fs::remove_all(dir, ec);
+}
+
 TEST_CASE("terrain export: Unreal regions cover the landscape and reassemble its heights and weights exactly")
 {
     const geo::Heightfield h = hills(127, 253, 100.0, {-6300.0, -12600.0});
