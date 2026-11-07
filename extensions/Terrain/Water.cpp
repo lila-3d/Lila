@@ -4,6 +4,7 @@
 #include "Water.h"
 
 #include "Erosion.h"
+#include "ErosionGpu.h"
 #include "Stamps.h"
 
 #include <lila/Mesh.h>
@@ -793,7 +794,7 @@ WaterResult applyWaterImpl(Heightfield& h, const WaterSpec& spec, const WaterObj
         return res;
     const size_t n = h.size();
     const std::vector<float> start = h.heights;
-    const Drainage d0 = drain(h);
+    const Drainage d0 = drainAuto(h);
 
     // Rivers as lines from source to mouth.
     std::vector<RiverLine> lines;
@@ -1095,7 +1096,7 @@ WaterResult applyWaterImpl(Heightfield& h, const WaterSpec& spec, const WaterObj
             addBody(std::move(l));
     }
 
-    Drainage d = drain(h);
+    Drainage d = drainAuto(h);
     auto pointLake = [&](const std::string& id, const std::string& specId, const std::string& kind, glm::dvec2 at, double level, bool quiet) {
         const uint32_t c = cellOf(h, at);
         if (body[c] >= 0)
@@ -1356,7 +1357,7 @@ WaterResult applyWaterImpl(Heightfield& h, const WaterSpec& spec, const WaterObj
     put("water", water);
     put("shore", shore);
     put("beach", beach);
-    writeFlowMasks(h, drain(h));
+    writeFlowMasks(h, drainAuto(h));
 
     double cut = 0.0, fill = 0.0;
     for (size_t i = 0; i < n; ++i)

@@ -4,6 +4,7 @@
 #include "ErosionGpu.h"
 
 #include <lila/GpuCompute.h>
+#include <lila/Log.h>
 #include <lila/Profile.h>
 
 #include <tbb/parallel_for.h>
@@ -385,6 +386,21 @@ private:
 bool gpuErosionAvailable() { return gpu::available(); }
 
 double lastGpuErosionMs() { return runner().ms; }
+
+Drainage drainAuto(const Heightfield& h)
+{
+    // Below this the submission costs more than the CPU fill.
+    constexpr size_t kGpuFrom = 128 * 128;
+    if (h.size() >= kGpuFrom && gpu::available())
+    {
+        Drainage d;
+        std::string err;
+        if (drainGpu(h, d, &err))
+            return d;
+        log::warn("terrain: drainage ran on the CPU: {}", err);
+    }
+    return drain(h);
+}
 
 bool drainGpu(const Heightfield& h, Drainage& out, std::string* err)
 {

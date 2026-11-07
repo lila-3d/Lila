@@ -22,6 +22,9 @@ bool erodeGpu(Heightfield& h, const ErosionParams& p, std::string* err = nullptr
  */
 bool drainGpu(const Heightfield& h, Drainage& out, std::string* err = nullptr);
 
+/** drainGpu() while the renderer runs, else drain(): the result is the same either way. */
+Drainage drainAuto(const Heightfield& h);
+
 /** GPU time of the last erodeGpu or drainGpu, ms. */
 double lastGpuErosionMs();
 } // namespace terrain

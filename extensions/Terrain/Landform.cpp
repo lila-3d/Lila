@@ -114,7 +114,7 @@ private:
     std::chrono::steady_clock::time_point mLast = std::chrono::steady_clock::now();
 };
 
-Drainage drainWith(const Heightfield& h, DrainSource* drains) { return drains ? (*drains)(h) : drain(h); }
+Drainage drainWith(const Heightfield& h, DrainSource* drains) { return drains ? (*drains)(h) : drainAuto(h); }
 
 /** Prefetches a sample's row and its neighbours' rows of z, as neighbourMax reads them. */
 void prefetchAround(const Heightfield& h, const std::vector<float>& z, uint32_t i)

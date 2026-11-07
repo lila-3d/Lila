@@ -5,6 +5,7 @@
 #include "Landform.h"
 #include "LandformGpu.h"
 #include "Shaping.h"
+#include "Water.h"
 
 #include "render/GpuCompute.h"
 #include "render/Renderer.h"
@@ -602,6 +603,57 @@ TEST_CASE("landform gpu: GPU drainage matches drain(), so debris, deposition and
     // Drainage and thermal are exact, so the rills and deposition after them take the same channels.
     MESSAGE("preset gpu vs cpu: worst " << worstOf(c, g) << " cm");
     CHECK(c.heights == g.heights);
+}
+
+TEST_CASE("landform gpu: drainAuto and the callers on it (water, analytic erosion) match the CPU exactly")
+{
+    if (!startLandGpu())
+        return;
+    // Flats, terraces with pits, and a non-square grid: the cases where a fill could round or tie differently.
+    std::vector<Heightfield> fields;
+    fields.push_back(lila::geo::makeHeightfieldCovering({0.0, 0.0}, {30000.0, 30000.0}, 200));
+    Heightfield terraced = landRanges(300, 3);
+    for (float& v : terraced.heights)
+        v = std::floor(v / 500.0f) * 500.0f;
+    fields.push_back(terraced);
+    Heightfield wide = lila::geo::makeHeightfieldCovering({0.0, 0.0}, {90000.0, 40000.0}, 451);
+    const Heightfield src = landRanges(451, 9);
+    for (size_t k = 0; k < wide.size(); ++k)
+        wide.heights[k] = src.heights[k % src.size()];
+    fields.push_back(wide);
+    for (const Heightfield& f : fields)
+    {
+        const terrain::Drainage cpu = terrain::drain(f), gpu = terrain::drainAuto(f);
+        CHECK(gpu.filled == cpu.filled);
+        CHECK(gpu.receiver == cpu.receiver);
+        CHECK(gpu.order == cpu.order);
+        CHECK(gpu.area == cpu.area);
+    }
+
+    terrain::WaterSpec spec;
+    terrain::RiverSpec river;
+    river.id = "main";
+    river.source = "auto";
+    river.threshold = 3.0e6;
+    spec.rivers.push_back(river);
+    terrain::LakeSpec lakes;
+    lakes.id = "lakes";
+    lakes.source = "auto";
+    spec.lakes.push_back(lakes);
+    Heightfield wg = landRanges(257, 21), wc = wg;
+    terrain::applyWater(wg, spec);
+    Heightfield ag = landRanges(257, 22), ac = ag;
+    terrain::AnalyticParams ap;
+    terrain::erodeAnalytic(ag, ap);
+    // The same calls with no GPU take drain().
+    auto& r = lila::render::Renderer::get();
+    r.stop();
+    terrain::applyWater(wc, spec);
+    terrain::erodeAnalytic(ac, ap);
+    CHECK(r.start());
+    CHECK(wg.heights == wc.heights);
+    CHECK(wg.masks == wc.masks);
+    CHECK(ag.heights == ac.heights);
 }
 
 TEST_CASE("landform commands: terrainCreate's age, terrainErode presets, and terrainLandform steps")

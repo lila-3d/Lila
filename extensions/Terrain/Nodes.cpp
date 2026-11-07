@@ -669,7 +669,7 @@ gn::NodeDecl flowDecl()
 
                 GeometryPtr g = c.geometry("heightfield");
                 Heightfield h = requireHeightfield(c, g);
-                const Drainage d = drain(h);
+                const Drainage d = drainAuto(h);
                 writeFlowMasks(h, d);
                 if (c.b("fillPits"))
                     h.heights = d.filled;

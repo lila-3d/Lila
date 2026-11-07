@@ -2,6 +2,7 @@
 // buildability, solar, ...), the water graph, buildable regions and scored sites. All in the heightfield's own space.
 
 #include "Analysis.h"
+#include "ErosionGpu.h"
 #include "Stamps.h"
 
 #include <lila/Profile.h>
@@ -323,7 +324,7 @@ Analysis::Analysis(std::shared_ptr<const Heightfield> hp, const AnalysisParams& 
     LILA_ZONE();
 
     const Heightfield& h = *mH;
-    mD = drain(h);
+    mD = drainAuto(h);
     const size_t n = h.size();
     mReachOf.assign(n, -1);
     mLakeOf.assign(n, -1);
