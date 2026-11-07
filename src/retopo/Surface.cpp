@@ -101,6 +101,28 @@ void Surface::buildGeometry()
     }
 }
 
+void Surface::dropShortCreases(const std::vector<uint8_t>& byAngle, double minCreaseLength)
+{
+    constexpr double kRuns = 3.0;
+    std::vector<Index> parent(vertexCount());
+    std::iota(parent.begin(), parent.end(), Index(0));
+    const auto find = [&](Index x) {
+        while (parent[x] != x)
+            x = parent[x] = parent[parent[x]];
+        return x;
+    };
+    for (size_t e = 0; e < edges.size(); ++e)
+        if (edgeFeature[e] && byAngle[e])
+            parent[find(edges[e][0])] = find(edges[e][1]);
+    std::vector<double> length(vertexCount(), 0.0);
+    for (size_t e = 0; e < edges.size(); ++e)
+        if (edgeFeature[e] && byAngle[e])
+            length[find(edges[e][0])] += glm::length(pos[edges[e][1]] - pos[edges[e][0]]);
+    for (size_t e = 0; e < edges.size(); ++e)
+        if (edgeFeature[e] && byAngle[e] && length[find(edges[e][0])] < kRuns * minCreaseLength)
+            edgeFeature[e] = 0;
+}
+
 void Surface::detectFeatures(double sharpAngleDeg, double cornerDeficitDeg, double minCreaseLength)
 {
     LILA_ZONE();
@@ -236,6 +258,7 @@ void Surface::detectFeatures(double sharpAngleDeg, double cornerDeficitDeg, doub
                 if (runBend[r] < 1.5 * runRough[r])
                     edgeFeature[e] = 0;
             }
+        dropShortCreases(byAngle, minCreaseLength);
     }
 
     // A crease that runs along both sides of a thin triangle forks at a sliver no lattice corner fits: keep the sharper

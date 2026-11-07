@@ -130,6 +130,11 @@ struct LILA_SCENE_API Surface
      * cornerDeficitDeg, like a cone's tip.
      */
     void detectFeatures(double sharpAngleDeg, double cornerDeficitDeg = 75.0, double minCreaseLength = 0.0);
+    /**
+     * Angle creases, open or closed, must run three times minCreaseLength once the noise is gone: a shorter one holds
+     * no loop and only walls off a sliver of the layout.
+     */
+    void dropShortCreases(const std::vector<uint8_t>& byAngle, double minCreaseLength);
     /** Keeps only corners at least spacing apart (the most constrained first), so the lattice can honour them. */
     void thinCorners(const std::vector<double>& spacing);
     double totalArea() const;
