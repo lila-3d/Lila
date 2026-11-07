@@ -10,10 +10,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <stdexcept>
 
 using namespace lila;
@@ -244,6 +246,11 @@ json Road::toJson() const
               {"design", design.toJson()},
               {"smooth", smooth},
               {"masks", masks}};
+    if (ring)
+    {
+        j["ring"] = true;
+        j["ringCrossFall"] = ringCrossFall;
+    }
     if (!object.empty())
         j["object"] = object;
     else
@@ -277,6 +284,8 @@ Road Road::fromJson(const json& j)
     r.path = pointsFrom(j.value("path", json::array()));
     r.object = j.value("object", std::string());
     r.smooth = j.value("smooth", true);
+    r.ring = j.value("ring", false);
+    r.ringCrossFall = j.value("ringCrossFall", 2.0);
     if (j.contains("masks"))
         r.masks = j["masks"].get<std::vector<std::string>>();
     else if (r.kind == "road" || r.kind == "runway")
@@ -805,7 +814,7 @@ struct StationGrid
                             const double len = std::sqrt(len2);
                             best.station = t < 0.5 ? seg : seg + 1;
                             best.lateral = cross2(ab / len, p - a);
-                            best.overshoot = (seg == 0 && raw < 0.0) ? -raw * len : (seg + 2 == r.centreline.size() && raw > 1.0) ? (raw - 1.0) * len : 0.0;
+                            best.overshoot = r.ring ? 0.0 : (seg == 0 && raw < 0.0) ? -raw * len : (seg + 2 == r.centreline.size() && raw > 1.0) ? (raw - 1.0) * len : 0.0;
                             const double y = r.centreline[seg].y + (r.centreline[seg + 1].y - r.centreline[seg].y) * t;
                             const double e = r.bank[seg] + (r.bank[seg + 1] - r.bank[seg]) * t;
                             best.height = y - e * best.lateral;
@@ -875,6 +884,23 @@ double planeSlope(const StationGrid& g, glm::dvec2 p, glm::dvec2 dir)
     return (a.height - b.height) / 100.0;
 }
 
+/** Centre of a closed loop of stations (the last repeats the first). */
+glm::dvec2 ringCentre(const std::vector<Station>& st)
+{
+    glm::dvec2 c(0.0);
+    for (size_t i = 0; i + 1 < st.size(); ++i)
+        c += st[i].p / double(st.size() - 1);
+    return c;
+}
+
+glm::dvec2 ringCentre(const std::vector<glm::dvec3>& centreline)
+{
+    glm::dvec2 c(0.0);
+    for (size_t i = 0; i + 1 < centreline.size(); ++i)
+        c += glm::dvec2(centreline[i].x, centreline[i].z) / double(centreline.size() - 1);
+    return c;
+}
+
 /** One road laid into h after the earlier ones: its result, with locked marking the formations no later road may touch. */
 RoadResult layRoad(Heightfield& h, const Road& rd, std::vector<glm::dvec2> line, const std::vector<Earlier>& earlier, std::vector<uint8_t>& locked)
 {
@@ -895,22 +921,41 @@ RoadResult layRoad(Heightfield& h, const Road& rd, std::vector<glm::dvec2> line,
         res.warnings.push_back("the road needs at least two distinct points");
         return res;
     }
-    // Ends close to an earlier road join it at its centreline.
-    for (const Earlier& e : earlier)
-        for (glm::dvec2* end : {&line.front(), &line.back()})
+    res.ring = rd.ring;
+    // Ring: the loop closed on its first point; it neither joins nor simplifies.
+    double ringTurn = 0.0;
+    if (rd.ring)
+    {
+        if (line.size() > 1 && glm::length(line.front() - line.back()) < 1e-6)
+            line.pop_back();
+        if (line.size() < 3)
         {
-            const RoadResult::Surface q = e.grid->near(*end);
-            if (q.station == SIZE_MAX || q.overshoot > 0.0 || std::abs(q.lateral) > e.result->formationHalf + 2.0 * fh || e.result->span[q.station] != 0)
-                continue;
-            const glm::dvec2 t = e.result->tangents[q.station];
-            *end -= leftOf(t) * q.lateral;
+            res.warnings.push_back("a ring needs at least three distinct points");
+            return res;
         }
-    // A routed polyline zigzags between grid samples; its turns, not its steps, are the alignment.
-    if (line.size() > 2)
-        line = simplifyPlan(line, std::max(h.cell * 0.75, 1.0));
+        for (size_t k = 0; k < line.size(); ++k)
+            ringTurn += cross2(line[k], line[(k + 1) % line.size()]);
+        line.push_back(line.front());
+    }
+    else
+    {
+        // Ends close to an earlier road join it at its centreline.
+        for (const Earlier& e : earlier)
+            for (glm::dvec2* end : {&line.front(), &line.back()})
+            {
+                const RoadResult::Surface q = e.grid->near(*end);
+                if (q.station == SIZE_MAX || q.overshoot > 0.0 || std::abs(q.lateral) > e.result->formationHalf + 2.0 * fh || e.result->span[q.station] != 0)
+                    continue;
+                const glm::dvec2 t = e.result->tangents[q.station];
+                *end -= leftOf(t) * q.lateral;
+            }
+        // A routed polyline zigzags between grid samples; its turns, not its steps, are the alignment.
+        if (line.size() > 2)
+            line = simplifyPlan(line, std::max(h.cell * 0.75, 1.0));
+    }
 
     const double radius = de.minCurveRadius > 0.0 ? de.minCurveRadius : de.speedRadius();
-    const std::vector<Station> st = alignPlan(line, radius, ds, rd.smooth, res.minCurveRadius, res.warnings);
+    const std::vector<Station> st = alignPlan(line, radius, ds, rd.smooth && !rd.ring, res.minCurveRadius, res.warnings);
     const size_t n = st.size();
     if (n < 2)
     {
@@ -939,6 +984,15 @@ RoadResult layRoad(Heightfield& h, const Road& rd, std::vector<glm::dvec2> line,
     const double window = std::max(4.0 * fh, 6.0 * h.cell);
     std::vector<std::string> profileWarnings;
     std::vector<double> y = solveRoadProfile(s, g, keys, G, de.minVerticalRadius, window, de.fitTolerance, nullptr, nullptr);
+    // A ring is level at the mean ground under it, or at its first height key.
+    double ringHeight = 0.0;
+    if (rd.ring)
+    {
+        for (size_t i = 0; i + 1 < n; ++i)
+            ringHeight += g[i] / double(n - 1);
+        if (!rd.keys.empty())
+            ringHeight = rd.keys.front().height;
+    }
 
     // Junctions: where the centreline runs over an earlier road's paved width at grade.
     res.span.assign(n, 0);
@@ -949,7 +1003,16 @@ RoadResult layRoad(Heightfield& h, const Road& rd, std::vector<glm::dvec2> line,
         size_t from, to;
     };
     std::vector<Run> runs;
-    for (const Earlier& e : earlier)
+    /** A ring this road ends on: the station at the ring's edge and the direction away from it. */
+    struct RingEnd
+    {
+        const Earlier* ring;
+        size_t edge;
+        glm::dvec2 away;
+        int step;
+    };
+    std::vector<RingEnd> ringEnds;
+    for (const Earlier& e : std::span<const Earlier>(earlier.data(), rd.ring ? 0 : earlier.size()))
     {
         std::vector<uint8_t> inside(n, 0);
         for (size_t i = 0; i < n; ++i)
@@ -982,20 +1045,33 @@ RoadResult layRoad(Heightfield& h, const Road& rd, std::vector<glm::dvec2> line,
                 for (size_t k = i; k <= j; ++k)
                     res.span[k] = 3;
                 runs.push_back({&e, i, j});
+                if (e.road->ring && (i == 0 || j == n - 1))
+                    ringEnds.push_back({&e, i == 0 ? j : i, i == 0 ? st[j].t : -st[i].t, i == 0 ? 1 : -1});
                 res.junctions.push_back({e.road->id, i == 0 || j == n - 1 ? "T" : "cross", {st[mid].p.x, q.height, st[mid].p.y}});
             }
             i = j + 1;
         }
     }
     double vr = kInf;
-    y = solveRoadProfile(s, g, keys, G, de.minVerticalRadius, window, de.fitTolerance, &vr, &profileWarnings);
-    res.minVerticalRadius = vr;
-    for (const std::string& w : profileWarnings)
-        res.warnings.push_back(w);
-    const std::vector<double> e = solveBank(st, de, res.pavedHalf, bankKeys);
+    std::vector<double> e;
+    if (rd.ring)
+    {
+        // Level along, falling away from the island across: the island is on the left of a counter-clockwise loop.
+        y.assign(n, ringHeight);
+        e.assign(n, (ringTurn > 0.0 ? -1.0 : 1.0) * rd.ringCrossFall * 0.01);
+        res.minVerticalRadius = vr;
+    }
+    else
+    {
+        y = solveRoadProfile(s, g, keys, G, de.minVerticalRadius, window, de.fitTolerance, &vr, &profileWarnings);
+        res.minVerticalRadius = vr;
+        for (const std::string& w : profileWarnings)
+            res.warnings.push_back(w);
+        e = solveBank(st, de, res.pavedHalf, bankKeys);
+    }
 
     // Spans: deep fill bridges, deep cut tunnels; short ones close up, tiny ones go.
-    if (de.bridgeHeight > 0.0 || de.tunnelDepth > 0.0)
+    if (!rd.ring && (de.bridgeHeight > 0.0 || de.tunnelDepth > 0.0))
     {
         std::vector<uint8_t> bridge(n, 0), tunnel(n, 0);
         const std::vector<float>* flow = h.findMask("flow");
@@ -1201,7 +1277,7 @@ RoadResult layRoad(Heightfield& h, const Road& rd, std::vector<glm::dvec2> line,
             const glm::dvec2 ab = st[k + 1].p - st[k].p;
             const double len = std::max(1e-9, glm::length(ab));
             const double d = cross2(ab / len, p - st[k].p);
-            const double over = (k == 0 && raw < 0.0) ? -raw * len : (k + 2 == n && raw > 1.0) ? (raw - 1.0) * len : 0.0;
+            const double over = rd.ring ? 0.0 : (k == 0 && raw < 0.0) ? -raw * len : (k + 2 == n && raw > 1.0) ? (raw - 1.0) * len : 0.0;
             const size_t near = t < 0.5 ? k : k + 1;
             const uint8_t span = res.span[near];
             const double yc = y[k] + (y[k + 1] - y[k]) * t;
@@ -1536,6 +1612,79 @@ RoadResult layRoad(Heightfield& h, const Road& rd, std::vector<glm::dvec2> line,
             }
         }
     }
+
+    // Islands: a ring's raised centre, and a splitter where this road enters a ring.
+    const double rise = pr.kerbHeight > 0.0 ? pr.kerbHeight : 15.0;
+    std::vector<float>& islandMask = h.mask(kRoadIslandMask);
+    auto raiseIsland = [&](RoadResult::Island island, const std::function<double(glm::dvec2)>& top) {
+        glm::dvec2 plo(kInf), phi(-kInf);
+        for (const glm::dvec2& p : island.outline)
+        {
+            plo = glm::min(plo, p);
+            phi = glm::max(phi, p);
+        }
+        const int px0 = std::max(0, int(std::floor((plo.x - h.origin.x) / h.cell))), px1 = std::min(h.nx - 1, int(std::ceil((phi.x - h.origin.x) / h.cell)));
+        const int pz0 = std::max(0, int(std::floor((plo.y - h.origin.y) / h.cell))), pz1 = std::min(h.nz - 1, int(std::ceil((phi.y - h.origin.y) / h.cell)));
+        for (int z = pz0; z <= pz1; ++z)
+            for (int x = px0; x <= px1; ++x)
+            {
+                const glm::dvec2 p = h.samplePos(x, z);
+                if (!pointInPolygon(p, island.outline))
+                    continue;
+                const size_t idx = h.index(x, z);
+                h.heights[idx] = float(top(p));
+                islandMask[idx] = 1.0f;
+                surfaceMask[idx] = 0.0f;
+                protectMask[idx] = 1.0f;
+                locked[idx] = 1;
+            }
+        res.islands.push_back(std::move(island));
+    };
+    if (rd.ring)
+    {
+        const glm::dvec2 c = ringCentre(st);
+        double radiusMean = 0.0;
+        for (size_t i = 0; i + 1 < n; ++i)
+            radiusMean += glm::length(st[i].p - c) / double(n - 1);
+        const double inner = radiusMean - res.kerbHalf;
+        if (inner > h.cell)
+        {
+            RoadResult::Island island;
+            island.kind = "central";
+            // The inner kerb is the ring's high edge.
+            island.height = ringHeight + std::abs(e[0]) * res.kerbHalf + rise;
+            for (int k = 0; k < 64; ++k)
+            {
+                const double a = 2.0 * kPi * double(k) / 64.0;
+                island.outline.push_back(c + glm::dvec2(std::cos(a), std::sin(a)) * inner);
+            }
+            const double top = island.height;
+            raiseIsland(std::move(island), [top](glm::dvec2) { return top; });
+        }
+    }
+    for (const RingEnd& re : ringEnds)
+    {
+        const RoadResult& ring = *re.ring->result;
+        const glm::dvec2 c = ringCentre(ring.centreline);
+        double radiusMean = 0.0;
+        for (size_t k = 0; k + 1 < ring.centreline.size(); ++k)
+            radiusMean += glm::length(glm::dvec2(ring.centreline[k].x, ring.centreline[k].z) - c) / double(ring.centreline.size() - 1);
+        // The island's base sits on the ring's outer kerb, as wide as both shoulders, tapering back along this road.
+        const double outer = radiusMean + ring.kerbHalf;
+        const double base = std::max(100.0, std::min(2.0 * pr.shoulder, res.pavedHalf));
+        const double length = std::max(1500.0, 4.0 * base);
+        size_t k = re.edge;
+        while ((re.step > 0 ? k + 1 < n : k > 0) && glm::length(st[k].p - c) < outer)
+            k = re.step > 0 ? k + 1 : k - 1;
+        const glm::dvec2 nose = st[k].p;
+        const glm::dvec2 side = leftOf(re.away) * (base * 0.5);
+        RoadResult::Island island;
+        island.kind = "splitter";
+        island.other = re.ring->road->id;
+        island.outline = {nose + side, nose + re.away * length, nose - side};
+        island.height = y[k] + rise;
+        raiseIsland(std::move(island), [&](glm::dvec2 p) { return res.surfaceAt(p).height + rise; });
+    }
     return res;
 }
 } // namespace
@@ -1559,7 +1708,7 @@ RoadResult::Surface RoadResult::surfaceAt(glm::dvec2 p) const
             const double len = std::sqrt(len2);
             best.station = t < 0.5 ? k : k + 1;
             best.lateral = cross2(ab / len, p - a);
-            best.overshoot = (k == 0 && raw < 0.0) ? -raw * len : (k + 2 == centreline.size() && raw > 1.0) ? (raw - 1.0) * len : 0.0;
+            best.overshoot = ring ? 0.0 : (k == 0 && raw < 0.0) ? -raw * len : (k + 2 == centreline.size() && raw > 1.0) ? (raw - 1.0) * len : 0.0;
             const double y = centreline[k].y + (centreline[k + 1].y - centreline[k].y) * t;
             const double e = bank[k] + (bank[k + 1] - bank[k]) * t;
             best.height = y - e * best.lateral;

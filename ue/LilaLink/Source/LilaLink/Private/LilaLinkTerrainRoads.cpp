@@ -50,6 +50,8 @@ struct FLilaRoad
 	FString MeshAxis;
 	bool bScaleToWidth = true;
 	TArray<FLilaRoadSpan> Spans;
+	/** A roundabout's ring: a last segment joins the last point back to the first. */
+	bool bClosed = false;
 };
 
 /** The spline actor Lila's roads for a terrain live on in a partitioned world. */
@@ -105,6 +107,7 @@ bool ParseRoads(const TSharedPtr<FJsonObject>& Params, TArray<FLilaRoad>& Out, F
 		(*Object)->TryGetNumberField(TEXT("endFalloff"), Road.EndFalloff);
 		(*Object)->TryGetBoolField(TEXT("raiseTerrain"), Road.bRaise);
 		(*Object)->TryGetBoolField(TEXT("lowerTerrain"), Road.bLower);
+		(*Object)->TryGetBoolField(TEXT("closed"), Road.bClosed);
 		FString Layer;
 		if ((*Object)->TryGetStringField(TEXT("layer"), Layer) && !Layer.IsEmpty())
 		{
@@ -356,17 +359,19 @@ TSharedPtr<FJsonValue> SetTerrainRoads(const TSharedPtr<FJsonObject>& Params, FS
 			Point->bLowerTerrain = Road.bLower;
 			Points.Add(Point);
 		}
-		for (int32 Index = 0; Index + 1 < Points.Num(); ++Index)
+		const int32 SegmentsInRoad = Road.bClosed && Points.Num() > 2 ? Points.Num() : Points.Num() - 1;
+		for (int32 Index = 0; Index < SegmentsInRoad; ++Index)
 		{
+			const int32 Next = (Index + 1) % Points.Num();
 			const FName Name(*FString::Printf(TEXT("%sR%d_S%d"), *Prefix, RoadIndex, Index));
 			ULandscapeSplineSegment* Segment = NewObject<ULandscapeSplineSegment>(Component, Name, RF_Transactional);
 			Component->GetSegments().Add(Segment);
 			Segment->Connections[0].ControlPoint = Points[Index];
-			Segment->Connections[1].ControlPoint = Points[Index + 1];
+			Segment->Connections[1].ControlPoint = Points[Next];
 			Segment->Connections[0].TangentLen = static_cast<float>(ToComponent.InverseTransformVector(Road.Points[Index].LeaveTangent).Size());
-			Segment->Connections[1].TangentLen = -static_cast<float>(ToComponent.InverseTransformVector(Road.Points[Index + 1].ArriveTangent).Size());
+			Segment->Connections[1].TangentLen = -static_cast<float>(ToComponent.InverseTransformVector(Road.Points[Next].ArriveTangent).Size());
 			// Bridges and tunnels leave the landscape alone under or over them.
-			const double Middle = 0.5 * (Along[Index] + Along[Index + 1]);
+			const double Middle = Next > Index ? 0.5 * (Along[Index] + Along[Next]) : Along[Index];
 			bool bInSpan = false;
 			for (const FLilaRoadSpan& Span : Road.Spans)
 			{
@@ -385,7 +390,7 @@ TSharedPtr<FJsonValue> SetTerrainRoads(const TSharedPtr<FJsonObject>& Params, FS
 				Segment->SplineMeshes.Add(Entry);
 			}
 			Points[Index]->ConnectedSegments.Add(FLandscapeSplineConnection(Segment, 0));
-			Points[Index + 1]->ConnectedSegments.Add(FLandscapeSplineConnection(Segment, 1));
+			Points[Next]->ConnectedSegments.Add(FLandscapeSplineConnection(Segment, 1));
 			++SegmentCount;
 		}
 		for (ULandscapeSplineControlPoint* Point : Points)

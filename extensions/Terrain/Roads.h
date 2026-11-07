@@ -120,6 +120,13 @@ struct Road
     bool smooth = true;
     /** Extra masks written over the paved surface (paved, for a city). */
     std::vector<std::string> masks;
+    /**
+     * A roundabout's ring: path is the closed loop (first point not repeated), laid level at one height with ringCrossFall
+     * (percent) falling away from the central island, which is raised and masked. Roads laid after it that end on it get
+     * splitter islands.
+     */
+    bool ring = false;
+    double ringCrossFall = 2.0;
 
     nlohmann::json toJson() const;
     /** Presets for kind and profileName, then every field j gives. Throws std::invalid_argument on unknown names. */
@@ -132,6 +139,8 @@ inline constexpr const char* kRoadVergeMask = "roadVerge";
 inline constexpr const char* kRoadDirtMask = "roadDirtEdge";
 inline constexpr const char* kRoadWearMask = "roadWear";
 inline constexpr const char* kErosionProtectMask = "erosionProtect";
+/** Raised kerbed islands: a roundabout's centre and the splitters on the roads entering it. */
+inline constexpr const char* kRoadIslandMask = "roadIsland";
 
 struct RoadResult
 {
@@ -245,6 +254,17 @@ struct RoadResult
         std::vector<glm::dvec3> arc;
     };
     std::vector<KerbReturn> kerbReturns;
+    /** Raised islands: central (a ring's centre) or splitter (between the entry and exit lanes where this road meets a ring). */
+    struct Island
+    {
+        std::string kind;
+        std::string other;
+        std::vector<glm::dvec2> outline;
+        double height = 0.0;
+    };
+    std::vector<Island> islands;
+    /** A closed loop: the last station is the first. */
+    bool ring = false;
 
     /** cm3 and cm2 in the heightfield's units. */
     double cut = 0.0, fill = 0.0, area = 0.0;

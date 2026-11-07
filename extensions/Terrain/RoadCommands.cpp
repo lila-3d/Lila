@@ -28,6 +28,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <optional>
 #include <set>
 
 using namespace lila;
@@ -207,6 +208,20 @@ json roadJson(const Terrain& f, const Road& r, const RoadResult& res, const std:
         kerbs.push_back({{"other", k.other}, {"corner", vec3(p.world(k.corner))}, {"arc", arc}});
     }
     out["kerbReturns"] = kerbs;
+    json islands = json::array();
+    for (const RoadResult::Island& i : res.islands)
+    {
+        json outline = json::array();
+        for (const glm::dvec2& q : i.outline)
+            outline.push_back(vec3(p.world(q.x, i.height, q.y)));
+        json is = {{"kind", i.kind}, {"outline", outline}, {"height", upOf(p.world(i.outline[0].x, i.height, i.outline[0].y))}};
+        if (!i.other.empty())
+            is["other"] = i.other;
+        islands.push_back(is);
+    }
+    out["islands"] = islands;
+    if (r.ring)
+        out["ring"] = true;
     return out;
 }
 
@@ -260,6 +275,171 @@ const std::vector<std::string> kProfileKeys = {"lanes", "laneWidth", "shoulder",
                                                "surface", "guardrailFill", "markerSpacing", "poleSpacing", "kerbReturn", "dirtEdge"};
 const std::vector<std::string> kDesignKeys = {"designSpeed", "maxGrade", "minVerticalRadius", "maxBank", "bankRunoff", "minCurveRadius", "cutAngle", "fillAngle",
                                               "wallHeight", "bridgeHeight", "tunnelDepth", "tunnelRadius", "deckDepth", "pillarSpacing", "fitTolerance"};
+
+/** The parts of a polyline outside a circle, each cut where it crosses the circle so it ends on it. */
+std::vector<std::vector<glm::dvec2>> outsideCircle(const std::vector<glm::dvec2>& line, glm::dvec2 c, double r)
+{
+    std::vector<std::vector<glm::dvec2>> out(1);
+    auto inside = [&](glm::dvec2 q) { return glm::length(q - c) < r; };
+    if (!line.empty() && !inside(line[0]))
+        out.back().push_back(line[0]);
+    for (size_t k = 1; k < line.size(); ++k)
+    {
+        const glm::dvec2 a = line[k - 1], d = line[k] - a, f = a - c;
+        const double A = std::max(1e-12, glm::dot(d, d)), B = 2.0 * glm::dot(f, d), C = glm::dot(f, f) - r * r;
+        const double disc = B * B - 4.0 * A * C;
+        if (disc > 0.0)
+        {
+            const double root = std::sqrt(disc);
+            for (const double t : {(-B - root) / (2.0 * A), (-B + root) / (2.0 * A)})
+            {
+                if (t <= 0.0 || t >= 1.0)
+                    continue;
+                out.back().push_back(a + d * t);
+                // Leaving the outside closes this part; coming back out starts the next.
+                if (inside(a + d * std::min(1.0, t + 1e-9)))
+                    out.emplace_back();
+            }
+        }
+        if (!inside(line[k]))
+            out.back().push_back(line[k]);
+    }
+    std::erase_if(out, [](const std::vector<glm::dvec2>& part) { return part.size() < 2; });
+    return out;
+}
+
+json runAddRoundabout(const Args& a, const std::string& cmd)
+{
+    LILA_ZONE();
+
+    Graph& g = Graph::current();
+    const std::vector<std::string> names = a.objects();
+    if (names.size() != 1)
+        throw CommandError(cmd + ": give one terrain");
+    const Terrain f = findTerrain(g, names[0], cmd);
+    if (!a.has("at"))
+        throw CommandError(cmd + ": give at= (the centre)");
+    const glm::dvec2 c = f.local2(worldPoint(a.flags["at"], cmd));
+    const double radius = a.get<double>("radius", 2500.0) / f.across();
+    const std::string layer = layerName(a.get<std::string>("layer", "Roads"));
+
+    Road ring;
+    try
+    {
+        ring = Road::fromJson({{"kind", "road"}, {"profileName", a.get<std::string>("profile", "urban")}});
+        json po = {{"lanes", a.get<int>("lanes", 1)}, {"laneWidth", a.get<double>("laneWidth", 500.0)}};
+        if (a.has("kerbHeight"))
+            po["kerbHeight"] = a.flags["kerbHeight"];
+        ring.profile.read(po);
+    }
+    catch (const std::exception& e)
+    {
+        throw CommandError(cmd + ": " + e.what());
+    }
+    ring.ring = true;
+    ring.smooth = false;
+    ring.ringCrossFall = a.get<double>("crossFall", 2.0);
+    scaleToLocal(ring, f.across(), f.vertical());
+    if (radius <= ring.profile.kerbHalf() + 100.0 / f.across())
+        throw CommandError(cmd + ": radius must leave room for a central island: more than " +
+                           std::to_string(int(std::ceil((ring.profile.kerbHalf() + 100.0) * f.across()))) + " cm");
+    constexpr double kTau = 6.283185307179586;
+    const int segments = std::clamp(int(std::ceil(kTau * radius / std::max(f.local->cell, 1.0))), 32, 512);
+    for (int k = 0; k < segments; ++k)
+    {
+        const double t = kTau * double(k) / double(segments);
+        ring.path.push_back(c + glm::dvec2(std::cos(t), std::sin(t)) * radius);
+    }
+    if (a.has("height"))
+        ring.keys.push_back({c, f.localHeight(a.get<double>("height", 0.0), c)});
+
+    Layers t = readGroup(g, f, cmd);
+    static const std::set<std::string> skip = {"TerrainStamps", "TerrainVolume", "TerrainBiomes", "TerrainLayers"};
+    const json list = jsonProp(chainNode(t.group, layer, "TerrainRoads", skip, -160.0, cmd), "roads", json::array());
+    std::string id = a.get<std::string>("id", "");
+    if (id.empty())
+        for (int k = 1; id.empty(); ++k)
+        {
+            const std::string candidate = "roundabout" + std::to_string(k);
+            if (std::none_of(list.begin(), list.end(), [&](const json& e) { return e.value("id", std::string()) == candidate; }))
+                id = candidate;
+        }
+    ring.id = id;
+
+    std::set<std::string> only;
+    if (a.has("roads"))
+        for (const json& r : a.flags["roads"])
+            only.insert(r.get<std::string>());
+    for (const std::string& rid : only)
+        if (std::none_of(list.begin(), list.end(), [&](const json& e) { return e.value("id", std::string()) == rid; }))
+            throw CommandError(cmd + ": no road " + rid + " in layer " + layer);
+
+    // Roads reaching the ring are cut back to its centreline; one running through becomes an approach per side.
+    json kept = json::array(), approaches = json::array(), warnings = json::array();
+    std::optional<size_t> firstApproach;
+    for (const json& e : list)
+    {
+        const std::string rid = e.value("id", std::string());
+        if (rid == id || (!only.empty() && !only.count(rid)))
+        {
+            if (rid != id)
+                kept.push_back(e);
+            continue;
+        }
+        const Road r = Road::fromJson(e);
+        if (r.ring)
+        {
+            kept.push_back(e);
+            continue;
+        }
+        if (!r.object.empty())
+        {
+            if (only.count(rid))
+                warnings.push_back(rid + " follows a curve, so it was left as it is: end the curve on the ring's centreline");
+            kept.push_back(e);
+            continue;
+        }
+        const std::vector<std::vector<glm::dvec2>> parts = outsideCircle(r.path, c, radius);
+        const bool reaches = parts.size() != 1 || parts[0].size() != r.path.size() ||
+                             std::any_of(r.path.begin(), r.path.end(), [&](glm::dvec2 q) { return glm::length(q - c) < radius; });
+        if (!reaches)
+        {
+            if (only.count(rid))
+                warnings.push_back(rid + " does not reach the ring, so it was left as it is");
+            kept.push_back(e);
+            continue;
+        }
+        if (!firstApproach)
+            firstApproach = kept.size();
+        for (size_t k = 0; k < parts.size(); ++k)
+        {
+            Road part = r;
+            part.path = parts[k];
+            if (k > 0)
+                part.id = rid + "_" + std::string(1, char('a' + k));
+            kept.push_back(part.toJson());
+            approaches.push_back(part.id);
+        }
+    }
+    // The ring goes before its approaches so they join it.
+    kept.insert(kept.begin() + std::ptrdiff_t(firstApproach.value_or(kept.size())), ring.toJson());
+    nodeNamed(t.group, layer)->values["roads"] = kept.dump();
+    commitGroup(t, cmd);
+
+    const Terrain after = findTerrain(g, f.path(names[0]), cmd);
+    const auto results = roadResults(after.modifier->id(), layer);
+    auto it = results.find(id);
+    const RoadResult res = it != results.end() ? it->second : RoadResult{};
+    json out = roadJson(after, ring, res, layer, a.get<bool>("detail", false));
+    for (const std::string& w : res.warnings)
+        log::warn("{}: {}: {}", cmd, id, w);
+    for (const json& w : warnings)
+        log::warn("{}: {}", cmd, w.get<std::string>());
+    out["approaches"] = approaches;
+    out["warnings"] = warnings;
+    out["revision"] = revision(*after.local);
+    return out;
+}
 
 std::vector<FlagDef> addRoadFlags()
 {
@@ -704,6 +884,39 @@ json buildRoad(const Terrain& f, const RoadEntry& e, const std::string& cmd)
     }
     out["junctions"] = patches;
 
+    // Islands: a raised cap over the outline with kerb faces down into the ground.
+    json islandMeshes = json::array();
+    for (const RoadResult::Island& i : r.islands)
+    {
+        const size_t m = i.outline.size();
+        if (m < 3)
+            continue;
+        const double drop = std::max(30.0, rd.profile.kerbHeight + 20.0);
+        std::vector<glm::dvec3> pts;
+        for (const glm::dvec2& q : i.outline)
+            pts.push_back(p.world(q.x, f.local->heightAt(q.x, q.y), q.y));
+        for (const glm::dvec2& q : i.outline)
+            pts.push_back(p.world(q.x, f.local->heightAt(q.x, q.y) - drop, q.y));
+        std::vector<std::vector<int>> faces;
+        std::vector<int> cap;
+        for (size_t k = 0; k < m; ++k)
+            cap.push_back(int(k));
+        faces.push_back(cap);
+        for (size_t k = 0; k < m; ++k)
+        {
+            const int a = int(k), b = int((k + 1) % m);
+            faces.push_back({b, a, a + int(m), b + int(m)});
+        }
+        const glm::dvec3 n = glm::cross(pts[1] - pts[0], pts[2] - pts[0]);
+        if (glm::dot(n, upVector()) < 0.0)
+            for (auto& face : faces)
+                std::reverse(face.begin(), face.end());
+        const std::string mesh = makeMesh(pts, faces, base + "_" + i.kind + "Island");
+        nodes.push_back(mesh);
+        islandMeshes.push_back(mesh);
+    }
+    out["islands"] = islandMeshes;
+
     // Props: guardrails bend along their runs; markers, lights and poles stand upright along theirs.
     json props = json::array();
     for (size_t k = 0; k < r.guardrails.size(); ++k)
@@ -827,16 +1040,21 @@ json unrealRoads(const Terrain& f, const std::vector<RoadEntry>& roads, const gl
         curve::Spline s;
         s.kind = curve::Kind::Bezier;
         std::vector<size_t> at = meshStations(r, 0, r.centreline.size() - 1, step);
+        // A ring's last station is its first; Unreal closes the loop with a segment back to it.
+        if (r.ring && at.size() > 3)
+            at.pop_back();
         for (size_t i : at)
         {
             s.points.push_back(p.world(r.centreline[i]));
             s.tilt.push_back(std::atan(r.bank[i] * p.vertical() / p.across()));
         }
         // Catmull-Rom handles, so the spline passes smoothly through every station it keeps.
-        for (size_t k = 0; k < s.points.size(); ++k)
+        const size_t m = s.points.size();
+        for (size_t k = 0; k < m; ++k)
         {
-            const glm::dvec3 prev = s.points[k > 0 ? k - 1 : k], next = s.points[std::min(s.points.size() - 1, k + 1)];
-            const glm::dvec3 d = (next - prev) / (k > 0 && k + 1 < s.points.size() ? 6.0 : 3.0);
+            const bool inner = r.ring || (k > 0 && k + 1 < m);
+            const glm::dvec3 prev = s.points[k > 0 ? k - 1 : (r.ring ? m - 1 : k)], next = s.points[k + 1 < m ? k + 1 : (r.ring ? 0 : k)];
+            const glm::dvec3 d = (next - prev) / (inner ? 6.0 : 3.0);
             s.handleL.push_back(s.points[k] - d);
             s.handleR.push_back(s.points[k] + d);
             s.typeL.push_back(curve::HandleType::Free);
@@ -854,6 +1072,8 @@ json unrealRoads(const Terrain& f, const std::vector<RoadEntry>& roads, const gl
                      {"lowerTerrain", a.get<bool>("lower", false)},
                      {"layer", a.get<std::string>("paintLayer", "")},
                      {"points", splines.at(0).at("points")}};
+        if (r.ring)
+            road["closed"] = true;
         if (const std::string mesh = a.get<std::string>("segmentMesh", ""); !mesh.empty())
             road["mesh"] = {{"asset", mesh}, {"forwardAxis", a.get<std::string>("meshForwardAxis", "x")}, {"scaleToWidth", a.get<bool>("scaleToWidth", true)}};
         json spans = json::array();
@@ -897,6 +1117,32 @@ bool registerRoads(ext::Context& ctx)
         .examples = {"r = terrainAddRoad('Terrain', id='passRoad', path=[[-40000, 0], [0, 8000], [40000, 2000]], maxGrade=7)\nr['maxGrade'], r['spans']",
                      "terrainAddRoad('Terrain', 'TrackCurve', kind='track', id='farmTrack')",
                      "terrainAddRoad('Terrain', kind='runway', id='strip', path=[[0, 0], [250000, 0]], build=True)"},
+    });
+
+    ctx.registerCommand({
+        .name = "terrainAddRoundabout",
+        .doc = "Lay a roundabout into a terrain's roads layer: a level ring road around a raised central island, its cross "
+               "fall running away from the island. Roads in the layer that reach the ring are cut back to its centreline (one "
+               "running through becomes two approaches) and laid after it, so each joins at grade with kerb returns and a "
+               "splitter island between its entry and exit lanes. Writes the roadIsland mask besides the road masks. Returns "
+               "the ring as terrainAddRoad does, with its islands and the approach ids.",
+        .positionalDoc = "terrain mesh or its modifier",
+        .flags = {{"at", "at", T::List, nullptr, "Centre [x, z] or [x, y, z] in world space (x, y on a Z-up scene)."},
+                  {"radius", "r", T::Float, 2500.0, "Radius of the ring's centreline, cm.", {}, {}, 100.0},
+                  {"id", "id", T::String, "", "Stable id; the same id again replaces that roundabout. Empty makes one."},
+                  {"layer", "ly", T::String, "Roads", "Roads layer (a Terrain Roads node)."},
+                  {"roads", "rd", T::List, nullptr, "Ids of the roads to join to it; default every road with a path reaching the ring."},
+                  {"profile", "pr", T::String, "urban", "Cross-section preset of the ring.", roadProfileNames()},
+                  {"lanes", "ln", T::Int, 1, "Circulating lanes.", {}, {}, 1.0, 4.0},
+                  {"laneWidth", "lw", T::Float, 500.0, "Circulating lane width, cm.", {}, {}, 100.0},
+                  {"kerbHeight", "kh", T::Float, nullptr, "Kerb height, cm; also how high the islands stand.", {}, {}, 0.0},
+                  {"crossFall", "cf", T::Float, 2.0, "Cross fall away from the island, percent.", {}, {}, 0.0, 10.0},
+                  {"height", "ht", T::Float, nullptr, "Ring height along the up axis, cm; default the mean ground under it."},
+                  {"detail", "dt", T::Bool, false, "Return every station, not a sample of them."}},
+        .run = [](const Args& a) -> json { return runAddRoundabout(a, "terrainAddRoundabout"); },
+        .examples = {"terrainAddRoad('Terrain', id='main', path=[[-40000, 0], [40000, 0]])\n"
+                     "terrainAddRoad('Terrain', id='side', path=[[0, -30000], [0, 0]])\n"
+                     "r = terrainAddRoundabout('Terrain', at=[0, 0], radius=2500)\nr['approaches'], r['islands']"},
     });
 
     ctx.registerCommand({

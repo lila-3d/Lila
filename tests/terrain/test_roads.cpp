@@ -314,6 +314,131 @@ TEST_CASE("roads: a side road joins an earlier one at grade, with its cross fall
     CHECK(on.worstLevel < 0.01);
 }
 
+TEST_CASE("roads: a roundabout is a level ring with outward cross fall, a raised island, and approaches that join it with splitters")
+{
+    geo::Heightfield h = grid(120000.0, 481, [](double x, double z) { return 0.03 * x + 0.01 * z; });
+    const double R = 2500.0;
+    terrain::RoadInput ring = roadAlong("ring", "road", {});
+    ring.road.ring = true;
+    ring.road.smooth = false;
+    ring.road.profile.lanes = 1;
+    ring.road.profile.laneWidth = 500.0;
+    for (int k = 0; k < 128; ++k)
+    {
+        const double a = 6.283185307179586 * double(k) / 128.0;
+        ring.line.push_back({R * std::cos(a), R * std::sin(a)});
+    }
+    ring.road.path = ring.line;
+    std::vector<terrain::RoadInput> roads{ring};
+    for (const glm::dvec2 dir : {glm::dvec2(1.0, 0.0), glm::dvec2(0.0, 1.0), glm::dvec2(-1.0, 0.0), glm::dvec2(0.0, -1.0)})
+        roads.push_back(roadAlong("in" + std::to_string(roads.size()), "road", {dir * 40000.0, dir * R}));
+    const auto results = terrain::applyRoads(h, roads);
+    const terrain::RoadResult& r = results.at("ring");
+    REQUIRE(r.ring);
+    CHECK(r.maxGrade < 1e-6);
+    for (const glm::dvec3& p : r.centreline)
+        CHECK(p.y == doctest::Approx(r.centreline[0].y));
+    // Across the ring the inner kerb is higher than the outer one by the cross fall.
+    const glm::dvec2 east(R, 0.0);
+    const double inner = r.surfaceAt(east * ((R - r.pavedHalf) / R)).height, outer = r.surfaceAt(east * ((R + r.pavedHalf) / R)).height;
+    CHECK(inner - outer == doctest::Approx(0.02 * 2.0 * r.pavedHalf).epsilon(0.02));
+    // The central island stands level, masked, above the ring.
+    REQUIRE(r.islands.size() == 1);
+    CHECK(r.islands[0].kind == "central");
+    const std::vector<float>* island = h.findMask(terrain::kRoadIslandMask);
+    REQUIRE(island);
+    CHECK(h.maskAt(terrain::kRoadIslandMask, 0.0, 0.0) == 1.0f);
+    CHECK(h.heightAt(0.0, 0.0) == doctest::Approx(r.islands[0].height));
+    CHECK(r.islands[0].height > r.centreline[0].y);
+    CHECK(h.maskAt(terrain::kRoadSurfaceMask, 0.0, 0.0) == 0.0f);
+    // Off the islands, the ring's formation is its design surface.
+    double worst = 0.0;
+    for (int z = 0; z < h.nz; ++z)
+        for (int x = 0; x < h.nx; ++x)
+        {
+            const size_t i = h.index(x, z);
+            const glm::dvec2 p = h.samplePos(x, z);
+            const terrain::RoadResult::Surface q = r.surfaceAt(p);
+            if ((*island)[i] > 0.0f || std::abs(q.lateral) > r.formationHalf || std::abs(glm::length(p) - R) > r.formationHalf)
+                continue;
+            bool onApproach = false;
+            for (size_t k = 1; k < roads.size(); ++k)
+                onApproach |= std::abs(results.at(roads[k].road.id).surfaceAt(p).lateral) <= results.at(roads[k].road.id).formationHalf + h.cell;
+            if (!onApproach)
+                worst = std::max(worst, std::abs(h.heights[i] - q.height));
+        }
+    CHECK(worst < 0.01);
+
+    for (size_t k = 1; k < roads.size(); ++k)
+    {
+        const terrain::RoadResult& b = results.at(roads[k].road.id);
+        INFO(roads[k].road.id);
+        REQUIRE(b.junctions.size() == 1);
+        CHECK(b.junctions[0].other == "ring");
+        CHECK(b.kerbReturns.size() == 2);
+        REQUIRE(b.islands.size() == 1);
+        CHECK(b.islands[0].kind == "splitter");
+        CHECK(b.islands[0].other == "ring");
+        // The splitter sits on the approach just outside the ring, raised over it.
+        glm::dvec2 mid(0.0);
+        for (const glm::dvec2& p : b.islands[0].outline)
+            mid += p / double(b.islands[0].outline.size());
+        CHECK(glm::length(mid) > R);
+        CHECK(h.maskAt(terrain::kRoadIslandMask, mid.x, mid.y) > 0.0f);
+        CHECK(h.heightAt(mid.x, mid.y) > b.surfaceAt(mid).height + 5.0);
+        // At the ring's edge both surfaces agree across the approach's width.
+        size_t edge = 0;
+        for (size_t i = 0; i < b.span.size(); ++i)
+            if (b.span[i] == 3)
+            {
+                edge = i;
+                break;
+            }
+        REQUIRE(edge > 0);
+        const glm::dvec2 c(b.centreline[edge].x, b.centreline[edge].z), left(-b.tangents[edge].y, b.tangents[edge].x);
+        for (double d : {-b.pavedHalf * 0.5, 0.0, b.pavedHalf * 0.5})
+        {
+            const glm::dvec2 p = c + left * d;
+            CHECK(std::abs(b.surfaceAt(p).height - r.surfaceAt(p).height) < 2.0);
+        }
+    }
+}
+
+TEST_CASE("roads: terrainAddRoundabout cuts the roads through it into approaches and exports a closed ring")
+{
+    loadTerrain();
+    run("newScene");
+    json t = run("terrainCreate", {{"size", {100000.0, 100000.0}}, {"resolution", 257}, {"flat", true}, {"name", "Circle"}});
+    const std::string mesh = t["mesh"];
+    run("terrainAddRoad", {{"args", {mesh}}, {"id", "main"}, {"path", {{-45000.0, 0.0}, {45000.0, 0.0}}}});
+    run("terrainAddRoad", {{"args", {mesh}}, {"id", "side"}, {"path", {{0.0, -45000.0}, {0.0, 0.0}}}});
+    json r = run("terrainAddRoundabout", {{"args", {mesh}}, {"at", {0.0, 0.0}}, {"radius", 3000.0}, {"id", "circus"}});
+    INFO(r.dump().substr(0, 2000));
+    CHECK(r["applied"].get<bool>());
+    CHECK(r["ring"].get<bool>());
+    CHECK(r["maxGrade"].get<double>() < 1e-6);
+    std::set<std::string> approaches;
+    for (const json& id : r["approaches"])
+        approaches.insert(id.get<std::string>());
+    CHECK(approaches == std::set<std::string>{"main", "main_b", "side"});
+    REQUIRE(r["islands"].size() == 1);
+    CHECK(r["islands"][0]["kind"] == "central");
+
+    json listed = run("terrainRoads", {{"args", {mesh}}});
+    const json& layer = listed["layers"]["Roads"];
+    REQUIRE(layer.size() == 4);
+    CHECK(layer[0]["id"] == "circus");
+    int splitters = 0;
+    for (const json& road : layer)
+        for (const json& i : road["islands"])
+            splitters += i["kind"] == "splitter";
+    CHECK(splitters == 3);
+
+    json exported = run("terrainRoadExport", {{"args", {mesh}}});
+    INFO(exported.dump().substr(0, 1000));
+    run("newScene");
+}
+
 TEST_CASE("roads: commands lay, list, route, build, export and protect roads on a terrain")
 {
     loadTerrain();
