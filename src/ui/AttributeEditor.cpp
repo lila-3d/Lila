@@ -80,15 +80,37 @@ uint64_t gPendingReveal = 0;
 class AttrRowLabel final : public QLabel
 {
 public:
-    using QLabel::QLabel;
+    explicit AttrRowLabel(const QString& text) : QLabel(text) { setAlignment(Qt::AlignRight | Qt::AlignVCenter); }
     QSize minimumSizeHint() const override { return {fontMetrics().horizontalAdvance("Wwwww"), QLabel::minimumSizeHint().height()}; }
     void setMark(QPixmap mark)
     {
         mMark = std::move(mark);
         update();
     }
+    /** A child pinned to the label's left end, after the ones already there; starts hidden. */
+    void addLeading(QWidget* w)
+    {
+        w->hide();
+        mLeading.push_back(w);
+        placeLeading();
+    }
 
 protected:
+    void resizeEvent(QResizeEvent* e) override
+    {
+        QLabel::resizeEvent(e);
+        placeLeading();
+    }
+    void placeLeading()
+    {
+        int x = 0;
+        for (QWidget* w : mLeading)
+        {
+            const QSize s = w->sizeHint();
+            w->setGeometry(x, (height() - s.height()) / 2, s.width(), s.height());
+            x += s.width();
+        }
+    }
     void paintEvent(QPaintEvent*) override
     {
         QPainter p(this);
@@ -108,6 +130,98 @@ protected:
 
 private:
     QPixmap mMark;
+    std::vector<QWidget*> mLeading;
+};
+
+/** The right end of a row label: a drag there moves every label's edge, a double-click puts it back to auto. */
+class LabelEdgeDrag final : public QObject
+{
+public:
+    static constexpr int kGrab = 6;
+
+    LabelEdgeDrag(QLabel* on, std::function<void(int x, bool commit)> dragged, std::function<void()> reset)
+        : QObject(on), mOn(on), mDragged(std::move(dragged)), mReset(std::move(reset))
+    {
+        on->setMouseTracking(true);
+        on->installEventFilter(this);
+    }
+
+protected:
+    bool eventFilter(QObject*, QEvent* e) override
+    {
+        switch (e->type())
+        {
+        case QEvent::MouseMove:
+        {
+            auto* me = static_cast<QMouseEvent*>(e);
+            if (mDragging)
+            {
+                mDragged(edgeX(me) + mOffset, false);
+                return true;
+            }
+            if (onEdge(me) != mHover)
+            {
+                mHover = !mHover;
+                if (mHover)
+                    mOn->setCursor(Qt::SplitHCursor);
+                else
+                    mOn->unsetCursor();
+            }
+            return false;
+        }
+        case QEvent::Leave:
+            if (mHover && !mDragging)
+            {
+                mHover = false;
+                mOn->unsetCursor();
+            }
+            return false;
+        case QEvent::MouseButtonPress:
+        {
+            auto* me = static_cast<QMouseEvent*>(e);
+            if (me->button() != Qt::LeftButton || !onEdge(me))
+                return false;
+            mDragging = true;
+            mOffset = mOn->width() - int(me->position().x());
+            return true;
+        }
+        case QEvent::MouseButtonRelease:
+            if (!mDragging)
+                return false;
+            mDragging = false;
+            mDragged(edgeX(static_cast<QMouseEvent*>(e)) + mOffset, true);
+            return true;
+        case QEvent::MouseButtonDblClick:
+            if (!onEdge(static_cast<QMouseEvent*>(e)))
+                return false;
+            mReset();
+            return true;
+        default: return false;
+        }
+    }
+
+private:
+    bool onEdge(QMouseEvent* me) const { return me->position().x() >= mOn->width() - kGrab; }
+    /** The pointer's x in the scrolled body: the label's parents up to it. */
+    int edgeX(QMouseEvent* me) const
+    {
+        QWidget* body = mOn->window();
+        for (QWidget* w = mOn; w; w = w->parentWidget())
+            if (w->objectName() == "aeBody")
+            {
+                body = w;
+                break;
+            }
+        return mOn->mapTo(body, me->position().toPoint()).x();
+    }
+
+    QLabel* mOn;
+    std::function<void(int, bool)> mDragged;
+    std::function<void()> mReset;
+    bool mHover = false;
+    bool mDragging = false;
+    /** How far right of the pointer the edge sat when the drag began, so it moves without jumping. */
+    int mOffset = 0;
 };
 
 constexpr const char* kAttrMime = "application/x-lila-attr";
@@ -233,16 +347,19 @@ double numberOf(const scene::PlugValue& v, int component)
 }
 
 /**
- * Channel box style virtual slider: a drag steps its targets 0.1 per pixel (Shift 1, Ctrl 0.01) live, and the release
- * commits them through setAttr as one undo step. The middle button drags.
+ * Virtual slider: a drag steps its targets 0.1 per pixel (Shift 10x, Ctrl 0.1x) live, and the release commits them
+ * through setAttr as one undo step. The middle button drags anywhere it is installed. On a number field the left button
+ * drags too, and a left click without a drag starts typing with the value selected; a ranged field (span) steps its
+ * range per field width and stays inside it.
  */
 class NumberScrub final : public QObject
 {
 public:
     using Commit = std::function<void(const std::string& attr, const json& value)>;
 
-    NumberScrub(QWidget* on, std::vector<ScrubTarget> targets, Commit commit)
-        : QObject(on), mTargets(std::move(targets)), mCommit(std::move(commit))
+    NumberScrub(QWidget* on, std::vector<ScrubTarget> targets, Commit commit, QLineEdit* field = nullptr,
+                std::optional<std::pair<double, double>> span = std::nullopt)
+        : QObject(on), mTargets(std::move(targets)), mCommit(std::move(commit)), mField(field), mSpan(span)
     {
         on->installEventFilter(this);
     }
@@ -256,13 +373,32 @@ protected:
         {
             auto* me = static_cast<QMouseEvent*>(e);
             if (me->button() == Qt::MiddleButton)
+            {
                 begin(me->globalPosition().toPoint());
-            // Not consumed: a middle click without a drag still resets.
-            return false;
+                // Not consumed: a middle click without a drag still resets.
+                return false;
+            }
+            // A typing field keeps its own clicks.
+            if (me->button() != Qt::LeftButton || !mField || mField->hasFocus())
+                return false;
+            begin(me->globalPosition().toPoint());
+            mLeft = true;
+            return true;
         }
         case QEvent::MouseMove:
             return mActive && move(static_cast<QMouseEvent*>(e));
-        case QEvent::MouseButtonRelease: return mActive && end();
+        case QEvent::MouseButtonRelease:
+        {
+            if (mLeft && !mMoved)
+            {
+                mActive = mLeft = false;
+                mField->setFocus(Qt::MouseFocusReason);
+                mField->selectAll();
+                return true;
+            }
+            mLeft = false;
+            return mActive && end();
+        }
         default: return false;
         }
     }
@@ -297,7 +433,8 @@ private:
             mMoved = true;
         }
         const Qt::KeyboardModifiers mods = me->modifiers();
-        mAccum += dx * ((mods & Qt::ControlModifier) ? 0.01 : (mods & Qt::ShiftModifier) ? 1.0 : 0.1);
+        const double step = mSpan && mField ? (mSpan->second - mSpan->first) / std::max(1, mField->width()) : 0.1;
+        mAccum += dx * step * ((mods & Qt::ControlModifier) ? 0.1 : (mods & Qt::ShiftModifier) ? 10.0 : 1.0);
         Graph& g = Graph::current();
         UndoStack& u = UndoStack::get();
         const bool was = u.enabled();
@@ -335,7 +472,11 @@ private:
 
     double valueFor(const ScrubTarget& t, const scene::PlugValue& start) const
     {
-        double v = numberOf(start, t.component) + mAccum;
+        const double from = numberOf(start, t.component);
+        double v = from + mAccum;
+        // A ranged field's drag stays in its range, unless the value already sat outside it.
+        if (mSpan && mField && from >= mSpan->first && from <= mSpan->second)
+            v = std::clamp(v, mSpan->first, mSpan->second);
         if (t.minValue)
             v = std::max(v, *t.minValue);
         if (t.maxValue)
@@ -357,11 +498,73 @@ private:
     std::vector<ScrubTarget> mTargets;
     std::vector<std::pair<ScrubTarget, scene::PlugValue>> mSaved;
     Commit mCommit;
+    QLineEdit* mField = nullptr;
+    std::optional<std::pair<double, double>> mSpan;
     bool mActive = false;
     bool mMoved = false;
+    bool mLeft = false;
     QPoint mStart, mLast;
     double mAccum = 0.0;
 };
+
+/** A number box that fills the field column; a ranged one shows its value as a fill across that range. */
+class NumberField final : public QLineEdit
+{
+public:
+    explicit NumberField(std::optional<std::pair<double, double>> span) : mSpan(span)
+    {
+        setCursor(Qt::SizeHorCursor);
+    }
+
+    void showValue(double v)
+    {
+        if (mSpan && mSpan->second > mSpan->first)
+        {
+            const double f = std::clamp((v - mSpan->first) / (mSpan->second - mSpan->first), 0.0, 1.0);
+            if (f != mFill)
+            {
+                mFill = f;
+                update();
+            }
+        }
+    }
+
+protected:
+    void paintEvent(QPaintEvent* e) override
+    {
+        QLineEdit::paintEvent(e);
+        if (!mSpan || hasFocus() || mFill <= 0.0)
+            return;
+        QPainter p(this);
+        QColor fill = themeColor("accent");
+        fill.setAlpha(isReadOnly() ? 28 : 56);
+        const QRect r = rect().adjusted(1, 1, -1, -1);
+        p.fillRect(QRect(r.left(), r.top(), int(std::round(r.width() * mFill)), r.height()), fill);
+    }
+    void focusInEvent(QFocusEvent* e) override
+    {
+        setCursor(Qt::IBeamCursor);
+        QLineEdit::focusInEvent(e);
+    }
+    void focusOutEvent(QFocusEvent* e) override
+    {
+        setCursor(Qt::SizeHorCursor);
+        QLineEdit::focusOutEvent(e);
+    }
+
+private:
+    std::optional<std::pair<double, double>> mSpan;
+    double mFill = 0.0;
+};
+
+/** The range a field's fill spans: the soft range, else the hard one; none unless both ends are known. */
+std::optional<std::pair<double, double>> fillSpan(const scene::AttrDef& def)
+{
+    const std::optional<double> lo = def.softMin ? def.softMin : def.minValue, hi = def.softMax ? def.softMax : def.maxValue;
+    if (!lo || !hi || *hi <= *lo)
+        return std::nullopt;
+    return std::pair{*lo, *hi};
+}
 
 QString fmt(double v)
 {
@@ -593,6 +796,7 @@ AttributeEditor::AttributeEditor(QWidget* parent) : QWidget(parent)
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->viewport()->installEventFilter(this);
     mBody = new QWidget;
+    mBody->setObjectName("aeBody");
     mBodyLayout = new QVBoxLayout(mBody);
     mBodyLayout->setContentsMargins(0, 0, 0, 0);
     mBodyLayout->setSpacing(6);
@@ -1020,17 +1224,19 @@ void AttributeEditor::rebuild()
         const NumberScrub::Commit commit = [this](const std::string& a, const json& v) { set(a, v); };
 
         auto numberEdit = [&](int component) {
-            auto* e = new QLineEdit;
+            const std::optional<std::pair<double, double>> span = fillSpan(def);
+            auto* e = new NumberField(span);
             e->setAlignment(Qt::AlignRight);
             e->setReadOnly(readOnly);
+            if (readOnly)
+                e->unsetCursor();
             e->setMinimumWidth(e->fontMetrics().horizontalAdvance("-0.000") + 8);
-            e->setMaximumWidth(e->fontMetrics().horizontalAdvance("-00000.0000") + 10);
-            e->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+            e->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
             std::string target = component >= 0 ? def.childNames[component] : attr;
             if (!readOnly)
             {
                 scrubbed.push_back({ref, component, target, def.minValue, def.maxValue, def.type == PlugType::Int});
-                new NumberScrub(e, {scrubbed.back()}, commit);
+                new NumberScrub(e, {scrubbed.back()}, commit, e, span);
                 if (std::optional<json> d = valueReset::plugDefault(def, component))
                     onMiddleClickReset(e, [this, target, v = *d] { set(target, v); }, QString::fromStdString(valueReset::describe(*d)));
             }
@@ -1082,6 +1288,7 @@ void AttributeEditor::rebuild()
                 else if (auto* i = std::get_if<int64_t>(&v))
                     d = double(*i);
                 e->setText(attrView::formatNumber(d));
+                e->showValue(d);
             });
             return e;
         };
@@ -1096,20 +1303,10 @@ void AttributeEditor::rebuild()
             auto* h = new QHBoxLayout(field);
             h->setContentsMargins(0, 0, 0, 0);
             h->setSpacing(3);
-            int widest = 0;
             for (int c = 0; c < 3; ++c)
-            {
-                QLineEdit* e = numberEdit(c);
-                widest += e->maximumWidth() + h->spacing();
-                h->addWidget(e);
-            }
+                h->addWidget(numberEdit(c), 1);
             if ((def.flags & scene::AttrColor) && element < 0)
-            {
-                QWidget* swatch = colorSwatch(def, id, index, readOnly);
-                widest += swatch->sizeHint().width() + h->spacing();
-                h->addWidget(swatch);
-            }
-            field->setMaximumWidth(widest);
+                h->addWidget(colorSwatch(def, id, index, readOnly));
             break;
         }
         case PlugType::Bool:
@@ -1337,34 +1534,22 @@ void AttributeEditor::rebuild()
         mAttrWidgets.emplace(def.name, label);
         if ((def.flags & scene::AttrUser) && element < 0)
         {
-            // Added attributes: a pencil to edit and a grip to drag, shown while the row is hovered.
-            auto* row = new QWidget;
-            auto* h = new QHBoxLayout(row);
-            h->setContentsMargins(0, 0, 0, 0);
-            h->setSpacing(2);
-            h->addWidget(field, 1);
-            auto* pencil = new QToolButton(row);
-            pencil->setObjectName("editAttr");
-            pencil->setIcon(icon("pencil"));
-            pencil->setAutoRaise(true);
-            pencil->setToolTip("Edit this attribute");
-            auto* grip = new QLabel(row);
+            // Added attributes: a grip to drag and a pencil to edit, in the label's free left end while the row is hovered.
+            auto* grip = new QLabel(label);
             grip->setPixmap(icon("grip-vertical").pixmap(14, 14));
             grip->setToolTip("Drag onto another attribute or heading to move it");
             grip->setCursor(Qt::OpenHandCursor);
-            h->addWidget(pencil);
-            h->addWidget(grip);
-            // Hidden but still sized, so revealing them on hover doesn't move or resize the field.
-            for (QWidget* w : {static_cast<QWidget*>(pencil), static_cast<QWidget*>(grip)})
-            {
-                QSizePolicy p = w->sizePolicy();
-                p.setRetainSizeWhenHidden(true);
-                w->setSizePolicy(p);
-                w->hide();
-            }
+            auto* pencil = new QToolButton(label);
+            pencil->setObjectName("editAttr");
+            pencil->setIcon(icon("pencil"));
+            pencil->setIconSize(QSize(12, 12));
+            pencil->setAutoRaise(true);
+            pencil->setToolTip("Edit this attribute");
+            label->addLeading(grip);
+            label->addLeading(pencil);
             connect(pencil, &QToolButton::clicked, this, [this, attr, pencil] { openEdit(attr, pencil); });
-            auto* hover = new RowGestures(row);
-            hover->reveal = {pencil, grip};
+            for (QWidget* w : {static_cast<QWidget*>(label), field})
+                (new RowGestures(w))->reveal = {grip, pencil};
             auto* drag = new RowGestures(grip);
             drag->dragMime = kAttrMime;
             drag->dragText = QString::fromStdString(attr);
@@ -1380,7 +1565,6 @@ void AttributeEditor::rebuild()
                 else
                     dropHeading(mimeText(d, kHeadingMime), category);
             };
-            field = row;
         }
         if (element < 0 && !readOnly && (def.flags & scene::AttrInput))
         {
@@ -1432,6 +1616,7 @@ void AttributeEditor::rebuild()
             h->addWidget(badge);
             field = row;
         }
+        new LabelEdgeDrag(label, [this](int x, bool done) { dragLabelEdge(x, done); }, [this] { resetLabelEdge(); });
         mSearchRows.push_back({form, label, def});
         form->addRow(label, field);
         return true;
@@ -1496,25 +1681,62 @@ void AttributeEditor::rebuild()
     };
     auto newForm = [](QWidget* content) {
         auto* form = new QFormLayout(content);
-        form->setLabelAlignment(Qt::AlignRight);
+        form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+        form->setRowWrapPolicy(QFormLayout::DontWrapRows);
         form->setContentsMargins(8, 2, 4, 2);
         form->setSpacing(3);
         return form;
     };
-    auto subHeading = [&](QFormLayout* form, const std::string& title, std::function<void()> remove = {}) -> QLabel* {
+    /**
+     * A group's heading row in form, over its rows: a chevron folds them (remembered per heading), a rule underlines
+     * it. Returns the heading label and the form its rows go in.
+     */
+    auto subHeading = [&](QFormLayout* form, const std::string& title, std::function<void()> remove = {}) -> std::pair<QLabel*, QFormLayout*> {
         auto* l = new QLabel(QString::fromStdString(title));
-        l->setStyleSheet("color: #c8c8c8; font-weight: 600; padding-top: 4px; border-bottom: 1px solid #474747;");
+        l->setStyleSheet("color: #c8c8c8; font-weight: 600;");
         markIssues(l, componentIssues({}, title, QString::fromStdString(title)));
         noteComponent(title, l);
-        if (!remove)
-        {
-            form->addRow(l);
-            return l;
-        }
         auto* row = new QWidget;
+        row->setObjectName("groupHeading");
+        row->setStyleSheet("#groupHeading { border-bottom: 1px solid #474747; }");
         auto* h = new QHBoxLayout(row);
-        h->setContentsMargins(0, 0, 0, 0);
+        h->setContentsMargins(0, 8, 0, 1);
+        h->setSpacing(2);
+        auto* fold = new QToolButton;
+        fold->setObjectName("groupFold");
+        fold->setAutoRaise(true);
+        fold->setCheckable(true);
+        fold->setIconSize(QSize(12, 12));
+        fold->setToolTip("Fold " + QString::fromStdString(title));
+        h->addWidget(fold);
         h->addWidget(l, 1);
+        auto* body = new QWidget;
+        QFormLayout* rows = newForm(body);
+        rows->setContentsMargins(0, 2, 0, 2);
+        std::string safe = title;
+        for (char& c : safe)
+            if (c == '/' || c == '~')
+                c = '_';
+        const std::string pointer = "/foldedGroups/" + safe;
+        auto setFolded = [fold, body](bool folded) {
+            body->setVisible(!folded);
+            fold->setIcon(icon(folded ? "chevron-right" : "chevron-down"));
+        };
+        const bool folded = PrefStore::get().value("attributeEditor", pointer, false);
+        fold->setChecked(folded);
+        setFolded(folded);
+        connect(fold, &QToolButton::toggled, body, [setFolded, pointer](bool on) {
+            setFolded(on);
+            if (on)
+                PrefStore::get().set("attributeEditor", pointer, true);
+            else
+                PrefStore::get().remove("attributeEditor", pointer);
+        });
+        form->addRow(row);
+        form->addRow(body);
+        if (!remove)
+            return {l, rows};
         auto* plus = new QToolButton;
         plus->setObjectName("headingAdd");
         plus->setIcon(icon("plus"));
@@ -1528,8 +1750,7 @@ void AttributeEditor::rebuild()
         x->setToolTip(QString::fromStdString("Remove " + title + " and its attributes"));
         connect(x, &QToolButton::clicked, this, std::move(remove));
         h->addWidget(x);
-        form->addRow(row);
-        return l;
+        return {l, rows};
     };
 
     // Attrs with a category show together under its heading in a Parameters section, in attr order.
@@ -1549,18 +1770,10 @@ void AttributeEditor::rebuild()
         int added = 0;
         for (const std::string& c : categories)
         {
-            bool headed = c.empty();
+            QFormLayout* rows = c.empty() ? form : subHeading(form, c).second;
             for (const scene::AttrDef* d : parameters)
-            {
-                if (d->category != c)
-                    continue;
-                if (!headed)
-                {
-                    subHeading(form, c);
-                    headed = true;
-                }
-                added += addAttrRows(form, *d);
-            }
+                if (d->category == c)
+                    added += addAttrRows(rows, *d);
         }
         if (added)
             mBodyLayout->addWidget(section("Parameters", content));
@@ -1620,11 +1833,8 @@ void AttributeEditor::rebuild()
             QFormLayout* rows = form;
             if (!c.empty())
             {
-                auto* indented = new QWidget;
-                rows = newForm(indented);
-                rows->setContentsMargins(14, 0, 0, 4);
-                QLabel* heading = subHeading(form, c, [this, c] { removeCategory(c); });
-                form->addRow(indented);
+                QLabel* heading = nullptr;
+                std::tie(heading, rows) = subHeading(form, c, [this, c] { removeCategory(c); });
                 ++added;
                 // Only USD objects look up labels: listing USD's schemas loads OpenUSDCore.
                 if (schemaList >= 0)
@@ -1719,6 +1929,11 @@ void AttributeEditor::rebuild()
     mBodyLayout->addStretch(1);
     updateValues();
     fitLabels();
+    // Label edges come from where forms sit, which settles once the layout runs and when folded rows first show.
+    QTimer::singleShot(0, this, [this] { fitLabels(); });
+    for (QToolButton* fold : mBody->findChildren<QToolButton*>())
+        if (fold->isCheckable())
+            connect(fold, &QToolButton::toggled, this, [this] { QTimer::singleShot(0, this, [this] { fitLabels(); }); });
     applySearch();
     if (gPendingReveal && reveal(gPendingReveal))
         gPendingReveal = 0;
@@ -2213,32 +2428,61 @@ void AttributeEditor::rememberCollapse(QWidget* section, const std::string& key)
 
 void AttributeEditor::fitLabels()
 {
+    struct Row
+    {
+        AttrRowLabel* label;
+        int x;
+    };
+    std::vector<Row> rows;
+    int longest = 0, shortest = 0;
     for (QFormLayout* form : mBody->findChildren<QFormLayout*>())
     {
-        std::vector<AttrRowLabel*> labels;
-        int longest = 0, shortest = 0, fieldMin = 0;
+        if (!form->parentWidget())
+            continue;
+        const int x = form->parentWidget()->mapTo(mBody, QPoint()).x() + form->contentsMargins().left();
         for (int r = 0; r < form->rowCount(); ++r)
         {
             QLayoutItem* l = form->itemAt(r, QFormLayout::LabelRole);
-            QLayoutItem* f = form->itemAt(r, QFormLayout::FieldRole);
             auto* label = l ? dynamic_cast<AttrRowLabel*>(l->widget()) : nullptr;
-            if (!label || !f)
+            if (!label || !form->itemAt(r, QFormLayout::FieldRole))
                 continue;
-            labels.push_back(label);
-            longest = std::max(longest, label->QLabel::sizeHint().width());
-            shortest = std::max(shortest, label->minimumSizeHint().width());
-            fieldMin = std::max(fieldMin, f->minimumSize().width());
+            rows.push_back({label, x});
+            longest = std::max(longest, x + label->QLabel::sizeHint().width());
+            shortest = std::max(shortest, x + label->minimumSizeHint().width());
         }
-        if (labels.empty() || !form->parentWidget())
-            continue;
-        const QMargins m = form->contentsMargins();
-        const int avail = mScroll->viewport()->width() - form->parentWidget()->mapTo(mBody, QPoint()).x() - m.left() - m.right() -
-                          form->horizontalSpacing();
-        const int width = std::clamp(avail - fieldMin, shortest, std::max(shortest, longest));
-        for (AttrRowLabel* label : labels)
-            if (label->maximumWidth() != width)
-                label->setMaximumWidth(width);
     }
+    if (rows.empty())
+        return;
+    // Fields keep at least this much of the width, so a long label or a wide drag never squeezes them away.
+    constexpr int kFieldRoom = 90;
+    const int width = mScroll->viewport()->width();
+    const double fraction = mDragFraction >= 0.0 ? mDragFraction : PrefStore::get().value("attributeEditor", "/labelFraction", 0.0);
+    const int wanted = fraction > 0.0 ? int(std::lround(fraction * width)) : std::min(longest, int(width * 0.4));
+    mLabelEdge = std::clamp(wanted, shortest, std::max(shortest, width - kFieldRoom));
+    for (const Row& r : rows)
+    {
+        const int w = mLabelEdge - r.x;
+        if (r.label->minimumWidth() != w || r.label->maximumWidth() != w)
+            r.label->setFixedWidth(w);
+    }
+}
+
+void AttributeEditor::dragLabelEdge(int x, bool commit)
+{
+    const int width = std::max(1, mScroll->viewport()->width());
+    mDragFraction = double(x) / width;
+    fitLabels();
+    if (!commit)
+        return;
+    PrefStore::get().set("attributeEditor", "/labelFraction", double(mLabelEdge) / width);
+    mDragFraction = -1.0;
+}
+
+void AttributeEditor::resetLabelEdge()
+{
+    mDragFraction = -1.0;
+    PrefStore::get().remove("attributeEditor", "/labelFraction");
+    fitLabels();
 }
 
 bool AttributeEditor::eventFilter(QObject* watched, QEvent* event)

@@ -91,8 +91,14 @@ private:
     /** Deletes the added attributes under one heading of Extra Attributes: a component. */
     void removeCategory(const std::string& category);
     QWidget* colorSwatch(const scene::AttrDef& def, scene::NodeId id, int index, bool readOnly);
-    /** Narrows each form's label column, down to its labels' elided minimum, before its fields drop below their minimum. */
+    /**
+     * Ends every form's labels on one shared edge: auto (the longest label, capped at 40% of the width) or where the
+     * user dragged it, as a fraction of the width in prefs. Labels past it elide.
+     */
     void fitLabels();
+    /** The label edge dragged to x in the body, live; commit saves it. Double-click on the edge resets it to auto. */
+    void dragLabelEdge(int x, bool commit);
+    void resetLabelEdge();
     bool eventFilter(QObject* watched, QEvent* event) override;
     /** The node's issues above its sections, each one a link to where it points. */
     QWidget* issueList();
@@ -174,5 +180,8 @@ private:
     bool mRebuild = false;
     /** Attributes of mNode whose change rebuilds the editor (an AttrFilter's triggers). */
     std::set<int> mTriggers;
+    /** The label edge in body coordinates, and the fraction a drag in progress holds (negative when none). */
+    int mLabelEdge = 0;
+    double mDragFraction = -1.0;
 };
 } // namespace lila::ui

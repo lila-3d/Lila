@@ -3,6 +3,7 @@
 #include "ops/Command.h"
 #include "scene/AttrComponents.h"
 #include "scene/Graph.h"
+#include "core/PrefStore.h"
 #include "ui/AttrAuthoring.h"
 #include "ui/AttributeEditor.h"
 
@@ -15,7 +16,10 @@
 #include <QListWidget>
 #include <QPushButton>
 #include <QHBoxLayout>
+#include <QMouseEvent>
 #include <QToolButton>
+
+#include <set>
 
 using namespace lila;
 using namespace lila::scene;
@@ -216,12 +220,90 @@ TEST_CASE("Extra Attributes: schemas as indented headings, no schema list, hover
 
     QToolButton* pencil = ae.findChild<QToolButton*>("editAttr");
     REQUIRE(pencil);
-    QWidget* row = pencil->parentWidget();
-    QWidget* field = qobject_cast<QHBoxLayout*>(row->layout())->itemAt(0)->widget();
-    const QRect before = field->geometry();
+    std::vector<QRect> before;
+    for (QWidget* w : ae.findChildren<QLineEdit*>())
+        before.push_back(w->geometry());
     QEvent enter(QEvent::Enter);
-    QApplication::sendEvent(row, &enter);
+    QApplication::sendEvent(pencil->parentWidget(), &enter);
     settle();
     CHECK(pencil->isVisible());
-    CHECK(field->geometry() == before);
+    std::vector<QRect> after;
+    for (QWidget* w : ae.findChildren<QLineEdit*>())
+        after.push_back(w->geometry());
+    CHECK(after == before);
+}
+
+
+void mouse(QWidget* w, QEvent::Type type, QPoint at, Qt::MouseButton button = Qt::LeftButton)
+{
+    const Qt::MouseButtons held = type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::MouseButtons(Qt::LeftButton);
+    QMouseEvent e(type, QPointF(at), QPointF(w->mapToGlobal(at)), type == QEvent::MouseMove ? Qt::NoButton : button, held, Qt::NoModifier);
+    QApplication::sendEvent(w, &e);
+}
+
+TEST_CASE("Attribute Editor: one label edge, dragged and reset; number fields drag and click to type")
+{
+    cmd("newScene");
+    cmd("spaceLocator", {{"name", "Edge"}});
+    cmd("addAttr", {{"args", {"Edge"}}, {"longName", "gain"}, {"softMinValue", 0.0}, {"softMaxValue", 10.0}, {"defaultValue", 5.0}});
+    cmd("select", {{"args", {"Edge"}}});
+    PrefStore::get().remove("attributeEditor", "/labelFraction");
+    ui::AttributeEditor ae;
+    ae.resize(420, 900);
+    ae.show();
+    settle();
+
+    QWidget* body = ae.findChild<QWidget*>("aeBody");
+    REQUIRE(body);
+    auto edges = [&] {
+        std::set<int> out;
+        for (QLabel* l : body->findChildren<QLabel*>())
+            if (QFormLayout* form = l->parentWidget() ? qobject_cast<QFormLayout*>(l->parentWidget()->layout()) : nullptr)
+                if (int row = -1; (form->getWidgetPosition(l, &row, nullptr), row >= 0) && form->itemAt(row, QFormLayout::LabelRole) &&
+                                  form->itemAt(row, QFormLayout::LabelRole)->widget() == l && l->isVisibleTo(body))
+                    out.insert(l->mapTo(body, QPoint(l->width(), 0)).x());
+        return out;
+    };
+    REQUIRE(edges().size() == 1);
+    const int autoEdge = *edges().begin();
+
+    QLabel* gain = nullptr;
+    for (QLabel* l : body->findChildren<QLabel*>())
+        if (l->text() == "Gain")
+            gain = l;
+    REQUIRE(gain);
+    const QPoint grab(gain->width() - 2, gain->height() / 2);
+    mouse(gain, QEvent::MouseButtonPress, grab);
+    mouse(gain, QEvent::MouseMove, grab + QPoint(40, 0));
+    mouse(gain, QEvent::MouseButtonRelease, grab + QPoint(40, 0));
+    settle();
+    CHECK(edges().size() == 1);
+    CHECK(*edges().begin() == autoEdge + 40);
+    CHECK(PrefStore::get().value("attributeEditor", "/labelFraction", 0.0) > 0.0);
+    mouse(gain, QEvent::MouseButtonDblClick, QPoint(gain->width() - 2, gain->height() / 2));
+    settle();
+    CHECK(*edges().begin() == autoEdge);
+    CHECK(PrefStore::get().value("attributeEditor", "/labelFraction", 0.0) == 0.0);
+
+    QLineEdit* field = nullptr;
+    for (QLineEdit* e : body->findChildren<QLineEdit*>())
+        if (e->text() == "5")
+            field = e;
+    REQUIRE(field);
+    // A click types: focus with the value selected, nothing changed.
+    mouse(field, QEvent::MouseButtonPress, field->rect().center());
+    mouse(field, QEvent::MouseButtonRelease, field->rect().center());
+    settle();
+    CHECK(field->hasFocus());
+    CHECK(field->selectedText() == "5");
+    field->clearFocus();
+    // A drag across half the field steps half the 0 to 10 range.
+    const QPoint at = field->rect().center();
+    mouse(field, QEvent::MouseButtonPress, at);
+    for (int dx = 4; dx <= field->width() / 2; dx += 4)
+        mouse(field, QEvent::MouseMove, at + QPoint(dx, 0));
+    mouse(field, QEvent::MouseButtonRelease, at + QPoint(field->width() / 2, 0));
+    settle();
+    CHECK(cmd("getAttr", {{"args", {"Edge.gain"}}}).get<double>() == doctest::Approx(10.0).epsilon(0.05));
+    CHECK_FALSE(field->hasFocus());
 }
