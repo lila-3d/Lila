@@ -7,6 +7,7 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "Landscape.h"
+#include "LandscapeEditLayer.h"
 #include "LandscapeInfo.h"
 #include "LandscapeSplineActor.h"
 #include "LandscapeSplineControlPoint.h"
@@ -403,6 +404,12 @@ TSharedPtr<FJsonValue> SetTerrainRoads(const TSharedPtr<FJsonObject>& Params, FS
 	Component->MarkPackageDirty();
 	if (bDeforms)
 	{
+		// Splines only paint and deform through an edit layer reserved for them.
+		if (!Landscape->FindEditLayerOfTypeConst(ULandscapeEditLayerSplines::StaticClass()) &&
+			Landscape->CreateLayer(FName(TEXT("Splines")), ULandscapeEditLayerSplines::StaticClass()) == INDEX_NONE)
+		{
+			Warnings.Add(TEXT("could not add a Splines edit layer to the landscape, so the roads neither paint nor deform it"));
+		}
 		Landscape->RequestSplineLayerUpdate();
 	}
 
