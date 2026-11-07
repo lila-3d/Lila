@@ -1225,6 +1225,12 @@ bool StartupDialog::eventFilter(QObject* obj, QEvent* e)
                 run();
             return true;
         }
+        // The app's Esc hotkey (viewport.escape) would otherwise take it first.
+        if (ke->key() == Qt::Key_Escape && ke->modifiers() == Qt::NoModifier)
+        {
+            reject();
+            return true;
+        }
         // Space opens the highlighted scene or example like Enter, instead of toggling the list selection.
         if (ke->key() == Qt::Key_Space && ke->modifiers() == Qt::NoModifier && (obj == mList || (mExamples && obj == mExamples)))
         {
