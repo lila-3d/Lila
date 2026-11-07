@@ -5,6 +5,7 @@
 #include "Roads.h"
 #include "Stamps.h"
 #include "Terrain.h"
+#include "TerrainEdit.h"
 
 #include <lila/Actions.h>
 #include <lila/Command.h>
@@ -47,11 +48,10 @@ namespace fs = std::filesystem;
 
 constexpr const char* kRoadSourcePrefix = "RoadSource";
 
-bool sceneZUp() { return math::upAxis() == math::UpAxis::Z; }
-glm::dvec3 sceneUp() { return sceneZUp() ? glm::dvec3(0.0, 0.0, 1.0) : glm::dvec3(0.0, 1.0, 0.0); }
-double upComponent(const glm::dvec3& w) { return sceneZUp() ? w.z : w.y; }
-glm::dvec3 onGround(glm::dvec2 g) { return sceneZUp() ? glm::dvec3(g.x, g.y, 0.0) : glm::dvec3(g.x, 0.0, g.y); }
-json vec3(const glm::dvec3& p) { return json::array({p.x, p.y, p.z}); }
+using namespace terrain::edit;
+using Terrain = TerrainTarget;
+using Layers = GroupEdit;
+
 json finite(double v) { return std::isfinite(v) ? json(v) : json(nullptr); }
 /** Lila space to Unreal's (forward, right, up), cm. */
 glm::dvec3 unrealOf(const glm::dvec3& v)
@@ -59,74 +59,6 @@ glm::dvec3 unrealOf(const glm::dvec3& v)
     const math::AxisBasis& b = math::axisBasis();
     return {glm::dot(v, b.forward), glm::dot(v, b.right), glm::dot(v, b.up)};
 }
-
-/** A terrain's placement: world from the heightfield's own space (X, Z across, Y up) and back. */
-struct Placement
-{
-    glm::dmat4 m{1.0};
-    glm::dmat4 inv{1.0};
-
-    Placement() = default;
-    explicit Placement(const glm::dmat4& world) : m(world), inv(glm::inverse(world)) {}
-    glm::dvec2 local(const glm::dvec3& w) const
-    {
-        const glm::dvec4 q = inv * glm::dvec4(w, 1.0);
-        return {q.x, q.z};
-    }
-    glm::dvec3 world(double x, double y, double z) const { return glm::dvec3(m * glm::dvec4(x, y, z, 1.0)); }
-    glm::dvec3 world(const glm::dvec3& p) const { return world(p.x, p.y, p.z); }
-    glm::dvec3 direction(glm::dvec2 d) const { return glm::normalize(glm::dvec3(m * glm::dvec4(d.x, 0.0, d.y, 0.0))); }
-    double localHeight(double up, glm::dvec2 xz) const
-    {
-        const double k = glm::dot(glm::dvec3(m[1]), sceneUp());
-        const double base = upComponent(world(xz.x, 0.0, xz.y));
-        return std::abs(k) > 1e-12 ? (up - base) / k : up;
-    }
-    double across() const { return 0.5 * (glm::length(glm::dvec3(m[0])) + glm::length(glm::dvec3(m[2]))); }
-    double vertical() const { return glm::length(glm::dvec3(m[1])); }
-};
-
-struct Terrain
-{
-    Node* mesh = nullptr;
-    Node* modifier = nullptr;
-    std::shared_ptr<const Heightfield> local;
-    Placement place;
-};
-
-Terrain findTerrain(Graph& g, const std::string& name, const std::string& cmd)
-{
-    Node* n = g.find(name);
-    if (!n)
-        throw CommandError(cmd + ": no node named '" + name + "'");
-    g.evaluate();
-    Terrain f;
-    if (gn::isGnModifier(*n))
-    {
-        f.modifier = n;
-        f.local = gn::modifierHeightfield(n->id());
-        const scene::NodeId meshId = scene::modifiers::meshOf(g, n->id());
-        f.mesh = meshId != scene::kNoNode ? g.node(meshId) : nullptr;
-    }
-    else
-    {
-        f.mesh = n;
-        const std::vector<scene::NodeId> stack = scene::modifiers::stack(g, n->id());
-        for (auto it = stack.rbegin(); it != stack.rend() && !f.local; ++it)
-            if (Node* m = g.node(*it); m && gn::isGnModifier(*m))
-                if (auto h = gn::modifierHeightfield(m->id()))
-                {
-                    f.modifier = m;
-                    f.local = std::move(h);
-                }
-    }
-    if (!f.local || f.local->empty())
-        throw CommandError(cmd + ": " + n->path() + " makes no heightfield (make a terrain with terrainCreate)");
-    f.place = Placement(f.mesh ? f.mesh->as<glm::dmat4>(scene::Transform::kWorldMatrix) : glm::dmat4(1.0));
-    return f;
-}
-
-std::string pathOf(const Terrain& f, const std::string& fallback) { return f.mesh ? f.mesh->path() : fallback; }
 
 std::string layerName(const std::string& s)
 {
@@ -136,132 +68,6 @@ std::string layerName(const std::string& s)
     if (out.empty() || !std::isalpha(static_cast<unsigned char>(out[0])))
         out = "Roads" + out;
     return out;
-}
-
-glm::dvec3 worldPoint(const json& p, const std::string& cmd)
-{
-    if (!p.is_array() || (p.size() != 2 && p.size() != 3))
-        throw CommandError(cmd + ": points are [x, " + std::string(sceneZUp() ? "y" : "z") + "] or [x, y, z]");
-    return p.size() == 2 ? onGround({p[0].get<double>(), p[1].get<double>()}) : glm::dvec3(p[0].get<double>(), p[1].get<double>(), p[2].get<double>());
-}
-
-struct Layers
-{
-    Node* node = nullptr;
-    gn::Group group;
-};
-
-Layers groupOf(Graph& g, const Terrain& f, const std::string& cmd)
-{
-    Node* node = f.modifier ? gn::groupOfModifier(g, *f.modifier) : nullptr;
-    if (!node)
-        throw CommandError(cmd + ": the terrain has no group");
-    try
-    {
-        return {node, gn::readGroup(*node)};
-    }
-    catch (const std::exception& e)
-    {
-        throw CommandError(cmd + ": " + e.what());
-    }
-}
-
-void commit(Layers& t, const std::string& cmd)
-{
-    try
-    {
-        gn::commitGroup(Graph::current(), *t.node, std::move(t.group));
-    }
-    catch (const std::exception& e)
-    {
-        throw CommandError(cmd + ": " + e.what());
-    }
-}
-
-gn::GNode* named(gn::Group& grp, const std::string& name)
-{
-    for (gn::GNode& n : grp.nodes)
-        if (n.name == name)
-            return &n;
-    return nullptr;
-}
-
-gn::GLink* into(gn::Group& grp, const std::string& node, const std::string& socket)
-{
-    for (gn::GLink& l : grp.links)
-        if (l.toNode == node && l.toSocket == socket)
-            return &l;
-    return nullptr;
-}
-
-/** The roads layer named name, added before the trailing nodes whose types are in skip when missing. */
-gn::GNode& roadLayer(gn::Group& grp, const std::string& name, const std::set<std::string>& skip, const std::string& cmd)
-{
-    if (gn::GNode* n = named(grp, name))
-    {
-        if (n->type != "TerrainRoads")
-            throw CommandError(cmd + ": the terrain's group has a " + n->type + " node named " + name + " already");
-        return *n;
-    }
-    std::string to = "GroupOutput", socket = "geometry";
-    for (gn::GLink* l = into(grp, to, socket); l; l = into(grp, to, socket))
-    {
-        const gn::GNode* from = named(grp, l->fromNode);
-        if (!from || !skip.count(from->type))
-            break;
-        to = from->name;
-        socket = "heightfield";
-    }
-    gn::GLink* l = into(grp, to, socket);
-    if (!l)
-        throw CommandError(cmd + ": the terrain's group has no heightfield running into " + to);
-    const gn::GNode* toNode = named(grp, to);
-    const gn::GNode* fromNode = named(grp, l->fromNode);
-    const glm::dvec2 at = toNode && fromNode ? (toNode->position + fromNode->position) * 0.5 + glm::dvec2(0.0, -160.0) : glm::dvec2(0.0);
-    const std::string fromName = l->fromNode, fromSocket = l->fromSocket;
-    l->fromNode = name;
-    l->fromSocket = "heightfield";
-    grp.links.push_back({fromName, fromSocket, name, "heightfield"});
-    gn::GNode n;
-    n.name = name;
-    n.type = "TerrainRoads";
-    n.position = at;
-    grp.nodes.push_back(std::move(n));
-    return grp.nodes.back();
-}
-
-json listOf(const gn::GNode& n)
-{
-    auto it = n.values.find("roads");
-    if (it == n.values.end() || !it->is_string() || it->get<std::string>().empty())
-        return json::array();
-    json j = json::parse(it->get<std::string>(), nullptr, false);
-    return j.is_array() ? j : json::array();
-}
-
-void dropUnusedSources(gn::Group& grp)
-{
-    std::set<std::string> used;
-    for (const gn::GNode& n : grp.nodes)
-        if (n.type == "TerrainRoads")
-            for (const json& r : listOf(n))
-                if (r.contains("object"))
-                    used.insert(r["object"].get<std::string>());
-    std::erase_if(grp.nodes, [&](const gn::GNode& n) { return n.type == "ObjectInfo" && n.name.starts_with(kRoadSourcePrefix) && !used.count(n.name); });
-}
-
-std::string sourceNode(gn::Group& grp, const std::string& object)
-{
-    for (const gn::GNode& n : grp.nodes)
-        if (n.type == "ObjectInfo" && n.name.starts_with(kRoadSourcePrefix) && n.values.value("object", std::string()) == object)
-            return n.name;
-    gn::GNode n;
-    n.name = grp.uniqueNodeName(kRoadSourcePrefix);
-    n.type = "ObjectInfo";
-    n.position = {-600.0, -400.0 - 120.0 * double(grp.nodes.size())};
-    n.values["object"] = object;
-    grp.nodes.push_back(n);
-    return n.name;
 }
 
 /** Lengths, heights, grades and angles from world to the heightfield's own units (a across, v up per local unit). */
@@ -288,7 +94,7 @@ void scaleToLocal(Road& r, double a, double v)
 /** A road's result in world terms: points in world space, lengths and heights in cm, grades and banks in percent. */
 json roadJson(const Terrain& f, const Road& r, const RoadResult& res, const std::string& layer, bool detail)
 {
-    const Placement& p = f.place;
+    const Terrain& p = f;
     const double a = p.across(), v = p.vertical();
     json out = {{"id", r.id},
                 {"layer", layer},
@@ -414,13 +220,13 @@ struct RoadEntry
 std::vector<RoadEntry> allRoads(Graph& g, const Terrain& f, const std::string& cmd)
 {
     std::vector<RoadEntry> out;
-    Layers t = groupOf(g, f, cmd);
+    Layers t = readGroup(g, f, cmd);
     for (const gn::GNode& n : t.group.nodes)
     {
         if (n.type != "TerrainRoads")
             continue;
         const auto results = roadResults(f.modifier->id(), n.name);
-        for (const json& j : listOf(n))
+        for (const json& j : jsonProp(n, "roads", json::array()))
         {
             RoadEntry e;
             e.road = Road::fromJson(j);
@@ -433,7 +239,7 @@ std::vector<RoadEntry> allRoads(Graph& g, const Terrain& f, const std::string& c
     return out;
 }
 
-Terrain oneTerrain(const Args& a, const std::string& cmd)
+Terrain firstTerrain(const Args& a, const std::string& cmd)
 {
     const std::vector<std::string> names = a.objects();
     if (names.empty())
@@ -512,7 +318,7 @@ json runAddRoad(const Args& a, const std::string& cmd)
         if (Node* first = g.find(names[0]); first && first->type().isA("curve"))
             std::swap(names[0], names[1]);
     const Terrain f = findTerrain(g, names[0], cmd);
-    const Placement& fr = f.place;
+    const Terrain& fr = f;
     const std::string layer = layerName(a.get<std::string>("layer", "Roads"));
 
     Road r;
@@ -563,11 +369,11 @@ json runAddRoad(const Args& a, const std::string& cmd)
     }
     scaleToLocal(r, fr.across(), fr.vertical());
 
-    Layers t = groupOf(g, f, cmd);
+    Layers t = readGroup(g, f, cmd);
     const bool base = a.get<std::string>("stage", "final") == "base";
     const std::set<std::string> skip = base ? withLandformTypes({"ErodeTerrain", "TerrainStamps", "TerrainSculpt", "TerrainRoads", "TerrainWaterFeatures", "TerrainVolume", "TerrainBiomes", "TerrainLayers"})
                                                 : std::set<std::string>{"TerrainStamps", "TerrainVolume", "TerrainBiomes", "TerrainLayers"};
-    json list = listOf(roadLayer(t.group, layer, skip, cmd));
+    json list = jsonProp(chainNode(t.group, layer, "TerrainRoads", skip, -160.0, cmd), "roads", json::array());
     std::string id = a.get<std::string>("id", "");
     if (id.empty())
         for (int k = 1; id.empty(); ++k)
@@ -584,7 +390,7 @@ json runAddRoad(const Args& a, const std::string& cmd)
     if (a.has("path"))
     {
         for (const json& q : a.flags["path"])
-            r.path.push_back(fr.local(worldPoint(q, cmd)));
+            r.path.push_back(fr.local2(worldPoint(q, cmd)));
         if (r.path.size() < 2)
             throw CommandError(cmd + ": path needs at least two points");
     }
@@ -593,7 +399,7 @@ json runAddRoad(const Args& a, const std::string& cmd)
         Node* src = g.find(object);
         if (!src || !src->type().isA("curve"))
             throw CommandError(cmd + ": object must name a curve");
-        r.object = sourceNode(t.group, src->path());
+        r.object = sourceNode(t.group, kRoadSourcePrefix, src->path());
     }
     else
         throw CommandError(cmd + ": give path= or object= (a curve)");
@@ -603,8 +409,8 @@ json runAddRoad(const Args& a, const std::string& cmd)
             if (!q.is_array() || q.size() != 3)
                 throw CommandError(cmd + ": keys are [x, y, z] world points");
             const glm::dvec3 w = worldPoint(q, cmd);
-            const glm::dvec2 at = fr.local(w);
-            r.keys.push_back({at, fr.localHeight(upComponent(w), at)});
+            const glm::dvec2 at = fr.local2(w);
+            r.keys.push_back({at, fr.localHeight(upOf(w), at)});
         }
 
     bool replaced = false;
@@ -616,11 +422,11 @@ json runAddRoad(const Args& a, const std::string& cmd)
         }
     if (!replaced)
         list.push_back(r.toJson());
-    named(t.group, layer)->values["roads"] = list.dump();
-    dropUnusedSources(t.group);
-    commit(t, cmd);
+    nodeNamed(t.group, layer)->values["roads"] = list.dump();
+    dropUnusedSources(t.group, kRoadSourcePrefix, "TerrainRoads", {"roads"});
+    commitGroup(t, cmd);
 
-    const Terrain after = findTerrain(g, pathOf(f, names[0]), cmd);
+    const Terrain after = findTerrain(g, f.path(names[0]), cmd);
     const auto results = roadResults(after.modifier->id(), layer);
     auto it = results.find(id);
     const RoadResult res = it != results.end() ? it->second : RoadResult{};
@@ -630,7 +436,7 @@ json runAddRoad(const Args& a, const std::string& cmd)
     out["replaced"] = replaced;
     out["revision"] = revision(*after.local);
     if (a.get<bool>("build", false))
-        out["build"] = ops::execute("terrainRoadBuild", {{"args", {pathOf(after, names[0])}}, {"ids", {id}}, {"layer", layer}});
+        out["build"] = ops::execute("terrainRoadBuild", {{"args", {after.path(names[0])}}, {"ids", {id}}, {"layer", layer}});
     return out;
 }
 
@@ -659,7 +465,7 @@ void addBox(std::vector<glm::dvec3>& pts, std::vector<std::vector<int>>& faces, 
 }
 
 /** A box piece with the scene's up: on a Z-up scene the piece's Y becomes Z. */
-glm::dvec3 upright(glm::dvec3 p) { return sceneZUp() ? glm::dvec3(p.x, -p.z, p.y) : p; }
+glm::dvec3 upright(glm::dvec3 p) { return zUp() ? glm::dvec3(p.x, -p.z, p.y) : p; }
 
 std::string makePiece(const std::vector<std::pair<glm::dvec3, glm::dvec3>>& boxes, const std::string& name)
 {
@@ -683,7 +489,7 @@ SweepFrame frameAt(const std::vector<glm::dvec3>& w, size_t i)
     const size_t a = i > 0 ? i - 1 : i, z = std::min(w.size() - 1, i + 1);
     SweepFrame f;
     f.t = glm::normalize(w[z] - w[a]);
-    const glm::dvec3 up = sceneUp();
+    const glm::dvec3 up = upVector();
     f.n = glm::normalize(up - f.t * glm::dot(up, f.t));
     f.b = glm::cross(f.t, f.n);
     return f;
@@ -710,7 +516,7 @@ std::vector<size_t> meshStations(const RoadResult& r, size_t from, size_t to, do
 std::string sweepAlong(const Terrain& f, const RoadResult& r, const std::vector<size_t>& at, const std::vector<std::pair<double, double>>& profile,
                        double drop, const std::string& name, std::vector<std::string>& made_)
 {
-    const Placement& p = f.place;
+    const Terrain& p = f;
     std::vector<glm::dvec3> w;
     json pts = json::array(), tilt = json::array();
     for (size_t i : at)
@@ -729,7 +535,7 @@ std::string sweepAlong(const Terrain& f, const RoadResult& r, const std::vector<
     for (const auto& [d, up] : profile)
         prof.push_back(vec3(w[0] + bt * (d * p.across()) + nt * (up * p.vertical())));
     const std::string profileCurve = made(ops::execute("curve", {{"points", prof}, {"type", "poly"}, {"name", name + "_profile"}}));
-    const json ex = ops::execute("extrude", {{"args", {path, profileCurve}}, {"alignProfile", false}, {"frameMode", "fixedUp"}, {"upVector", vec3(sceneUp())}, {"name", name}});
+    const json ex = ops::execute("extrude", {{"args", {path, profileCurve}}, {"alignProfile", false}, {"frameMode", "fixedUp"}, {"upVector", vec3(upVector())}, {"name", name}});
     made_.push_back(path);
     made_.push_back(profileCurve);
     const std::string mesh = made(ex);
@@ -766,7 +572,7 @@ void arrayRun(const std::vector<glm::dvec3>& at, const std::string& piece, const
                                      {"count", int(at.size())},
                                      {"align", align},
                                      {"upMode", "autoNormals"},
-                                     {"upVector", vec3(sceneUp())},
+                                     {"upVector", vec3(upVector())},
                                      {"output", "merged"}});
     out.push_back(piece);
 }
@@ -777,7 +583,7 @@ json buildRoad(const Terrain& f, const RoadEntry& e, const std::string& cmd)
 
     const Road& rd = e.road;
     const RoadResult& r = e.result;
-    const Placement& p = f.place;
+    const Terrain& p = f;
     std::vector<std::string> nodes;
     const std::string base = layerName(rd.id);
     const double step = std::max(200.0, r.along.size() > 1 ? r.along[1] - r.along[0] : 200.0);
@@ -836,7 +642,7 @@ json buildRoad(const Terrain& f, const RoadEntry& e, const std::string& cmd)
             std::vector<glm::dvec3> pts;
             std::vector<std::vector<int>> faces;
             const glm::dvec3 at = p.world(q.at);
-            const glm::dvec3 fwd = p.direction(q.direction), up = sceneUp(), side = glm::normalize(glm::cross(fwd, up));
+            const glm::dvec3 fwd = p.direction(q.direction), up = upVector(), side = glm::normalize(glm::cross(fwd, up));
             const int segs = 12;
             for (int s = 0; s <= segs; ++s)
             {
@@ -889,7 +695,7 @@ json buildRoad(const Terrain& f, const RoadEntry& e, const std::string& cmd)
                 faces.push_back({0, int(i), int(i + 1)});
         }
         const glm::dvec3 n = glm::cross(pts[1] - pts[0], pts[2] - pts[0]);
-        if (glm::dot(n, sceneUp()) < 0.0)
+        if (glm::dot(n, upVector()) < 0.0)
             for (auto& face : faces)
                 std::reverse(face.begin(), face.end());
         const std::string m = makeMesh(pts, faces, base + "_junction");
@@ -912,7 +718,7 @@ json buildRoad(const Terrain& f, const RoadEntry& e, const std::string& cmd)
             c.push_back(vec3(q));
         const std::string curve = made(ops::execute("curve", {{"points", c}, {"type", "poly"}, {"name", base + "_guardrail" + std::to_string(k + 1) + "_path"}}));
         ops::execute("arrayAlongCurve", {{"args", {piece}}, {"curve", curve}, {"fill", "spacing"}, {"spacing", 400.0}, {"deform", true}, {"forwardAxis", "+x"},
-                                         {"upMode", "autoNormals"}, {"upVector", vec3(sceneUp())}, {"output", "merged"}});
+                                         {"upMode", "autoNormals"}, {"upVector", vec3(upVector())}, {"output", "merged"}});
         nodes.push_back(curve);
         nodes.push_back(piece);
         props.push_back(piece);
@@ -977,7 +783,7 @@ json buildRoad(const Terrain& f, const RoadEntry& e, const std::string& cmd)
 /** A road as a curve with attributes: per point the world position, Unreal position, distance, grade, bank and span. */
 json exportRoad(const Terrain& f, const RoadEntry& e, double step)
 {
-    const Placement& p = f.place;
+    const Terrain& p = f;
     const double a = p.across(), v = p.vertical();
     const RoadResult& r = e.result;
     json pts = json::array();
@@ -1010,7 +816,7 @@ json exportRoad(const Terrain& f, const RoadEntry& e, double step)
 /** setTerrainRoads' road entries: Bezier splines through stations every step cm, in Unreal space relative to origin. */
 json unrealRoads(const Terrain& f, const std::vector<RoadEntry>& roads, const glm::dvec3& origin, const Args& a)
 {
-    const Placement& p = f.place;
+    const Terrain& p = f;
     json out = json::array();
     for (const RoadEntry& e : roads)
     {
@@ -1102,7 +908,7 @@ bool registerRoads(ext::Context& ctx)
         .undoable = false,
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
-            const Terrain f = oneTerrain(a, "terrainRoads");
+            const Terrain f = firstTerrain(a, "terrainRoads");
             json layers = json::object();
             for (const RoadEntry& e : allRoads(g, f, "terrainRoads"))
             {
@@ -1122,15 +928,16 @@ bool registerRoads(ext::Context& ctx)
         .flags = {{"ids", "i", T::List, json::array(), "Road ids."}, {"layer", "ly", T::String, "Roads", "Roads layer."}, {"all", "a", T::Bool, false, "Every road in the layer."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
-            const Terrain f = oneTerrain(a, "terrainRoadRemove");
-            Layers t = groupOf(g, f, "terrainRoadRemove");
+            const Terrain f = firstTerrain(a, "terrainRoadRemove");
+            Layers t = readGroup(g, f, "terrainRoadRemove");
             const std::string layer = layerName(a.get<std::string>("layer", "Roads"));
-            gn::GNode* node = named(t.group, layer);
+            gn::GNode* node = nodeNamed(t.group, layer);
             if (!node || node->type != "TerrainRoads")
                 throw CommandError("terrainRoadRemove: no roads layer " + layer);
             const std::set<std::string> ids = idsFlag(a);
             json kept = json::array(), removed = json::array();
-            for (const json& r : listOf(*node))
+            const json roads = jsonProp(*node, "roads", json::array());
+            for (const json& r : roads)
             {
                 const std::string id = r.value("id", std::string());
                 if (a.get<bool>("all", false) || ids.count(id))
@@ -1139,8 +946,8 @@ bool registerRoads(ext::Context& ctx)
                     kept.push_back(r);
             }
             node->values["roads"] = kept.dump();
-            dropUnusedSources(t.group);
-            commit(t, "terrainRoadRemove");
+            dropUnusedSources(t.group, kRoadSourcePrefix, "TerrainRoads", {"roads"});
+            commitGroup(t, "terrainRoadRemove");
             return removed;
         },
         .examples = {"terrainRoadRemove('Terrain', ids=['passRoad'])"},
@@ -1157,7 +964,7 @@ bool registerRoads(ext::Context& ctx)
         .flags = {{"ids", "i", T::List, json::array(), "Road ids; empty builds every road."}, {"layer", "ly", T::String, "", "Only this roads layer."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
-            const Terrain f = oneTerrain(a, "terrainRoadBuild");
+            const Terrain f = firstTerrain(a, "terrainRoadBuild");
             const std::set<std::string> ids = idsFlag(a);
             const std::string layer = a.get<std::string>("layer", "");
             json out = json::array();
@@ -1189,7 +996,7 @@ bool registerRoads(ext::Context& ctx)
         .undoable = false,
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
-            const Terrain f = oneTerrain(a, "terrainRoadExport");
+            const Terrain f = firstTerrain(a, "terrainRoadExport");
             const std::vector<RoadEntry> roads = allRoads(g, f, "terrainRoadExport");
             if (roads.empty() && a.get<bool>("ifAny", false))
                 return {{"roads", 0}};
@@ -1199,8 +1006,8 @@ bool registerRoads(ext::Context& ctx)
             json list = json::array();
             for (const RoadEntry& e : roads)
                 if (!e.result.empty())
-                    list.push_back(exportRoad(f, e, std::max(1.0, a.get<double>("spacing", 500.0)) / f.place.across()));
-            const json doc = {{"terrain", pathOf(f, "")}, {"units", "cm"}, {"upAxis", sceneZUp() ? "z" : "y"}, {"revision", revision(*f.local)}, {"roads", list}};
+                    list.push_back(exportRoad(f, e, std::max(1.0, a.get<double>("spacing", 500.0)) / f.across()));
+            const json doc = {{"terrain", f.path("")}, {"units", "cm"}, {"upAxis", zUp() ? "z" : "y"}, {"revision", revision(*f.local)}, {"roads", list}};
             std::error_code ec;
             if (file.has_parent_path())
                 fs::create_directories(file.parent_path(), ec);
@@ -1235,7 +1042,7 @@ bool registerRoads(ext::Context& ctx)
         .undoable = false,
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
-            const Terrain f = oneTerrain(a, "terrainSendRoadsToUnreal");
+            const Terrain f = firstTerrain(a, "terrainSendRoadsToUnreal");
             const std::vector<RoadEntry> roads = allRoads(g, f, "terrainSendRoadsToUnreal");
             if (roads.empty())
             {
@@ -1258,8 +1065,8 @@ bool registerRoads(ext::Context& ctx)
             std::string landscape = a.get<std::string>("landscape", "");
             if (landscape.empty())
                 landscape = layerName(f.mesh ? f.mesh->name() : std::string("Terrain"));
-            const glm::dvec3 origin = f.place.world(f.local->origin.x + f.local->extent().x * 0.5, 0.0, f.local->origin.y + f.local->extent().y * 0.5);
-            const json params = {{"id", pathOf(f, "")}, {"landscape", landscape}, {"location", vec3(unrealOf(origin))}, {"roads", unrealRoads(f, roads, origin, a)}};
+            const glm::dvec3 origin = f.world(f.local->origin.x + f.local->extent().x * 0.5, 0.0, f.local->origin.y + f.local->extent().y * 0.5);
+            const json params = {{"id", f.path("")}, {"landscape", landscape}, {"location", vec3(unrealOf(origin))}, {"roads", unrealRoads(f, roads, origin, a)}};
             const int timeoutMs = int(std::clamp(a.get<double>("timeout", 120.0), 1.0, 3600.0) * 1000.0);
             link::RpcResult r = client->call("setTerrainRoads", params, timeoutMs);
             if (!r.ok)

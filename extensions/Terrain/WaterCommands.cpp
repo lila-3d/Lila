@@ -2,6 +2,7 @@
 // preview surface, and their export as splines and locators to files and to Unreal.
 
 #include "Stamps.h"
+#include "TerrainEdit.h"
 #include "Water.h"
 
 #include <lila/Command.h>
@@ -42,86 +43,21 @@ constexpr const char* kNodeType = "TerrainWaterFeatures";
 constexpr const char* kNodeName = "Water";
 constexpr const char* kSourcePrefix = "WaterSource";
 
-bool zUp() { return math::upAxis() == math::UpAxis::Z; }
-glm::dvec3 upVector() { return zUp() ? glm::dvec3(0.0, 0.0, 1.0) : glm::dvec3(0.0, 1.0, 0.0); }
-double upOf(const glm::dvec3& w) { return zUp() ? w.z : w.y; }
-glm::dvec3 fromGround(glm::dvec2 g) { return zUp() ? glm::dvec3(g.x, g.y, 0.0) : glm::dvec3(g.x, 0.0, g.y); }
+using namespace terrain::edit;
+using Terrain = TerrainTarget;
+using Edit = GroupEdit;
 
-/** A terrain as the water commands see it: mesh, modifier, heightfield in its own space and its world placement. */
-struct Terrain
+WorldMap worldMapOf(const Terrain& t)
 {
-    Node* mesh = nullptr;
-    Node* modifier = nullptr;
-    std::shared_ptr<const Heightfield> local;
-    glm::dmat4 m{1.0};
-    glm::dmat4 inv{1.0};
-
-    glm::dvec2 local2(const glm::dvec3& w) const
-    {
-        const glm::dvec4 q = inv * glm::dvec4(w, 1.0);
-        return {q.x, q.z};
-    }
-    double across() const { return 0.5 * (glm::length(glm::dvec3(m[0])) + glm::length(glm::dvec3(m[2]))); }
-    double vertical() const { return glm::length(glm::dvec3(m[1])); }
-    /** The local height at xz whose world point sits at up along the scene's up axis. */
-    double localHeight(double up, glm::dvec2 xz) const
-    {
-        const double k = glm::dot(glm::dvec3(m[1]), upVector());
-        const double base = upOf(glm::dvec3(m * glm::dvec4(xz.x, 0.0, xz.y, 1.0)));
-        return std::abs(k) > 1e-12 ? (up - base) / k : up;
-    }
-    WorldMap world() const
-    {
-        WorldMap w;
-        w.m = m;
-        w.up = upVector();
-        w.across = across();
-        w.vertical = vertical();
-        return w;
-    }
-    glm::dvec2 centre() const { return local->origin + local->extent() * 0.5; }
-};
-
-Terrain findTerrain(Graph& g, const std::string& name, const std::string& cmd)
-{
-    Node* n = g.find(name);
-    if (!n)
-        throw CommandError(cmd + ": no node named '" + name + "'");
-    g.evaluate();
-    Terrain t;
-    if (gn::isGnModifier(*n))
-    {
-        t.modifier = n;
-        t.local = gn::modifierHeightfield(n->id());
-        const scene::NodeId meshId = scene::modifiers::meshOf(g, n->id());
-        t.mesh = meshId != scene::kNoNode ? g.node(meshId) : nullptr;
-    }
-    else
-    {
-        t.mesh = n;
-        const std::vector<scene::NodeId> stack = scene::modifiers::stack(g, n->id());
-        for (auto it = stack.rbegin(); it != stack.rend() && !t.local; ++it)
-            if (Node* m = g.node(*it); m && gn::isGnModifier(*m))
-                if (auto h = gn::modifierHeightfield(m->id()))
-                {
-                    t.modifier = m;
-                    t.local = std::move(h);
-                }
-    }
-    if (!t.local || t.local->empty())
-        throw CommandError(cmd + ": " + n->path() + " makes no heightfield (make a terrain with terrainCreate)");
-    t.m = t.mesh ? t.mesh->as<glm::dmat4>(scene::Transform::kWorldMatrix) : glm::dmat4(1.0);
-    t.inv = glm::inverse(t.m);
-    return t;
+    WorldMap w;
+    w.m = t.m;
+    w.up = upVector();
+    w.across = t.across();
+    w.vertical = t.vertical();
+    return w;
 }
 
-Terrain oneTerrain(const Args& a, const std::string& cmd)
-{
-    const std::vector<std::string> names = a.objects();
-    if (names.size() != 1)
-        throw CommandError(cmd + ": give one terrain");
-    return findTerrain(Graph::current(), names[0], cmd);
-}
+std::string pathOf(const Terrain& t) { return t.path(t.modifier->path()); }
 
 /** terrainExport's default folder: the bake folder's export/. */
 fs::path exportDir()
@@ -134,142 +70,17 @@ fs::path exportDir()
     return fs::temp_directory_path() / "lila_terrain" / "export";
 }
 
-std::string pathOf(const Terrain& t) { return t.mesh ? t.mesh->path() : t.modifier->path(); }
-
-struct Edit
-{
-    Node* node = nullptr;
-    gn::Group group;
-};
-
-Edit readEdit(Graph& g, const Terrain& t, const std::string& cmd)
-{
-    Node* node = t.modifier ? gn::groupOfModifier(g, *t.modifier) : nullptr;
-    if (!node)
-        throw CommandError(cmd + ": the terrain has no node group");
-    try
-    {
-        return {node, gn::readGroup(*node)};
-    }
-    catch (const std::exception& e)
-    {
-        throw CommandError(cmd + ": " + e.what());
-    }
-}
-
-gn::GNode* named(gn::Group& grp, const std::string& name)
-{
-    for (gn::GNode& n : grp.nodes)
-        if (n.name == name)
-            return &n;
-    return nullptr;
-}
-
-gn::GLink* into(gn::Group& grp, const std::string& node, const std::string& socket)
-{
-    for (gn::GLink& l : grp.links)
-        if (l.toNode == node && l.toSocket == socket)
-            return &l;
-    return nullptr;
-}
-
 /** The group's water node, added on the heightfield chain before the trailing stamp layers when missing. */
 gn::GNode* waterNode(gn::Group& grp, bool create, const std::string& cmd)
 {
-    if (gn::GNode* n = named(grp, kNodeName))
-    {
-        if (n->type != kNodeType)
-            throw CommandError(cmd + ": the terrain's group has a " + n->type + " node named " + kNodeName + " already");
-        return n;
-    }
+    // Water sits right after the ground forms: stamps, roads (which bridge it), the volume and surface layers come after.
+    static const std::set<std::string> after = {"TerrainStamps", "TerrainRoads", "TerrainVolume", "TerrainBiomes", "TerrainLayers"};
+    if (nodeNamed(grp, kNodeName))
+        return &chainNode(grp, kNodeName, kNodeType, after, -160.0, cmd);
     for (gn::GNode& n : grp.nodes)
         if (n.type == kNodeType)
             return &n;
-    if (!create)
-        return nullptr;
-    std::string to = "GroupOutput", socket = "geometry";
-    for (gn::GLink* l = into(grp, to, socket); l; l = into(grp, to, socket))
-    {
-        const gn::GNode* from = named(grp, l->fromNode);
-        // Water sits right after the ground forms: stamps, roads (which bridge it), the volume and surface layers come after.
-        static const std::set<std::string> after = {"TerrainStamps", "TerrainRoads", "TerrainVolume", "TerrainBiomes", "TerrainLayers"};
-        if (!from || !after.count(from->type))
-            break;
-        to = from->name;
-        socket = "heightfield";
-    }
-    gn::GLink* l = into(grp, to, socket);
-    if (!l)
-        throw CommandError(cmd + ": the terrain's group has no heightfield running into " + to);
-    const gn::GNode* toNode = named(grp, to);
-    const gn::GNode* fromNode = named(grp, l->fromNode);
-    const glm::dvec2 at = toNode && fromNode ? (toNode->position + fromNode->position) * 0.5 + glm::dvec2(0.0, -160.0) : glm::dvec2(0.0);
-    const std::string fromName = l->fromNode, fromSocket = l->fromSocket;
-    l->fromNode = kNodeName;
-    l->fromSocket = "heightfield";
-    grp.links.push_back({fromName, fromSocket, kNodeName, "heightfield"});
-    gn::GNode n;
-    n.name = kNodeName;
-    n.type = kNodeType;
-    n.position = at;
-    grp.nodes.push_back(std::move(n));
-    return &grp.nodes.back();
-}
-
-json listProp(const gn::GNode& n, const char* prop, json fallback)
-{
-    auto it = n.values.find(prop);
-    if (it == n.values.end() || !it->is_string() || it->get<std::string>().empty())
-        return fallback;
-    json j = json::parse(it->get<std::string>(), nullptr, false);
-    return j.is_discarded() ? fallback : j;
-}
-
-/** The Object Info node following object, made when the group has none. */
-std::string sourceNode(gn::Group& grp, const std::string& object)
-{
-    for (const gn::GNode& n : grp.nodes)
-        if (n.type == "ObjectInfo" && n.name.starts_with(kSourcePrefix) && n.values.value("object", std::string()) == object)
-            return n.name;
-    gn::GNode n;
-    n.name = grp.uniqueNodeName(kSourcePrefix);
-    n.type = "ObjectInfo";
-    n.position = {-600.0, -400.0 - 120.0 * double(grp.nodes.size())};
-    n.values["object"] = object;
-    grp.nodes.push_back(n);
-    return n.name;
-}
-
-void dropUnusedSources(gn::Group& grp)
-{
-    std::set<std::string> used;
-    for (const gn::GNode& n : grp.nodes)
-        if (n.type == kNodeType)
-            for (const char* prop : {"rivers", "lakes"})
-                for (const json& s : listProp(n, prop, json::array()))
-                    if (s.contains("object"))
-                        used.insert(s["object"].get<std::string>());
-    std::erase_if(grp.nodes, [&](const gn::GNode& n) { return n.type == "ObjectInfo" && n.name.starts_with(kSourcePrefix) && !used.count(n.name); });
-}
-
-void commit(Edit& e, const std::string& cmd)
-{
-    try
-    {
-        gn::commitGroup(Graph::current(), *e.node, std::move(e.group));
-    }
-    catch (const std::exception& ex)
-    {
-        throw CommandError(cmd + ": " + ex.what());
-    }
-}
-
-/** A world point from [x, z] on the ground (x, y on a Z-up scene) or [x, y, z]. */
-glm::dvec3 worldPoint(const json& p, const std::string& cmd)
-{
-    if (!p.is_array() || (p.size() != 2 && p.size() != 3))
-        throw CommandError(cmd + std::string(": points are [x, ") + (zUp() ? "y" : "z") + "] or [x, y, z]");
-    return p.size() == 2 ? fromGround({p[0].get<double>(), p[1].get<double>()}) : glm::dvec3(p[0].get<double>(), p[1].get<double>(), p[2].get<double>());
+    return create ? &chainNode(grp, kNodeName, kNodeType, after, -160.0, cmd) : nullptr;
 }
 
 std::vector<glm::dvec2> localLine(const Terrain& t, const json& list, const std::string& cmd)
@@ -308,18 +119,18 @@ Current currentWater(Graph& g, const Terrain& t)
     gn::GNode* n = waterNode(grp, false, "");
     if (!n)
         return c;
-    for (const json& j : listProp(*n, "rivers", json::array()))
+    for (const json& j : jsonProp(*n, "rivers", json::array()))
         c.spec.rivers.push_back(RiverSpec::fromJson(j));
-    for (const json& j : listProp(*n, "lakes", json::array()))
+    for (const json& j : jsonProp(*n, "lakes", json::array()))
         c.spec.lakes.push_back(LakeSpec::fromJson(j));
-    c.spec.settings = WaterSettings::fromJson(listProp(*n, "settings", json::object()));
+    c.spec.settings = WaterSettings::fromJson(jsonProp(*n, "settings", json::object()));
     c.has = publishedWater(t.modifier->id(), n->name, &c.result);
     return c;
 }
 
 json worldWater(const Terrain& t, const Current& c)
 {
-    return waterJson(c.result, t.world(), c.spec.settings.seaLevel);
+    return waterJson(c.result, worldMapOf(t), c.spec.settings.seaLevel);
 }
 
 /** Counts and volumes an agent reads after every water call. */
@@ -390,8 +201,8 @@ std::string refreshPreview(Graph& g, const Terrain& t, const WaterResult& r)
 /** Commits the edited water, re-reads it and builds the answer: the named feature's data, the stats and the revision. */
 json finish(Edit& e, const Terrain& t, const std::string& cmd, const std::string& id, bool preview)
 {
-    dropUnusedSources(e.group);
-    commit(e, cmd);
+    dropUnusedSources(e.group, kSourcePrefix, kNodeType, {"rivers", "lakes"});
+    commitGroup(e, cmd);
     Graph& g = Graph::current();
     const Terrain after = findTerrain(g, pathOf(t), cmd);
     const Current c = currentWater(g, after);
@@ -523,9 +334,9 @@ json addRiver(const Args& a)
     Graph& g = Graph::current();
     const Terrain t = oneTerrain(a, cmd);
     const double ac = t.across(), v = t.vertical();
-    Edit e = readEdit(g, t, cmd);
+    Edit e = readGroup(g, t, cmd);
     gn::GNode* node = waterNode(e.group, true, cmd);
-    json list = listProp(*node, "rivers", json::array());
+    json list = jsonProp(*node, "rivers", json::array());
 
     RiverSpec s;
     s.id = a.get<std::string>("id", "");
@@ -546,7 +357,7 @@ json addRiver(const Args& a)
         if (!src || !src->type().isA("curve"))
             throw CommandError(cmd + ": object must name a curve");
         s.source = "object";
-        s.object = sourceNode(e.group, src->path());
+        s.object = sourceNode(e.group, kSourcePrefix, src->path());
         node = waterNode(e.group, false, cmd);
     }
     else
@@ -588,9 +399,9 @@ json addLake(const Args& a)
     Graph& g = Graph::current();
     const Terrain t = oneTerrain(a, cmd);
     const double ac = t.across(), v = t.vertical();
-    Edit e = readEdit(g, t, cmd);
+    Edit e = readGroup(g, t, cmd);
     gn::GNode* node = waterNode(e.group, true, cmd);
-    json list = listProp(*node, "lakes", json::array());
+    json list = jsonProp(*node, "lakes", json::array());
 
     LakeSpec s;
     s.id = a.get<std::string>("id", "");
@@ -621,7 +432,7 @@ json addLake(const Args& a)
         if (!src || !src->type().isA("curve"))
             throw CommandError(cmd + ": object must name a closed curve");
         s.source = "object";
-        s.object = sourceNode(e.group, src->path());
+        s.object = sourceNode(e.group, kSourcePrefix, src->path());
         node = waterNode(e.group, false, cmd);
         centre = t.local2(glm::dvec3(src->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]));
     }
@@ -648,9 +459,9 @@ json seaLevel(const Args& a)
     const std::string cmd = "terrainSeaLevel";
     Graph& g = Graph::current();
     const Terrain t = oneTerrain(a, cmd);
-    Edit e = readEdit(g, t, cmd);
+    Edit e = readGroup(g, t, cmd);
     gn::GNode* node = waterNode(e.group, true, cmd);
-    WaterSettings s = WaterSettings::fromJson(listProp(*node, "settings", json::object()));
+    WaterSettings s = WaterSettings::fromJson(jsonProp(*node, "settings", json::object()));
     if (a.get<bool>("off", false))
         s.seaLevel = std::numeric_limits<double>::quiet_NaN();
     else if (a.has("level"))
@@ -674,7 +485,7 @@ json waterRemove(const Args& a)
     const std::string cmd = "terrainWaterRemove";
     Graph& g = Graph::current();
     const Terrain t = oneTerrain(a, cmd);
-    Edit e = readEdit(g, t, cmd);
+    Edit e = readGroup(g, t, cmd);
     gn::GNode* node = waterNode(e.group, false, cmd);
     if (!node)
         throw CommandError(cmd + ": the terrain has no water");
@@ -683,7 +494,7 @@ json waterRemove(const Args& a)
     {
         // The node leaves the chain: what fed it feeds what it fed.
         const std::string name = node->name;
-        if (const gn::GLink* in = into(e.group, name, "heightfield"))
+        if (const gn::GLink* in = linkInto(e.group, name, "heightfield"))
         {
             const std::string fromNode = in->fromNode, fromSocket = in->fromSocket;
             for (gn::GLink& l : e.group.links)
@@ -707,7 +518,7 @@ json waterRemove(const Args& a)
         for (const char* prop : {"rivers", "lakes"})
         {
             json keep = json::array();
-            for (const json& s : listProp(*node, prop, json::array()))
+            for (const json& s : jsonProp(*node, prop, json::array()))
             {
                 const std::string id = s.value("id", std::string());
                 if (ids.count(id))

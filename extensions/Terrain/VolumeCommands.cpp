@@ -2,6 +2,7 @@
 // list its split, check its seams, and send its pieces to files and Unreal.
 
 #include "Stamps.h"
+#include "TerrainEdit.h"
 #include "Volume.h"
 
 #include <lila/Command.h>
@@ -24,6 +25,7 @@
 #include <cmath>
 #include <format>
 #include <fstream>
+#include <set>
 
 using namespace lila;
 
@@ -41,195 +43,9 @@ namespace fs = std::filesystem;
 constexpr const char* kNodeName = "Volume";
 constexpr const char* kVolumeSourcePrefix = "VolumeSource";
 
-bool volumeZUp() { return math::upAxis() == math::UpAxis::Z; }
-glm::dvec3 volumeFromGround(glm::dvec2 g, double up = 0.0) { return volumeZUp() ? glm::dvec3(g.x, g.y, up) : glm::dvec3(g.x, up, g.y); }
-
-/** A terrain as these commands see it: its mesh, the modifier making it, its heightfield, and world from its own space. */
-struct VolumeTarget
-{
-    Node* mesh = nullptr;
-    Node* modifier = nullptr;
-    std::shared_ptr<const Heightfield> local;
-    glm::dmat4 world{1.0};
-    glm::dmat4 inv{1.0};
-
-    double across() const { return 0.5 * (glm::length(glm::dvec3(world[0])) + glm::length(glm::dvec3(world[2]))); }
-    glm::dvec3 toLocal(const glm::dvec3& w) const { return glm::dvec3(inv * glm::dvec4(w, 1.0)); }
-    glm::dvec3 toWorld(const glm::dvec3& l) const { return glm::dvec3(world * glm::dvec4(l, 1.0)); }
-};
-
-VolumeTarget findVolumeTarget(Graph& g, const std::string& name, const std::string& cmd)
-{
-    Node* n = g.find(name);
-    if (!n)
-        throw CommandError(cmd + ": no node named '" + name + "'");
-    g.evaluate();
-    VolumeTarget t;
-    if (gn::isGnModifier(*n))
-    {
-        t.modifier = n;
-        t.local = gn::modifierHeightfield(n->id());
-        const scene::NodeId meshId = scene::modifiers::meshOf(g, n->id());
-        t.mesh = meshId != scene::kNoNode ? g.node(meshId) : nullptr;
-    }
-    else
-    {
-        t.mesh = n;
-        const std::vector<scene::NodeId> stack = scene::modifiers::stack(g, n->id());
-        for (auto it = stack.rbegin(); it != stack.rend() && !t.local; ++it)
-            if (Node* m = g.node(*it); m && gn::isGnModifier(*m))
-                if (auto h = gn::modifierHeightfield(m->id()))
-                {
-                    t.modifier = m;
-                    t.local = std::move(h);
-                }
-    }
-    if (!t.local || t.local->empty())
-        throw CommandError(cmd + ": " + n->path() + " makes no heightfield (make a terrain with terrainCreate)");
-    t.world = t.mesh ? t.mesh->as<glm::dmat4>(scene::Transform::kWorldMatrix) : glm::dmat4(1.0);
-    t.inv = glm::inverse(t.world);
-    return t;
-}
-
-VolumeTarget oneVolumeTarget(const Args& a, const std::string& cmd)
-{
-    const std::vector<std::string> names = a.objects();
-    if (names.size() != 1)
-        throw CommandError(cmd + ": give one terrain");
-    return findVolumeTarget(Graph::current(), names[0], cmd);
-}
-
-std::string volumePathOf(const VolumeTarget& t, const Args& a) { return t.mesh ? t.mesh->path() : a.objects()[0]; }
-
-json volumeVec(const glm::dvec3& p) { return json::array({p.x, p.y, p.z}); }
-
-// ---------------------------------------------------------------------------------------------------- the group
-
-struct VolumeGroup
-{
-    Node* node = nullptr;
-    gn::Group group;
-};
-
-VolumeGroup volumeGroup(Graph& g, const VolumeTarget& t, const std::string& cmd)
-{
-    Node* node = t.modifier ? gn::groupOfModifier(g, *t.modifier) : nullptr;
-    if (!node)
-        throw CommandError(cmd + ": " + (t.modifier ? t.modifier->path() : std::string("the terrain")) + " has no group");
-    try
-    {
-        return {node, gn::readGroup(*node)};
-    }
-    catch (const std::exception& e)
-    {
-        throw CommandError(cmd + ": " + e.what());
-    }
-}
-
-void commitVolumeGroup(VolumeGroup& v, const std::string& cmd)
-{
-    try
-    {
-        gn::commitGroup(Graph::current(), *v.node, std::move(v.group));
-    }
-    catch (const std::exception& e)
-    {
-        throw CommandError(cmd + ": " + e.what());
-    }
-}
-
-gn::GNode* volumeNodeNamed(gn::Group& grp, const std::string& name)
-{
-    for (gn::GNode& n : grp.nodes)
-        if (n.name == name)
-            return &n;
-    return nullptr;
-}
-
-/** The Terrain Volume node, added last on the heightfield chain into the group output when missing. */
-gn::GNode& ensureVolumeNode(gn::Group& grp, const std::string& cmd)
-{
-    if (gn::GNode* n = volumeNodeNamed(grp, kNodeName))
-    {
-        if (n->type != "TerrainVolume")
-            throw CommandError(cmd + ": the terrain's group has a " + n->type + " node named " + kNodeName + " already");
-        return *n;
-    }
-    auto linkInto = [&](const std::string& node, const std::string& socket) -> gn::GLink* {
-        for (gn::GLink& l : grp.links)
-            if (l.toNode == node && l.toSocket == socket)
-                return &l;
-        return nullptr;
-    };
-    // Biomes and material layers read the split heights, so the volume goes before them.
-    std::string toName = "GroupOutput", toSocket = "geometry";
-    gn::GLink* in = linkInto(toName, toSocket);
-    for (const gn::GNode* f = in ? volumeNodeNamed(grp, in->fromNode) : nullptr; f && (f->type == "TerrainBiomes" || f->type == "TerrainLayers");
-         f = in ? volumeNodeNamed(grp, in->fromNode) : nullptr)
-    {
-        toName = f->name;
-        toSocket = "heightfield";
-        in = linkInto(toName, toSocket);
-    }
-    if (!in)
-        throw CommandError(cmd + ": the terrain's group has no heightfield running into its output");
-    const gn::GNode* from = volumeNodeNamed(grp, in->fromNode);
-    const gn::GNode* to = volumeNodeNamed(grp, toName);
-    const glm::dvec2 at = from && to ? (from->position + to->position) * 0.5 + glm::dvec2(0.0, 160.0) : glm::dvec2(0.0);
-    const std::string fromNode = in->fromNode, fromSocket = in->fromSocket;
-    in->fromNode = kNodeName;
-    in->fromSocket = "heightfield";
-    grp.links.push_back({fromNode, fromSocket, kNodeName, "heightfield"});
-    gn::GNode n;
-    n.name = kNodeName;
-    n.type = "TerrainVolume";
-    n.position = at;
-    grp.nodes.push_back(std::move(n));
-    return grp.nodes.back();
-}
-
-json opsOf(const gn::GNode& n)
-{
-    auto it = n.values.find("ops");
-    if (it == n.values.end() || !it->is_string() || it->get<std::string>().empty())
-        return json::array();
-    json j = json::parse(it->get<std::string>(), nullptr, false);
-    return j.is_array() ? j : json::array();
-}
-
-json settingsOf(const gn::GNode& n)
-{
-    auto it = n.values.find("settings");
-    if (it == n.values.end() || !it->is_string() || it->get<std::string>().empty())
-        return json::object();
-    json j = json::parse(it->get<std::string>(), nullptr, false);
-    return j.is_object() ? j : json::object();
-}
-
-std::string volumeSource(gn::Group& grp, const std::string& object)
-{
-    for (const gn::GNode& n : grp.nodes)
-        if (n.type == "ObjectInfo" && n.name.starts_with(kVolumeSourcePrefix) && n.values.value("object", std::string()) == object)
-            return n.name;
-    gn::GNode n;
-    n.name = grp.uniqueNodeName(kVolumeSourcePrefix);
-    n.type = "ObjectInfo";
-    n.position = {-600.0, -400.0 - 120.0 * double(grp.nodes.size())};
-    n.values["object"] = object;
-    grp.nodes.push_back(n);
-    return n.name;
-}
-
-void dropUnusedVolumeSources(gn::Group& grp)
-{
-    std::set<std::string> used;
-    for (const gn::GNode& n : grp.nodes)
-        if (n.type == "TerrainVolume")
-            for (const json& o : opsOf(n))
-                if (o.contains("object"))
-                    used.insert(o["object"].get<std::string>());
-    std::erase_if(grp.nodes, [&](const gn::GNode& n) { return n.type == "ObjectInfo" && n.name.starts_with(kVolumeSourcePrefix) && !used.count(n.name); });
-}
+using VolumeTarget = edit::TerrainTarget;
+// Biomes and material layers read the split heights, so the volume goes before them.
+const std::set<std::string> kVolumeAfter = {"TerrainBiomes", "TerrainLayers"};
 
 // ---------------------------------------------------------------------------------------------------- results as json
 
@@ -241,11 +57,11 @@ json boundsJson(const VolumeTarget& t, const geo::Bounds& b)
     for (int c = 0; c < 8; ++c)
     {
         const glm::dvec3 p((c & 1) ? b.max.x : b.min.x, (c & 2) ? b.max.y : b.min.y, (c & 4) ? b.max.z : b.min.z);
-        const glm::dvec3 w = t.toWorld(p);
+        const glm::dvec3 w = t.world(p);
         lo = glm::min(lo, w);
         hi = glm::max(hi, w);
     }
-    return {{"min", volumeVec(lo)}, {"max", volumeVec(hi)}};
+    return {{"min", edit::vec3(lo)}, {"max", edit::vec3(hi)}};
 }
 
 json volumeJson(const VolumeTarget& t, const VolumeResult& r)
@@ -264,7 +80,7 @@ json volumeJson(const VolumeTarget& t, const VolumeResult& r)
                           {"points", int64_t(p.lods[0]->numPoints())},
                           {"lodFaces", lods},
                           {"bounds", boundsJson(t, p.bounds)},
-                          {"center", volumeVec(t.toWorld(p.bounds.center()))},
+                          {"center", edit::vec3(t.world(p.bounds.center()))},
                           {"holeCells", int64_t(p.holeCells)},
                           {"buriedCells", int64_t(p.buriedCells)},
                           {"materials", p.materials}});
@@ -342,13 +158,13 @@ std::vector<glm::dvec3> localPath(const Args& a, const VolumeTarget& t, const st
         {
             const json& p = list[k];
             if (!p.is_array() || (p.size() != 2 && p.size() != 3))
-                throw CommandError(cmd + ": points are [x, y, z] or ground [x, " + (volumeZUp() ? "y" : "z") + "]");
+                throw CommandError(cmd + ": points are [x, y, z] or ground [x, " + (edit::zUp() ? "y" : "z") + "]");
             if (p.size() == 3)
             {
                 out.push_back(t.toLocal({p[0].get<double>(), p[1].get<double>(), p[2].get<double>()}));
                 continue;
             }
-            glm::dvec3 l = t.toLocal(volumeFromGround({p[0].get<double>(), p[1].get<double>()}));
+            glm::dvec3 l = t.toLocal(edit::fromGround({p[0].get<double>(), p[1].get<double>()}));
             const bool end = k == 0 || k + 1 == list.size();
             l.y = t.local->heightAt(l.x, l.z) - (end && endBelow >= 0.0 ? endBelow : below) / t.across();
             out.push_back(l);
@@ -372,10 +188,10 @@ json writeOp(const Args& a, VolumeOp op, const std::string& cmd)
     LILA_ZONE();
 
     Graph& g = Graph::current();
-    const VolumeTarget t = oneVolumeTarget(a, cmd);
-    VolumeGroup v = volumeGroup(g, t, cmd);
-    gn::GNode& node = ensureVolumeNode(v.group, cmd);
-    json list = opsOf(node);
+    const VolumeTarget t = edit::oneTerrain(a, cmd);
+    edit::GroupEdit v = edit::readGroup(g, t, cmd);
+    gn::GNode& node = edit::chainNode(v.group, kNodeName, "TerrainVolume", kVolumeAfter, 160.0, cmd);
+    json list = edit::jsonProp(node, "ops", json::array());
     std::string id = a.get<std::string>("id", "");
     if (id.empty())
         for (int k = 1; id.empty(); ++k)
@@ -392,7 +208,7 @@ json writeOp(const Args& a, VolumeOp op, const std::string& cmd)
             throw CommandError(cmd + ": object must name a mesh");
         if (t.mesh && src->id() == t.mesh->id())
             throw CommandError(cmd + ": a terrain can't stamp itself");
-        op.object = volumeSource(v.group, src->path());
+        op.object = edit::sourceNode(v.group, kVolumeSourcePrefix, src->path());
     }
     bool replaced = false;
     for (json& e : list)
@@ -404,10 +220,10 @@ json writeOp(const Args& a, VolumeOp op, const std::string& cmd)
     if (!replaced)
         list.push_back(op.toJson());
     node.values["ops"] = list.dump();
-    dropUnusedVolumeSources(v.group);
-    commitVolumeGroup(v, cmd);
+    edit::dropUnusedSources(v.group, kVolumeSourcePrefix, "TerrainVolume", {"ops"});
+    edit::commitGroup(v, cmd);
 
-    const VolumeTarget after = findVolumeTarget(g, volumePathOf(t, a), cmd);
+    const VolumeTarget after = edit::findTerrain(g, t.path(a.objects()[0]), cmd);
     json out = {{"id", id}, {"kind", op.kind}, {"replaced", replaced}};
     if (auto r = lastResult(after))
     {
@@ -457,12 +273,12 @@ std::vector<FlagDef> pathFlags(const char* what)
 json removeOps(const Args& a, const std::string& cmd)
 {
     Graph& g = Graph::current();
-    const VolumeTarget t = oneVolumeTarget(a, cmd);
-    VolumeGroup v = volumeGroup(g, t, cmd);
-    gn::GNode* node = volumeNodeNamed(v.group, kNodeName);
+    const VolumeTarget t = edit::oneTerrain(a, cmd);
+    edit::GroupEdit v = edit::readGroup(g, t, cmd);
+    gn::GNode* node = edit::nodeNamed(v.group, kNodeName);
     if (!node)
         return {{"removed", json::array()}, {"revision", revision(*t.local)}};
-    json list = opsOf(*node);
+    json list = edit::jsonProp(*node, "ops", json::array());
     std::set<std::string> ids;
     for (const json& id : a.flags.value("ids", json::array()))
         ids.insert(id.get<std::string>());
@@ -476,9 +292,9 @@ json removeOps(const Args& a, const std::string& cmd)
             kept.push_back(e);
     }
     node->values["ops"] = kept.dump();
-    dropUnusedVolumeSources(v.group);
-    commitVolumeGroup(v, cmd);
-    const VolumeTarget after = findVolumeTarget(g, volumePathOf(t, a), cmd);
+    edit::dropUnusedSources(v.group, kVolumeSourcePrefix, "TerrainVolume", {"ops"});
+    edit::commitGroup(v, cmd);
+    const VolumeTarget after = edit::findTerrain(g, t.path(a.objects()[0]), cmd);
     json out = {{"removed", removed}, {"revision", revision(*after.local)}};
     if (auto r = lastResult(after))
         out["volume"] = volumeJson(after, *r);
@@ -641,7 +457,7 @@ void registerVolumeCommands(ext::Context& ctx)
             }(),
             "cave", 0.25),
         .run = [](const Args& a) -> json {
-            const VolumeTarget t = oneVolumeTarget(a, "terrainCave");
+            const VolumeTarget t = edit::oneTerrain(a, "terrainCave");
             VolumeOp op = baseOp(a, t, "cave", "cave", true);
             const double r = std::max(1.0, a.get<double>("radius", 300.0));
             op.radius = r / t.across();
@@ -678,7 +494,7 @@ void registerVolumeCommands(ext::Context& ctx)
             }(),
             "tunnel", 0.0),
         .run = [](const Args& a) -> json {
-            const VolumeTarget t = oneVolumeTarget(a, "terrainTunnel");
+            const VolumeTarget t = edit::oneTerrain(a, "terrainTunnel");
             VolumeOp op = baseOp(a, t, "tunnel", "tunnel", true);
             const double r = std::max(1.0, a.get<double>("radius", 400.0));
             op.radius = r / t.across();
@@ -744,7 +560,7 @@ void registerVolumeCommands(ext::Context& ctx)
             }(),
             "cliff", 0.3),
         .run = [](const Args& a) -> json {
-            const VolumeTarget t = oneVolumeTarget(a, "terrainOverhang");
+            const VolumeTarget t = edit::oneTerrain(a, "terrainOverhang");
             VolumeOp op = baseOp(a, t, "overhang", "cliff", true);
             op.path = localPath(a, t, "terrainOverhang", 0.0, -1.0);
             if (op.path.size() < 2)
@@ -775,7 +591,7 @@ void registerVolumeCommands(ext::Context& ctx)
              {"carve", "cr", VT::Bool, true, "Open the rock under the arch."}},
             "rock", 0.15),
         .run = [](const Args& a) -> json {
-            const VolumeTarget t = oneVolumeTarget(a, "terrainArch");
+            const VolumeTarget t = edit::oneTerrain(a, "terrainArch");
             if (!a.has("from") || !a.has("to"))
                 throw CommandError("terrainArch: give from= and to=");
             VolumeOp op = baseOp(a, t, "arch", "rock", false);
@@ -808,7 +624,7 @@ void registerVolumeCommands(ext::Context& ctx)
                               {"path", "p", VT::List, nullptr, "Capsule line: [[x, y, z], ...] or ground [[x, z], ...]."}},
                              "rock", 0.0),
         .run = [](const Args& a) -> json {
-            const VolumeTarget t = oneVolumeTarget(a, "terrainVolumeStamp");
+            const VolumeTarget t = edit::oneTerrain(a, "terrainVolumeStamp");
             std::string shape = a.get<std::string>("shape", "mesh");
             if (shape == "mesh" && !a.has("object"))
                 throw CommandError("terrainVolumeStamp: give object= or shape=");
@@ -855,13 +671,13 @@ void registerVolumeCommands(ext::Context& ctx)
         .undoable = false,
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
-            const VolumeTarget t = oneVolumeTarget(a, "terrainVolume");
-            VolumeGroup v = volumeGroup(g, t, "terrainVolume");
+            const VolumeTarget t = edit::oneTerrain(a, "terrainVolume");
+            edit::GroupEdit v = edit::readGroup(g, t, "terrainVolume");
             json out = {{"ops", json::array()}, {"settings", VolumeSettings().toJson()}};
-            if (gn::GNode* n = volumeNodeNamed(v.group, kNodeName))
+            if (gn::GNode* n = edit::nodeNamed(v.group, kNodeName))
             {
-                out["ops"] = opsOf(*n);
-                out["settings"] = VolumeSettings::fromJson(settingsOf(*n)).toJson();
+                out["ops"] = edit::jsonProp(*n, "ops", json::array());
+                out["settings"] = VolumeSettings::fromJson(edit::jsonProp(*n, "settings", json::object())).toJson();
             }
             if (auto r = lastResult(t))
                 out["volume"] = volumeJson(t, *r);
@@ -897,10 +713,10 @@ void registerVolumeCommands(ext::Context& ctx)
                   {"maxVoxels", "mv", VT::Float, nullptr, "Most voxels; past it the voxel grows, with a warning.", {}, {}, 1e5}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
-            const VolumeTarget t = oneVolumeTarget(a, "terrainSplit");
-            VolumeGroup v = volumeGroup(g, t, "terrainSplit");
-            gn::GNode& node = ensureVolumeNode(v.group, "terrainSplit");
-            json s = settingsOf(node);
+            const VolumeTarget t = edit::oneTerrain(a, "terrainSplit");
+            edit::GroupEdit v = edit::readGroup(g, t, "terrainSplit");
+            gn::GNode& node = edit::chainNode(v.group, kNodeName, "TerrainVolume", kVolumeAfter, 160.0, "terrainSplit");
+            json s = edit::jsonProp(node, "settings", json::object());
             const double k = t.across();
             for (const char* key : {"split", "margin", "lods"})
                 if (a.has(key))
@@ -911,8 +727,8 @@ void registerVolumeCommands(ext::Context& ctx)
             if (a.has("maxVoxels"))
                 s["maxVoxels"] = a.get<double>("maxVoxels", 16e6);
             node.values["settings"] = VolumeSettings::fromJson(s).toJson().dump();
-            commitVolumeGroup(v, "terrainSplit");
-            const VolumeTarget after = findVolumeTarget(g, volumePathOf(t, a), "terrainSplit");
+            edit::commitGroup(v, "terrainSplit");
+            const VolumeTarget after = edit::findTerrain(g, t.path(a.objects()[0]), "terrainSplit");
             json out = {{"settings", VolumeSettings::fromJson(s).toJson()}, {"revision", revision(*after.local)}};
             if (auto r = lastResult(after))
                 out["volume"] = volumeJson(after, *r);
@@ -934,7 +750,7 @@ json volumeIssues(uint64_t modifier, const glm::dmat4& world, double tolerance)
     if (!h)
         return issues;
     const double across = 0.5 * (glm::length(glm::dvec3(world[0])) + glm::length(glm::dvec3(world[2])));
-    auto at = [&](const glm::dvec3& l) { return volumeVec(glm::dvec3(world * glm::dvec4(l, 1.0))); };
+    auto at = [&](const glm::dvec3& l) { return edit::vec3(glm::dvec3(world * glm::dvec4(l, 1.0))); };
     for (const auto& [node, r] : volumeResults(modifier))
     {
         if (!r)
@@ -1047,7 +863,7 @@ json exportVolume(uint64_t modifier, const glm::dmat4& world, const fs::path& fo
                 lods.push_back(int64_t(m->numFaces()));
             pieces.push_back({{"name", p.name},
                               {"file", file.generic_string()},
-                              {"center", volumeVec(centre)},
+                              {"center", edit::vec3(centre)},
                               {"lodFaces", lods},
                               {"holeCells", int64_t(p.holeCells)},
                               {"materials", p.materials}});

@@ -1,7 +1,7 @@
 # Terrain, built as <bin>/<config>/extensions/Terrain.lilaext next to lila.exe, which loads it by default.
 lila_add_extension(lila_terrain_extension ID Terrain MANIFEST extension.json UI RESOURCES resources
     SOURCES Terrain.cpp Core.cpp Nodes.cpp Commands.cpp Export.cpp Erosion.cpp ErosionGpu.cpp Inputs.cpp Stamps.cpp Analysis.cpp SculptTool.cpp Ui.cpp ExportEngines.cpp ExportEnginesCommands.cpp
-            Water.cpp WaterCommands.cpp Roads.cpp RoadCommands.cpp Volume.cpp VolumeCommands.cpp
+            Water.cpp WaterCommands.cpp Roads.cpp RoadCommands.cpp Volume.cpp VolumeCommands.cpp TerrainEdit.cpp
             Landform.cpp LandformGpu.cpp LandformNodes.cpp LandformCommands.cpp ErosionFilter.cpp Shaping.cpp Brushes.cpp
             Projection.cpp Painted.cpp Osm.cpp Fetch.cpp DemRefine.cpp Http.cpp InputCommands.cpp
             Materials.cpp GroundCover.cpp MaterialNodes.cpp MaterialCommands.cpp SurfaceUi.cpp Query.cpp Spec.cpp Wedge.cpp Checks.cpp
