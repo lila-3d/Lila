@@ -1,17 +1,30 @@
 #include "LilaLinkMeshTerrain.h"
 
+#include "LilaLinkMaterialFunction.h"
 #include "LilaLinkMethodRegistry.h"
 
 #include "Dom/JsonObject.h"
 #include "DynamicMesh/DynamicMesh3.h"
 #include "DynamicMesh/DynamicMeshAttributeSet.h"
 #include "Editor.h"
+#include "Engine/Texture.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "MaterialEditingLibrary.h"
+#include "Materials/Material.h"
+#include "Materials/MaterialExpressionConstant.h"
+#include "Materials/MaterialExpressionConstant3Vector.h"
+#include "Materials/MaterialExpressionFunctionInput.h"
+#include "Materials/MaterialExpressionMaterialFunctionCall.h"
+#include "Materials/MaterialExpressionScalarParameter.h"
+#include "Materials/MaterialExpressionTextureObjectParameter.h"
+#include "Materials/MaterialExpressionVectorParameter.h"
+#include "Materials/MaterialFunction.h"
 #include "Materials/MaterialInterface.h"
 #include "MeshPartition.h"
 #include "MeshPartitionChannel.h"
 #include "MeshPartitionDefinition.h"
+#include "MeshPartitionMaterialExpressionUtils.h"
 #include "Misc/FileHelper.h"
 #include "MeshPartitionEditorComponent.h"
 #include "MeshPartitionEditorSubsystem.h"
@@ -232,6 +245,196 @@ void WriteChannels(AActor* Section, const TArray<FLilaChannel>& Channels, FInt32
 	Provider->SetMesh(MoveTemp(Mesh), false);
 }
 
+const TCHAR* ChannelFunctionName = TEXT("MF_LilaMeshTerrainChannel");
+const TCHAR* ChannelVersionTag = TEXT("Lila Mesh Terrain Channel v");
+constexpr int32 ChannelFunctionVersion = 1;
+const TCHAR* MeshTerrainFolder = TEXT("/Game/LilaLink/MeshTerrain");
+
+/** A material layer of Lila's terrain sent as a channel: the channel's name and the layer's look. */
+struct FLilaMaterialLayer
+{
+	FName Channel;
+	FLinearColor Color = FLinearColor(0.5f, 0.5f, 0.5f);
+	float Roughness = 0.85f;
+	float TileSize = 400.0f;
+};
+
+void ReadMaterialLayers(const TSharedPtr<FJsonObject>& Params, TArray<FLilaMaterialLayer>& Out)
+{
+	const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
+	if (!Params->TryGetArrayField(TEXT("materialLayers"), Values))
+	{
+		return;
+	}
+	for (const TSharedPtr<FJsonValue>& Value : *Values)
+	{
+		const TSharedPtr<FJsonObject>* Object = nullptr;
+		FString Name;
+		if (!Value.IsValid() || !Value->TryGetObject(Object) || !(*Object)->TryGetStringField(TEXT("name"), Name))
+		{
+			continue;
+		}
+		FLilaMaterialLayer& L = Out.AddDefaulted_GetRef();
+		L.Channel = FName(*Name);
+		FVector Color;
+		if (ReadVector(*Object, TEXT("color"), Color))
+		{
+			L.Color = FLinearColor(float(Color.X), float(Color.Y), float(Color.Z));
+		}
+		double Number = 0.0;
+		if ((*Object)->TryGetNumberField(TEXT("roughness"), Number))
+		{
+			L.Roughness = float(Number);
+		}
+		if ((*Object)->TryGetNumberField(TEXT("tileSize"), Number) && Number > 0.0)
+		{
+			L.TileSize = float(Number);
+		}
+	}
+}
+
+int32 ChannelFunctionVersionOf(const UMaterialFunction* Function)
+{
+	const FString& D = Function->Description;
+	return D.StartsWith(ChannelVersionTag) ? FCString::Atoi(*D.RightChop(FCString::Strlen(ChannelVersionTag))) : 0;
+}
+
+/**
+ * MF_LilaMeshTerrainChannel: a Mesh Partition channel's weight (0 to 1) at the pixel, by the channel's index in the
+ * terrain's definition. setMeshTerrain reports each channel's index, and the generated material holds it in a
+ * <Channel>Channel parameter.
+ */
+void BuildChannelFunction(UMaterialFunction* Function)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMeshTerrain::BuildChannelFunction);
+
+	const FString Description = FString::Printf(TEXT("%s%d: the weight of a Mesh Partition channel at the pixel, by the channel's index in the definition."),
+		ChannelVersionTag, ChannelFunctionVersion);
+	LilaLink::FFunctionGraph G(Function, *Description);
+	UMaterialExpressionFunctionInput* Index = G.ScalarInput(TEXT("ChannelIndex"), 0.0f, TEXT("Channel"), TEXT("The channel's index in the Mesh Partition definition."));
+	auto* Resource = G.New<UE::MeshPartition::UMaterialExpressionMeshPartitionResource>(-800);
+	auto* Sample = G.New<UE::MeshPartition::UMaterialExpressionMeshPartitionChannelSampleIndex>(-400);
+	Sample->ChannelTextureInput.Connect(0, Resource);
+	Sample->ChannelIndex.Connect(0, Index);
+	G.Output(Sample, TEXT("Weight"), TEXT("The channel's weight at the pixel, 0 to 1."));
+	G.Finish();
+}
+
+UMaterialFunction* ChannelFunction(TArray<FString>& Warnings)
+{
+	bool bCreated = false;
+	UMaterialFunction* Function = LilaLink::FindOrCreateMaterialFunction(LilaLink::MastersFolderPath(), ChannelFunctionName, bCreated);
+	if (!Function)
+	{
+		Warnings.Add(FString::Printf(TEXT("could not create %s in %s"), ChannelFunctionName, LilaLink::MastersFolderPath()));
+		return nullptr;
+	}
+	if (bCreated || ChannelFunctionVersionOf(Function) < ChannelFunctionVersion)
+	{
+		BuildChannelFunction(Function);
+	}
+	return Function;
+}
+
+/**
+ * M_<Label>_MeshTerrain: per material layer, MF_LilaMeshTerrainChannel reads the layer's channel and feeds a chain of
+ * MF_LilaTerrainLayer calls, with the layer's channel index, tint, roughness, texture and tile size as parameters
+ * (defaults from Lila). Rebuilt on every send so the defaults follow Lila's rules.
+ */
+UMaterial* MeshTerrainMaterial(const FString& Label, const AMeshPartition* Mesh, const TArray<FLilaMaterialLayer>& Layers, TArray<FString>& OutAssets,
+	TArray<FString>& Warnings)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMeshTerrain::MeshTerrainMaterial);
+
+	const UMeshPartitionDefinition* Definition = Mesh ? Mesh->GetMeshPartitionDefinition() : nullptr;
+	UMaterialFunction* Channel = ChannelFunction(Warnings);
+	UMaterialFunction* Layer = LilaLink::TerrainLayerFunction(Warnings);
+	if (!Definition || !Channel || !Layer)
+	{
+		return nullptr;
+	}
+	const FString Folder = FString(MeshTerrainFolder) / Label;
+	const FString Name = TEXT("M_") + Label + TEXT("_MeshTerrain");
+	bool bCreated = false;
+	UMaterial* Material = LilaLink::FindOrCreateMaterial(Folder, Name, bCreated);
+	if (!Material)
+	{
+		Warnings.Add(FString::Printf(TEXT("could not create %s in %s"), *Name, *Folder));
+		return nullptr;
+	}
+	Material->Modify();
+	UMaterialEditingLibrary::DeleteAllMaterialExpressions(Material);
+	int32 Row = 0;
+	auto Make = [&](TSubclassOf<UMaterialExpression> Class, int32 X) { return UMaterialEditingLibrary::CreateMaterialExpression(Material, Class, X, (Row++) * 140); };
+	auto* Zero = Cast<UMaterialExpressionConstant3Vector>(Make(UMaterialExpressionConstant3Vector::StaticClass(), -1500));
+	Zero->Constant = FLinearColor(0.0f, 0.0f, 0.0f);
+	auto* ZeroRough = Cast<UMaterialExpressionConstant>(Make(UMaterialExpressionConstant::StaticClass(), -1500));
+	ZeroRough->R = 0.0f;
+	UMaterialExpression* Color = Zero;
+	UMaterialExpression* Rough = ZeroRough;
+	FString ColorOut, RoughOut;
+	UTexture* White = LoadObject<UTexture>(nullptr, TEXT("/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture"));
+	int32 Placed = 0;
+	for (const FLilaMaterialLayer& L : Layers)
+	{
+		const int32 ChannelIndex = Definition->GetChannelMap().FindChannel(L.Channel);
+		if (ChannelIndex == INDEX_NONE)
+		{
+			Warnings.Add(FString::Printf(TEXT("material layer %s left out of %s: the Mesh Terrain has no such channel"), *L.Channel.ToString(), *Name));
+			continue;
+		}
+		const FString LayerName = L.Channel.ToString();
+		auto Param = [&](TSubclassOf<UMaterialExpression> Class, const FString& Suffix) {
+			auto* P = Cast<UMaterialExpressionParameter>(Make(Class, -1200));
+			P->ParameterName = *(LayerName + Suffix);
+			P->Group = *LayerName;
+			return P;
+		};
+		auto* Index = Cast<UMaterialExpressionScalarParameter>(Param(UMaterialExpressionScalarParameter::StaticClass(), TEXT("Channel")));
+		Index->DefaultValue = float(ChannelIndex);
+		auto* Tint = Cast<UMaterialExpressionVectorParameter>(Param(UMaterialExpressionVectorParameter::StaticClass(), TEXT("Tint")));
+		Tint->DefaultValue = L.Color;
+		auto* LayerRough = Cast<UMaterialExpressionScalarParameter>(Param(UMaterialExpressionScalarParameter::StaticClass(), TEXT("Roughness")));
+		LayerRough->DefaultValue = L.Roughness;
+		auto* Tile = Cast<UMaterialExpressionScalarParameter>(Param(UMaterialExpressionScalarParameter::StaticClass(), TEXT("TileSize")));
+		Tile->DefaultValue = L.TileSize;
+		auto* Texture = Cast<UMaterialExpressionTextureObjectParameter>(Make(UMaterialExpressionTextureObjectParameter::StaticClass(), -1200));
+		Texture->ParameterName = *(LayerName + TEXT("Texture"));
+		Texture->Group = *LayerName;
+		Texture->Texture = White;
+
+		auto* Weight = Cast<UMaterialExpressionMaterialFunctionCall>(Make(UMaterialExpressionMaterialFunctionCall::StaticClass(), -800));
+		Weight->SetMaterialFunction(Channel);
+		UMaterialEditingLibrary::ConnectMaterialExpressions(Index, TEXT(""), Weight, TEXT("ChannelIndex"));
+		auto* Call = Cast<UMaterialExpressionMaterialFunctionCall>(Make(UMaterialExpressionMaterialFunctionCall::StaticClass(), -400 + Placed * 300));
+		Call->SetMaterialFunction(Layer);
+		UMaterialEditingLibrary::ConnectMaterialExpressions(Color, ColorOut, Call, TEXT("Accum"));
+		UMaterialEditingLibrary::ConnectMaterialExpressions(Rough, RoughOut, Call, TEXT("AccumRoughness"));
+		UMaterialEditingLibrary::ConnectMaterialExpressions(Weight, TEXT("Weight"), Call, TEXT("Weight"));
+		UMaterialEditingLibrary::ConnectMaterialExpressions(Tint, TEXT(""), Call, TEXT("LayerTint"));
+		UMaterialEditingLibrary::ConnectMaterialExpressions(LayerRough, TEXT(""), Call, TEXT("LayerRoughness"));
+		UMaterialEditingLibrary::ConnectMaterialExpressions(Texture, TEXT(""), Call, TEXT("LayerTexture"));
+		UMaterialEditingLibrary::ConnectMaterialExpressions(Tile, TEXT(""), Call, TEXT("LayerTileSize"));
+		Color = Rough = Call;
+		ColorOut = TEXT("BaseColor");
+		RoughOut = TEXT("Roughness");
+		++Placed;
+	}
+	if (Placed == 0)
+	{
+		return nullptr;
+	}
+	UMaterialEditingLibrary::ConnectMaterialProperty(Color, ColorOut, MP_BaseColor);
+	UMaterialEditingLibrary::ConnectMaterialProperty(Rough, RoughOut, MP_Roughness);
+	Material->PostEditChange();
+	Material->MarkPackageDirty();
+	UMaterialEditingLibrary::RecompileMaterial(Material);
+	OutAssets.AddUnique(Material->GetPathName());
+	OutAssets.AddUnique(Channel->GetPathName());
+	OutAssets.AddUnique(Layer->GetPathName());
+	return Material;
+}
+
 TSharedPtr<FJsonValue> SetMeshTerrain(const TSharedPtr<FJsonObject>& Params, FString& OutError)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMeshTerrain::SetMeshTerrain);
@@ -262,6 +465,8 @@ TSharedPtr<FJsonValue> SetMeshTerrain(const TSharedPtr<FJsonObject>& Params, FSt
 	{
 		return nullptr;
 	}
+	TArray<FLilaMaterialLayer> MaterialLayers;
+	ReadMaterialLayers(Params, MaterialLayers);
 	UWorld* World = EditorWorld();
 	if (!World)
 	{
@@ -433,14 +638,43 @@ TSharedPtr<FJsonValue> SetMeshTerrain(const TSharedPtr<FJsonObject>& Params, FSt
 
 	DeclareChannels(Result, Channels, Warnings);
 
+	TArray<FString> Assets;
+	UMaterial* Generated = nullptr;
+	if (!Material && !MaterialLayers.IsEmpty())
+	{
+		Generated = MeshTerrainMaterial(Label, Result, MaterialLayers, Assets, Warnings);
+		if (Generated)
+		{
+			for (const TPair<FString, AActor*>& S : TaggedSections(World, Tag))
+			{
+				S.Value->FindComponentByClass<UMeshProviderModifier>()->SetMaterial(0, Generated);
+			}
+		}
+	}
+
 	TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
 	Out->SetStringField(TEXT("actor"), Result ? Result->GetActorLabel() : FString());
 	TArray<TSharedPtr<FJsonValue>> ChannelValues;
+	const UMeshPartitionDefinition* Definition = Result ? Result->GetMeshPartitionDefinition() : nullptr;
 	for (const FLilaChannel& C : Channels)
 	{
 		ChannelValues.Add(MakeShared<FJsonValueString>(C.Name.ToString()));
 	}
 	Out->SetArrayField(TEXT("channels"), ChannelValues);
+	// The index MF_LilaMeshTerrainChannel takes for each channel.
+	TSharedRef<FJsonObject> Indices = MakeShared<FJsonObject>();
+	for (const FLilaChannel& C : Channels)
+	{
+		Indices->SetNumberField(C.Name.ToString(), Definition ? Definition->GetChannelMap().FindChannel(C.Name) : INDEX_NONE);
+	}
+	Out->SetObjectField(TEXT("channelIndices"), Indices);
+	Out->SetStringField(TEXT("material"), Material ? Material->GetPathName() : Generated ? Generated->GetPathName() : FString());
+	TArray<TSharedPtr<FJsonValue>> AssetValues;
+	for (const FString& A : Assets)
+	{
+		AssetValues.Add(MakeShared<FJsonValueString>(A));
+	}
+	Out->SetArrayField(TEXT("assets"), AssetValues);
 	Out->SetBoolField(TEXT("created"), bCreated);
 	Out->SetNumberField(TEXT("sections"), NewSections.Num());
 	TArray<TSharedPtr<FJsonValue>> WarningValues;

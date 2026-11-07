@@ -8,6 +8,7 @@
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -166,10 +167,11 @@ nlohmann::json exportEngineTarget(const lila::Args& a, const Heightfield& local,
                                   const std::string& name);
 /**
  * terrainSendToUnreal as Mesh Terrain or a region import; null for a plain landscape send. id is the terrain's path,
- * name its file stem.
+ * name its file stem. materialLayers is surfaceLandscapeParams for the terrain: it names the material layers' channels and
+ * gives the generated Mesh Terrain material its layers.
  */
 nlohmann::json sendEngineVariant(const lila::Args& a, const Heightfield& local, const glm::dmat4& world, const std::string& id, const std::string& name,
-                                 const std::filesystem::path& cache);
+                                 const std::filesystem::path& cache, const std::function<nlohmann::json(nlohmann::json&)>& materialLayers);
 
 /** Where the Unity and Godot importer scripts are; a missing folder is logged and the exports go without them. */
 void setEngineScripts(const std::filesystem::path& folder);

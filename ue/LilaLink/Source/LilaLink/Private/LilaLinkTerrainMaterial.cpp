@@ -456,6 +456,11 @@ TSharedPtr<FJsonValue> SetTerrainMaterial(const TSharedPtr<FJsonObject>& Params,
 }
 } // namespace
 
+UMaterialFunction* LilaLink::TerrainLayerFunction(TArray<FString>& OutWarnings)
+{
+	return TerrainFunction(OutWarnings);
+}
+
 void LilaLink::AddTerrainMaterialMethods(TMap<FString, FLilaLinkMethod>& Methods)
 {
 	Methods.Add(TEXT("setTerrainMaterial"), LilaLink::Sync(&SetTerrainMaterial));

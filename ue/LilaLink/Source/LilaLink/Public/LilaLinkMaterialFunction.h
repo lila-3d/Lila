@@ -27,18 +27,27 @@ struct FMaterialPair
  * Folder/FunctionName and Folder/MaterialName, each created when missing; both null, with OutError, when either can't be
  * made. The caller builds both when bCreated or when asked to rebuild, never one alone.
  */
-FMaterialPair FindOrCreateMaterialPair(const FString& Folder, const FString& FunctionName, const FString& MaterialName, FString& OutError);
+LILALINK_API FMaterialPair FindOrCreateMaterialPair(const FString& Folder, const FString& FunctionName, const FString& MaterialName, FString& OutError);
 
 /** Folder/Name, created when missing (bOutCreated set); null when it can't be made. */
-UMaterialFunction* FindOrCreateMaterialFunction(const FString& Folder, const FString& Name, bool& bOutCreated);
-UMaterial* FindOrCreateMaterial(const FString& Folder, const FString& Name, bool& bOutCreated);
+LILALINK_API UMaterialFunction* FindOrCreateMaterialFunction(const FString& Folder, const FString& Name, bool& bOutCreated);
+LILALINK_API UMaterial* FindOrCreateMaterial(const FString& Folder, const FString& Name, bool& bOutCreated);
+
+/** Where the generated master materials and the MF_Lila functions live. */
+LILALINK_API const TCHAR* MastersFolderPath();
+
+/**
+ * MF_LilaTerrainLayer, built or upgraded when needed: adds one weight-blended layer (tinted top-projected texture and
+ * roughness, times Weight) to what the calls before it summed. Null with a warning when it can't be made.
+ */
+LILALINK_API UMaterialFunction* TerrainLayerFunction(TArray<FString>& OutWarnings);
 
 /**
  * A material function's graph, cleared and rebuilt down columns. Its parameter inputs default to a parameter of the same
  * name, so a material that calls the function and leaves a pin empty still has that parameter for its instances to set,
  * and Lila's instances drive a user's own material the same way they drive the generated one.
  */
-struct FFunctionGraph
+struct LILALINK_API FFunctionGraph
 {
 	FFunctionGraph(UMaterialFunction* InFunction, const TCHAR* Description);
 
@@ -65,8 +74,8 @@ struct FFunctionGraph
 };
 
 /** Clears Material's graph and places a call of Function in it. */
-UMaterialExpressionMaterialFunctionCall* ResetToFunctionCall(UMaterial* Material, UMaterialFunctionInterface* Function);
+LILALINK_API UMaterialExpressionMaterialFunctionCall* ResetToFunctionCall(UMaterial* Material, UMaterialFunctionInterface* Function);
 
 /** Wires the call's named outputs to the material's properties; false when any output is missing. */
-bool ConnectFunctionOutputs(UMaterialExpressionMaterialFunctionCall* Call, std::initializer_list<TPair<const TCHAR*, EMaterialProperty>> Outputs);
+LILALINK_API bool ConnectFunctionOutputs(UMaterialExpressionMaterialFunctionCall* Call, std::initializer_list<TPair<const TCHAR*, EMaterialProperty>> Outputs);
 } // namespace LilaLink

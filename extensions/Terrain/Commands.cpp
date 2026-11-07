@@ -2423,7 +2423,8 @@ void registerCommands(ext::Context& ctx)
                 throw CommandError("terrainSendToUnreal: give one terrain");
             const Found f = findTerrain(Graph::current(), names[0], "terrainSendToUnreal");
             if (json sent = sendEngineVariant(a, *f.local, f.frame.m, f.mesh ? f.mesh->path() : names[0],
-                                              identifier(f.mesh ? f.mesh->name() : std::string("Terrain")), link::cacheDir());
+                                              identifier(f.mesh ? f.mesh->name() : std::string("Terrain")), link::cacheDir(),
+                                              [&](json& p) { return surfaceLandscapeParams(p, f.modifier, false); });
                 !sent.is_null())
                 return sent;
             try

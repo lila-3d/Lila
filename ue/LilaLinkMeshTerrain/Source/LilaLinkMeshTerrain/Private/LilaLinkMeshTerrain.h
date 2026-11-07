@@ -12,9 +12,13 @@
  * placed: the importer centres the mesh on the origin from Z 0, location and rotation move it to the terrain's place.
  * Sending the same id again with the same sections swaps the new meshes into the existing base modifiers, so the user's
  * own modifiers on that Mesh Partition stay; other sections replace the base modifiers and move the user's modifiers
- * to the new actor. Replies {actor, created, sections, warnings}.
+ * to the new actor. channels [{name, file}] become Mesh Partition channels; without material, materialLayers [{name
+ * (a channel), color, roughness, tileSize}] get a generated M_<label>_MeshTerrain built on MF_LilaMeshTerrainChannel and
+ * MF_LilaTerrainLayer. Replies {actor, created, sections, channels, channelIndices, material, assets, warnings}.
  *
  * removeMeshTerrain {id} deletes the Mesh Partition actor and its base modifiers. Replies {removed}.
+ *
+ * sampleMeshTerrain {id, points: [[x, y], ...]} replies, per point, the nearest base mesh vertex: [{position, weights}].
  */
 namespace LilaLinkMeshTerrain
 {

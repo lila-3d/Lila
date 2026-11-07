@@ -22,6 +22,7 @@ public class LilaLinkMeshTerrain : ModuleRules
 			"LilaLink",
 			"MeshPartition",
 			"MeshPartitionEditor",
+			"MaterialEditor",
 		});
 	}
 }

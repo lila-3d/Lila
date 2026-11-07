@@ -1345,7 +1345,8 @@ json exportEngineTarget(const Args& a, const Heightfield& local, const glm::dmat
     return nullptr;
 }
 
-json sendEngineVariant(const Args& a, const Heightfield& local, const glm::dmat4& world, const std::string& id, const std::string& name, const fs::path& cache)
+json sendEngineVariant(const Args& a, const Heightfield& local, const glm::dmat4& world, const std::string& id, const std::string& name, const fs::path& cache,
+                       const std::function<json(json&)>& materialLayersOf)
 {
     LILA_ZONE();
 
@@ -1371,6 +1372,22 @@ json sendEngineVariant(const Args& a, const Heightfield& local, const glm::dmat4
         {
             throw CommandError(std::string("terrainSendToUnreal: ") + e.what());
         }
+        const bool userMaterial = a.has("material") && !a.get<std::string>("material", "").empty();
+        json materialLayers;
+        {
+            json layerParams = {{"id", id}, {"label", name}, {"layers", json::array()}};
+            for (const json& c : settings["channels"])
+                layerParams["layers"].push_back({{"mask", c["mask"]}, {"name", c["name"]}});
+            const json surface = materialLayersOf ? materialLayersOf(layerParams) : json();
+            if (!surface.is_null())
+            {
+                // Material layers' channels take their Unreal names (Grass), as landscape paint layers do.
+                for (size_t i = 0; i < settings["channels"].size(); ++i)
+                    settings["channels"][i]["name"] = layerParams["layers"][i]["name"];
+                if (!userMaterial && a.get<bool>("makeMaterial", true))
+                    materialLayers = surface["layers"];
+            }
+        }
         json params = {{"id", id},
                        {"label", name},
                        {"heightmap", settings["files"]["heightmap"]},
@@ -1381,8 +1398,10 @@ json sendEngineVariant(const Args& a, const Heightfield& local, const glm::dmat4
                        {"rotation", settings["rotation"]},
                        {"saveAndUnload", a.get<bool>("saveAndUnload", false)},
                        {"channels", settings["channels"]}};
-        if (a.has("material") && !a.get<std::string>("material", "").empty())
+        if (userMaterial)
             params["material"] = a.get<std::string>("material", "");
+        if (!materialLayers.is_null())
+            params["materialLayers"] = materialLayers;
         link::RpcResult r = client->call("setMeshTerrain", params, timeoutMs);
         if (!r.ok)
             throw CommandError("terrainSendToUnreal: " + r.error);

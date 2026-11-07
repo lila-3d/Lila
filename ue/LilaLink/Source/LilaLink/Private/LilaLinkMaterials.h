@@ -83,7 +83,7 @@ void ApplyStylised(UMaterialInstanceConstant* Instance, const TSharedPtr<FJsonOb
 void KeepGrayscale16(UTexture* Texture);
 
 /** Where the generated master materials live. */
-const TCHAR* MastersFolderPath();
+LILALINK_API const TCHAR* MastersFolderPath();
 
 /**
  * Imports a texture file into Folder as colour (sRGB) or linear data, or as a normal map, or finds the one already
