@@ -428,6 +428,67 @@ TEST_CASE("heightfield draw: casts into the shadow map like the terrain's mesh")
     CHECK(mean < 3.0);
 }
 
+TEST_CASE("heightfield draw: stylised shading models shade it like the terrain's mesh")
+{
+    auto& r = render::Renderer::get();
+    if (!r.running() && !r.start())
+    {
+        MESSAGE("no GPU for the heightfield shading model test");
+        return;
+    }
+    auto h = hills(257, 3000.0);
+    ui::Camera cam;
+    cam.distance = 30000.0;
+    cam.pitch = -55.0;
+    cam.nearClip = 100.0;
+    std::string err;
+    auto shoot = [&](render::FrameState s) {
+        Shot out;
+        REQUIRE_MESSAGE(r.renderOffscreen(std::move(s), out.w, out.h, out.bgra, &err), err);
+        return out;
+    };
+    geo::HeightfieldMeshOptions mo;
+    mo.masks = false;
+    scene::MeshPtr mesh = std::make_shared<geo::Mesh>(geo::heightfieldToMesh(*h, mo));
+    render::MeshDraw md;
+    md.mesh = ui::renderMeshFor(mesh);
+    REQUIRE(md.mesh);
+
+    render::Material plain;
+    plain.baseColor = glm::vec3(0.6f, 0.55f, 0.5f);
+    render::FrameState defaultLit = shotState(cam, 1.6);
+    defaultLit.heightfields.push_back(drawOf(h));
+    defaultLit.heightfields[0].materials = std::vector<render::Material>{plain};
+    const Shot hfLit = shoot(defaultLit);
+
+    render::Material toon = plain;
+    toon.style.model = render::ShadingModel::Toon;
+    toon.style.toonSoftness = 0.01f;
+    render::Material foliage = plain;
+    foliage.style.model = render::ShadingModel::Foliage;
+    foliage.style.foliageGradient = 1.0f;
+    foliage.style.foliageBottomColor = glm::vec3(0.02f, 0.05f, 0.02f);
+    foliage.style.foliageTopColor = glm::vec3(0.2f, 0.8f, 0.1f);
+    for (const render::Material& m : {toon, foliage})
+    {
+        render::FrameState asMesh = shotState(cam, 1.6);
+        render::MeshDraw styled = md;
+        styled.materials = std::vector<render::Material>{m};
+        asMesh.meshes.push_back(styled);
+        render::FrameState asHeightfield = shotState(cam, 1.6);
+        asHeightfield.heightfields.push_back(drawOf(h));
+        asHeightfield.heightfields[0].materials = std::vector<render::Material>{m};
+        const Shot hf = shoot(asHeightfield);
+        const auto [mean, share] = difference(shoot(asMesh), hf);
+        const double changed = difference(hfLit, hf).second;
+        MESSAGE("model " << int(m.style.model) << ": changes " << changed * 100.0 << "% of the default lit heightfield; vs its mesh: mean " << mean
+                         << ", " << share * 100.0 << "% off by more than 8");
+        CHECK(changed > 0.2);
+        CHECK(share < 0.03);
+        CHECK(mean < 2.0);
+    }
+}
+
 TEST_CASE("terrain display commands: options and paint layers round trip, layers undo")
 {
     loadTerrain();

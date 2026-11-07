@@ -579,6 +579,26 @@ void HeightfieldRenderer::record(VkCommandBuffer cmd, VkPipelineLayout layout, s
     vkCmdDrawIndexed(cmd, uint32_t(kHeightfieldPatch * kHeightfieldPatch * 6), r.patches, 0, 0, 0);
 }
 
+glm::vec2 HeightfieldRenderer::heightRange(const HeightfieldDraw& d) const
+{
+    if (!validHeightfieldDraw(d))
+        return glm::vec2(0.0f);
+    if (auto it = mHeights.find(d.heights.get()); it != mHeights.end() && it->second.pyramid.levels() > 0)
+        return it->second.pyramid.ranges.back().front();
+    const std::vector<float>& h = *d.heights;
+    using R = std::pair<float, float>;
+    const R r = tbb::parallel_reduce(
+        tbb::blocked_range<size_t>(0, size_t(d.nx) * size_t(d.nz)), R{FLT_MAX, -FLT_MAX},
+        [&](const tbb::blocked_range<size_t>& b, R acc) {
+            for (size_t k = b.begin(); k < b.end(); ++k)
+                if (std::isfinite(h[k]))
+                    acc = {std::min(acc.first, h[k]), std::max(acc.second, h[k])};
+            return acc;
+        },
+        [](R a, R b) { return R{std::min(a.first, b.first), std::max(a.second, b.second)}; });
+    return r.first <= r.second ? glm::vec2(r.first, r.second) : glm::vec2(0.0f);
+}
+
 void HeightfieldRenderer::evict(VulkanContext& vk, uint64_t frame)
 {
     auto stale = [&](const Grid& g) { return g.lastUsed + 240 < frame || (g.keep.use_count() == 1 && g.lastUsed != frame); };

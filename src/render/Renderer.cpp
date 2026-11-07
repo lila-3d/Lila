@@ -767,7 +767,7 @@ struct Renderer::Impl
     std::vector<uint32_t> frameTable;
     std::map<std::pair<uint64_t, uint64_t>, uint32_t> frameHandles;
     /** Style block offsets in the frame's table per (draw, material slot), for slots with a stylised shading model. */
-    std::map<std::pair<const MeshDraw*, uint32_t>, uint32_t> frameStyles;
+    std::map<std::pair<const void*, uint32_t>, uint32_t> frameStyles; // by MeshDraw or HeightfieldDraw, and slot
     VkDeviceAddress frameTableAddress = 0;
     /** The frame's mesh draws grouped for instancing, and the address of their instance buffer (0 if it failed). */
     DrawBatches frameBatches;
@@ -2191,6 +2191,8 @@ struct Renderer::Impl
                 add(mat.normalMap, kFlatNormalKey);
                 add(mat.ormMap, kWhiteLinearKey);
                 add(mat.emissiveMap, kWhiteSrgbKey);
+                if (mat.style.strokeMap && !mat.style.strokeMap->isUdimSet())
+                    add(mat.style.strokeMap, kWhiteLinearKey);
             }
             for (const HeightfieldLayer& l : d.layers)
             {
@@ -2497,6 +2499,23 @@ struct Renderer::Impl
     }
 
     /** Appends a style block per shaded draw section whose material uses a stylised shading model. */
+    void writeStyle(const void* draw, uint32_t slot, const MaterialStyle& style, const glm::vec3& boundsMin, const glm::vec3& boundsMax, bool zUp)
+    {
+        uint32_t stroke = 0xffffffffu;
+        if (style.strokeMap && !style.strokeMap->isUdimSet() && textureKey(style.strokeMap, 0) != 0)
+        {
+            // The fixed-sampler path binds the sheet itself; bindless reads its slot through the table.
+            auto it = frameHandles.find({style.strokeMap->key, kWhiteLinearKey});
+            if (!bindless)
+                stroke = 0;
+            else if (it != frameHandles.end() && it->second != kNoHandle)
+                stroke = it->second;
+        }
+        const auto block = packStyle(style, stroke, boundsMin, boundsMax, zUp);
+        frameStyles[{draw, slot}] = uint32_t(frameTable.size());
+        frameTable.insert(frameTable.end(), block.begin(), block.end());
+    }
+
     void writeStyles(const FrameState& s)
     {
         for (const MeshDraw& d : s.meshes)
@@ -2504,24 +2523,17 @@ struct Renderer::Impl
             if (!(d.flags & DrawShaded) || !d.mesh)
                 continue;
             for (uint32_t slot = 0; slot < d.materials.size(); ++slot)
-            {
-                const MaterialStyle& style = d.materials[slot].style;
-                if (style.model == ShadingModel::DefaultLit)
-                    continue;
-                uint32_t stroke = 0xffffffffu;
-                if (style.strokeMap && !style.strokeMap->isUdimSet() && textureKey(style.strokeMap, 0) != 0)
-                {
-                    // The fixed-sampler path binds the sheet itself; bindless reads its slot through the table.
-                    auto it = frameHandles.find({style.strokeMap->key, kWhiteLinearKey});
-                    if (!bindless)
-                        stroke = 0;
-                    else if (it != frameHandles.end() && it->second != kNoHandle)
-                        stroke = it->second;
-                }
-                const auto block = packStyle(style, stroke, d.mesh->boundsMin, d.mesh->boundsMax, s.zUp);
-                frameStyles[{&d, slot}] = uint32_t(frameTable.size());
-                frameTable.insert(frameTable.end(), block.begin(), block.end());
-            }
+                if (d.materials[slot].style.model != ShadingModel::DefaultLit)
+                    writeStyle(&d, slot, d.materials[slot].style, d.mesh->boundsMin, d.mesh->boundsMax, s.zUp);
+        }
+        // A heightfield shades with slot 0, over bounds in its own space as its mesh's would be.
+        for (const HeightfieldDraw& d : s.heightfields)
+        {
+            if (!(d.flags & DrawShaded) || d.materials.empty() || d.materials[0].style.model == ShadingModel::DefaultLit)
+                continue;
+            const glm::vec2 range = heightfields.heightRange(d);
+            const glm::vec2 corner = d.origin + glm::vec2(float(std::max(d.nx - 1, 0)), float(std::max(d.nz - 1, 0))) * d.cell;
+            writeStyle(&d, 0, d.materials[0].style, glm::vec3(d.origin.x, range.x, d.origin.y), glm::vec3(corner.x, range.y, corner.y), s.zUp);
         }
     }
 
@@ -2583,7 +2595,11 @@ struct Renderer::Impl
         md.lightingChannels = d.lightingChannels;
         const DrawBatch b{&md, 0, 0, 1};
         const GpuMesh none{};
-        return sectionPush(s, b, none, MeshSection{}, set);
+        MeshPush p = sectionPush(s, b, none, MeshSection{}, set);
+        if (frameTableAddress)
+            if (auto it = frameStyles.find({&d, 0u}); it != frameStyles.end())
+                p.style = it->second;
+        return p;
     }
 
     enum class HeightfieldPass

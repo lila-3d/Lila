@@ -98,6 +98,8 @@ public:
     const HeightfieldDraw& draw(size_t i) const { return *mPrepared[i].draw; }
     /** Patches and triangles prepared for this frame. */
     size_t patches() const { return mPatches; }
+    /** The lowest and highest of d's heights: from its GPU copy's pyramid when it has one. */
+    glm::vec2 heightRange(const HeightfieldDraw& d) const;
 
     /**
      * Records prepared draw i with whichever heightfield pipeline is bound; p holds its material's push constants.
