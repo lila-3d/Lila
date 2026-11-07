@@ -127,6 +127,8 @@ UnrealMode unrealModeNamed(std::string_view name)
 json Component::toJson() const
 {
     json j = {{"format", kFormat}, {"version", 1}, {"name", name}};
+    if (!label.empty())
+        j["label"] = label;
     if (!doc.empty())
         j["doc"] = doc;
     json list = json::array();
@@ -153,6 +155,7 @@ Component Component::fromJson(const json& j)
     c.name = j.at("name").get<std::string>();
     if (c.name.empty())
         throw std::invalid_argument("a component needs a name");
+    c.label = j.value("label", "");
     c.doc = j.value("doc", "");
     for (const json& a : j.value("attrs", json::array()))
     {
@@ -232,6 +235,12 @@ std::optional<Component> find(std::string_view name)
         if (c.name == name)
             return std::move(c);
     return std::nullopt;
+}
+
+std::string labelOf(std::string_view name)
+{
+    std::optional<Component> c = find(name);
+    return c && !c->label.empty() ? c->label : std::string(name);
 }
 
 fs::path folder(bool studio)

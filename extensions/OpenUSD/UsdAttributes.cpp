@@ -354,7 +354,10 @@ nlohmann::json componentSchemaList()
                 a->niceName = nice;
             attrs.push_back(scene::attrDefToJson(*a));
         }
-        out.push_back({{"name", name}, {"doc", def->GetDocumentation()}, {"attrs", std::move(attrs)}});
+        nlohmann::json schema = {{"name", name}, {"doc", def->GetDocumentation()}, {"attrs", std::move(attrs)}};
+        if (std::string label; def->GetMetadata(SdfFieldKeys->DisplayName, &label) && !label.empty())
+            schema["label"] = label;
+        out.push_back(std::move(schema));
     }
     return out;
 }

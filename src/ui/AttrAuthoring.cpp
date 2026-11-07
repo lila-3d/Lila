@@ -352,12 +352,14 @@ void AddPopover::refill()
     for (const scene::attrComponents::Component& c : scene::attrComponents::all())
     {
         const QString cname = QString::fromStdString(c.name);
-        if (!text.isEmpty() && !cname.contains(text, Qt::CaseInsensitive) && !QString::fromStdString(c.doc).contains(text, Qt::CaseInsensitive))
+        const QString shown = c.label.empty() ? cname : QString::fromStdString(c.label);
+        if (!text.isEmpty() && !cname.contains(text, Qt::CaseInsensitive) && !shown.contains(text, Qt::CaseInsensitive) &&
+            !QString::fromStdString(c.doc).contains(text, Qt::CaseInsensitive))
             continue;
         if (!headed)
             header("Components");
         headed = true;
-        auto* item = new QListWidgetItem(icon("puzzle"), QString("%1   %2 · %3 attributes").arg(cname, QString::fromStdString(c.source)).arg(c.attrs.size()), mList);
+        auto* item = new QListWidgetItem(icon("puzzle"), QString("%1   %2 · %3 attributes").arg(shown, QString::fromStdString(c.source)).arg(c.attrs.size()), mList);
         item->setToolTip(QString::fromStdString(c.doc));
         item->setData(kKind, kComponent);
         item->setData(kPayload, cname);

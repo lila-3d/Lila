@@ -263,6 +263,7 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
                 {
                     scene::attrComponents::Component c;
                     c.name = c.usdSchema = s.at("name").get<std::string>();
+                    c.label = s.value("label", "");
                     c.source = "usd";
                     c.doc = s.value("doc", "");
                     for (const nlohmann::json& a : s.value("attrs", nlohmann::json::array()))

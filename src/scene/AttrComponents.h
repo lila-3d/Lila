@@ -46,6 +46,8 @@ struct LILA_SCENE_API Component
 {
     /** The heading it shows under, and the category its attrs carry on an object. */
     std::string name;
+    /** What the UI shows for it; empty shows name. A USD schema's displayName. */
+    std::string label;
     /** Where it comes from: "usd", "user", "studio", or the extension that registered it. */
     std::string source;
     std::string doc;
@@ -76,6 +78,8 @@ LILA_SCENE_API bool addSource(ext::Context& ctx, const std::string& id, Source s
 /** Every source's components, the saved ones last; a later one with a name already listed is left out. */
 LILA_SCENE_API std::vector<Component> all();
 LILA_SCENE_API std::optional<Component> find(std::string_view name);
+/** The component's label, or name itself when it has none or no component has that name. */
+LILA_SCENE_API std::string labelOf(std::string_view name);
 
 /** The folder saved components go to: the user's, or the first studio folder. Empty when there is no studio folder. */
 LILA_SCENE_API std::filesystem::path folder(bool studio);

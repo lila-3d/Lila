@@ -1608,6 +1608,9 @@ void AttributeEditor::rebuild()
                 if (!headed)
                 {
                     QLabel* heading = subHeading(form, c, [this, c] { removeCategory(c); });
+                    // Only USD objects look up labels: listing USD's schemas loads OpenUSDCore.
+                    if (n->type().attrIndex("usdApiSchemas") >= 0)
+                        heading->setText(QString::fromStdString(scene::attrComponents::labelOf(c)));
                     heading->setObjectName("componentHeading");
                     heading->setContextMenuPolicy(Qt::CustomContextMenu);
                     connect(heading, &QWidget::customContextMenuRequested, this, [this, heading, c](const QPoint& at) { headingMenu(c, heading, at); });
