@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace terrain
 {
@@ -16,4 +18,7 @@ int httpGet(const std::string& url, const std::filesystem::path& dest, std::stri
 
 /** GET url as text; status as httpGet. */
 int httpGetText(const std::string& url, std::string* body, std::string* why);
+
+/** GET count bytes of url from offset (an HTTP Range request); returns 206 or 200 when out has them, as httpGet otherwise. */
+int httpGetRange(const std::string& url, uint64_t offset, uint64_t count, std::vector<uint8_t>* out, std::string* why);
 } // namespace terrain

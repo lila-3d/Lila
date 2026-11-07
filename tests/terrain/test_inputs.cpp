@@ -3,6 +3,7 @@
 #include "Erosion.h"
 #include "Fetch.h"
 #include "Inputs.h"
+#include "LandCover.h"
 #include "Osm.h"
 #include "Painted.h"
 #include "Projection.h"
@@ -15,6 +16,7 @@
 #include <miniz.h>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -953,6 +955,267 @@ TEST_CASE("terrain inputs: terrainReload re-reads a painted image saved again, a
     fs::last_write_time(dir / "paint.png", fs::last_write_time(dir / "paint.png") + std::chrono::seconds(2));
     json after = run("terrainReload", {{"args", {t["mesh"]}}});
     CHECK(after["heightRange"][1].get<double>() == doctest::Approx(750.0).epsilon(0.01));
+    fs::remove_all(dir);
+}
+
+namespace
+{
+/** The synthetic WorldCover layout: no data along the top, 64-pixel blocks of every class, then scattered codes below. */
+int wcCode(int c, int r)
+{
+    static const int k[] = {10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 100};
+    if (r < 16)
+        return 0;
+    if (r < 512)
+        return k[(c / 64 + r / 64) % 11];
+    return k[((uint32_t(c) * 2654435761u) ^ (uint32_t(r) * 40503u)) % 11];
+}
+
+constexpr double kWcStep = 1.0 / 12000.0;
+
+/** A WorldCover-shaped GeoTIFF: 8-bit codes, deflate tiles, EPSG:4326 at 1/12000 degree, nodata 0, the header at the end. */
+void writeWorldCoverLike(const fs::path& path, int n, int tile, double west, double north)
+{
+    std::vector<uint8_t> o = {'I', 'I', 42, 0, 0, 0, 0, 0};
+    auto u16 = [&](uint32_t v) {
+        o.push_back(uint8_t(v));
+        o.push_back(uint8_t(v >> 8));
+    };
+    auto u32 = [&](uint32_t v) {
+        for (int i = 0; i < 4; ++i)
+            o.push_back(uint8_t(v >> (8 * i)));
+    };
+    auto f64 = [&](double v) {
+        const uint64_t b = std::bit_cast<uint64_t>(v);
+        for (int i = 0; i < 8; ++i)
+            o.push_back(uint8_t(b >> (8 * i)));
+    };
+    auto here = [&] {
+        if (o.size() & 1)
+            o.push_back(0);
+        return uint32_t(o.size());
+    };
+    const int across = n / tile;
+    std::vector<uint32_t> offsets, counts;
+    for (int ty = 0; ty < across; ++ty)
+        for (int tx = 0; tx < across; ++tx)
+        {
+            std::vector<uint8_t> raw(size_t(tile) * size_t(tile));
+            for (int r = 0; r < tile; ++r)
+                for (int c = 0; c < tile; ++c)
+                    raw[size_t(r) * size_t(tile) + size_t(c)] = uint8_t(wcCode(tx * tile + c, ty * tile + r));
+            mz_ulong packed = mz_compressBound(mz_ulong(raw.size()));
+            std::vector<uint8_t> buf(packed);
+            REQUIRE(mz_compress2(buf.data(), &packed, raw.data(), mz_ulong(raw.size()), 6) == MZ_OK);
+            offsets.push_back(here());
+            counts.push_back(uint32_t(packed));
+            o.insert(o.end(), buf.begin(), buf.begin() + ptrdiff_t(packed));
+        }
+    const uint32_t offsetsAt = here();
+    for (uint32_t v : offsets)
+        u32(v);
+    const uint32_t countsAt = here();
+    for (uint32_t v : counts)
+        u32(v);
+    const uint32_t scaleAt = here();
+    for (double v : {kWcStep, kWcStep, 0.0})
+        f64(v);
+    const uint32_t tieAt = here();
+    for (double v : {0.0, 0.0, 0.0, west, north, 0.0})
+        f64(v);
+    const uint32_t keysAt = here();
+    for (uint32_t v : {1, 1, 0, 3, 1024, 0, 1, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326})
+        u16(v);
+    struct Entry
+    {
+        uint16_t tag, type;
+        uint32_t count, value;
+    };
+    const uint32_t chunks = uint32_t(offsets.size());
+    const Entry entries[] = {{256, 3, 1, uint32_t(n)},   {257, 3, 1, uint32_t(n)},       {258, 3, 1, 8},           {259, 3, 1, 8},
+                             {262, 3, 1, 1},             {277, 3, 1, 1},                 {284, 3, 1, 1},           {322, 3, 1, uint32_t(tile)},
+                             {323, 3, 1, uint32_t(tile)}, {324, 4, chunks, offsetsAt},   {325, 4, chunks, countsAt}, {339, 3, 1, 1},
+                             {33550, 12, 3, scaleAt},    {33922, 12, 6, tieAt},          {34735, 3, 16, keysAt},   {42113, 2, 2, uint32_t('0')}};
+    const uint32_t ifd = here();
+    u16(uint32_t(std::size(entries)));
+    for (const Entry& e : entries)
+    {
+        u16(e.tag);
+        u16(e.type);
+        u32(e.count);
+        if (e.type == 3 && e.count == 1)
+        {
+            u16(e.value);
+            u16(0);
+        }
+        else
+            u32(e.value);
+    }
+    u32(0);
+    for (int i = 0; i < 4; ++i)
+        o[size_t(4 + i)] = uint8_t(ifd >> (8 * i));
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    f.write(reinterpret_cast<const char*>(o.data()), std::streamsize(o.size()));
+}
+
+/** World [x, z] of a latitude and longitude on a terrain placed around origin. */
+json groundOf(const std::string& mesh, double lat, double lon, double lat0, double lon0)
+{
+    const json p = run("terrainGeoref", {{"args", {mesh}}, {"origin", {lat0, lon0}}, {"latLon", {{lat, lon}}}})["points"][0];
+    return {p[0], p[2]};
+}
+} // namespace
+
+TEST_CASE("terrain inputs: WorldCover tile names, and tiled GeoTIFFs read by window and over ranges")
+{
+    CHECK(worldCoverTileNames({6.5, 45.5, 7.5, 46.5}) == std::vector<std::string>{"N45E006"});
+    CHECK(worldCoverTileNames({6.0, 45.0, 9.0, 48.0}) == std::vector<std::string>{"N45E006"});
+    CHECK(worldCoverTileNames({-1.0, -1.0, 1.0, 1.0}) == std::vector<std::string>{"N00W003", "N00E000", "S03W003", "S03E000"});
+    CHECK(worldCoverUrl("N45E006") == "https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_N45E006_Map.tif");
+    CHECK(worldCoverClass(10) == "forest");
+    CHECK(worldCoverClass(95) == "wetland");
+    CHECK(worldCoverClass(0).empty());
+    CHECK(std::string(worldCoverAttribution()).find("ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium") != std::string::npos);
+
+    const fs::path dir = scratch("worldcover_read");
+    const fs::path file = dir / "wc.tif";
+    writeWorldCoverLike(file, 1024, 128, 6.0, 48.0);
+    const uint64_t fileSize = fs::file_size(file);
+
+    // The whole file through readDem: every code where it was written, no data as a void.
+    const Dem all = readDem(file);
+    CHECK(all.width == 1024);
+    CHECK(all.geographic);
+    CHECK(all.epsg == 4326);
+    CHECK(all.x0 == doctest::Approx(6.0 + 0.5 * kWcStep).epsilon(1e-12));
+    CHECK(all.y0 == doctest::Approx(48.0 - 0.5 * kWcStep).epsilon(1e-12));
+    CHECK(std::isnan(all.metres[5]));
+    int wrong = 0;
+    for (int r = 16; r < 1024; r += 7)
+        for (int c = 0; c < 1024; c += 5)
+            wrong += all.metres[size_t(r) * 1024 + size_t(c)] != float(wcCode(c, r));
+    CHECK(wrong == 0);
+
+    // A window reads only the tiles it touches.
+    uint64_t read = 0;
+    const ByteRange counted = [&, inner = fileByteRange(file)](uint64_t at, uint64_t n, std::vector<uint8_t>& out) {
+        inner(at, n, out);
+        read += out.size();
+    };
+    const GeoTiffWindowReader reader(counted, "wc.tif");
+    CHECK(reader.info().width == 1024);
+    CHECK(reader.info().metres.empty());
+    read = 0;
+    const Dem w = reader.window(600, 700, 700, 760);
+    CHECK(w.width == 100);
+    CHECK(w.height == 60);
+    CHECK(w.x0 == doctest::Approx(all.x0 + 600 * kWcStep).epsilon(1e-12));
+    CHECK(w.y0 == doctest::Approx(all.y0 - 700 * kWcStep).epsilon(1e-12));
+    CHECK(w.metres[size_t(13) * 100 + 42] == float(wcCode(642, 713)));
+    CHECK(read < fileSize / 8);
+
+    // Fetched over ranges as tile N45E006; the tiles north and west of it don't exist.
+    std::vector<std::string> asked;
+    const RangeDownloader fake = [&](const std::string& url, uint64_t at, uint64_t n, std::vector<uint8_t>* out, std::string*) {
+        asked.push_back(url);
+        if (url != worldCoverUrl("N45E006"))
+            return 404;
+        fileByteRange(file)(at, n, *out);
+        return 206;
+    };
+    const GeoBox box{5.9995, 47.99, 6.03, 48.0005};
+    const LandCoverFetch res = fetchWorldCover(box, fake);
+    CHECK(res.tiles == 4);
+    CHECK(res.empty == 3);
+    CHECK(res.bytes < fileSize / 2);
+    CHECK(res.codes.dx == doctest::Approx(kWcStep));
+    auto codeAt = [&](double lat, double lon) {
+        const int64_t c = std::llround((lon - res.codes.x0) / res.codes.dx), r = std::llround((res.codes.y0 - lat) / res.codes.dy);
+        return res.codes.metres[size_t(r) * size_t(res.codes.width) + size_t(c)];
+    };
+    CHECK(codeAt(48.0 - 100.5 * kWcStep, 6.0 + 200.5 * kWcStep) == float(wcCode(200, 100)));
+    CHECK(codeAt(48.0 - 115.5 * kWcStep, 6.0 + 333.5 * kWcStep) == float(wcCode(333, 115)));
+    CHECK(codeAt(48.0 - 2.5 * kWcStep, 6.0 + 50.5 * kWcStep) == 0.0f);
+    CHECK(codeAt(48.0 + 2.5 * kWcStep, 6.0 + 50.5 * kWcStep) == 0.0f);
+    CHECK(codeAt(48.0 - 50.5 * kWcStep, 6.0 - 2.5 * kWcStep) == 0.0f);
+
+    const RangeDownloader sea = [](const std::string&, uint64_t, uint64_t, std::vector<uint8_t>*, std::string*) { return 404; };
+    CHECK_THROWS_WITH_AS(fetchWorldCover(box, sea), doctest::Contains("open sea"), std::runtime_error);
+    fs::remove_all(dir);
+}
+
+TEST_CASE("terrain inputs: terrainImportLandCover puts WorldCover codes on the right cells, writes landcover masks and the attribution")
+{
+    loadTerrain();
+    run("newScene");
+    const fs::path dir = scratch("worldcover_import");
+    const fs::path file = dir / "ESA_WorldCover_10m_2021_v200_N45E006_Map.tif";
+    writeWorldCoverLike(file, 1024, 128, 6.0, 48.0);
+
+    // About 4 km square, centred 200 rows down and 300 columns in, so its north and west edges run off the data.
+    const double lat0 = 48.0 - 200.0 * kWcStep, lon0 = 6.0 + 300.0 * kWcStep;
+    json t = run("terrainCreate", {{"size", {400000.0, 400000.0}}, {"resolution", 201}, {"amplitude", 0.0}, {"name", "CoverGround"}});
+    const std::string mesh = t["mesh"];
+    json o = run("terrainImportLandCover", {{"args", {file.string()}}, {"terrain", mesh}, {"origin", {lat0, lon0}}});
+    CHECK(o["mask"] == "worldcover");
+    CHECK(o["nodata"].get<double>() > 0.0);
+    CHECK(o["nodata"].get<double>() < 0.2);
+    double total = o["nodata"].get<double>();
+    for (const auto& [cls, s] : o["landcover"].items())
+        total += s.get<double>();
+    CHECK(total == doctest::Approx(1.0));
+    for (const char* cls : {"forest", "scrub", "grassland", "farmland", "urban", "rock", "glacier", "water", "wetland"})
+        CHECK(o["landcover"].contains(cls));
+    {
+        std::ifstream f(o["attributionFile"].get<std::string>());
+        const std::string text((std::istreambuf_iterator<char>(f)), {});
+        CHECK(text.find("== ESA WorldCover ==") != std::string::npos);
+        CHECK(text.find("ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium") != std::string::npos);
+    }
+
+    // Block centres of known classes: (column block, row block) -> code.
+    struct Probe
+    {
+        int bx, by, code;
+        const char* cls;
+    };
+    const Probe probes[] = {{6, 5, 10, "forest"}, {4, 3, 80, "water"}, {5, 3, 90, "wetland"}, {4, 2, 70, "glacier"}, {3, 1, 50, "urban"}, {6, 4, 100, "grassland"}};
+    json points = json::array();
+    for (const Probe& p : probes)
+        points.push_back(groundOf(mesh, 48.0 - (p.by * 64 + 32.5) * kWcStep, 6.0 + (p.bx * 64 + 32.5) * kWcStep, lat0, lon0));
+    // North of the data: no code.
+    points.push_back(groundOf(mesh, 48.0 + 8.0 * kWcStep, lon0, lat0, lon0));
+    const json masks = {"worldcover", "landcover_forest", "landcover_water", "landcover_wetland", "landcover_glacier", "landcover_urban", "landcover_grassland"};
+    const json s = run("terrainSample", {{"args", {mesh}}, {"points", points}, {"masks", masks}});
+    for (size_t i = 0; i < std::size(probes); ++i)
+    {
+        const Probe& p = probes[i];
+        INFO(p.cls);
+        CHECK(s[i]["inside"].get<bool>());
+        CHECK(s[i]["worldcover"].get<double>() * 255.0 == doctest::Approx(p.code).epsilon(1e-4));
+        for (const char* cls : {"forest", "water", "wetland", "glacier", "urban", "grassland"})
+            CHECK(s[i][std::string("landcover_") + cls].get<double>() == doctest::Approx(std::string(cls) == p.cls ? 1.0 : 0.0));
+    }
+    CHECK(s[std::size(probes)]["inside"].get<bool>());
+    CHECK(s[std::size(probes)]["worldcover"].get<double>() == doctest::Approx(0.0));
+
+    // terrainBiomes reads the codes as its default WorldCover classes.
+    run("terrainBiomes", {{"args", {mesh}}, {"landcover", {{"mask", "worldcover"}}}});
+    const json b = run("terrainSample", {{"args", {mesh}}, {"points", {points[0], points[2]}}, {"masks", {"biome_forest", "biome_wetland"}}});
+    CHECK(b[0]["biome_forest"].get<double>() > 0.9);
+    CHECK(b[1]["biome_wetland"].get<double>() > 0.9);
+
+    // The node re-reads the file when the terrain re-runs.
+    const json reload = run("terrainReload", {{"args", {mesh}}});
+    bool listed = false;
+    for (const json& f : reload["files"])
+        listed = listed || f["file"].get<std::string>().find("ESA_WorldCover") != std::string::npos;
+    CHECK(listed);
+    const json info = run("terrainInfo", {{"args", {mesh}}});
+    CHECK(info["masks"].contains("worldcover"));
+    CHECK(info["masks"].contains("landcover_forest"));
+
+    CHECK_THROWS_WITH_AS(run("terrainImportLandCover", {{"args", {file.string()}}, {"terrain", mesh}, {"origin", {10.0, 10.0}}}), doctest::Contains("cover"), std::exception);
     fs::remove_all(dir);
 }
 

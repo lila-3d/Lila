@@ -8,7 +8,7 @@ add_executable(lila_terrain_tests main.cpp test_terrain.cpp test_stamps.cpp test
     ${CMAKE_SOURCE_DIR}/extensions/Terrain/ErosionFilter.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Shaping.cpp
     ${CMAKE_SOURCE_DIR}/extensions/Terrain/Brushes.cpp
     test_inputs.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Projection.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Painted.cpp
-    ${CMAKE_SOURCE_DIR}/extensions/Terrain/Osm.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Fetch.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/DemRefine.cpp
+    ${CMAKE_SOURCE_DIR}/extensions/Terrain/Osm.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Fetch.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/LandCover.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/DemRefine.cpp
     ${CMAKE_SOURCE_DIR}/extensions/Terrain/Materials.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/GroundCover.cpp)
 target_include_directories(lila_terrain_tests PRIVATE ${CMAKE_SOURCE_DIR}/extensions/Terrain)
 find_package(miniz CONFIG REQUIRED)
