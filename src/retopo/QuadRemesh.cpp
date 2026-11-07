@@ -1634,6 +1634,32 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
             }
         };
         seamDebug("extracted");
+        // LILA_STAGE_DUMP=<dir>: the mesh after each cleanup step, as <layout>_<step>.obj.
+        auto stageDump = [&](const char* stage) {
+            const char* dir = std::getenv("LILA_STAGE_DUMP");
+            if (!dir)
+                return;
+            if (FILE* f = std::fopen((std::string(dir) + "/" + layout + "_" + stage + ".obj").c_str(), "w"))
+            {
+                std::vector<Index> id(m.pointCapacity(), 0);
+                Index next = 1;
+                for (Index p = 0; p < m.pointCapacity(); ++p)
+                    if (m.pointValid(p))
+                    {
+                        std::fprintf(f, "v %.9g %.9g %.9g\n", m.position(p).x, m.position(p).y, m.position(p).z);
+                        id[p] = next++;
+                    }
+                for (Index fc = 0; fc < m.faceCapacity(); ++fc)
+                    if (m.faceValid(fc))
+                    {
+                        std::fprintf(f, "f");
+                        for (Index p : m.facePoints(fc))
+                            std::fprintf(f, " %d", int(id[p]));
+                        std::fprintf(f, "\n");
+                    }
+                std::fclose(f);
+            }
+        };
         std::vector<FeatureKind>& feature = ex.feature;
         std::vector<uint8_t>& boundary = ex.boundary;
         feature.resize(m.pointCapacity(), FeatureKind::None);
@@ -1648,6 +1674,7 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         }
         removeValence2(m, feature);
         seamDebug("v2");
+        stageDump("1v2");
         // Every border point on the plane is the seam's, however it was traced, so no hole fill closes a bay along it.
         if (symmetric)
         {
@@ -1674,6 +1701,7 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         boundary.resize(m.pointCapacity(), 0);
         compactTagged(m, feature, boundary);
         seamDebug("compact");
+        stageDump("2compact");
         geo::conformNormals(m);
         // Conforming only makes the winding consistent; the source's own decides which way round it goes.
         if (2 * foldedFaces(m, src, bvh).size() > size_t(m.numFaces()))
@@ -1686,11 +1714,14 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         snapCorners(m, feature, s, 1.25 * coarseH);
         boundary.resize(m.pointCapacity(), 0);
         seamDebug("presnap");
+        stageDump("3corners");
         snapBorder(m, feature, border, 1.5 * coarseH);
         seamDebug("snapped");
+        stageDump("4border");
         projectPoints(m, feature, bvh, lines, 0.6 * coarseH);
         relaxAlongFeatures(m, feature, bvh, lines, coarseH, std::max(1, opts.relaxIterations / 2), symmetric ? opts.symmetryAxis : -1);
         clock.lap("cleanup");
+        stageDump("5relax");
 
         // The patch layout is built at the final density.
         if (opts.pureQuads && std::string_view(layout) != "patches")
@@ -1705,8 +1736,11 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         if (const char* e = std::getenv("LILA_PATCH_RELAX"); e && std::string_view(layout) == "patches")
             relaxIterations = std::atoi(e);
         splitHighValence(m, feature);
+        stageDump("6split");
         relaxAlongFeatures(m, feature, bvh, lines, h, relaxIterations, symmetric ? opts.symmetryAxis : -1);
+        stageDump("7relax");
         untangle(m, feature, src, bvh, lines, h);
+        stageDump("8untangle");
         clock.lap("refine");
 
         if (symmetric)
@@ -1891,6 +1925,14 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         Budget::remaining() > 1.5 * seamlessTook)
     {
         std::string why;
+        if (const char* dump = std::getenv("LILA_FIELD_DUMP"))
+            if (FILE* f = std::fopen(dump, "w"))
+            {
+                for (Index v = 0; v < s.vertexCount(); ++v)
+                    std::fprintf(f, "%.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g\n", s.pos[v].x, s.pos[v].y, s.pos[v].z, s.normal[v].x,
+                                 s.normal[v].y, s.normal[v].z, qSeam[v].x, qSeam[v].y, qSeam[v].z);
+                std::fclose(f);
+            }
         Extracted ex = layoutPatches(s, qSeam, scale, double(opts.targetFaces) * (symmetric ? 0.5 : 1.0), &why);
         if (const char* raw = std::getenv("LILA_PATCH_RAW"); raw && ex.mesh.numFaces() > 0)
             if (FILE* f = std::fopen(raw, "w"))
