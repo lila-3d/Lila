@@ -6,6 +6,7 @@
 #include "Fetch.h"
 #include "Http.h"
 #include "Inputs.h"
+#include "LandCover.h"
 #include "Osm.h"
 #include "Painted.h"
 #include "Projection.h"
@@ -33,6 +34,7 @@
 #include <QTimer>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <fstream>
@@ -183,6 +185,73 @@ gn::NodeDecl landcoverDecl()
                 {
                     const json geo = json::parse(c.s("georef"));
                     rasterizeLandcover(h, cachedOsm(paths::resolvePath(file))->areas, Georef::fromJson(geo));
+                }
+                catch (const std::exception& e)
+                {
+                    throw gn::ExecError(c.node.name + ": " + e.what());
+                }
+                c.out("heightfield", replaceHeightfield(g, std::move(h)));
+            },
+    };
+}
+
+/** A land cover raster's part over a heightfield, read once per file time and window. */
+std::shared_ptr<const Dem> cachedLandCover(const fs::path& file, const Heightfield& h, const Georef& g)
+{
+    static std::mutex lock;
+    struct Entry
+    {
+        fs::file_time_type stamp;
+        std::array<int, 4> window;
+        std::shared_ptr<const Dem> codes;
+    };
+    static std::map<std::string, Entry> cache;
+    std::error_code ec;
+    const auto stamp = fs::last_write_time(file, ec);
+    if (ec)
+        throw std::runtime_error("no file " + file.string());
+    const GeoTiffWindowReader r(fileByteRange(file), file.filename().string());
+    const std::array<int, 4> w = rasterWindow(r.info(), h, g);
+    if (w[0] == w[2])
+        throw std::runtime_error(file.filename().string() + " doesn't cover the terrain");
+    std::lock_guard guard(lock);
+    auto it = cache.find(file.string());
+    if (it != cache.end() && it->second.stamp == stamp && it->second.window == w)
+        return it->second.codes;
+    auto codes = std::make_shared<const Dem>(r.window(w[0], w[1], w[2], w[3]));
+    cache[file.string()] = {stamp, w, codes};
+    return codes;
+}
+
+gn::NodeDecl readLandCoverDecl()
+{
+    return {
+        .type = "ReadLandCover",
+        .label = "Read Land Cover",
+        .category = "Terrain",
+        .doc = "ESA WorldCover class codes from a GeoTIFF (degrees or UTM) onto the heightfield by nearest sample: a mask of the "
+               "codes (code / 255, what terrainBiomes' landcover reads) and the landcover_<class> masks OSM Land Cover writes. "
+               "Only the part of the file over the terrain is read. terrainImportLandCover sets it up.",
+        .sockets = {.inputs = {hfSocket(), sock("file", Socket::String, "", "Land cover GeoTIFF; relative paths are under the workspace."),
+                               sock("georef", Socket::String, "", "Where the heightfield is on the earth (JSON, from terrainGeoref)."),
+                               sock("mask", Socket::String, "worldcover", "Mask for the class codes."),
+                               sock("classes", Socket::Bool, true, "Also write the landcover_<class> masks.")},
+                    .outputs = {hfSocket()}},
+        .exec =
+            [](ExecContext& c) {
+                LILA_ZONE();
+
+                GeometryPtr g = c.geometry("heightfield");
+                Heightfield h = heightfieldIn(c, g);
+                const std::string file = c.s("file"), mask = c.s("mask");
+                if (file.empty())
+                    throw gn::ExecError(c.node.name + ": no file");
+                if (mask.empty())
+                    throw gn::ExecError(c.node.name + ": no mask name");
+                try
+                {
+                    const Georef geo = Georef::fromJson(json::parse(c.s("georef")));
+                    rasterizeWorldCover(h, *cachedLandCover(paths::resolvePath(file), h, geo), geo, mask, c.b("classes"));
                 }
                 catch (const std::exception& e)
                 {
@@ -593,7 +662,10 @@ glm::dvec3 worldOf(const json& p)
 }
 
 /** Source nodes that read a file, in a terrain's group. */
-bool readsFile(const gn::GNode& n) { return n.type == "ImportTerrainImage" || n.type == "ReadElevationData" || n.type == "OsmLandcover" || n.type == "ReadHeightfield"; }
+bool readsFile(const gn::GNode& n)
+{
+    return n.type == "ImportTerrainImage" || n.type == "ReadElevationData" || n.type == "OsmLandcover" || n.type == "ReadLandCover" || n.type == "ReadHeightfield";
+}
 
 /** A source node's file: its own value, or the modifier's exposed input feeding it. */
 fs::path fileOf(const gn::Group& grp, const gn::GNode& n, const Node* modifier)
@@ -1055,6 +1127,111 @@ json runImportOsm(const Args& a)
     return out;
 }
 
+json runImportLandCover(const Args& a)
+{
+    LILA_ZONE();
+
+    const std::string cmd = "terrainImportLandCover";
+    Graph& g = Graph::current();
+    if (!a.has("terrain"))
+        throw CommandError(cmd + ": give terrain= (the terrain the land cover goes on)");
+    TerrainRef t = findTerrainRef(g, a.get<std::string>("terrain", ""), cmd);
+    const Georef geo = georefFor(t, a, cmd);
+    const Heightfield& hf = *t.local;
+    const fs::path dataDir = terrainDataDir();
+    const std::string mask = a.get<std::string>("mask", "worldcover");
+    if (mask.empty())
+        throw CommandError(cmd + ": mask is empty");
+    const bool classes = a.get<bool>("classes", true);
+
+    fs::path file;
+    json fetched = nullptr;
+    const std::vector<std::string> pos = givenFiles(a);
+    if (!pos.empty())
+    {
+        file = resolvedFile(pos[0]);
+        if (!fs::exists(file))
+            throw CommandError(cmd + ": no file " + file.string());
+    }
+    else
+    {
+        if (a.get<std::string>("source", "worldcover") != "worldcover")
+            throw CommandError(cmd + ": source is worldcover");
+        const GeoBox b = boxOf(hf, geo);
+        char tag[96];
+        std::snprintf(tag, sizeof tag, "worldcover_%.5f_%.5f_%.5f_%.5f", b.west, b.south, b.east, b.north);
+        file = dataDir / "landcover" / (safeName(tag) + ".tif");
+        fetched = {{"source", "worldcover"}, {"bbox", {b.west, b.south, b.east, b.north}}, {"file", paths::toUtf8(file)}, {"cached", fs::exists(file)}};
+        if (!fs::exists(file))
+        {
+            if (a.get<bool>("offline", false))
+                throw CommandError(cmd + ": offline and this area was never fetched (" + file.string() + ")");
+            try
+            {
+                const LandCoverFetch res = fetchWorldCover(b, [](const std::string& url, uint64_t at, uint64_t n, std::vector<uint8_t>* out, std::string* why) {
+                    return httpGetRange(url, at, n, out, why);
+                });
+                writeGeoTiff(file, res.codes, true);
+                fetched["tiles"] = res.tiles;
+                fetched["emptyTiles"] = res.empty;
+                fetched["downloadedBytes"] = res.bytes;
+                fetched["samples"] = {res.codes.width, res.codes.height};
+            }
+            catch (const std::exception& e)
+            {
+                throw CommandError(cmd + ": " + e.what());
+            }
+        }
+    }
+
+    std::map<std::string, double> share;
+    try
+    {
+        Heightfield probe = hf;
+        share = rasterizeWorldCover(probe, *cachedLandCover(file, probe, geo), geo, mask, classes);
+    }
+    catch (const std::exception& e)
+    {
+        throw CommandError(cmd + ": " + e.what());
+    }
+    const std::string terrainPath = t.mesh ? t.mesh->path() : t.modifier->path();
+    GroupEdit e = editGroup(g, t, cmd);
+    gn::GNode* n = nodeOfType(e.group, "ReadLandCover");
+    if (!n)
+        n = &insertOnChain(e.group, "ReadLandCover", e.group.uniqueNodeName("ReadLandCover"), "GroupOutput", "geometry", cmd);
+    n->values["file"] = paths::storedPath(file);
+    n->values["georef"] = geo.toJson().dump();
+    n->values["mask"] = mask;
+    n->values["classes"] = classes;
+    n->values["fileStamp"] = stampOf(file);
+    commit(e, cmd);
+
+    fs::path attributionFile;
+    try
+    {
+        attributionFile = writeAttribution(dataDir, "ESA WorldCover", worldCoverAttribution());
+    }
+    catch (const std::exception& ex)
+    {
+        throw CommandError(cmd + ": " + ex.what());
+    }
+    const double nodata = share.contains("nodata") ? share["nodata"] : 0.0;
+    share.erase("nodata");
+    json out = {{"terrain", terrainPath},
+                {"file", paths::toUtf8(file)},
+                {"mask", mask},
+                {"landcover", share},
+                {"nodata", nodata},
+                {"georef", georefJson(geo)},
+                {"attribution", worldCoverAttribution()},
+                {"attributionFile", paths::toUtf8(attributionFile)}};
+    if (!fetched.is_null())
+        out["fetched"] = fetched;
+    if (nodata > 0.5)
+        out["warning"] = "most of the terrain has no land cover data; check the file covers the terrain's place";
+    return out;
+}
+
 json runConstrain(const Args& a)
 {
     LILA_ZONE();
@@ -1182,7 +1359,7 @@ json runLiveLink(const Args& a, bool reloadOnly)
     GroupEdit e = editGroup(g, t, cmd);
     const json files = restamp(e, t.modifier, reloadOnly ? std::nullopt : std::optional<bool>(a.get<bool>("on", true)));
     if (files.empty())
-        throw CommandError(cmd + ": the terrain reads no file (Import Terrain Image, Read Elevation Data, OSM Land Cover or Read Heightfield)");
+        throw CommandError(cmd + ": the terrain reads no file (Import Terrain Image, Read Elevation Data, OSM Land Cover, Read Land Cover or Read Heightfield)");
     commit(e, cmd);
     json out = t.mesh ? terrainInfo(t.mesh->path()) : json::object();
     out["files"] = files;
@@ -1229,7 +1406,7 @@ using namespace inputcmd;
 
 bool registerInputs(ext::Context& ctx)
 {
-    for (gn::NodeDecl d : {constraintsDecl(), landcoverDecl(), bareEarthDecl(), amplifyDecl()})
+    for (gn::NodeDecl d : {constraintsDecl(), landcoverDecl(), readLandCoverDecl(), bareEarthDecl(), amplifyDecl()})
         if (!gn::registerDecl(ctx, std::move(d)))
             return false;
 
@@ -1299,6 +1476,29 @@ bool registerInputs(ext::Context& ctx)
         .run = runImportOsm,
         .examples = {"terrainImportOsm('osm/zermatt.osm', terrain='Terrain')", "terrainImportOsm(terrain='Terrain', fetch=True, kinds=['road', 'river'])",
                      "terrainImportOsm('city.osm.pbf', terrain='Island', origin=[60.39, 5.32])"},
+    });
+
+    ctx.registerCommand({
+        .name = "terrainImportLandCover",
+        .doc = "Put ESA WorldCover land cover (10 m, 2021) on a terrain: the class codes into a mask (worldcover by default; code / "
+               "255, what terrainBiomes(landcover={'mask': 'worldcover'}) reads) and the same landcover_<class> masks "
+               "terrainImportOsm writes, through a Read Land Cover node in the terrain's group. Fetches the terrain's area from "
+               "WorldCover's cloud-optimised tiles on AWS, downloading only the parts over it, and keeps it in the workspace's "
+               "terrain/landcover; or reads a local WorldCover GeoTIFF (degrees or UTM). Writes the CC BY 4.0 attribution to "
+               "terrain/ATTRIBUTION.txt.\n\n"
+               "Classes: 10 forest, 20 scrub, 30 grassland, 40 farmland, 50 urban, 60 rock (bare or sparse), 70 glacier (snow "
+               "and ice), 80 water, 90 and 95 wetland (95 mangroves), 100 grassland (moss and lichen). The terrain must come from "
+               "real elevation, or give origin= [latitude, longitude] of its centre. Returns the share of the terrain per class "
+               "and the share without data.",
+        .positionalDoc = "a local WorldCover GeoTIFF (optional)",
+        .flags = {nodeFlag({"terrain", "t", T::String, nullptr, "The terrain."}, "mesh"),
+                  {"origin", "o", T::List, nullptr, "[latitude, longitude] of the terrain's centre, for terrains not from real data."},
+                  {"source", "src", T::String, "worldcover", "Where land cover comes from.", {"worldcover"}},
+                  {"mask", "m", T::String, "worldcover", "Mask for the class codes."},
+                  {"classes", "cl", T::Bool, true, "Also write the landcover_<class> masks."},
+                  {"offline", "off", T::Bool, false, "Use an area fetched before only."}},
+        .run = runImportLandCover,
+        .examples = {"terrainImportLandCover(terrain='Terrain')", "terrainImportLandCover('ESA_WorldCover_10m_2021_v200_N45E006_Map.tif', terrain='Terrain')"},
     });
 
     ctx.registerCommand({

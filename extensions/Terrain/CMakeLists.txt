@@ -3,7 +3,7 @@ lila_add_extension(lila_terrain_extension ID Terrain MANIFEST extension.json UI 
     SOURCES Terrain.cpp Core.cpp Nodes.cpp Commands.cpp Export.cpp Erosion.cpp ErosionGpu.cpp Inputs.cpp Stamps.cpp Analysis.cpp SculptTool.cpp Ui.cpp ExportEngines.cpp ExportEnginesCommands.cpp
             Water.cpp WaterCommands.cpp Roads.cpp RoadCommands.cpp Volume.cpp VolumeCommands.cpp
             Landform.cpp LandformGpu.cpp LandformNodes.cpp LandformCommands.cpp ErosionFilter.cpp Shaping.cpp Brushes.cpp
-            Projection.cpp Painted.cpp Osm.cpp Fetch.cpp DemRefine.cpp Http.cpp InputCommands.cpp
+            Projection.cpp Painted.cpp Osm.cpp Fetch.cpp LandCover.cpp DemRefine.cpp Http.cpp InputCommands.cpp
             Materials.cpp GroundCover.cpp MaterialNodes.cpp MaterialCommands.cpp SurfaceUi.cpp Query.cpp Spec.cpp Wedge.cpp Checks.cpp
             Terrain.h Export.h ExportEngines.h Erosion.h ErosionGpu.h Inputs.h Stamps.h Analysis.h Water.h Roads.h Volume.h
             Landform.h LandformGpu.h LandformCommands.h ErosionFilter.h Shaping.h Brushes.h

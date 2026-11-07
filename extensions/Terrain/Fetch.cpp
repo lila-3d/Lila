@@ -293,7 +293,7 @@ Dem mosaicTerrarium(const std::map<TileXY, Dem>& tiles, int z, const GeoBox& b, 
     return out;
 }
 
-void writeGeoTiff(const fs::path& path, const Dem& d)
+void writeGeoTiff(const fs::path& path, const Dem& d, bool bytes)
 {
     LILA_ZONE();
 
@@ -306,11 +306,20 @@ void writeGeoTiff(const fs::path& path, const Dem& d)
     for (int s = 0; s < strips; ++s)
     {
         const int rows = std::min(rowsPerStrip, d.height - s * rowsPerStrip);
-        const size_t bytes = size_t(rows) * size_t(d.width) * 4;
-        const uint8_t* src = reinterpret_cast<const uint8_t*>(d.metres.data() + size_t(s) * rowsPerStrip * size_t(d.width));
-        mz_ulong packed = mz_compressBound(mz_ulong(bytes));
+        const size_t samples = size_t(rows) * size_t(d.width), size = samples * (bytes ? 1 : 4);
+        const float* first = d.metres.data() + size_t(s) * rowsPerStrip * size_t(d.width);
+        const uint8_t* src = reinterpret_cast<const uint8_t*>(first);
+        std::vector<uint8_t> narrow;
+        if (bytes)
+        {
+            narrow.resize(samples);
+            for (size_t i = 0; i < samples; ++i)
+                narrow[i] = std::isfinite(first[i]) ? uint8_t(std::clamp(std::lround(first[i]), 0L, 255L)) : 0;
+            src = narrow.data();
+        }
+        mz_ulong packed = mz_compressBound(mz_ulong(size));
         std::vector<uint8_t> buf(packed);
-        if (mz_compress2(buf.data(), &packed, src, mz_ulong(bytes), 6) != MZ_OK)
+        if (mz_compress2(buf.data(), &packed, src, mz_ulong(size), 6) != MZ_OK)
             throw std::runtime_error("deflate failed");
         offsets.push_back(uint32_t(o.size()));
         counts.push_back(uint32_t(packed));
@@ -356,7 +365,7 @@ void writeGeoTiff(const fs::path& path, const Dem& d)
     const Entry entries[] = {
         {256, 4, 1, uint32_t(d.width)},
         {257, 4, 1, uint32_t(d.height)},
-        {258, 3, 1, 32},
+        {258, 3, 1, bytes ? 8u : 32u},
         {259, 3, 1, 8},
         {262, 3, 1, 1},
         {273, 4, uint32_t(strips), oneStrip ? offsets[0] : offsetsAt},
@@ -364,7 +373,7 @@ void writeGeoTiff(const fs::path& path, const Dem& d)
         {278, 4, 1, uint32_t(rowsPerStrip)},
         {279, 4, uint32_t(strips), oneStrip ? counts[0] : countsAt},
         {284, 3, 1, 1},
-        {339, 3, 1, 3},
+        {339, 3, 1, bytes ? 1u : 3u},
         {33550, 12, 3, scaleAt},
         {33922, 12, 6, tieAt},
         {34735, 3, uint32_t(std::size(keys)), keysAt},

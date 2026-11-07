@@ -74,8 +74,11 @@ Dem mosaicGeographic(const std::vector<Dem>& tiles, const GeoBox& b, size_t* unc
 /** Terrarium tiles (zoom z, keyed by tile) resampled onto a geographic grid over the box, spacing metres apart. */
 Dem mosaicTerrarium(const std::map<TileXY, Dem>& tiles, int z, const GeoBox& b, double spacing, size_t* uncovered = nullptr);
 
-/** A geographic Dem as a float32 GeoTIFF (deflate, EPSG:4326, pixel is area), which readDem reads back exactly. */
-void writeGeoTiff(const std::filesystem::path& path, const Dem& d);
+/**
+ * A geographic Dem as a float32 GeoTIFF (deflate, EPSG:4326, pixel is area), which readDem reads back exactly. bytes
+ * writes 8-bit unsigned samples instead (rounded, voids as 0), for class maps.
+ */
+void writeGeoTiff(const std::filesystem::path& path, const Dem& d, bool bytes = false);
 
 /** The attribution the source's licence requires wherever the terrain is shown or shipped. */
 std::string demAttribution(DemSource s, const std::string& dataset);
