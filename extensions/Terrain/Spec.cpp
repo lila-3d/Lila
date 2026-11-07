@@ -3,6 +3,7 @@
 // check, export), and terrainSpec(t) reads a terrain back as a spec that rebuilds it. Presets are saved specs.
 
 #include "Spec.h"
+#include "Stamps.h"
 
 #include <lila/Command.h>
 #include <lila/Extension.h>

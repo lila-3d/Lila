@@ -5,6 +5,7 @@
 #include "Water.h"
 
 #include <lila/Command.h>
+#include <lila/Deformer.h>
 #include <lila/Extension.h>
 #include <lila/GeometryNodes.h>
 #include <lila/Graph.h>
