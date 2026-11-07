@@ -6,6 +6,7 @@
 #include "MaterialNodes.h"
 #include "Query.h"
 #include "Spec.h"
+#include "Wedge.h"
 #include "Terrain.h"
 #include "Volume.h"
 
@@ -26,5 +27,6 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(lila::ext::Context& ctx)
         return 1;
     terrain::registerRegionRefs(ctx);
     terrain::registerSpec(ctx);
+    terrain::registerWedge(ctx);
     return 0;
 }

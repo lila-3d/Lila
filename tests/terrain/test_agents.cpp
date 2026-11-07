@@ -1,6 +1,10 @@
 #include "TestUtil.h"
 
+#include "core/ImageIO.h"
+
 #include <cmath>
+#include <filesystem>
+#include <set>
 
 using namespace terraintest;
 
@@ -139,5 +143,47 @@ TEST_CASE("agents: every terrainSpec preset builds and passes its steps")
         INFO(r["check"].dump());
         CHECK(r["ok"] == true);
     }
+    run("newScene");
+}
+
+TEST_CASE("agents: terrainWedge builds spec variants in parallel lilabatch processes into a labelled contact sheet")
+{
+    loadTerrain();
+    run("newScene");
+    const json spec = {{"name", "WedgeHills"},
+                       {"size", {40000.0, 40000.0}},
+                       {"resolution", 65},
+                       {"source", {{"type", "noise"}, {"amplitude", 6000.0}, {"featureSize", 20000.0}}},
+                       {"erosion", {{"preset", "hills"}, {"age", 0.3}}}};
+    const std::string folder = (std::filesystem::temp_directory_path() / "lila_terrain_tests_wedge").string();
+    json w = run("terrainWedge", {{"spec", spec}, {"vary", {{"seed", {1, 2, 3}}, {"erosion.age", {0.2, 0.5, 0.2}}}}, {"count", 3}, {"tile", 96}, {"folder", folder}});
+    INFO(w.dump().substr(0, 3000));
+    CHECK(w["mode"] == "parallel");
+    REQUIRE(w["variants"].size() == 3);
+    std::set<std::string> revisions;
+    for (const json& v : w["variants"])
+    {
+        CHECK(v["ok"] == true);
+        CHECK(v["image"].is_string());
+        revisions.insert(v["revision"].get<std::string>());
+    }
+    CHECK(revisions.size() == 3);
+    CHECK(w["variants"][1]["vary"]["erosion.age"] == 0.5);
+    const lila::image::Image sheet = lila::image::read(w["sheet"].get<std::string>());
+    CHECK(sheet.width == 2 * (96 + 6) + 6);
+    CHECK(sheet.height > 2 * 96);
+    CHECK(std::filesystem::exists(w["json"].get<std::string>()));
+    // Nothing is left in the scene, and the same variant built here gives the worker's ground.
+    CHECK(run("ls", {{"type", "mesh"}}).size() == 0);
+    json one = spec;
+    one["seed"] = 2;
+    one["erosion"]["age"] = 0.5;
+    CHECK(run("terrainSpec", {{"spec", one}})["revision"] == w["variants"][1]["revision"]);
+
+    json seq = run("terrainWedge", {{"spec", spec}, {"count", 2}, {"tile", 64}, {"parallel", false}, {"folder", folder}});
+    CHECK(seq["mode"] == "inProcess");
+    CHECK(seq["note"] == "parallel=False");
+    CHECK(seq["variants"][0]["ok"] == true);
+    CHECK(seq["variants"][1]["vary"]["seed"] == 1);
     run("newScene");
 }
