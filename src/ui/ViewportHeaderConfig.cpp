@@ -1,11 +1,20 @@
 #include "ui/ViewportHeaderConfig.h"
 
+#include "core/Log.h"
+#include "core/Paths.h"
 #include "core/PrefStore.h"
 #include "ui/Actions.h"
+#include "ui/BarPresets.h"
 #include "ui/Controls.h"
+#include "ui/FileDialog.h"
+#include "ui/IconBars.h"
 #include "ui/Icons.h"
+#include "ui/Layouts.h"
+#include "ui/Theme.h"
 
 #include <QApplication>
+#include <QCheckBox>
+#include <QComboBox>
 #include <QDrag>
 #include <QDropEvent>
 #include <QHBoxLayout>
@@ -16,8 +25,10 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMimeData>
+#include <QPainter>
 #include <QPointer>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -89,7 +100,9 @@ json defaultConfig()
     return {
         {"left",
          {"componentMode", "shading", kSeparator, "symmetry", "softSelect", kSeparator, "selectionMasks", kSeparator,
-          {{"menu", "Display"}, {"icon", "adjustments-horizontal"}, {"items", {"viewport.wireOnShaded", "viewport.defaultMaterial", "viewport.greyBaseColor"}}}}},
+          {{"menu", "Display"}, {"icon", "adjustments-horizontal"}, {"items",
+            {"viewport.wireOnShaded", "viewport.defaultMaterial", "viewport.greyBaseColor", kSeparator, "viewport.toggleHighlightSelection",
+             "viewport.togglePreselectObjects", "viewport.togglePreselectComponents"}}}}},
         {"right",
          {"snap", "overlays", "camera", kSeparator, {{"action", "viewport.isolate"}}, {{"action", "viewport.toggleImagePlanes"}}, kSeparator,
           {{"action", "view.presenter"}}, {{"action", "viewport.frameSelected"}},
@@ -121,6 +134,13 @@ std::string entryLabel(const json& e)
     }
     if (isMenu(e))
         return e.value("menu", std::string("Menu"));
+    if (e.is_object() && e.contains("item"))
+    {
+        const iconBars::Item* i = iconBars::registry().find(e.value("item", std::string()));
+        if (!i)
+            return e.value("item", std::string());
+        return !i->label.empty() ? i->label : actions::find(i->action) ? actions::displayLabel(i->action) : i->id;
+    }
     if (e.is_object() && e.contains("action"))
     {
         const std::string id = e.value("action", std::string());
@@ -140,6 +160,11 @@ std::string entryIcon(const json& e)
     }
     if (isMenu(e))
         return e.value("icon", std::string("menu-2"));
+    if (e.is_object() && e.contains("item"))
+    {
+        const iconBars::Item* i = iconBars::registry().find(e.value("item", std::string()));
+        return i && !i->icon.empty() ? i->icon : "square";
+    }
     if (e.is_object() && e.contains("action"))
     {
         std::string ic = actions::iconFor(e.value("action", std::string()));
@@ -199,37 +224,97 @@ json rowEntry(const QTreeWidgetItem* row)
     return e;
 }
 
-/** The header's contents: the two sides, each a list of entries, menus holding commands. Accepts entries dragged in. */
-class HeaderTree : public QTreeWidget
+/** The bar the editor is working on: the viewport header (two sides) or an icon bar (one list). */
+struct Target
+{
+    std::string bar;
+    std::vector<std::pair<std::string, QString>> sides; // config key, title
+
+    bool header() const { return bar == barPresets::kHeader; }
+
+    json load() const { return header() ? config() : json{{"entries", iconBars::arrangement(bar)}}; }
+    json defaults() const { return header() ? defaultConfig() : json{{"entries", iconBars::defaultArrangement(bar)}}; }
+
+    void store(const json& c) const
+    {
+        if (header())
+            setConfig(c);
+        else
+            iconBars::setArrangement(bar, c.value("entries", json::array()));
+    }
+
+    void reset() const
+    {
+        if (header())
+            PrefStore::get().remove("general", kPref);
+        else
+            iconBars::resetArrangement(bar);
+    }
+
+    /** The bar's own items, for the top of the command list. */
+    std::vector<json> items() const
+    {
+        std::vector<json> out;
+        if (header())
+            for (const Builtin& b : builtins())
+                out.push_back(json(b.id));
+        else
+            for (const iconBars::Item* i : iconBars::itemsIn(bar))
+                if (i->kind != iconBars::Kind::Separator)
+                    out.push_back(json{{"item", i->id}});
+        return out;
+    }
+};
+
+Target targetFor(const std::string& bar)
+{
+    if (bar == barPresets::kHeader)
+        return {bar, {{"left", "Left"}, {"right", "Right"}}};
+    return {bar, {{"entries", QString::fromStdString(barPresets::barLabel(bar))}}};
+}
+
+/** Where a drop lands relative to the row under the pointer. */
+enum class DropAt
+{
+    None,
+    Above,
+    Below,
+    Onto,
+};
+
+/** A bar's contents: its sides, each a list of entries, menus holding commands. Accepts entries dragged in. */
+class BarTree : public QTreeWidget
 {
 public:
     std::function<void()> changed;
 
-    explicit HeaderTree(QWidget* parent) : QTreeWidget(parent)
+    explicit BarTree(QWidget* parent) : QTreeWidget(parent)
     {
         setHeaderHidden(true);
         setDragDropMode(QAbstractItemView::DragDrop);
         setDefaultDropAction(Qt::MoveAction);
         setSelectionMode(QAbstractItemView::SingleSelection);
-        setDropIndicatorShown(true);
+        // The line is drawn here: the style's own indicator is too faint to follow.
+        setDropIndicatorShown(false);
         setIndentation(16);
         setUniformRowHeights(true);
     }
 
-    void load(const json& c)
+    void load(const Target& target, const json& c)
     {
+        mSides = target.sides;
         clear();
-        for (const char* side : {"left", "right"})
+        for (const auto& [key, title] : mSides)
         {
             auto* root = new QTreeWidgetItem(this);
-            root->setText(0, side == std::string("left") ? "Left" : "Right");
+            root->setText(0, title);
             root->setData(0, kKindRole, int(RowKind::Side));
             root->setFlags(Qt::ItemIsEnabled | Qt::ItemIsDropEnabled);
             QFont f = root->font(0);
             f.setWeight(QFont::DemiBold);
             root->setFont(0, f);
             root->setForeground(0, QApplication::palette().color(QPalette::Disabled, QPalette::Text));
-            for (const json& e : c.value(side, json::array()))
+            for (const json& e : c.value(key, json::array()))
                 root->addChild(makeRow(e));
         }
         expandAll();
@@ -238,18 +323,18 @@ public:
     json save() const
     {
         json c = json::object();
-        for (int s = 0; s < topLevelItemCount(); ++s)
+        for (int s = 0; s < topLevelItemCount() && s < int(mSides.size()); ++s)
         {
             json list = json::array();
             QTreeWidgetItem* root = topLevelItem(s);
             for (int i = 0; i < root->childCount(); ++i)
                 list.push_back(rowEntry(root->child(i)));
-            c[s == 0 ? "left" : "right"] = std::move(list);
+            c[mSides[size_t(s)].first] = std::move(list);
         }
         return c;
     }
 
-    /** Where a new entry goes: into the selected menu or side, else after the selected row, else the end of Left. */
+    /** Where a new entry goes: into the selected menu or side, else after the selected row, else the end of the first side. */
     void insertEntry(const json& e)
     {
         QTreeWidgetItem* at = currentItem();
@@ -271,15 +356,15 @@ public:
         }
         if (!parent)
             return;
-        if (RowKind(parent->data(0, kKindRole).toInt()) == RowKind::Menu && !fitsInMenu(e))
-        {
-            index = parent->parent()->indexOfChild(parent) + 1;
-            parent = parent->parent();
-        }
-        QTreeWidgetItem* row = makeRow(e);
-        parent->insertChild(index, row);
-        parent->setExpanded(true);
-        setCurrentItem(row);
+        place(e, parent, index, false);
+    }
+
+    void removeCurrent()
+    {
+        QTreeWidgetItem* at = currentItem();
+        if (!at || !at->parent())
+            return;
+        delete at;
         if (changed)
             changed();
     }
@@ -305,74 +390,82 @@ protected:
     void dragMoveEvent(QDragMoveEvent* e) override
     {
         QTreeWidget::dragMoveEvent(e);
-        if (e->mimeData()->hasFormat(kMime))
-            e->acceptProposedAction();
+        if (!e->mimeData()->hasFormat(kMime))
+            return;
+        e->acceptProposedAction();
+        trackDrop(e->position().toPoint());
+    }
+
+    void dragLeaveEvent(QDragLeaveEvent* e) override
+    {
+        clearDrop();
+        QTreeWidget::dragLeaveEvent(e);
     }
 
     void dropEvent(QDropEvent* e) override
     {
+        trackDrop(e->position().toPoint());
+        const DropAt at = mDropAt;
+        QTreeWidgetItem* target = mDropRow;
+        clearDrop();
         if (!e->mimeData()->hasFormat(kMime))
             return;
         const json entry = json::parse(e->mimeData()->data(kMime).toStdString(), nullptr, false);
         if (entry.is_discarded())
             return;
-        QTreeWidgetItem* target = itemAt(e->position().toPoint());
         QTreeWidgetItem* parent = nullptr;
         int index = 0;
         if (!target)
         {
             parent = topLevelItem(topLevelItemCount() - 1);
-            index = parent->childCount();
+            index = parent ? parent->childCount() : 0;
+        }
+        else if (RowKind kind = RowKind(target->data(0, kKindRole).toInt());
+                 kind == RowKind::Side || (kind == RowKind::Menu && at == DropAt::Onto && fitsInMenu(entry)))
+        {
+            parent = target;
+            index = at == DropAt::Onto ? target->childCount() : 0;
+            if (kind == RowKind::Side && at == DropAt::Above && indexOfTopLevelItem(target) > 0)
+            {
+                parent = topLevelItem(indexOfTopLevelItem(target) - 1);
+                index = parent->childCount();
+            }
         }
         else
         {
-            const auto kind = RowKind(target->data(0, kKindRole).toInt());
-            const DropIndicatorPosition pos = dropIndicatorPosition();
-            const bool onto = pos == QAbstractItemView::OnItem;
-            if (kind == RowKind::Side || (kind == RowKind::Menu && onto && fitsInMenu(entry)))
-            {
-                parent = target;
-                index = onto ? target->childCount() : 0;
-                if (kind == RowKind::Side && pos == QAbstractItemView::AboveItem && indexOfTopLevelItem(target) > 0)
-                {
-                    parent = topLevelItem(indexOfTopLevelItem(target) - 1);
-                    index = parent->childCount();
-                }
-            }
-            else
-            {
-                parent = target->parent();
-                index = parent->indexOfChild(target) + (pos == QAbstractItemView::BelowItem || onto ? 1 : 0);
-            }
+            parent = target->parent();
+            index = parent->indexOfChild(target) + (at == DropAt::Above ? 0 : 1);
         }
         if (!parent)
             return;
-        // A menu takes commands and separators only; anything else lands beside it.
-        if (RowKind(parent->data(0, kKindRole).toInt()) == RowKind::Menu && !fitsInMenu(entry))
-        {
-            index = parent->parent()->indexOfChild(parent) + 1;
-            parent = parent->parent();
-        }
-        if (e->source() == this)
-            if (QTreeWidgetItem* moved = currentItem(); moved && moved->parent())
-            {
-                QTreeWidgetItem* from = moved->parent();
-                if (moved == parent || parent->parent() == moved)
-                    return;
-                const int at = from->indexOfChild(moved);
-                if (from == parent && at < index)
-                    --index;
-                from->takeChild(at);
-            }
-        QTreeWidgetItem* row = makeRow(entry);
-        parent->insertChild(std::clamp(index, 0, parent->childCount()), row);
-        parent->setExpanded(true);
-        row->setExpanded(true);
-        setCurrentItem(row);
+        if (!place(entry, parent, index, e->source() == this))
+            return;
         e->setDropAction(Qt::CopyAction);
         e->accept();
-        if (changed)
-            changed();
+    }
+
+    void paintEvent(QPaintEvent* e) override
+    {
+        QTreeWidget::paintEvent(e);
+        if (mDropAt == DropAt::None || !mDropRow)
+            return;
+        const QRect r = visualItemRect(mDropRow);
+        if (!r.isValid())
+            return;
+        QPainter p(viewport());
+        const QColor line = themeColor("accent");
+        if (mDropAt == DropAt::Onto)
+        {
+            p.setPen(QPen(line, 2));
+            p.drawRect(r.adjusted(1, 1, -2, -2));
+            return;
+        }
+        const int y = mDropAt == DropAt::Above ? r.top() : r.bottom();
+        p.fillRect(QRect(r.left(), y - 1, viewport()->width() - r.left() - 4, 2), line);
+        p.setBrush(line);
+        p.setPen(Qt::NoPen);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.drawEllipse(QPointF(r.left() + 2, y), 3, 3);
     }
 
     void keyPressEvent(QKeyEvent* e) override
@@ -385,19 +478,83 @@ protected:
         QTreeWidget::keyPressEvent(e);
     }
 
-public:
-    void removeCurrent()
+private:
+    /** Menus and sides take a drop onto their middle; elsewhere the drop goes between rows. */
+    void trackDrop(const QPoint& at)
     {
-        QTreeWidgetItem* at = currentItem();
-        if (!at || !at->parent())
-            return;
-        delete at;
+        QTreeWidgetItem* row = itemAt(at);
+        DropAt where = DropAt::None;
+        if (row)
+        {
+            const QRect r = visualItemRect(row);
+            const int y = at.y() - r.top();
+            const auto kind = RowKind(row->data(0, kKindRole).toInt());
+            if (kind != RowKind::Entry && y > r.height() / 4 && y < r.height() * 3 / 4)
+                where = DropAt::Onto;
+            else
+                where = y < r.height() / 2 ? DropAt::Above : DropAt::Below;
+            // Above the first side has nowhere to go but into it.
+            if (kind == RowKind::Side && where == DropAt::Above && indexOfTopLevelItem(row) == 0)
+                where = DropAt::Onto;
+        }
+        else if (topLevelItemCount() > 0)
+        {
+            // Past the last row: the end of the last side.
+            QTreeWidgetItem* last = topLevelItem(topLevelItemCount() - 1);
+            row = last->childCount() > 0 ? last->child(last->childCount() - 1) : last;
+            where = row == last ? DropAt::Onto : DropAt::Below;
+        }
+        if (row != mDropRow || where != mDropAt)
+        {
+            mDropRow = row;
+            mDropAt = where;
+            viewport()->update();
+        }
+    }
+
+    void clearDrop()
+    {
+        mDropRow = nullptr;
+        mDropAt = DropAt::None;
+        viewport()->update();
+    }
+
+    /** Inserts the entry, moving the current row when the drag came from this tree. False when the move is onto itself. */
+    bool place(const json& entry, QTreeWidgetItem* parent, int index, bool move)
+    {
+        // A menu takes commands and separators only; anything else lands beside it.
+        if (RowKind(parent->data(0, kKindRole).toInt()) == RowKind::Menu && !fitsInMenu(entry))
+        {
+            index = parent->parent()->indexOfChild(parent) + 1;
+            parent = parent->parent();
+        }
+        if (move)
+            if (QTreeWidgetItem* moved = currentItem(); moved && moved->parent())
+            {
+                QTreeWidgetItem* from = moved->parent();
+                if (moved == parent || parent->parent() == moved)
+                    return false;
+                const int at = from->indexOfChild(moved);
+                if (from == parent && at < index)
+                    --index;
+                from->takeChild(at);
+            }
+        QTreeWidgetItem* row = makeRow(entry);
+        parent->insertChild(std::clamp(index, 0, parent->childCount()), row);
+        parent->setExpanded(true);
+        row->setExpanded(true);
+        setCurrentItem(row);
         if (changed)
             changed();
+        return true;
     }
+
+    std::vector<std::pair<std::string, QString>> mSides;
+    QTreeWidgetItem* mDropRow = nullptr;
+    DropAt mDropAt = DropAt::None;
 };
 
-/** Everything that can go on the header: the built-in items, a separator, and every registered command by category. */
+/** Everything that can go on the bar: its own items, a separator, a menu, and every registered command by category. */
 class SourceTree : public QTreeWidget
 {
 public:
@@ -409,7 +566,7 @@ public:
         setIndentation(16);
     }
 
-    void fill(const QString& filter)
+    void fill(const Target& target, const QString& filter)
     {
         clear();
         auto group = [this](const QString& title) {
@@ -422,10 +579,10 @@ public:
             return g;
         };
         auto matches = [&](const QString& text) { return filter.isEmpty() || text.contains(filter, Qt::CaseInsensitive); };
-        QTreeWidgetItem* items = group("Header Items");
-        for (const Builtin& b : builtins())
-            if (matches(b.label))
-                items->addChild(makeRow(json(b.id)));
+        QTreeWidgetItem* items = group(QString::fromStdString(barPresets::barLabel(target.bar)) + " Items");
+        for (const json& e : target.items())
+            if (matches(QString::fromStdString(entryLabel(e))))
+                items->addChild(makeRow(e));
         if (matches("Separator"))
             items->addChild(makeRow(json(kSeparator)));
         if (matches("Menu"))
@@ -446,7 +603,7 @@ public:
                 delete takeTopLevelItem(i);
         if (!filter.isEmpty())
             expandAll();
-        else
+        else if (topLevelItemCount() > 0)
             topLevelItem(0)->setExpanded(true);
     }
 
@@ -463,95 +620,138 @@ protected:
     }
 };
 
-class HeaderEditor : public QWidget
+QPushButton* pushButton(const QString& text, QWidget* parent)
+{
+    auto* b = new QPushButton(text, parent);
+    b->setAutoDefault(false);
+    return b;
+}
+
+class BarEditor : public QWidget
 {
 public:
-    explicit HeaderEditor(QWidget* parent) : QWidget(parent, Qt::Tool)
+    explicit BarEditor(QWidget* parent) : QWidget(parent, Qt::Tool)
     {
-        setWindowTitle("Customize Viewport Header");
+        setWindowTitle("Customize Bars");
         setAttribute(Qt::WA_DeleteOnClose);
-        resize(640, 560);
+        resize(680, 600);
         auto* root = new QVBoxLayout(this);
         root->setContentsMargins(12, 12, 12, 12);
         root->setSpacing(8);
-        auto* hint = new QLabel("Drag commands from the right onto the header. Changes show in every viewport as you make them.", this);
-        hint->setWordWrap(true);
-        controls::setRole(hint, "hint");
-        root->addWidget(hint);
+
+        auto* presetRow = new QHBoxLayout;
+        presetRow->setSpacing(4);
+        auto* presetLabel = new QLabel("Preset", this);
+        presetRow->addWidget(presetLabel);
+        mPresets = new QComboBox(this);
+        mPresets->setToolTip("A saved set of bar arrangements. Edits go into the current preset; Lila Default needs Save As to keep them.");
+        mPresets->setMinimumWidth(160);
+        connect(mPresets, &QComboBox::activated, this, [this](int i) {
+            barPresets::activate(mPresets->itemData(i).toString().toStdString());
+            loadBar();
+            refreshPresets();
+        });
+        presetRow->addWidget(mPresets, 1);
+        QPushButton* saveAs = pushButton("Save As...", this);
+        connect(saveAs, &QPushButton::clicked, this, [this] { saveAsPreset(); });
+        mDelete = pushButton("Delete", this);
+        connect(mDelete, &QPushButton::clicked, this, [this] {
+            const std::string name = barPresets::current();
+            if (name.empty())
+                return;
+            barPresets::remove(name);
+            refreshPresets();
+        });
+        QPushButton* importButton = pushButton("Import...", this);
+        connect(importButton, &QPushButton::clicked, this, [this] { importPreset(); });
+        mExport = pushButton("Export...", this);
+        connect(mExport, &QPushButton::clicked, this, [this] { exportPreset(); });
+        for (QPushButton* b : {saveAs, mDelete, importButton, mExport})
+            presetRow->addWidget(b);
+        root->addLayout(presetRow);
+
+        mBind = new QCheckBox(this);
+        mBind->setToolTip("Applies this preset whenever the layout is applied");
+        connect(mBind, &QCheckBox::toggled, this, [this](bool on) {
+            const std::string preset = barPresets::current();
+            barPresets::bind(layouts::current(), on ? (preset.empty() ? std::string(barPresets::kDefaultBinding) : preset) : std::string());
+        });
+        root->addWidget(mBind);
+
+        mBars = new controls::Segmented(this);
+        for (size_t i = 0; i < barPresets::bars().size(); ++i)
+            mBars->add(QString::fromStdString(barPresets::barLabel(barPresets::bars()[i])), {}, {}, int(i));
+        connect(mBars, &controls::Segmented::picked, this, [this](int i) { setBar(barPresets::bars()[size_t(i)]); });
+        auto* barRow = new QHBoxLayout;
+        barRow->addWidget(mBars);
+        barRow->addStretch(1);
+        root->addSpacing(4);
+        root->addLayout(barRow);
 
         auto* columns = new QHBoxLayout;
         columns->setSpacing(12);
         auto* left = new QVBoxLayout;
-        auto* headerTitle = new QLabel("Header", this);
-        QFont bold = headerTitle->font();
-        bold.setWeight(QFont::DemiBold);
-        headerTitle->setFont(bold);
-        left->addWidget(headerTitle);
-        mHeader = new HeaderTree(this);
-        mHeader->changed = [this] { apply(); };
-        mHeader->setContextMenuPolicy(Qt::CustomContextMenu);
-        connect(mHeader, &QWidget::customContextMenuRequested, this, [this](const QPoint& at) { rowMenu(mHeader->itemAt(at), mHeader->viewport()->mapToGlobal(at)); });
-        connect(mHeader, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* row) {
+        mTree = new BarTree(this);
+        mTree->changed = [this] { apply(); };
+        mTree->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(mTree, &QWidget::customContextMenuRequested, this, [this](const QPoint& at) { rowMenu(mTree->itemAt(at), mTree->viewport()->mapToGlobal(at)); });
+        connect(mTree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* row) {
             if (row && RowKind(row->data(0, kKindRole).toInt()) == RowKind::Menu)
                 rename(row);
         });
-        left->addWidget(mHeader, 1);
-        auto* headerButtons = new QHBoxLayout;
-        headerButtons->setSpacing(2);
-        auto* newMenu = new QToolButton(this);
-        newMenu->setText("New Menu");
-        controls::setRole(newMenu, "push");
-        connect(newMenu, &QToolButton::clicked, this, [this] {
+        left->addWidget(mTree, 1);
+        auto* treeButtons = new QHBoxLayout;
+        treeButtons->setSpacing(4);
+        QPushButton* newMenu = pushButton("New Menu", this);
+        connect(newMenu, &QPushButton::clicked, this, [this] {
             const QString title = QInputDialog::getText(this, "New Menu", "Name", QLineEdit::Normal, "Display");
             if (!title.trimmed().isEmpty())
-                mHeader->insertEntry(json{{"menu", title.trimmed().toStdString()}, {"icon", "menu-2"}, {"items", json::array()}});
+                mTree->insertEntry(json{{"menu", title.trimmed().toStdString()}, {"icon", "menu-2"}, {"items", json::array()}});
         });
-        auto* remove = new QToolButton(this);
-        remove->setText("Remove");
-        controls::setRole(remove, "push");
-        connect(remove, &QToolButton::clicked, this, [this] { mHeader->removeCurrent(); });
-        headerButtons->addWidget(newMenu);
-        headerButtons->addWidget(remove);
-        left->addLayout(headerButtons);
+        QPushButton* remove = pushButton("Remove", this);
+        connect(remove, &QPushButton::clicked, this, [this] { mTree->removeCurrent(); });
+        QPushButton* resetBar = pushButton("Reset Bar", this);
+        resetBar->setToolTip("Puts this bar back to Lila's default items");
+        connect(resetBar, &QPushButton::clicked, this, [this] {
+            mTarget.reset();
+            barPresets::edited();
+            loadBar();
+        });
+        treeButtons->addWidget(newMenu);
+        treeButtons->addWidget(remove);
+        treeButtons->addStretch(1);
+        treeButtons->addWidget(resetBar);
+        left->addLayout(treeButtons);
         columns->addLayout(left, 1);
 
         auto* right = new QVBoxLayout;
-        auto* addTitle = new QLabel("Commands", this);
-        addTitle->setFont(bold);
-        right->addWidget(addTitle);
         auto* search = new QLineEdit(this);
         search->setPlaceholderText("Search commands");
         search->addAction(icon("search"), QLineEdit::LeadingPosition);
         search->setClearButtonEnabled(true);
         right->addWidget(search);
         mSource = new SourceTree(this);
-        mSource->fill({});
-        connect(search, &QLineEdit::textChanged, this, [this](const QString& t) { mSource->fill(t.trimmed()); });
+        connect(search, &QLineEdit::textChanged, this, [this](const QString& t) { mSource->fill(mTarget, t.trimmed()); });
+        mSearch = search;
         connect(mSource, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* row) {
             if (row && row->parent())
-                mHeader->insertEntry(rowEntry(row));
+                mTree->insertEntry(rowEntry(row));
         });
         right->addWidget(mSource, 1);
-        auto* add = new QToolButton(this);
-        add->setText("Add to Header");
-        controls::setRole(add, "push");
-        connect(add, &QToolButton::clicked, this, [this] {
+        QPushButton* add = pushButton("Add", this);
+        add->setToolTip("Adds the selected command to the bar; dragging it there works too");
+        connect(add, &QPushButton::clicked, this, [this] {
             if (QTreeWidgetItem* row = mSource->currentItem(); row && row->parent())
-                mHeader->insertEntry(rowEntry(row));
+                mTree->insertEntry(rowEntry(row));
         });
-        right->addWidget(add);
+        auto* addRow = new QHBoxLayout;
+        addRow->addStretch(1);
+        addRow->addWidget(add);
+        right->addLayout(addRow);
         columns->addLayout(right, 1);
         root->addLayout(columns, 1);
 
         auto* footer = new QHBoxLayout;
-        auto* reset = new QToolButton(this);
-        reset->setText("Reset to Default");
-        controls::setRole(reset, "push");
-        connect(reset, &QToolButton::clicked, this, [this] {
-            mHeader->load(defaultConfig());
-            PrefStore::get().remove("general", kPref);
-        });
-        footer->addWidget(reset);
         footer->addStretch(1);
         auto* done = new QPushButton("Done", this);
         done->setDefault(true);
@@ -559,11 +759,98 @@ public:
         footer->addWidget(done);
         root->addLayout(footer);
 
-        mHeader->load(config());
+        refreshPresets();
+        setBar(barPresets::kHeader);
+    }
+
+    void setBar(const std::string& bar)
+    {
+        mTarget = targetFor(bar);
+        const auto& all = barPresets::bars();
+        mBars->setCurrent(int(std::find(all.begin(), all.end(), bar) - all.begin()));
+        loadBar();
     }
 
 private:
-    void apply() { setConfig(mHeader->save()); }
+    void loadBar()
+    {
+        mTree->load(mTarget, mTarget.load());
+        mSource->fill(mTarget, mSearch->text().trimmed());
+    }
+
+    void apply()
+    {
+        mTarget.store(mTree->save());
+        barPresets::edited();
+    }
+
+    void refreshPresets()
+    {
+        QSignalBlocker block(mPresets);
+        mPresets->clear();
+        mPresets->addItem("Lila Default", QString());
+        for (const std::string& name : barPresets::names())
+            mPresets->addItem(QString::fromStdString(name), QString::fromStdString(name));
+        const std::string cur = barPresets::current();
+        mPresets->setCurrentIndex(std::max(0, mPresets->findData(QString::fromStdString(cur))));
+        mDelete->setEnabled(!cur.empty());
+        mExport->setEnabled(!cur.empty());
+        const std::string layout = layouts::current();
+        const std::string bound = barPresets::boundTo(layout);
+        QSignalBlocker blockBind(mBind);
+        mBind->setText(QString("Apply with the %1 layout").arg(QString::fromStdString(layout)));
+        mBind->setEnabled(!layout.empty());
+        mBind->setChecked(!bound.empty() && (bound == cur || (cur.empty() && bound == barPresets::kDefaultBinding)));
+    }
+
+    void saveAsPreset()
+    {
+        const std::string cur = barPresets::current();
+        bool ok = false;
+        const QString name = QInputDialog::getText(this, "Save Bar Preset", "Name", QLineEdit::Normal,
+                                                   cur.empty() ? QString("My Bars") : QString::fromStdString(cur), &ok)
+                                 .trimmed();
+        if (!ok || name.isEmpty())
+            return;
+        barPresets::save(name.toStdString());
+        refreshPresets();
+    }
+
+    void exportPreset()
+    {
+        const std::string cur = barPresets::current();
+        if (cur.empty())
+            return;
+        const QString filter = QString("Bar presets (*%1)").arg(barPresets::kFileSuffix);
+        QString path = fileDialog::getSaveFileName(this, "Export Bar Preset", QString::fromStdString(cur) + barPresets::kFileSuffix, filter);
+        if (path.isEmpty())
+            return;
+        if (!path.endsWith(barPresets::kFileSuffix))
+            path += barPresets::kFileSuffix;
+        std::string error;
+        if (!barPresets::exportTo(cur, paths::fromUtf8(path.toStdString()), error))
+            log::error("Export Bar Preset: {}", error);
+        else
+            log::info("Exported bar preset \"{}\" to {}", cur, path.toStdString());
+    }
+
+    void importPreset()
+    {
+        const QString filter = QString("Bar presets (*%1);;All files (*)").arg(barPresets::kFileSuffix);
+        const QString path = fileDialog::getOpenFileName(this, "Import Bar Preset", {}, filter);
+        if (path.isEmpty())
+            return;
+        std::string error;
+        const std::string name = barPresets::importFrom(paths::fromUtf8(path.toStdString()), error);
+        if (name.empty())
+        {
+            log::error("Import Bar Preset: {}", error);
+            return;
+        }
+        barPresets::activate(name);
+        refreshPresets();
+        loadBar();
+    }
 
     void rename(QTreeWidgetItem* row)
     {
@@ -585,27 +872,35 @@ private:
         QMenu menu;
         if (RowKind(row->data(0, kKindRole).toInt()) == RowKind::Menu)
             menu.addAction("Rename...", this, [this, row] { rename(row); });
-        menu.addAction(icon("x"), "Remove", this, [this] { mHeader->removeCurrent(); });
-        mHeader->setCurrentItem(row);
+        menu.addAction(icon("x"), "Remove", this, [this] { mTree->removeCurrent(); });
+        mTree->setCurrentItem(row);
         menu.exec(global);
     }
 
-    HeaderTree* mHeader;
-    SourceTree* mSource;
+    Target mTarget = targetFor(barPresets::kHeader);
+    QComboBox* mPresets = nullptr;
+    QPushButton* mDelete = nullptr;
+    QPushButton* mExport = nullptr;
+    QCheckBox* mBind = nullptr;
+    controls::Segmented* mBars = nullptr;
+    BarTree* mTree = nullptr;
+    SourceTree* mSource = nullptr;
+    QLineEdit* mSearch = nullptr;
 };
 
-QPointer<HeaderEditor> gEditor;
+QPointer<BarEditor> gEditor;
 } // namespace
 
-void openEditor(QWidget* anchor)
+void openEditor(QWidget* anchor, const std::string& bar)
 {
     if (!gEditor)
     {
         QWidget* owner = anchor ? anchor->window() : QApplication::activeWindow();
-        gEditor = new HeaderEditor(owner);
+        gEditor = new BarEditor(owner);
         if (owner)
             gEditor->move(owner->geometry().center() - QPoint(gEditor->width() / 2, gEditor->height() / 2));
     }
+    gEditor->setBar(bar.empty() ? std::string(barPresets::kHeader) : bar);
     gEditor->show();
     gEditor->raise();
     gEditor->activateWindow();
@@ -613,6 +908,8 @@ void openEditor(QWidget* anchor)
 
 void registerActions()
 {
+    barPresets::install();
+    iconBars::setCustomizeHook([](const std::string& bar, QWidget* anchor) { openEditor(anchor, bar); });
     actions::add({.id = "viewport.customizeHeader",
                   .label = "Customize Viewport Header...",
                   .category = "View",
@@ -621,10 +918,20 @@ void registerActions()
                   .doc = "Choose what the row at the top of each viewport shows: add any command, make your own menus of them, reorder "
                          "or remove items. Also on the header's right-click menu.",
                   .icon = "layout-navbar"});
+    actions::add({.id = "window.customizeToolBox",
+                  .label = "Customize Tool Box...",
+                  .category = "Windows",
+                  .run = [] { openEditor(nullptr, iconBars::kToolBox); },
+                  .enabled = {},
+                  .doc = "Choose what the tool box at the window's left edge shows. Also on the tool box's right-click menu.",
+                  .icon = "layout-sidebar"});
     actions::add({.id = "viewport.resetHeader",
                   .label = "Reset Viewport Header",
                   .category = "View",
-                  .run = [] { PrefStore::get().remove("general", kPref); },
+                  .run = [] {
+                      PrefStore::get().remove("general", kPref);
+                      barPresets::edited();
+                  },
                   .enabled = {},
                   .doc = "Puts the viewport header back to Lila's default items.",
                   .icon = "restore"});

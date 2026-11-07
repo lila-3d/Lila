@@ -128,9 +128,9 @@ UndoHistoryPanel::UndoHistoryPanel(QWidget* parent) : QWidget(parent)
     QPalette dim = mFooter->palette();
     dim.setColor(QPalette::WindowText, palette().color(QPalette::PlaceholderText));
     mFooter->setPalette(dim);
-    QFont small = mFooter->font();
-    small.setPointSizeF(small.pointSizeF() * 0.92);
-    mFooter->setFont(small);
+    QFont footerFont = mFooter->font();
+    footerFont.setPointSizeF(footerFont.pointSizeF() * 0.92);
+    mFooter->setFont(footerFont);
     v->addWidget(mFooter);
 
     QPointer<UndoHistoryPanel> self(this);

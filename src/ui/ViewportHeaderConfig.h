@@ -40,9 +40,9 @@ LILA_UI_API void setConfig(const nlohmann::json& config);
 LILA_UI_API std::string entryLabel(const nlohmann::json& entry);
 LILA_UI_API std::string entryIcon(const nlohmann::json& entry);
 
-/** Opens, or raises, the header editor. */
-LILA_UI_API void openEditor(QWidget* anchor = nullptr);
+/** Opens, or raises, the bar editor on a bar (the viewport header when empty; an icon bar's name otherwise). */
+LILA_UI_API void openEditor(QWidget* anchor = nullptr, const std::string& bar = {});
 
-/** viewport.customizeHeader and viewport.resetHeader. */
+/** viewport.customizeHeader, window.customizeToolBox and viewport.resetHeader; installs bar presets. */
 LILA_UI_API void registerActions();
 } // namespace lila::ui::viewportHeader

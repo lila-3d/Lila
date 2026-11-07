@@ -6,6 +6,8 @@
 
 #include <QWidget>
 
+#include <nlohmann/json.hpp>
+
 #include <cstdint>
 #include <functional>
 #include <initializer_list>
@@ -67,6 +69,22 @@ LILA_UI_API bool remove(const std::string& id);
 /** The items of a bar in display order: Lila's first, then after and before applied. */
 LILA_UI_API std::vector<const Item*> itemsIn(const std::string& bar);
 
+/**
+ * A bar as the user arranged it, a list of entries: {"item": id} for a registered item, {"action": id}, {"menu": title,
+ * "icon": name, "items": [action ids and "|"]}, and "|" for a separator. Items registered after it was saved are appended.
+ */
+LILA_UI_API nlohmann::json arrangement(const std::string& bar);
+/** The registered items in their own order, as arrangement entries. */
+LILA_UI_API nlohmann::json defaultArrangement(const std::string& bar);
+/** Whether the user has arranged the bar. */
+LILA_UI_API bool arranged(const std::string& bar);
+LILA_UI_API void setArrangement(const std::string& bar, const nlohmann::json& entries);
+LILA_UI_API void resetArrangement(const std::string& bar);
+/** The bar's items in display order: the registered ones, or the user's arrangement of them. */
+LILA_UI_API std::vector<Item> arrangedItems(const std::string& bar);
+/** What a bar's right-click Customize opens; the bar editor installs it. */
+LILA_UI_API void setCustomizeHook(std::function<void(const std::string& bar, QWidget* anchor)> hook);
+
 /** Whether an action shows as on, nullopt when it is not a toggle. */
 using StateFn = std::function<std::optional<bool>(const std::string& action)>;
 
@@ -101,6 +119,7 @@ public:
 protected:
     void resizeEvent(QResizeEvent* e) override;
     bool event(QEvent* e) override;
+    void contextMenuEvent(QContextMenuEvent* e) override;
 
 private:
     struct Button
@@ -129,6 +148,7 @@ private:
     int mIconSize;
     StateFn mState;
     std::vector<Button> mButtons;
+    nlohmann::json mBuiltFrom; // the arrangement the buttons were made from, so a pref change rebuilds only when it differs
     QToolButton* mChevron = nullptr;
     bool mFill = false;
     bool mWrap = false;

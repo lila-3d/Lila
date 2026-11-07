@@ -21,6 +21,7 @@
 #include "ui/RetopoDrawTool.h"
 #include "ui/SoftSelectPanel.h"
 #include "ui/SpinScrub.h"
+#include "ui/TearOff.h"
 #include "ui/Theme.h"
 #include "ui/Tools.h"
 #include "ui/UiCommon.h"
@@ -33,6 +34,7 @@
 #include "ui/ViewportWidget.h"
 
 #include <QActionGroup>
+#include <QApplication>
 #include <QCheckBox>
 #include <QDialog>
 #include <QDoubleSpinBox>
@@ -392,6 +394,34 @@ void hdrRadioRows(QMenu* m, const std::vector<std::string>& ids, const ViewportW
     }
 }
 
+/** What Shift+click on a header action button opens instead of running it, for the buttons that have one. */
+QString hdrShiftHint(const std::string& action)
+{
+    if (action == "viewport.toggleImagePlanes")
+        return "Reference Images menu";
+    if (action == "view.presenter")
+        return "edit the Presenter layout";
+    return {};
+}
+
+bool hdrShiftClick(QToolButton* b, const std::string& action)
+{
+    if (action == "viewport.toggleImagePlanes")
+    {
+        QMenu* menu = tearoff::findMenu(mainWindow(), {"Create", "Reference Images"});
+        if (!menu)
+            return false;
+        menu->popup(b->mapToGlobal(QPoint(0, b->height())));
+        return true;
+    }
+    if (action == "view.presenter" && actions::find("view.presenterLayout"))
+    {
+        actions::run("view.presenterLayout");
+        return true;
+    }
+    return false;
+}
+
 const char* const kModeActions[] = {"select.objectMode", "select.vertexMode", "select.edgeMode", "select.faceMode"};
 const char* const kShadingActions[] = {"viewport.wireframe", "viewport.shaded", "viewport.textured"};
 } // namespace
@@ -586,7 +616,8 @@ void ViewportHeader::buildSelectionMasks()
     auto* group = new QWidget(this);
     auto* row = new QHBoxLayout(group);
     row->setContentsMargins(0, 0, 0, 0);
-    row->setSpacing(0);
+    // Independent toggles, so spaced like separate buttons rather than joined like a segmented choice.
+    row->setSpacing(kHeaderGap);
     std::vector<QToolButton*> buttons;
     for (const char* id : kMaskActions)
     {
@@ -633,11 +664,12 @@ void ViewportHeader::fillCommandMenu(QMenu* m, const json& items)
         }
         if (!actions::find(id))
             continue;
-        QAction* a = m->addAction(icon(QString::fromStdString(actions::iconFor(id))), hdrLabel(id));
         std::optional<bool> on = viewportActionState(id, mView);
         if (!on)
             if (const Action* act = actions::find(id); act && act->checked)
                 on = act->checked();
+        // A menu row draws an icon in place of its check mark, so toggles go without one and read alike.
+        QAction* a = on ? m->addAction(hdrLabel(id)) : m->addAction(icon(QString::fromStdString(actions::iconFor(id))), hdrLabel(id));
         a->setCheckable(on.has_value());
         a->setChecked(on.value_or(false));
         a->setToolTip(hdrTip(id));
@@ -712,8 +744,10 @@ QToolButton* ViewportHeader::actionButton(const char* id, const char* iconName, 
         iconName = fallbackIcon.empty() ? "point" : fallbackIcon.c_str();
     QToolButton* b = button(iconName, {});
     const std::string action = id;
-    connect(b, &QToolButton::clicked, this, [this, action] {
+    connect(b, &QToolButton::clicked, this, [this, b, action] {
         activateView();
+        if ((QApplication::keyboardModifiers() & Qt::ShiftModifier) && hdrShiftClick(b, action))
+            return;
         actions::run(action);
         refresh();
     });
@@ -1187,9 +1221,7 @@ void ViewportHeader::fillOverlaysMenu(QMenu* m)
     hdrSubmenu(m, "Level of Detail", [this](QMenu* s) { lodDisplay::fillMenu(s, mView); });
 
     m->addSection("Selection Display");
-    for (const char* id : {"viewport.toggleHighlightSelection", "viewport.togglePreselectObjects", "viewport.togglePreselectComponents",
-                           "viewport.toggleXray"})
-        row(id);
+    row("viewport.toggleXray");
     if (hdrRelevant(vc::Joints, "rig.xrayJoints", mView))
         row("rig.xrayJoints");
 
@@ -1337,7 +1369,10 @@ void ViewportHeader::refreshSymmetry()
 void ViewportHeader::refreshTooltips()
 {
     for (auto& [b, id] : mActionButtons)
-        b->setToolTip(hdrTip(id));
+    {
+        const QString shift = hdrShiftHint(id);
+        b->setToolTip(shift.isEmpty() ? hdrTip(id) : hdrTip(id) + "\nShift+click: " + shift);
+    }
     for (int i = 0; i < 4 && mModes; ++i)
         if (auto* b = mModes->findChildren<QToolButton*>().value(i))
             b->setToolTip(hdrTip(kModeActions[i]));

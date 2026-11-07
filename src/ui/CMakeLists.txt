@@ -84,7 +84,7 @@ lila_module(lila_ui UI
     MarkingMenu.cpp MarkingMenu.h
     MarkingMenuEditor.cpp MarkingMenuEditor.h
     UserMenus.cpp UserMenus.h UserMenuEditor.cpp UserMenuEditor.h
-    MainWindow.cpp MainWindow.h MainWindowDetail.h MainWindowFiles.cpp MainWindowActions.cpp MainWindowMenus.cpp MainWindowLayout.cpp MenuContext.cpp MenuContext.h TopBar.cpp TopBar.h Controls.cpp Controls.h ViewportHeaderConfig.cpp ViewportHeaderConfig.h
+    MainWindow.cpp MainWindow.h MainWindowDetail.h MainWindowFiles.cpp MainWindowActions.cpp MainWindowMenus.cpp MainWindowLayout.cpp MenuContext.cpp MenuContext.h TopBar.cpp TopBar.h Controls.cpp Controls.h ViewportHeaderConfig.cpp ViewportHeaderConfig.h BarPresets.cpp BarPresets.h
     Menus.cpp Menus.h MenuSets.cpp MenuSets.h
     Modes.cpp Modes.h
     ExtensionUi.cpp ExtensionUi.h

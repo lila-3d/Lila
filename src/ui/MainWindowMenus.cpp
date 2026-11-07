@@ -368,7 +368,7 @@ void MainWindow::buildMenus()
                                   "window.modelingToolkit", "window.topologyToolkit", "window.curveToolkit", "window.uvToolkit", "window.levelToolkit",
                                   "#Show", "window.toggleToolBox",
                            "window.toggleChannelBox", "window.toggleUvEditor", "window.commandPalette", "view.presenter", "reference.addImages", "reference.clickable", "#Customize",
-                           "viewport.customizeHeader", "window.markingMenuEditor", "window.userMenuEditor", "window.extensionManager"});
+                           "viewport.customizeHeader", "window.customizeToolBox", "window.markingMenuEditor", "window.userMenuEditor", "window.extensionManager"});
 
     menu("Help", "Help");
     menus::addActions("Help", {"#Learn", "help.docs"});

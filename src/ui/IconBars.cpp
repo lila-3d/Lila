@@ -181,6 +181,22 @@ bool remove(const std::string& id)
     return registry().remove(id);
 }
 
+namespace
+{
+constexpr const char* kSeparatorEntry = "|";
+
+std::string arrangementPref(const std::string& bar)
+{
+    return "/ui/iconBars/" + bar;
+}
+
+std::function<void(const std::string&, QWidget*)>& customizeHook()
+{
+    static std::function<void(const std::string&, QWidget*)> hook;
+    return hook;
+}
+} // namespace
+
 std::vector<const Item*> itemsIn(const std::string& bar)
 {
     std::vector<Item*> items;
@@ -194,6 +210,101 @@ std::vector<const Item*> itemsIn(const std::string& bar)
     std::vector<Item*> ordered = arrange(items, [](Item* i) { return i->id; },
                                          [](Item* i) { return std::pair<std::string, std::string>{i->after, i->before}; });
     return {ordered.begin(), ordered.end()};
+}
+
+nlohmann::json defaultArrangement(const std::string& bar)
+{
+    nlohmann::json out = nlohmann::json::array();
+    for (const Item* i : itemsIn(bar))
+        out.push_back(i->kind == Kind::Separator ? nlohmann::json(kSeparatorEntry) : nlohmann::json{{"item", i->id}});
+    return out;
+}
+
+bool arranged(const std::string& bar)
+{
+    const nlohmann::json saved = PrefStore::get().value("general", arrangementPref(bar), nlohmann::json());
+    return saved.is_object() && saved.contains("entries") && saved["entries"].is_array();
+}
+
+nlohmann::json arrangement(const std::string& bar)
+{
+    if (!arranged(bar))
+        return defaultArrangement(bar);
+    const nlohmann::json saved = PrefStore::get().value("general", arrangementPref(bar), nlohmann::json());
+    nlohmann::json out = saved["entries"];
+    const nlohmann::json known = saved.value("known", nlohmann::json::array());
+    for (const Item* i : itemsIn(bar))
+        if (i->kind != Kind::Separator && std::find(known.begin(), known.end(), i->id) == known.end())
+            out.push_back({{"item", i->id}});
+    return out;
+}
+
+void setArrangement(const std::string& bar, const nlohmann::json& entries)
+{
+    nlohmann::json known = nlohmann::json::array();
+    for (const Item* i : itemsIn(bar))
+        known.push_back(i->id);
+    PrefStore::get().set("general", arrangementPref(bar), nlohmann::json{{"entries", entries}, {"known", std::move(known)}});
+}
+
+void resetArrangement(const std::string& bar)
+{
+    PrefStore::get().remove("general", arrangementPref(bar));
+}
+
+std::vector<Item> arrangedItems(const std::string& bar)
+{
+    std::vector<Item> out;
+    for (const nlohmann::json& e : arrangement(bar))
+    {
+        Item item;
+        item.bar = bar;
+        if (e.is_string())
+        {
+            if (e.get<std::string>() != kSeparatorEntry)
+                continue;
+            item.kind = Kind::Separator;
+            item.id = bar + "/-" + std::to_string(out.size());
+        }
+        else if (!e.is_object())
+            continue;
+        else if (e.contains("item"))
+        {
+            const Item* found = registry().find(e.value("item", std::string()));
+            if (!found || found->bar != bar)
+                continue;
+            item = *found;
+        }
+        else if (e.contains("action"))
+        {
+            item.action = e.value("action", std::string());
+            if (!actions::find(item.action))
+                continue;
+            item.id = bar + "/" + item.action;
+            item.icon = actions::iconFor(item.action);
+            if (item.icon.empty())
+                item.icon = "point";
+        }
+        else if (e.contains("menu"))
+        {
+            item.kind = Kind::Menu;
+            item.label = e.value("menu", std::string("Menu"));
+            item.icon = e.value("icon", std::string("menu-2"));
+            item.id = bar + "/menu:" + item.label;
+            for (const nlohmann::json& row : e.value("items", nlohmann::json::array()))
+                if (row.is_string())
+                    item.menuActions.push_back(row.get<std::string>() == kSeparatorEntry ? std::string() : row.get<std::string>());
+        }
+        else
+            continue;
+        out.push_back(std::move(item));
+    }
+    return out;
+}
+
+void setCustomizeHook(std::function<void(const std::string& bar, QWidget* anchor)> hook)
+{
+    customizeHook() = std::move(hook);
 }
 
 void addActionRows(QMenu* menu, const std::vector<std::string>& rows, const StateFn& state)
@@ -288,7 +399,14 @@ IconBar::IconBar(std::string bar, Qt::Orientation orientation, int iconSize, Sta
                     self->scheduleRefresh();
             });
     };
-    mPrefListener = PrefStore::get().onChanged([later](const std::string&) { later(); });
+    mPrefListener = PrefStore::get().onChanged([self, later](const std::string& file) {
+        later();
+        if (file == "general" && self)
+            QMetaObject::invokeMethod(self, [self] {
+                if (self && arrangement(self->mBar) != self->mBuiltFrom)
+                    self->scheduleRebuild();
+            });
+    });
     mToolsListener = tools::addListener(later);
     mViewportToolListener = viewportTools::addListener(later);
     mComponentListener = scene::components::addListener(later);
@@ -360,8 +478,11 @@ void IconBar::rebuild()
     }
     mButtons.clear();
     const QSize iconSize(mIconSize, mIconSize);
-    for (const Item* item : itemsIn(mBar))
+    mBuiltFrom = arrangement(mBar);
+    const std::vector<Item> items = arrangedItems(mBar);
+    for (const Item& entry : items)
     {
+        const Item* item = &entry;
         Button b;
         b.item = *item;
         if (item->kind == Kind::Separator)
@@ -615,6 +736,21 @@ void IconBar::resizeEvent(QResizeEvent* e)
 {
     QWidget::resizeEvent(e);
     layoutItems();
+}
+
+void IconBar::contextMenuEvent(QContextMenuEvent* e)
+{
+    if (!customizeHook())
+        return QWidget::contextMenuEvent(e);
+    QMenu menu;
+    const std::string bar = mBar;
+    QPointer<IconBar> self(this);
+    menu.addAction(icon("layout-navbar"), "Customize...", this, [bar, self] {
+        if (self)
+            customizeHook()(bar, self);
+    });
+    menu.addAction(icon("restore"), "Reset", this, [bar] { resetArrangement(bar); });
+    menu.exec(e->globalPos());
 }
 
 bool IconBar::event(QEvent* e)
