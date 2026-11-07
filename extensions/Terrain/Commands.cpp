@@ -2463,6 +2463,9 @@ void registerCommands(ext::Context& ctx)
                 throw CommandError("terrainSendToUnreal: " + r.error);
             json out = r.result;
             out["settings"] = settings;
+            // Before the volume, which puts the holes' visibility mask into the landscape's material.
+            if (!surface.is_null())
+                out["terrainMaterial"] = sendSurfaceMaterial(client, surface, timeoutMs);
             try
             {
                 if (json v = sendVolumeToUnreal(f.modifier ? f.modifier->id() : 0, f.frame.m, settings, f.mesh ? f.mesh->path() : names[0], name,
@@ -2496,8 +2499,6 @@ void registerCommands(ext::Context& ctx)
                     log::warn("terrainSendToUnreal: the landscape went, its roads did not: {}", e.what());
                     out["roadsError"] = e.what();
                 }
-            if (!surface.is_null())
-                out["terrainMaterial"] = sendSurfaceMaterial(client, surface, timeoutMs);
             return out;
         },
         .examples = {"terrainSendToUnreal('Terrain', material='/Game/Terrain/M_Landscape')"},
