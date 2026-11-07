@@ -4,6 +4,7 @@
 
 #include "ops/Command.h"
 #include "core/ExtensionContext.h"
+#include "core/MainQueue.h"
 #include "scene/Graph.h"
 #include "scene/Transform.h"
 #include "ui/Camera.h"
@@ -470,11 +471,23 @@ TEST_CASE("viewport renderers: registry, per-view selection, commands and unload
     // Back to Lila closes the session; unloading the extension sends its views back too.
     CHECK(run("viewportRenderer", {{"args", {"lila"}}, {"panel", kPanelA}}) == viewportRenderers::kLila);
     CHECK(probe.closed == 1);
+    REQUIRE(viewportRenderers::select(kPanelA, "vr.probe"));
     REQUIRE(viewportRenderers::select(kPanelB, "vr.probe"));
     ctx.unloadAll();
-    CHECK(probe.closed == 2);
+    CHECK(probe.closed == 3);
+    CHECK(viewportRenderers::selected(kPanelA) == viewportRenderers::kLila);
     CHECK(viewportRenderers::selected(kPanelB) == viewportRenderers::kLila);
     CHECK_FALSE(viewportRenderers::registry().contains("vr.probe"));
+
+    // Reloaded, it takes back the views it lost, but not one the user moved to another renderer meanwhile.
+    ext::Context again("vrExt");
+    REQUIRE(viewportRenderers::add(again, {.id = "vr.other", .open = open}));
+    REQUIRE(viewportRenderers::select(kPanelA, "vr.other"));
+    REQUIRE(viewportRenderers::add(again, {.id = "vr.probe", .open = open}));
+    mainq::drain();
+    CHECK(viewportRenderers::selected(kPanelB) == "vr.probe");
+    CHECK(viewportRenderers::selected(kPanelA) == "vr.other");
+    again.unloadAll();
     viewportRenderers::release(kPanelA);
     viewportRenderers::release(kPanelB);
 }

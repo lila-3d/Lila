@@ -37,6 +37,8 @@ struct View
     std::optional<Request> last;
     std::function<void()> redraw;
     std::function<double()> refreshHz;
+    /** The renderer this view lost when its extension unloaded; it switches back when that id registers again. */
+    std::string lost;
 };
 
 std::map<int, View>& views()
@@ -213,12 +215,25 @@ void dropRenderer(const std::string& id)
         if (v.renderer == id)
         {
             close(v);
+            v.lost = id;
             if (v.redraw)
                 v.redraw();
             dropped.push_back(panel);
+            log::info("viewport {}: renderer {} was removed, drawing with Lila's until it comes back", panel, id);
         }
     for (int panel : dropped)
         notify(panel);
+}
+
+void restoreRenderer(const std::string& id)
+{
+    std::vector<int> panels;
+    for (auto& [panel, v] : views())
+        if (v.lost == id)
+            panels.push_back(panel);
+    for (int panel : panels)
+        if (select(panel, id))
+            log::info("viewport {}: renderer {} is back", panel, id);
 }
 
 void applySaved(const std::string& renderer, Session& s)
@@ -251,6 +266,9 @@ Registry<Renderer>& registry()
     static const int listener = r.addListener([](RegistryChange change, const std::string& id, const std::string&) {
         if (change == RegistryChange::Removed)
             dropRenderer(id);
+        else
+            // After the registering extension finishes loading, so the session opens on a ready renderer.
+            mainq::post([id] { restoreRenderer(id); });
     });
     (void)listener;
     return r;
@@ -296,6 +314,8 @@ bool select(int panel, std::string_view id)
     if (id.empty())
         id = kLila;
     View& v = views()[panel];
+    // Any pick, the user's or the switch back, settles what the view waits for.
+    v.lost.clear();
     if (v.renderer == id)
         return true;
     if (id == kLila)
