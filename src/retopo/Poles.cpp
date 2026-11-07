@@ -236,7 +236,7 @@ std::vector<FieldSingularity> cancelClosePoles(const Surface& s, const std::vect
 }
 
 std::vector<FieldSingularity> spreadPoles(const Surface& s, const std::vector<FieldSingularity>& poles, const std::vector<double>& scale,
-                                          double minSep)
+                                          double minSep, const std::function<bool(Index)>& allowed)
 {
     const Index nt = Index(s.tris.size());
     auto centre = [&](Index t) { return (s.pos[s.tris[t][0]] + s.pos[s.tris[t][1]] + s.pos[s.tris[t][2]]) / 3.0; };
@@ -296,16 +296,17 @@ std::vector<FieldSingularity> spreadPoles(const Surface& s, const std::vector<Fi
         placed.push_back(p);
         spread(p.tri, 3.0 * minSep, [&](Index t, double d) { clearance[t] = std::min(clearance[t], d); });
     };
+    auto clear = [&](Index t) { return clearance[t] >= minSep && (!allowed || allowed(t)); };
     for (const FieldSingularity& p : poles)
     {
-        if (clearance[p.tri] >= minSep)
+        if (clear(p.tri))
         {
             place(p);
             continue;
         }
         Index best = kInvalid;
-        spread(p.tri, 2.0, [&](Index t, double) {
-            if (best == kInvalid && clearance[t] >= minSep)
+        spread(p.tri, allowed && !allowed(p.tri) ? 4.0 : 2.0, [&](Index t, double) {
+            if (best == kInvalid && clear(t))
                 best = t;
         });
         if (best != kInvalid)

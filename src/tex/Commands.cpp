@@ -270,14 +270,21 @@ void registerCommands()
     ops::registerCommand({
         .name = "texSetSettings",
         .doc = "Change a texture set's settings: the keys given replace the set's (channels, width, height, tiles, normalConvention, "
-               "bakeProject, exportPreset, material). Returns the full settings.",
+               "bakeProject, exportPreset, material, heightDepth, uvWidth, uvHeight, normalFromHeight, normalFade, heightSource). Returns the full settings.",
         .positionalDoc = "set settings",
         .run = [](const Args& a) -> json {
             Node& n = setNode(positionalString(a, 0, "texSetSettings", "texture set"), "texSetSettings");
             if (a.positional.size() < 2)
                 throw CommandError("texSetSettings: settings required");
-            json next = mergeSettings(readSettings(n), a.positional[1], "texSetSettings");
-            writeSettings(graph(), n, SetSettings::fromJson(next));
+            const SetSettings before = readSettings(n);
+            json next = mergeSettings(before, a.positional[1], "texSetSettings");
+            const SetSettings after = SetSettings::fromJson(next);
+            const Graph g = readGraph(n);
+            const StackState st = readStack(g, before);
+            writeSettings(graph(), n, after);
+            // The stack's height normal reads the set's depth and UV size.
+            if (st.layered && !st.graphMode && !st.stack.layers.empty())
+                writeGraph(graph(), n, compileStack(st.stack, after, g).graph);
             return next;
         },
     });
@@ -804,7 +811,10 @@ void registerCommands()
                   {"resolution", "", T::Int, nullptr, "Width and height, overriding the tiles'.", {}, {}, 1.0},
                   {"optional", "", T::Bool, true, "Also write the preset's optional maps the set has channels for."},
                   {"incremental", "", T::Bool, false, "Only rewrite files whose inputs or pixels changed since the last export to this folder."},
-                  {"backend", "", T::String, nullptr, "gpu or cpu; the GPU when left out and the renderer can run.", {"gpu", "cpu"}}},
+                  {"backend", "", T::String, nullptr, "gpu or cpu; the GPU when left out and the renderer can run.", {"gpu", "cpu"}},
+                  {"normalFromHeight", "", T::Bool, nullptr,
+                   "Write the normal as detail over the height, with the height at 16 bits, for materials that rebuild normals from "
+                   "it; the set's normalFromHeight when left out."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             Node& n = setNode(positionalString(a, 0, "texExport", "texture set"), "texExport");
@@ -815,6 +825,8 @@ void registerCommands()
             o.includeOptional = a.get<bool>("optional", true);
             o.incremental = a.get<bool>("incremental", false);
             o.backend = a.get<std::string>("backend", "");
+            if (a.has("normalFromHeight"))
+                o.normalFromHeight = a.get<bool>("normalFromHeight", false);
             try
             {
                 return exportSet(n, o);

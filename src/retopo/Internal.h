@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <span>
 #include <stdexcept>
@@ -229,9 +230,11 @@ LILA_SCENE_API std::vector<FieldSingularity> cancelClosePoles(const Surface& s, 
 /**
  * Poles moved apart until no two are closer than minSep lattice steps over the surface. Each pole too close to one
  * already placed moves to the nearest clear spot within two steps, or failing that joins the nearest placed pole.
+ * With allowed, a pole on a triangle it rejects moves to the nearest allowed clear spot within four steps.
  */
 LILA_SCENE_API std::vector<FieldSingularity> spreadPoles(const Surface& s, const std::vector<FieldSingularity>& poles,
-                                                         const std::vector<double>& scale, double minSep);
+                                                         const std::vector<double>& scale, double minSep,
+                                                         const std::function<bool(Index)>& allowed = {});
 
 /** Per triangle, its shell (connected through edges); and per shell, the index total its singularities must reach, or INT_MIN when it has a border. */
 struct Shells
@@ -272,13 +275,14 @@ struct Extracted;
  * error set, when it can't be solved. edgeSteps gets, per surface edge, the whole lattice step from its first vertex's
  * lattice point to its second's, for extractMesh. grid gets the quad mesh traced straight from the parametrization's
  * integer grid. foldRetries caps how often a rounding that folds the layout is undone and tried another way; folds gets
- * how many triangles stay folded.
+ * how many triangles stay folded. With mirror, s is the half of a symmetric shape clipped at that plane, and grid is
+ * traced over the half joined to its reflection.
  */
 LILA_SCENE_API std::vector<glm::dvec3> solveSeamlessPositions(const Surface& s, const std::vector<glm::dvec3>& q,
                                                               const std::vector<double>& scale, std::string* error = nullptr,
                                                               std::vector<std::array<int, 2>>* edgeSteps = nullptr,
                                                               Extracted* grid = nullptr, int foldRetries = 0,
-                                                              Index* folds = nullptr);
+                                                              Index* folds = nullptr, const geo::SymmetryPlane* mirror = nullptr);
 
 /**
  * A quad layout made patch by patch, so it can't fold: field lines traced from every pole and feature corner (a
@@ -302,7 +306,16 @@ struct Extracted
     geo::Mesh mesh;
     std::vector<FeatureKind> feature; // per point
     std::vector<uint8_t> boundary;    // per point: came from a surface boundary
+    /** Traced over a symmetric half joined to its reflection: the whole shape, seam row inside. */
+    bool mirrored = false;
 };
+/**
+ * extractMesh over a symmetric half (clipped at plane) joined to its reflection, so the seam row is traced inside
+ * instead of along an open border. Needs the seamless edge steps; the result is the whole shape, marked mirrored.
+ */
+LILA_SCENE_API Extracted extractMirrored(const Surface& s, const std::vector<glm::dvec3>& q, const std::vector<glm::dvec3>& o,
+                                         const std::vector<double>& scale, const std::vector<std::array<int, 2>>& edgeSteps,
+                                         const geo::SymmetryPlane& plane);
 LILA_SCENE_API Extracted extractMesh(const Surface& s, const std::vector<glm::dvec3>& q, const std::vector<glm::dvec3>& o,
                       const std::vector<double>& scale, const std::vector<std::array<int, 2>>* edgeSteps = nullptr);
 

@@ -137,6 +137,9 @@ TEST_CASE("tex: texExport packs channels through the Unreal preset")
     CHECK(fs::exists(dir / "T_Rock_N.png"));
     CHECK(fs::exists(dir / "T_Rock_BC.png"));
     CHECK(fs::exists(dir / "T_Rock_H.png"));
+    // Only the normal map carries a green convention: a reader flips the green of any map marked opengl.
+    for (const json& o : r["outputs"])
+        CHECK(o["normalFormat"] == (o["map"] == "normal" ? "directx" : ""));
     image::Image orm = image::read(dir / "T_Rock_ORM.png");
     REQUIRE(orm.width == 64);
     CHECK(orm.rgba[0] == doctest::Approx(0.9).epsilon(0.01));
@@ -153,4 +156,80 @@ TEST_CASE("tex: texExport packs channels through the Unreal preset")
     for (size_t i = 0; i < gl.rgba.size(); i += 4)
         worst = std::max(worst, std::abs(double(gl.rgba[i + 1]) - (1.0 - double(dx.rgba[i + 1]))));
     CHECK(worst < 0.01);
+}
+
+TEST_CASE("tex: normalFromHeight exports the normal as detail over a 16-bit height")
+{
+    buildRock();
+    fs::path dir = tempDir("exportHeightNormal");
+    run("texSetSettings", {{"args", {"Rock", {{"normalFade", 0.0}}}}});
+    json r = run("texExport", {{"args", {"Rock"}}, {"preset", "unreal"}, {"folder", dir.string()}, {"optional", false}, {"normalFromHeight", true}});
+    CAPTURE(r.dump());
+    // The height goes out even with optional maps off, at 16 bits, and both carry what rebuilds the normal.
+    bool sawHeight = false;
+    for (const json& o : r["outputs"])
+    {
+        if (o["map"] == "height")
+        {
+            sawHeight = true;
+            CHECK(o["bits"] == 16);
+            CHECK(o["meta"]["heightRange"].get<double>() == doctest::Approx(2.5));
+        }
+        if (o["map"] == "normal")
+            CHECK(o["meta"]["normalFromHeight"] == true);
+    }
+    CHECK(sawHeight);
+    // The Rock's normal is all its height's, so the detail left is flat.
+    image::Image n = image::read(dir / "T_Rock_N.png");
+    REQUIRE(n.width == 64);
+    double worst = 0.0;
+    for (size_t i = 0; i < n.rgba.size(); i += 4)
+        worst = std::max({worst, std::abs(n.rgba[i] - 0.5), std::abs(n.rgba[i + 1] - 0.5)});
+    CHECK(worst < 0.02);
+}
+
+TEST_CASE("tex: the stack's height normal follows the set's depth and UV size")
+{
+    run("newScene");
+    run("texCreateSet", {{"args", {"Wall"}}, {"resolution", 32}});
+    run("texAddLayer", {{"args", {"Wall", "fill"}}, {"material", {{"height", 0.7}}}});
+    run("texSetSettings", {{"args", {"Wall", {{"heightDepth", 2.0}, {"uvWidth", 400.0}, {"uvHeight", 200.0}}}}});
+    bool found = false;
+    const json info = run("texGraphInfo", {{"args", {"Wall"}}});
+    CAPTURE(info["definition"].dump());
+    for (const json& node : info["nodes"])
+        if (node["type"] == "heightToNormal")
+            for (const json& p : node["params"])
+            {
+                found = true;
+                if (p["id"] == "depth")
+                    CHECK(p["value"] == 2.0);
+                if (p["id"] == "sizeU")
+                    CHECK(p["value"] == 400.0);
+                if (p["id"] == "sizeV")
+                    CHECK(p["value"] == 200.0);
+            }
+    CHECK(found);
+}
+
+TEST_CASE("tex: normalFromHeight shows the normal rebuilt from the height channel, or the baked height")
+{
+    run("newScene");
+    run("texCreateSet", {{"args", {"Wall"}}, {"resolution", 32}});
+    run("texAddLayer", {{"args", {"Wall", "fill"}}, {"material", {{"height", 0.7}}}});
+    auto types = [] {
+        std::vector<std::string> out;
+        const json info = run("texGraphInfo", {{"args", {"Wall"}}});
+        for (const json& node : info["nodes"])
+            out.push_back(node["type"]);
+        return out;
+    };
+    auto has = [](const std::vector<std::string>& v, const char* t) { return std::ranges::find(v, t) != v.end(); };
+    CHECK_FALSE(has(types(), "heightNormalRebuild"));
+    run("texSetSettings", {{"args", {"Wall", {{"normalFromHeight", true}}}}});
+    CHECK(has(types(), "heightNormalRebuild"));
+    CHECK_FALSE(has(types(), "meshHeight"));
+    run("texSetSettings", {{"args", {"Wall", {{"heightSource", "mesh"}}}}});
+    CHECK(has(types(), "meshHeight"));
+    CHECK_THROWS_AS(run("texSetSettings", {{"args", {"Wall", {{"heightSource", "nope"}}}}}), CommandError);
 }

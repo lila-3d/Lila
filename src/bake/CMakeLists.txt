@@ -15,6 +15,7 @@ lila_module(lila_bake Scene
     CagePreview.cpp
     BakeWrite.cpp
     CpuBackend.cpp
+    HeightNormal.cpp
     HighFiles.cpp
     Lint.cpp
     Maps.cpp

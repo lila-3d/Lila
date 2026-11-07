@@ -103,6 +103,18 @@ void stylisedAttrs(std::vector<AttrDef>& a)
                                                     "off. Needs a GPU with ray tracing. Bake a roundedNormal map to keep it for game engines.", 0.0);
 }
 
+/** A height map and the normals rebuilt from it, as Unreal's MF_LilaHeightNormal rebuilds them. */
+void heightAttrs(std::vector<AttrDef>& a)
+{
+    a[kHeightMap] = pathAttr("heightMap", "Linear height texture (red channel, 16 bit), 0.5 at the surface. Unreal gets it as HeightMap.");
+    a[kNormalFromHeight] = {.name = "normalFromHeight", .type = PlugType::Bool, .defaultValue = false, .flags = AttrInput | AttrStorable,
+                            .doc = "Rebuild the shape's normals from the height map and lay the normal map on them as detail (bake "
+                                   "detailNormal for it), so steep sides light as walls. Unreal builds it with MF_LilaHeightNormal."};
+    a[kHeightDepth] = floatAttr("heightDepth", 5.0, "cm from height 0 to height 1: the relief the height map stands for.", 0.0);
+    a[kHeightUvWidth] = floatAttr("heightUvWidth", 100.0, "World size of the UV square along U, cm.", 1e-3);
+    a[kHeightUvHeight] = floatAttr("heightUvHeight", 100.0, "World size of the UV square along V, cm.", 1e-3);
+}
+
 constexpr int kSampledMaps[] = {kBaseColorMap, kMetallicMap, kRoughnessMap, kNormalMap, kAmbientOcclusionMap, kOrmMap, kEmissiveMap};
 static_assert(kCount == kTextureSampling + int(std::size(kSampledMaps)) * 3);
 
@@ -158,6 +170,7 @@ std::vector<AttrDef> materialAttrs()
     a[kUvSet] = {.name = "uvSet", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = AttrInput | AttrStorable,
                  .doc = "UV set the textures use (0 or 1).", .minValue = 0.0, .maxValue = 1.0};
     stylisedAttrs(a);
+    heightAttrs(a);
     samplingAttrs(a);
     return a;
 }
@@ -419,7 +432,7 @@ const std::vector<std::pair<std::string, int>>& textureChannels()
     static const std::vector<std::pair<std::string, int>> c = {
         {"baseColor", kBaseColorMap}, {"metallic", kMetallicMap},  {"roughness", kRoughnessMap},
         {"normal", kNormalMap},       {"ambientOcclusion", kAmbientOcclusionMap}, {"orm", kOrmMap},
-        {"emissive", kEmissiveMap},   {"stroke", kStrokeMap},
+        {"emissive", kEmissiveMap},   {"stroke", kStrokeMap},       {"height", kHeightMap},
     };
     return c;
 }

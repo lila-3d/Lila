@@ -27,7 +27,7 @@ const std::map<std::string, std::string, std::less<>>& defaultParameters()
     static const std::map<std::string, std::string, std::less<>> p = {
         {"baseColor", "BaseColorMap"}, {"normal", "NormalMap"},     {"orm", "ORMMap"},           {"mro", "MROMap"},
         {"ao", "AmbientOcclusionMap"}, {"roughness", "RoughnessMap"}, {"metallic", "MetallicMap"}, {"emissive", "EmissiveMap"},
-        {"height", "HeightMap"},       {"opacity", "OpacityMap"},
+        {"height", "HeightMap"},       {"opacity", "OpacityMap"},     {"detailNormal", "NormalMap"},
     };
     return p;
 }
@@ -67,7 +67,7 @@ json mappedMeshes()
 json textureSettings(std::string_view map, std::string_view colorSpace, std::string_view format, int bits)
 {
     const bool hdr = format == "exr" || bits >= 32;
-    if (map == "normal")
+    if (map == "normal" || map == "detailNormal")
         return {{"srgb", false}, {"compression", hdr ? "hdr" : "normalmap"}, {"lodGroup", "WorldNormalMap"}};
     if (map == "id" || map == "uvIslands")
         return {{"srgb", true}, {"compression", "uncompressed"}, {"lodGroup", "World"}};

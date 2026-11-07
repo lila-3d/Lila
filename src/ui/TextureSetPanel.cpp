@@ -1197,6 +1197,34 @@ struct TextureSetPanel::Impl
         QObject::connect(conv, &QComboBox::activated, settingsBox,
                          [this, conv](int) { runUi("texSetSettings", args({json{{"normalConvention", conv->currentData().toString().toStdString()}}})); });
         form->addRow("Normals", conv);
+        auto cmSpin = [&](double value, double lo, double hi, const char* key, const char* tip) {
+            auto* sp = new QDoubleSpinBox(settingsBox);
+            sp->setRange(lo, hi);
+            sp->setDecimals(2);
+            sp->setSuffix(" cm");
+            sp->setValue(value);
+            sp->setToolTip(tip);
+            QObject::connect(sp, &QDoubleSpinBox::editingFinished, settingsBox, [this, sp, key] {
+                runUi("texSetSettings", args({json{{key, sp->value()}}}));
+            });
+            return sp;
+        };
+        form->addRow("Height depth", cmSpin(settings.heightDepth, 0.0, 1000.0, "heightDepth",
+                                            "cm from height 0 to height 1: the relief the height channel stands for"));
+        auto* uvRow = new QWidget(settingsBox);
+        auto* uvl = new QHBoxLayout(uvRow);
+        uvl->setContentsMargins(0, 0, 0, 0);
+        uvl->addWidget(cmSpin(settings.uvWidth, 0.01, 100000.0, "uvWidth", "World size of the UV square along U"), 1);
+        uvl->addWidget(new QLabel("x", uvRow));
+        uvl->addWidget(cmSpin(settings.uvHeight, 0.01, 100000.0, "uvHeight", "World size of the UV square along V"), 1);
+        form->addRow("UV size", uvRow);
+        auto* fromHeight = new QCheckBox("Normals from height", settingsBox);
+        fromHeight->setChecked(settings.normalFromHeight);
+        fromHeight->setToolTip("Exports write the normal as detail over a 16-bit height, for materials that rebuild normals from it "
+                               "(Unreal's MF_LilaHeightNormal), so steep sides light as walls");
+        QObject::connect(fromHeight, &QCheckBox::toggled, settingsBox,
+                         [this](bool on) { runUi("texSetSettings", args({json{{"normalFromHeight", on}}})); });
+        form->addRow("Export", fromHeight);
         form->addRow("Material", materialPicker(settingsBox));
         auto* bake = new QLabel(settings.bakeProject.empty() ? QString("none") : qs(settings.bakeProject), settingsBox);
         bake->setToolTip("The bake project whose maps feed the set's mesh inputs (texSetSettings bakeProject=)");

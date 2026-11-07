@@ -110,6 +110,12 @@ enum Attr
     kIrisDepth,
     kLimbalRing,
     kBevelRadius,
+    // Normals from height
+    kHeightMap,
+    kNormalFromHeight,
+    kHeightDepth,
+    kHeightUvWidth,
+    kHeightUvHeight,
     // Per-texture sampling: wrapU, wrapV and filter for each of materials::sampledMaps(), in that order.
     kTextureSampling,
     kCount = kTextureSampling + 7 * 3

@@ -1,0 +1,69 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "heightNormalRebuild",
+  "label": "Height Normal Rebuild",
+  "category": "Normal",
+  "doc": "The normal a material with Normals From Height shows (Unreal's MF_LilaHeightNormal): the height's own normals with the detail of the normal laid on them. Where the height is steep and the normal is well off it (a wall a bake missed), the height wins; elsewhere the normal comes through as it is. depth is the cm from height 0 to 1, sizeU and sizeV the world size of the UV square, fade the slope in degrees where the height takes over (0 keeps the normal).",
+  "inputs": [
+    {
+      "id": "normal",
+      "type": "color",
+      "default": [
+        0.5,
+        0.5,
+        1,
+        1
+      ]
+    },
+    {
+      "id": "height",
+      "type": "gray",
+      "default": 0.5,
+      "taps": 25
+    }
+  ],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "depth",
+      "type": "float",
+      "default": 5.0,
+      "softMin": 0,
+      "softMax": 20
+    },
+    {
+      "id": "sizeU",
+      "type": "float",
+      "default": 100.0,
+      "softMin": 10,
+      "softMax": 1000
+    },
+    {
+      "id": "sizeV",
+      "type": "float",
+      "default": 100.0,
+      "softMin": 10,
+      "softMax": 1000
+    },
+    {
+      "id": "fade",
+      "type": "float",
+      "default": 45.0,
+      "softMin": 0,
+      "softMax": 90
+    }
+  ],
+  "cost": 30,
+  "helpers": [
+    "normals"
+  ],
+  "body": {
+    "out": "float2 e = texel();\nfloat2 k = p.depth / max(float2(p.sizeU, p.sizeV), 1e-3);\nfloat h[5][5];\nfor (int j = 0; j < 5; ++j)\n    for (int i = 0; i < 5; ++i)\n        h[j][i] = height.sample(uv + float2(float(i - 2), float(j - 2)) * e);\nfloat3 base = float3(0.0, 0.0, 1.0);\nfloat flattest = 1.0;\nfor (int j = 1; j < 4; ++j)\n    for (int i = 1; i < 4; ++i)\n    {\n        float2 g = float2(h[j][i + 1] - h[j][i - 1], h[j + 1][i] - h[j - 1][i]) / (2.0 * e);\n        float3 b = normalize(float3(-g * k, 1.0));\n        flattest = min(flattest, b.z);\n        if (i == 2 && j == 2)\n            base = b;\n    }\nfloat3 n = normalize(normalDecode(normal.sample(uv)));\nfloat3 d = normalize(normalRnm(base * float3(-1.0, -1.0, 1.0), n));\nif (p.fade > 0.0)\n{\n    float lo = cos(radians(min(p.fade * 0.5, 89.0)));\n    float hi = cos(radians(min(p.fade * 1.5, 89.9)));\n    float steep = saturate((flattest - hi) / max(lo - hi, 1e-6));\n    float off = degrees(acos(clamp(d.z, -1.0, 1.0)));\n    float agrees = saturate((p.fade * 0.75 - off) / (p.fade * 0.5));\n    float keep = max(steep, agrees);\n    keep = keep * keep * (3.0 - 2.0 * keep);\n    d = normalize(lerp(float3(0.0, 0.0, 1.0), d, keep));\n}\nreturn normalEncode(normalRnm(base, d));"
+  }
+}

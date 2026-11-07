@@ -22,6 +22,7 @@
 #include "ui/MaterialDraw.h"
 #include "ui/MeshCache.h"
 #include "ui/Overlay.h"
+#include "ui/TexLive.h"
 #include "ui/TextureCache.h"
 #include "ui/ViewportDisplay.h"
 #include "ui/ViewportRenderers.h"
@@ -288,6 +289,8 @@ void waitForMaterialMaps(scene::Graph& g, const std::vector<scene::NodeId>& node
     for (scene::NodeId id : nodes)
         if (scene::MeshPtr m = g.node(id)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh))
             drawMaterials(*m);
+    if (!texLive::waitIdle(30000.0))
+        log::warn("capture: texture sets still evaluating after 30 s; captured as they stand");
     if (!textures::waitForLoads(30.0))
         log::warn("capture: material maps still loading after 30 s; captured without them");
 }

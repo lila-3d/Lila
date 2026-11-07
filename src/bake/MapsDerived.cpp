@@ -3,13 +3,14 @@
 
 #include "bake/Backend.h"
 #include "bake/BakeInputs.h"
+#include "bake/HeightNormal.h"
 #include "core/Profile.h"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
 
-/** Maps derived from the baked normals with no new rays: normal to height (normal to curvature lives with curvature). */
+/** Maps derived from the baked normals with no new rays: normal to height and detail normal (normal to curvature lives with curvature). */
 namespace lila::bake
 {
 using namespace mapmath;
@@ -207,6 +208,80 @@ void normalToHeightFinalize(const MapSettings& settings, const BakeInputs&, Text
     meta["heightAuto"] = automatic;
     meta["decode"] = "height = (value - 0.5) * 2 * heightRange (cm, each UV island centred on 0)";
 }
+
+/** The tangent normal (OpenGL, unit) in xyz and the signed height above the low (cm) in w, for detailNormalFinalize. */
+void detailNormalKernel(const MapContext& ctx, std::span<const TexelSample> samples, std::span<const HitRecord> hits, std::span<glm::vec4> out,
+                        std::span<uint8_t> valid)
+{
+    for (size_t i = 0; i < samples.size(); ++i)
+    {
+        const TexelSample& s = samples[i];
+        const glm::vec3 n = unit(v3(s.normal));
+        const bool hit = (hits[i].flags & kHitValid) != 0;
+        const glm::vec3 h = hit ? hitNormal(ctx.prepared, ctx, hits[i]) : n;
+        const glm::vec3 e = encodeTangentNormal(h, n, glm::vec4(s.tangent[0], s.tangent[1], s.tangent[2], s.tangent[3]), true);
+        out[i] = glm::vec4(e, hit ? hits[i].height : 0.0f);
+        valid[i] = 1;
+    }
+}
+
+/** World cm per UV unit of the lows: the root of their summed surface area over their summed UV area. */
+double measuredUvSize(const BakeInputs& inputs)
+{
+    double area = 0.0, uvArea = 0.0;
+    for (const GroupInputs& g : inputs.groups)
+        for (const LowInput& low : g.lows)
+        {
+            const MeshSoup& m = low.soup;
+            if (m.uvs.size() != m.positions.size())
+                continue;
+            for (size_t c = 0; c + 2 < m.positions.size(); c += 3)
+            {
+                area += 0.5 * double(glm::length(glm::cross(m.positions[c + 1] - m.positions[c], m.positions[c + 2] - m.positions[c])));
+                const glm::vec2 a = m.uvs[c + 1] - m.uvs[c], b = m.uvs[c + 2] - m.uvs[c];
+                uvArea += 0.5 * std::abs(double(a.x * b.y - a.y * b.x));
+            }
+        }
+    return uvArea > 0.0 && area > 0.0 ? std::sqrt(area / uvArea) : 100.0;
+}
+
+void detailNormalFinalize(const MapSettings& settings, const BakeInputs& inputs, TextureBuffer& tex, json& meta)
+{
+    LILA_ZONE();
+    const json o = settings.options.is_object() ? settings.options : json::object();
+    glm::dvec2 size{0.0};
+    if (const auto it = o.find("uvSize"); it != o.end() && it->is_array() && it->size() == 2)
+        size = {(*it)[0].get<double>(), (*it)[1].get<double>()};
+    else if (it != o.end() && it->is_number())
+        size = glm::dvec2(it->get<double>());
+    const bool automatic = !(size.x > 0.0 && size.y > 0.0);
+    if (automatic)
+        size = glm::dvec2(measuredUvSize(inputs));
+    const double fade = o.value("fade", 45.0);
+    const bool greenUp = o.value("greenUp", false);
+
+    const size_t n = tex.texelCount();
+    image::Image normal{tex.width, tex.height, std::vector<float>(n * 4)}, height{tex.width, tex.height, std::vector<float>(n * 4)};
+    for (size_t i = 0; i < n; ++i)
+    {
+        const glm::vec3 v = tex.covered[i] ? unit(glm::vec3(tex.value[i])) : glm::vec3(0.0f, 0.0f, 1.0f);
+        normal.rgba[i * 4 + 0] = v.x * 0.5f + 0.5f;
+        normal.rgba[i * 4 + 1] = v.y * 0.5f + 0.5f;
+        normal.rgba[i * 4 + 2] = v.z * 0.5f + 0.5f;
+        height.rgba[i * 4] = tex.covered[i] ? tex.value[i].w : 0.0f;
+    }
+    // Heights are already cm, so the slope per UV unit is one over the world size.
+    const image::Image detail = detailNormals(normal, height, 1.0 / size, fade, true, &tex.covered);
+    for (size_t i = 0; i < n; ++i)
+    {
+        const float* d = &detail.rgba[i * 4];
+        tex.value[i] = tex.covered[i] ? glm::vec4(d[0], greenUp ? d[1] : 1.0f - d[1], d[2], 1.0f) : tex.def->background;
+    }
+    meta["uvSize"] = {size.x, size.y};
+    meta["uvSizeAuto"] = automatic;
+    meta["fade"] = fade;
+    meta["decode"] = "normal = reoriented(heightNormal, detail): heightNormal from the height map (depth = 2 * its heightRange) over uvSize cm";
+}
 } // namespace
 
 void registerDerivedMaps()
@@ -221,6 +296,18 @@ void registerDerivedMaps()
                  .cpu = [](const MapContext& ctx, std::span<const TexelSample> samples, std::span<const HitRecord> hits, std::span<glm::vec4> out,
                            std::span<uint8_t> valid) { slopeKernel(ctx, ctx.prepared, samples, hits, out, valid); },
                  .finalize = normalToHeightFinalize,
+                 .prepare = prepareHighNormalMaps});
+    registerMap({.id = "detailNormal",
+                 .label = "Detail Normal",
+                 .suffix = "detailnormal",
+                 .doc = "The tangent normal with the shape the height map already describes taken out, for materials that rebuild "
+                        "normals from the height (Lila's Normals From Height, LilaLink's MF_LilaHeightNormal): walls a bake "
+                        "looking straight down misses come back from the height. Bake height (16 bit) with it. options uvSize "
+                        "(cm of world per UV unit, a number or [u, v]; 0 = measured from the lows), fade (degrees, 45: where "
+                        "the height is steeper the detail fades out; 0 keeps it all), greenUp, highNormalMap.",
+                 .background = {0.5f, 0.5f, 1.0f, 1.0f},
+                 .cpu = detailNormalKernel,
+                 .finalize = detailNormalFinalize,
                  .prepare = prepareHighNormalMaps});
 }
 } // namespace lila::bake

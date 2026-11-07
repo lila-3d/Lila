@@ -50,7 +50,9 @@ json SetSettings::toJson() const
         tl.push_back(o);
     }
     return {{"channels", ch},         {"width", width},           {"height", height},           {"tiles", tl},
-            {"normalConvention", normalConvention}, {"bakeProject", bakeProject}, {"exportPreset", exportPreset}, {"material", material}};
+            {"normalConvention", normalConvention}, {"bakeProject", bakeProject}, {"exportPreset", exportPreset}, {"material", material},
+            {"heightDepth", heightDepth},   {"uvWidth", uvWidth},       {"uvHeight", uvHeight},       {"normalFromHeight", normalFromHeight},
+            {"normalFade", normalFade},     {"heightSource", heightSource}};
 }
 
 SetSettings SetSettings::fromJson(const json& j)
@@ -108,6 +110,16 @@ SetSettings SetSettings::fromJson(const json& j)
         s.bakeProject = j.value("bakeProject", s.bakeProject);
         s.exportPreset = j.value("exportPreset", s.exportPreset);
         s.material = j.value("material", s.material);
+        s.heightDepth = j.value("heightDepth", s.heightDepth);
+        s.uvWidth = j.value("uvWidth", s.uvWidth);
+        s.uvHeight = j.value("uvHeight", s.uvHeight);
+        if (!(s.heightDepth >= 0.0) || !(s.uvWidth > 0.0) || !(s.uvHeight > 0.0))
+            throw std::invalid_argument("heightDepth must be 0 or more, uvWidth and uvHeight more than 0");
+        s.normalFromHeight = j.value("normalFromHeight", s.normalFromHeight);
+        s.normalFade = std::clamp(j.value("normalFade", s.normalFade), 0.0, 90.0);
+        s.heightSource = j.value("heightSource", s.heightSource);
+        if (s.heightSource != "channel" && s.heightSource != "mesh")
+            throw std::invalid_argument("heightSource must be channel or mesh");
     }
     catch (const json::exception& e)
     {

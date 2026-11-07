@@ -61,7 +61,16 @@ bake::ProjectSettings projectSettings(const Sheet& sheet, const std::filesystem:
         if (m == "ao")
             ms.options = {{"rays", 64}, {"distance", relief * 4.0}};
         else if (m == "height")
+        {
             ms.options = {{"range", relief}};
+            // Engines rebuild normals from it (detailNormal); 8 bits would step the slopes.
+            ms.bits = 16;
+        }
+        else if (m == "detailNormal")
+        {
+            const glm::dvec2 size = sheet.worldExtent();
+            ms.options = {{"uvSize", {size.x, size.y}}};
+        }
         ps.maps.push_back(ms);
     }
     return ps;

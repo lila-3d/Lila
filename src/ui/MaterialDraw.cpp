@@ -155,10 +155,20 @@ render::Material convert(const scene::Node& n)
 
     if ((m.baseColorMap = textures::get(file(n, kBaseColorMap), true, true)))
         m.flags |= render::MatBaseColorMap;
-    if ((m.normalMap = textures::get(file(n, kNormalMap), false, true)))
+    const bool greenUp = NormalFormat(n.as<int64_t>(kNormalFormat)) == NormalFormat::OpenGL;
+    const std::string height = n.as<bool>(kNormalFromHeight) ? file(n, kHeightMap) : std::string();
+    if (!height.empty())
+    {
+        const double depth = floatAttr(n, kHeightDepth);
+        m.normalMap = textures::heightNormal(file(n, kNormalMap), height, depth / std::max(double(floatAttr(n, kHeightUvWidth)), 1e-3),
+                                             depth / std::max(double(floatAttr(n, kHeightUvHeight)), 1e-3), greenUp);
+    }
+    else
+        m.normalMap = textures::get(file(n, kNormalMap), false, true);
+    if (m.normalMap)
     {
         m.flags |= render::MatNormalMap;
-        if (NormalFormat(n.as<int64_t>(kNormalFormat)) == NormalFormat::OpenGL)
+        if (greenUp)
             m.flags |= render::MatNormalGreenUp;
     }
 

@@ -1,4 +1,5 @@
 {
+  "decal": false,
   "folder": "",
   "height": 1024,
   "high": [
@@ -81,17 +82,22 @@
     "curvature",
     "height",
     "cavity",
+    "detailNormal",
     "objectNormal"
   ],
   "material": "Trim Sandstone",
   "mipLevel": 3,
   "name": "T_Frieze",
   "padding": 4,
+  "palettes": [],
   "preset": "ladder",
   "pxPerM": 512.0,
+  "scalars": {},
   "supersampling": 16,
+  "switches": {},
   "trims": [
     {
+      "allowMirror": false,
       "allowRotate": true,
       "altGroup": -1,
       "fit": "seamless",
@@ -119,6 +125,7 @@
       "tags": []
     },
     {
+      "allowMirror": false,
       "allowRotate": true,
       "altGroup": -1,
       "fit": "seamless",
@@ -146,6 +153,7 @@
       "tags": []
     },
     {
+      "allowMirror": false,
       "allowRotate": true,
       "altGroup": -1,
       "fit": "seamless",
@@ -173,6 +181,7 @@
       "tags": []
     },
     {
+      "allowMirror": false,
       "allowRotate": true,
       "altGroup": -1,
       "fit": "seamless",
@@ -200,6 +209,7 @@
       "tags": []
     },
     {
+      "allowMirror": false,
       "allowRotate": true,
       "altGroup": -1,
       "fit": "seamless",
@@ -227,6 +237,7 @@
       "tags": []
     },
     {
+      "allowMirror": false,
       "allowRotate": true,
       "altGroup": -1,
       "fit": "seamless",
@@ -256,6 +267,7 @@
       ]
     },
     {
+      "allowMirror": false,
       "allowRotate": true,
       "altGroup": -1,
       "fit": "seamless",
@@ -285,6 +297,7 @@
       ]
     },
     {
+      "allowMirror": false,
       "allowRotate": true,
       "altGroup": -1,
       "fit": "seamless",
@@ -314,5 +327,6 @@
       ]
     }
   ],
+  "vectors": {},
   "width": 1024
 }

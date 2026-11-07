@@ -1,5 +1,6 @@
 #include "LilaLinkTrim.h"
 
+#include "LilaLinkHeightNormal.h"
 #include "LilaLinkLog.h"
 #include "LilaLinkMaterialFunction.h"
 #include "LilaLinkMaterials.h"
@@ -28,6 +29,7 @@
 #include "Materials/MaterialExpressionStaticSwitchParameter.h"
 #include "Materials/MaterialExpressionTextureCoordinate.h"
 #include "Materials/MaterialExpressionTextureObjectParameter.h"
+#include "Materials/MaterialExpressionTextureProperty.h"
 #include "Materials/MaterialExpressionVectorParameter.h"
 #include "Materials/MaterialExpressionVertexColor.h"
 #include "Materials/MaterialExpressionMaterialFunctionCall.h"
@@ -40,7 +42,7 @@
 namespace
 {
 /** Raised when the graph changes; a master older than this is kept (artists own it) and reported, until regenerate. */
-constexpr int32 MasterVersion = 2;
+constexpr int32 MasterVersion = 3;
 const TCHAR* MasterName = TEXT("M_LilaTrim");
 const TCHAR* FunctionName = TEXT("MF_LilaTrim");
 const TCHAR* VersionTag = TEXT("Lila Trim v");
@@ -94,10 +96,22 @@ float ao = Texture2DSample(SheetAOMap, SheetAOMapSampler, SheetUV).r;
 return lerp(1.0, ao, AOStrength);
 )");
 
-/** The sheet's baked normal (BC5 keeps only xy) under the tiling detail normal, RNM blended. */
-const TCHAR* NormalCode = TEXT(R"(
+/**
+ * The sheet's baked normal (BC5 keeps only xy), laid as detail on the height's own normal with UseHeightNormals, under the
+ * tiling detail normal, RNM blended.
+ */
+FString NormalCode()
+{
+	return FString(TEXT(R"(
 float2 xy = Texture2DSample(SheetNormalMap, SheetNormalMapSampler, SheetUV).xy * 2.0 - 1.0;
 float3 nrm = float3(xy, sqrt(saturate(1.0 - dot(xy, xy))));
+if (UseHeightNormals > 0.5)
+{
+)")) + LilaLink::HeightNormalHlsl(TEXT("SheetHeightMap"), TEXT("SheetUV"), TEXT("HeightTexel"),
+			   TEXT("HeightDepthCm / max(float2(SheetWidthCm, SheetHeightCm), 1e-3)"), TEXT("nrm")) +
+		   TEXT(R"(
+    nrm = heightNormal;
+}
 if (UseDetail > 0.5)
 {
     float2 dxy = (Texture2DSample(DetailNormalMap, DetailNormalMapSampler, detailUV).xy * 2.0 - 1.0) * DetailNormalStrength * (1.0 - edge);
@@ -108,6 +122,7 @@ if (UseDetail > 0.5)
 }
 return normalize(nrm);
 )");
+}
 
 /** A 4x4 linear texture of one grey level and compression: defaults whose sampler type matches the parameter's. */
 UTexture* NeutralTexture(const TCHAR* Name, uint8 Level, TextureCompressionSettings Compression, TArray<FString>& OutCreated)
@@ -223,6 +238,14 @@ void BuildFunction(UMaterialFunction* Function, TArray<FString>& OutCreated)
 	Scalar(TEXT("SecondaryRoughness"), 0.85f, TEXT("Vertex Blend"), TEXT("Roughness blended in by vertex colour red."));
 	Scalar(TEXT("VertexBlend"), 1.0f, TEXT("Vertex Blend"), TEXT("Scales vertex colour red."));
 	Scalar(TEXT("ParallaxHeight"), 0.02f, TEXT("Parallax"), TEXT("Parallax depth in UV units."));
+	Scalar(TEXT("HeightDepthCm"), 5.0f, TEXT("Height Normal"), TEXT("cm from the sheet height's 0 to its 1, as Lila baked it."));
+	Switch(TEXT("UseHeightNormals"), false, TEXT("Height Normal"));
+	{
+		auto* Texel = G.New<UMaterialExpressionTextureProperty>(-1200);
+		Texel->Property = TMTM_TexelSize;
+		Texel->TextureObject.Connect(0, Inputs[TEXT("SheetHeightMap")]);
+		Inputs.Add(TEXT("HeightTexel"), Texel);
+	}
 	Switch(TEXT("UseDetail"), false, TEXT("Detail"));
 	Switch(TEXT("UseVertexBlend"), false, TEXT("Vertex Blend"));
 	Inputs.Add(TEXT("VColor"), G.Make(UMaterialExpressionVertexColor::StaticClass(), -1400));
@@ -292,8 +315,9 @@ void BuildFunction(UMaterialFunction* Function, TArray<FString>& OutCreated)
 	auto* Metallic = CustomOf(Version + TEXT(" metallic"), FString(MasksCode) + MetallicCode, CMOT_Float1,
 		With({TEXT("Metallic"), TEXT("EdgeMetallic")}));
 	auto* Occlusion = CustomOf(Version + TEXT(" occlusion"), OcclusionCode, CMOT_Float1, {TEXT("SheetUV"), TEXT("SheetAOMap"), TEXT("AOStrength")});
-	auto* Normal = CustomOf(Version + TEXT(" normal"), FString(MasksCode) + NormalCode, CMOT_Float3,
-		With({TEXT("SheetNormalMap"), TEXT("UseDetail"), TEXT("DetailNormalMap"), TEXT("DetailNormalStrength")}));
+	auto* Normal = CustomOf(Version + TEXT(" normal"), FString(MasksCode) + NormalCode(), CMOT_Float3,
+		With({TEXT("SheetNormalMap"), TEXT("UseDetail"), TEXT("DetailNormalMap"), TEXT("DetailNormalStrength"), TEXT("UseHeightNormals"),
+			TEXT("SheetHeightMap"), TEXT("HeightTexel"), TEXT("HeightDepthCm")}));
 
 	// UsePaintedMaps: the sheet's texture set from Lila (base colour and ORM) stands in for the procedural paint.
 	auto Painted = [&](UMaterialExpression* Procedural, const TCHAR* Map, const TCHAR* Code, ECustomMaterialOutputType Type) -> UMaterialExpression* {

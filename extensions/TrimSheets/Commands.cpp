@@ -12,6 +12,7 @@
 #include <lila/Curves.h>
 #include <lila/Extension.h>
 #include <lila/Graph.h>
+#include <lila/ImageIO.h>
 #include <lila/Log.h>
 #include <lila/Math.h>
 #include <lila/Mesh.h>
@@ -257,6 +258,21 @@ void tagNode(const std::string& node, const std::filesystem::path& sheet)
     ops::execute("setAttr", {{"args", {node + "." + kNodeSheet, paths::storedPath(sheet)}}});
 }
 
+std::filesystem::path bakeRecord(const Sheet& s, const std::filesystem::path& f);
+
+/** cm from the baked height's 0 to its 1, from the bake record; 0 without one. */
+double bakedHeightDepth(const Sheet& s, const std::filesystem::path& f)
+{
+    std::ifstream in(bakeRecord(s, f));
+    const json r = json::parse(in, nullptr, false);
+    if (r.is_object())
+        for (const json& o : r.value("outputs", json::array()))
+            if (o.value("map", std::string()) == "height")
+                if (const json meta = o.value("meta", json()); meta.is_object())
+                    return 2.0 * meta.value("heightRange", 0.0);
+    return 0.0;
+}
+
 /** The Lila material a palette's faces use (the sheet's own for ""), made or updated with the baked maps. */
 void ensureMaterial(const Sheet& s, const std::filesystem::path& f, const std::string& palette = {})
 {
@@ -268,6 +284,18 @@ void ensureMaterial(const Sheet& s, const std::filesystem::path& f, const std::s
     for (const auto& [map, attr] : maps)
         if (const std::filesystem::path p = mapFile(s, f, map); (s.decal || std::string_view(map) != "baseColor") && std::filesystem::exists(p))
             sets[attr] = p.generic_string();
+    // With a detail normal the viewport rebuilds the relief's normals from the height, as the Unreal master does.
+    const std::filesystem::path detail = mapFile(s, f, "detailNormal"), height = mapFile(s, f, "height");
+    if (const double depth = bakedHeightDepth(s, f); !s.decal && depth > 0.0 && std::filesystem::exists(detail) && std::filesystem::exists(height))
+    {
+        const glm::dvec2 ext = s.worldExtent();
+        sets["normalMap"] = detail.generic_string();
+        sets["heightMap"] = height.generic_string();
+        sets["normalFromHeight"] = true;
+        sets["heightDepth"] = depth;
+        sets["heightUvWidth"] = ext.x;
+        sets["heightUvHeight"] = ext.y;
+    }
     // A decal's base colour carries its opacity in alpha.
     if (s.decal)
         call["blendMode"] = "translucent";
@@ -407,6 +435,8 @@ std::vector<geo::Mesh> highMeshes(const Sheet& s, const std::filesystem::path& f
 /** The bake result recorded beside the textures, for sends. */
 std::filesystem::path bakeRecord(const Sheet& s, const std::filesystem::path& f) { return textureFolder(s, f) / (s.name + "_bake.json"); }
 
+void syncSheetSets(const Sheet& s, const std::filesystem::path& f);
+
 json runBake(const Sheet& s, const std::filesystem::path& f, const SheetBakeOptions& opts, const char* cmd)
 {
     SheetBakeOptions o = opts;
@@ -427,6 +457,7 @@ json runBake(const Sheet& s, const std::filesystem::path& f, const SheetBakeOpti
         out << r.dump(2);
     }
     ensureMaterials(s, f);
+    syncSheetSets(s, f);
     return r;
 }
 
@@ -474,6 +505,38 @@ json bakeLayerGraph()
 }
 
 /**
+ * With a detail normal baked, the set shows and exports its normal rebuilt from the sheet's baked height, as the Unreal
+ * master draws it; without one, as painted.
+ */
+void syncHeightNormals(const Sheet& s, const std::filesystem::path& f, const std::string& set)
+{
+    const double depth = bakedHeightDepth(s, f);
+    const bool on = depth > 0.0 && std::filesystem::exists(mapFile(s, f, "detailNormal"));
+    const glm::dvec2 ext = s.worldExtent();
+    json want = {{"normalFromHeight", on}};
+    if (on)
+        want.update({{"heightSource", "mesh"}, {"heightDepth", depth}, {"uvWidth", ext.x}, {"uvHeight", ext.y}});
+    const json have = ops::execute("texGraphInfo", {{"args", {set}}}).value("settings", json::object());
+    for (const auto& [k, v] : want.items())
+        if (!have.contains(k) || have[k] != v)
+        {
+            ops::execute("texSetSettings", {{"args", {set, want}}});
+            return;
+        }
+}
+
+/** syncHeightNormals for the texture sets the sheet's palettes already have. */
+void syncSheetSets(const Sheet& s, const std::filesystem::path& f)
+{
+    std::vector<std::string> palettes = {""};
+    for (const Palette& p : s.palettes)
+        palettes.push_back(p.name);
+    for (const std::string& p : palettes)
+        if (const std::string set = textureSetName(s, p); hasTextureSet(set))
+            syncHeightNormals(s, f, set);
+}
+
+/**
  * A palette's texture set (the sheet's own for ""), bound to its material and reading the sheet's shared bake, made with a
  * Sheet Bake layer when missing. Bakes the sheet first when it has no textures.
  */
@@ -485,11 +548,13 @@ std::string ensureTextureSet(const Sheet& s, const std::filesystem::path& f, con
         ensureMaterials(s, f);
     const std::string project = ensureBakeProject(s, f, cmd);
     const std::string set = textureSetName(s, palette);
-    if (hasTextureSet(set))
-        return set;
-    ops::execute("texCreateSet", {{"args", {set}},
-                                  {"settings", {{"width", s.width}, {"height", s.height}, {"bakeProject", project}, {"material", materialName(s, palette)}}}});
-    ops::execute("texAddLayer", {{"args", {set, "procedural"}}, {"name", kBakeLayer}, {"index", 0}, {"graph", bakeLayerGraph()}});
+    if (!hasTextureSet(set))
+    {
+        ops::execute("texCreateSet", {{"args", {set}},
+                                      {"settings", {{"width", s.width}, {"height", s.height}, {"bakeProject", project}, {"material", materialName(s, palette)}}}});
+        ops::execute("texAddLayer", {{"args", {set, "procedural"}}, {"name", kBakeLayer}, {"index", 0}, {"graph", bakeLayerGraph()}});
+    }
+    syncHeightNormals(s, f, set);
     return set;
 }
 
@@ -732,6 +797,24 @@ std::vector<std::pair<std::string, scene::MeshPtr>> sheetMeshes(const std::files
     return out;
 }
 
+/**
+ * A palette's exported normal (DirectX) as detail over the sheet's baked height, written beside it as <name>_detail: the
+ * painted normal carries the bake's normal, which the master rebuilds from the height instead. Returns the output for it.
+ */
+json paintedDetail(const json& normalOut, const json& heightOut, glm::dvec2 extent, double depth)
+{
+    const std::filesystem::path file = paths::fromUtf8(normalOut.value("file", std::string()));
+    const image::Image normal = image::read(file);
+    const image::Image height = image::read(paths::fromUtf8(heightOut.value("file", std::string())));
+    if (normal.width <= 0 || height.width <= 0)
+        return normalOut;
+    const std::filesystem::path out = file.parent_path() / (file.stem().string() + "_detail" + file.extension().string());
+    image::write(out, bake::detailNormals(normal, height, {depth / extent.x, depth / extent.y}, 45.0, false), normalOut.value("bits", 8));
+    json o = normalOut;
+    o["file"] = paths::toUtf8(out);
+    return o;
+}
+
 /** What trimSheetSend imports and makes: the texture files, and one master instance per palette. */
 struct SendPlan
 {
@@ -750,18 +833,30 @@ SendPlan sendPlan(const Sheet& s, const std::filesystem::path& f, const json& ba
         const std::string name = link::textureAssetName(o.value("file", std::string()), o.value("udim", 1001));
         return folder + "/Textures/" + name + "." + name;
     };
-    const std::map<std::string, std::string> params = {
-        {"normal", "SheetNormalMap"}, {"ao", "SheetAOMap"}, {"curvature", "SheetCurvatureMap"}, {"cavity", "SheetCavityMap"}, {"height", "SheetHeightMap"}};
+    const std::map<std::string, std::string> params = {{"normal", "SheetNormalMap"},     {"ao", "SheetAOMap"},
+                                                       {"curvature", "SheetCurvatureMap"}, {"cavity", "SheetCavityMap"},
+                                                       {"height", "SheetHeightMap"},     {"detailNormal", "SheetDetailNormal"}};
     json shared = json::object();
+    json height;
     for (const json& o : baked.value("outputs", json::array()))
         if (const auto param = params.find(o.value("map", std::string())); param != params.end())
         {
             shared[param->second] = asset(o);
             plan.textures.push_back(o);
+            if (param->first == "height")
+                height = o;
         }
     const glm::dvec2 ext = s.worldExtent();
+    // With a detail normal and the height it was split from, the master rebuilds the relief's normals from the height.
+    const json heightMeta = height.is_object() ? height.value("meta", json()) : json();
+    const double depth = heightMeta.is_object() ? 2.0 * heightMeta.value("heightRange", 0.0) : 0.0;
+    const bool canRebuild = shared.contains("SheetDetailNormal") && depth > 0.0;
     auto instance = [&](const std::string& palette, const json& scalars, const json& vectors, const json& switches) {
         json textures = shared;
+        textures.erase("SheetDetailNormal");
+        const bool rebuild = canRebuild && (!switches.is_object() || switches.value("UseHeightNormals", true));
+        if (rebuild)
+            textures["SheetNormalMap"] = shared["SheetDetailNormal"];
         bool painted = false;
         // A textured palette sends its painted maps too; its normal carries the layers' height over the bake.
         if (const std::string set = textureSetName(s, palette); hasTextureSet(set))
@@ -774,14 +869,17 @@ SendPlan sendPlan(const Sheet& s, const std::filesystem::path& f, const json& ba
                 if (const auto param = paintParams.find(o.value("map", std::string())); param != paintParams.end())
                 {
                     found += param->first != "normal";
-                    textures[param->second] = asset(o);
-                    plan.textures.push_back(o);
+                    const json sent = param->first == "normal" && rebuild ? paintedDetail(o, height, ext, depth) : o;
+                    textures[param->second] = asset(sent);
+                    plan.textures.push_back(sent);
                 }
             painted = found == 2;
         }
         json sc = {{"SheetWidthCm", ext.x}, {"SheetHeightCm", ext.y}};
+        if (rebuild)
+            sc["HeightDepthCm"] = depth;
         sc.merge_patch(scalars);
-        json sw = {{"UsePaintedMaps", painted}};
+        json sw = {{"UsePaintedMaps", painted}, {"UseHeightNormals", rebuild}};
         sw.merge_patch(switches);
         plan.instances.push_back({{"name", "MI_" + materialName(s, palette).substr(2)},
                                   {"slot", materialName(s, palette)},

@@ -31,6 +31,13 @@ LILA_UI_API render::TexturePtr get(const std::string& path, bool srgb, bool udim
 LILA_UI_API render::TexturePtr packed(const std::string& orm, const std::string& occlusion, const std::string& roughness,
                           const std::string& metallic, std::array<int, 3> channels = {0, 1, 2});
 
+/**
+ * The normal a material rebuilds from its height map (bake/HeightNormal.h combineNormals): the height's own normals
+ * with the normal map laid on them as detail, at the normal map's size; the height's alone when normal is empty. slope
+ * is the height's depth over the world size of the UV square, per axis. Encoded as the normal map is (greenUp).
+ */
+LILA_UI_API render::TexturePtr heightNormal(const std::string& normal, const std::string& height, double slopeU, double slopeV, bool greenUp);
+
 /** Square preview of an image for the material editor, null while loading. */
 LILA_UI_API QImage thumbnail(const std::string& path, int size);
 /** Why thumbnail(path, size) failed, empty when it loaded or is still loading. */

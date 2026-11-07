@@ -7,7 +7,11 @@
 #include "tex/Plan.h"
 #include "tex/Ports.h"
 
+#include <glm/glm.hpp>
+
+#include <algorithm>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -49,6 +53,23 @@ struct LILA_SCENE_API SetSettings
     std::string exportPreset = "unreal";
     /** The {material} token in file names; empty uses the set's name. */
     std::string material;
+    /** cm from height 0 to height 1: the relief the height channel stands for. */
+    double heightDepth = 5.0;
+    /** World size of the UV square along U and V, cm. With heightDepth, what turns height steps into slopes. */
+    double uvWidth = 100.0;
+    double uvHeight = 100.0;
+    /**
+     * Exports write the normal for a material that rebuilds the shape's normals from the height (Normals From Height,
+     * Unreal's MF_LilaHeightNormal): the detail left once the height's own normals are rotated out, faded on slopes steeper
+     * than normalFade degrees. The height is exported with it, at 16 bits.
+     */
+    bool normalFromHeight = false;
+    double normalFade = 45.0;
+    /** The height an engine rebuilds normals from: channel (the set's height) or mesh (the bake project's height map). */
+    std::string heightSource = "channel";
+
+    /** heightDepth over the UV square's size: the height's slope per UV unit along u and v. */
+    glm::dvec2 heightSlope() const { return {heightDepth / std::max(uvWidth, 1e-3), heightDepth / std::max(uvHeight, 1e-3)}; }
 
     const Channel* channel(std::string_view name) const;
     std::pair<int, int> tileSize(const Tile& t) const;
@@ -132,6 +153,8 @@ struct ExportOptions
     bool incremental = false;
     /** gpu or cpu; empty picks the GPU when there is one. */
     std::string backend;
+    /** Overrides the set's normalFromHeight. */
+    std::optional<bool> normalFromHeight;
 };
 
 /**

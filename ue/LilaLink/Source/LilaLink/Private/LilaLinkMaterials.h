@@ -76,6 +76,12 @@ UMaterialInterface* StylisedParent(const FString& Model, bool bRebuild, TArray<F
 void ApplyStylised(UMaterialInstanceConstant* Instance, const TSharedPtr<FJsonObject>& In, TArray<FString>& OutCreated,
 	TArray<FString>& OutWarnings);
 
+/**
+ * A grayscale texture whose source is 16-bit RGBA keeps only its red channel, as G16: Unreal compresses Grayscale to G8
+ * unless the source itself is G16, and a height map loses the precision normals rebuilt from it need.
+ */
+void KeepGrayscale16(UTexture* Texture);
+
 /** Where the generated master materials live. */
 const TCHAR* MastersFolderPath();
 
