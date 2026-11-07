@@ -185,7 +185,7 @@ TEST_CASE("Header: lead chips, pin, related nodes with back and forward, name mo
     const std::string type = Graph::current().find("B")->type().registered().name;
     QString title;
     for (QToolButton* b : ae.findChildren<QToolButton*>())
-        if (b->text().endsWith(" Attributes") && b->isVisibleTo(&ae))
+        if (b->text() == "Transform" && b->isVisibleTo(&ae))
         {
             title = b->text();
             break;

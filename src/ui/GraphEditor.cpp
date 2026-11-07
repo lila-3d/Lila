@@ -10,10 +10,13 @@
 #include "ui/Actions.h"
 #include "ui/Animation.h"
 #include "ui/AttrView.h"
+#include "ui/Controls.h"
 #include "ui/Deletion.h"
 #include "ui/GraphCurveView.h"
+#include "ui/Hotkeys.h"
 #include "ui/Icons.h"
 #include "ui/Menus.h"
+#include "ui/SpinScrub.h"
 #include "ui/Theme.h"
 #include "ui/UiCommon.h"
 
@@ -59,13 +62,27 @@ QToolButton* toolButton(QWidget* parent, const char* iconName, const QString& ti
     return b;
 }
 
-QFrame* separator(QWidget* parent)
+/** "Label  (Key)" and the action's doc, naming the key the graph editor context binds to it. */
+QString keyedTip(const char* actionId, const char* key)
 {
-    auto* s = new QFrame(parent);
-    s->setFrameShape(QFrame::VLine);
-    s->setFixedWidth(9);
-    s->setStyleSheet(QString("color: %1;").arg(gray(60).name()));
-    return s;
+    const Action* a = actions::find(actionId);
+    if (!a)
+        return QString::fromUtf8(actionId);
+    QString tip = QString::fromStdString(a->label);
+    if (*key)
+        tip += QString("  (%1)").arg(key);
+    else if (QString bound = Hotkeys::get().keyFor(actionId); !bound.isEmpty())
+        tip += QString("  (%1)").arg(bound);
+    return a->doc.empty() ? tip : tip + "\n" + QString::fromStdString(a->doc);
+}
+
+QLabel* geDimLabel(const QString& text, QWidget* parent)
+{
+    auto* l = new QLabel(text, parent);
+    QPalette pal = l->palette();
+    pal.setColor(QPalette::WindowText, themeColor("dimText"));
+    l->setPalette(pal);
+    return l;
 }
 
 /** 0..3 from the tool row, then the views, pivots, quantities and rotation displays: names for prefs. */
@@ -111,6 +128,8 @@ std::optional<std::pair<char, double>> parseEntry(QString text)
 }
 
 const char* const kTweenModes[] = {"neighbour", "ease", "pushPull", "smooth", "default"};
+/** The id of a segmented control's hidden segment, checked when no visible choice applies. */
+constexpr int kMixedSegment = 99;
 } // namespace
 
 GraphEditor::GraphEditor(QWidget* parent) : QWidget(parent)
@@ -142,80 +161,77 @@ GraphEditor::GraphEditor(QWidget* parent) : QWidget(parent)
 
     auto* bar = new QHBoxLayout();
     bar->setSpacing(2);
+    auto gap = [bar] { bar->addSpacing(10); };
 
+    mToolSeg = new controls::Segmented(this);
     const char* toolIcons[] = {"arrows-move", "rotate-2", "resize"};
-    const QString toolTips[] = {"Move keys (W). Drag the box's edges to scale the selection.",
-                                "Rotate tangents (E): turns each selected key's handles about the key.",
-                                "Scale keys (R) about the pivot. Drag sideways for time, up and down for value."};
+    const char* toolActions[] = {"graphEditor.moveTool", "graphEditor.rotateTool", "graphEditor.scaleTool"};
+    const char* toolKeys[] = {"W", "E", "R"};
     for (int i = 0; i < 3; ++i)
-    {
-        mToolButtons[i] = toolButton(this, toolIcons[i], toolTips[i], true);
-        connect(mToolButtons[i], &QToolButton::clicked, this, [this, i] { setTool(i); });
-        bar->addWidget(mToolButtons[i]);
-    }
-    auto* pivot = toolButton(this, "focus-centered", "Scale pivot");
-    pivot->setPopupMode(QToolButton::InstantPopup);
-    auto* pivotMenu = new QMenu(pivot);
-    auto* pivotGroup = new QActionGroup(pivotMenu);
-    const char* pivotLabels[] = {"Selection Centre", "Click Point", "Current Frame", "First Key", "Last Key"};
-    for (int i = 0; i < 5; ++i)
-    {
-        QAction* a = pivotMenu->addAction(pivotLabels[i], this, [this, i] {
-            mView->settings.pivot = Pivot(i);
-            saveSettings();
-        });
-        a->setCheckable(true);
-        a->setChecked(int(mView->settings.pivot) == i);
-        pivotGroup->addAction(a);
-    }
-    pivot->setMenu(pivotMenu);
-    bar->addWidget(pivot);
-    mFalloff = toolButton(this, "ripple", "Falloff (B): keys near the selection follow value changes, less with distance", true);
+        mToolSeg->add({}, toolIcons[i], keyedTip(toolActions[i], toolKeys[i]), i);
+    connect(mToolSeg, &controls::Segmented::picked, this, [this](int i) { setTool(i); });
+    bar->addWidget(mToolSeg);
+    mPivot = new QComboBox(this);
+    for (const char* label : {"Selection Centre", "Click Point", "Current Frame", "First Key", "Last Key"})
+        mPivot->addItem(label);
+    mPivot->setCurrentIndex(int(mView->settings.pivot));
+    setComboDefault(mPivot, 0);
+    mPivot->setToolTip("Scale Pivot\nWhere the Scale Keys tool (R) scales from");
+    mPivot->setFocusPolicy(Qt::NoFocus);
+    connect(mPivot, &QComboBox::currentIndexChanged, this, [this](int i) {
+        mView->settings.pivot = Pivot(std::clamp(i, 0, 4));
+        saveSettings();
+    });
+    bar->addWidget(mPivot);
+    mFalloff = new QToolButton(this);
+    mFalloff->setText("Falloff");
+    mFalloff->setCheckable(true);
+    mFalloff->setFocusPolicy(Qt::NoFocus);
+    mFalloff->setToolTip(keyedTip("graphEditor.toggleFalloff", "B") + "\nHold B and drag to set the radius");
+    controls::setRole(mFalloff, "push");
     connect(mFalloff, &QToolButton::clicked, this, [this] { toggleFalloff(); });
     bar->addWidget(mFalloff);
-    mFalloffRadius = new QDoubleSpinBox(this);
-    mFalloffRadius->setRange(0.5, 1000.0);
-    mFalloffRadius->setDecimals(1);
-    mFalloffRadius->setSuffix(" f");
-    mFalloffRadius->setToolTip("Falloff radius in frames");
+    mFalloffRadius = controls::valueField(0.5, 1000.0, 1, "f", this);
+    mFalloffRadius->setToolTip("Falloff Radius\nIn frames");
     mFalloffRadius->setFixedWidth(62);
     mFalloffRadius->setValue(mView->settings.falloffFrames);
+    setSpinDefault(mFalloffRadius, 6.0);
     connect(mFalloffRadius, &QDoubleSpinBox::valueChanged, this, [this](double v) {
         mView->settings.falloffFrames = v;
         saveSettings();
     });
     bar->addWidget(mFalloffRadius);
-    bar->addWidget(separator(this));
+    gap();
 
-    for (const char* t : {"auto", "spline", "linear", "flat", "step", "clamped"})
+    bar->addWidget(geDimLabel("Tangents", this));
+    mTangentSeg = new controls::Segmented(this);
+    const char* tangentTypes[] = {"auto", "spline", "linear", "flat", "step", "clamped"};
+    for (int i = 0; i < 6; ++i)
     {
-        auto* b = toolButton(this, QString("curve-tangent-%1").arg(t).toUtf8().constData(),
-                             QString("%1 tangents on the selected keys").arg(niceName(t)));
-        connect(b, &QToolButton::clicked, this, [this, t] { applyTangent(t); });
-        bar->addWidget(b);
+        const char* t = tangentTypes[i];
+        mTangentSeg->add({}, QString("curve-tangent-%1").arg(t), QString("%1 Tangents\nSet on the selected keys, or every key of the shown curves").arg(niceName(t)), i);
     }
-    auto* breakB = toolButton(this, "unlink", "Break tangents: in and out handles move apart");
-    connect(breakB, &QToolButton::clicked, this, [this] { lockTangents(false); });
-    bar->addWidget(breakB);
-    auto* unify = toolButton(this, "link", "Unify tangents: in and out handles move together");
-    connect(unify, &QToolButton::clicked, this, [this] { lockTangents(true); });
-    bar->addWidget(unify);
-    auto* infinity = toolButton(this, "infinity", "Pre and post infinity: how the curve continues before its first key and after its last");
-    infinity->setPopupMode(QToolButton::InstantPopup);
-    auto* infMenu = new QMenu(infinity);
-    for (bool pre : {true, false})
-    {
-        QMenu* sub = infMenu->addMenu(pre ? "Pre Infinity" : "Post Infinity");
-        for (const char* m : {"constant", "linear", "cycle", "cycleRelative", "oscillate"})
-            sub->addAction(QString(m) == "cycleRelative" ? QString("Cycle with Offset") : niceName(m), [this, pre, m] { applyInfinity(pre, m); });
-    }
-    infinity->setMenu(infMenu);
-    bar->addWidget(infinity);
-    auto* loop = toolButton(this, "repeat", "Make the last key a loop key: it mirrors the first key and the curve cycles after it");
-    connect(loop, &QToolButton::clicked, this, [this] { mView->loopKeys(true); });
-    bar->addWidget(loop);
-    bar->addWidget(separator(this));
+    // A hidden segment stands for "mixed or no keys", so no visible type reads as current.
+    mTangentSeg->add({}, {}, {}, kMixedSegment)->hide();
+    connect(mTangentSeg, &controls::Segmented::picked, this, [this, tangentTypes](int i) {
+        if (i >= 0 && i < 6)
+            applyTangent(tangentTypes[i]);
+        syncTangentState();
+    });
+    bar->addWidget(mTangentSeg);
+    mBrokenSeg = new controls::Segmented(this);
+    mBrokenSeg->add({}, "link", keyedTip("graphEditor.unifyTangents", ""), 0);
+    mBrokenSeg->add({}, "unlink", keyedTip("graphEditor.breakTangents", ""), 1);
+    mBrokenSeg->add({}, {}, {}, kMixedSegment)->hide();
+    connect(mBrokenSeg, &controls::Segmented::picked, this, [this](int i) {
+        if (i >= 0)
+            lockTangents(i == 0);
+        syncTangentState();
+    });
+    bar->addWidget(mBrokenSeg);
+    gap();
 
+    bar->addWidget(geDimLabel("Tween", this));
     mTweenMode = new QComboBox(this);
     mTweenMode->addItems({"Neighbour", "Ease", "Push/Pull", "Smooth", "Default"});
     mTweenMode->setItemData(0, "Towards the key before (left) or after (right) the selection", Qt::ToolTipRole);
@@ -225,14 +241,15 @@ GraphEditor::GraphEditor(QWidget* parent) : QWidget(parent)
     mTweenMode->setItemData(4, "Towards (right) or away from (left) the channel's default value", Qt::ToolTipRole);
     mTweenMode->setFocusPolicy(Qt::NoFocus);
     mTweenMode->setCurrentIndex(indexOf(kTweenModes, PrefStore::get().value<std::string>("graphEditor", "/tween", ""), 0));
-    mTweenMode->setToolTip("Tween: what the slider blends the selected keys towards");
+    setComboDefault(mTweenMode, 0);
+    mTweenMode->setToolTip("Tween Mode\nWhat the slider blends the selected keys towards");
     connect(mTweenMode, &QComboBox::currentIndexChanged, this, [this] { saveSettings(); });
     bar->addWidget(mTweenMode);
     mTween = new QSlider(Qt::Horizontal, this);
     mTween->setRange(-100, 100);
     mTween->setFixedWidth(110);
     mTween->setFocusPolicy(Qt::NoFocus);
-    mTween->setToolTip("Drag to blend the selected keys; it springs back to the middle on release");
+    mTween->setToolTip("Tween\nDrag to blend the selected keys; springs back to the middle on release");
     connect(mTween, &QSlider::sliderPressed, this, [this] { mView->beginTween(anim::BlendMode(mTweenMode->currentIndex())); });
     connect(mTween, &QSlider::valueChanged, this, [this](int v) { mView->setTween(v / 100.0); });
     connect(mTween, &QSlider::sliderReleased, this, [this] {
@@ -241,32 +258,59 @@ GraphEditor::GraphEditor(QWidget* parent) : QWidget(parent)
         mTween->setValue(0);
     });
     bar->addWidget(mTween);
-    bar->addWidget(separator(this));
+    gap();
 
-    auto* curveMenuButton = toolButton(this, "adjustments-horizontal", "Filters, modifiers and buffer curves");
+    auto* curveMenuButton = new QToolButton(this);
+    curveMenuButton->setText("Curves");
+    curveMenuButton->setToolTip("Curves\nInfinity, loop keys, filters, modifiers and buffer curves");
+    curveMenuButton->setFocusPolicy(Qt::NoFocus);
     curveMenuButton->setPopupMode(QToolButton::InstantPopup);
+    controls::setRole(curveMenuButton, "push");
     auto* curveMenu = new QMenu(curveMenuButton);
     connect(curveMenu, &QMenu::aboutToShow, this, [this, curveMenu] {
         curveMenu->clear();
+        fillInfinityMenu(curveMenu);
         fillCurveMenu(curveMenu);
     });
     curveMenuButton->setMenu(curveMenu);
     bar->addWidget(curveMenuButton);
 
-    const char* viewIcons[] = {"chart-line", "layout-rows", "arrows-diff"};
-    const QString viewTips[] = {"Absolute: curves at their values", "Stacked: each curve in a band of its own, scaled to fit",
-                                "Normalized: every curve scaled to -1..1 on top of each other"};
-    for (int i = 0; i < 3; ++i)
-    {
-        mViewButtons[i] = toolButton(this, viewIcons[i], viewTips[i], true);
-        connect(mViewButtons[i], &QToolButton::clicked, this, [this, i] { setViewMode(i); });
-        bar->addWidget(mViewButtons[i]);
-    }
+    bar->addStretch(1);
+    bar->addWidget(geDimLabel("Frame", this));
+    mKeyTime = new QLineEdit(this);
+    mKeyTime->setFixedWidth(60);
+    mKeyTime->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    mKeyTime->setToolTip("Key Frame\nThe selected key's frame. +=, -=, *= or /= shift or scale several keys (scaling is about the first one).");
+    bar->addWidget(mKeyTime);
+    bar->addWidget(geDimLabel("Value", this));
+    mKeyValue = new QLineEdit(this);
+    mKeyValue->setFixedWidth(70);
+    mKeyValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    mKeyValue->setToolTip("Key Value\nThe selected keys' value. +=, -=, *= or /= change each key from its own value.");
+    bar->addWidget(mKeyValue);
+    mValueUnit = geDimLabel({}, this);
+    mValueUnit->setMinimumWidth(16);
+    bar->addWidget(mValueUnit);
+    gap();
 
-    auto* motion = toolButton(this, "activity", "Speed and acceleration strips under the curves");
-    motion->setPopupMode(QToolButton::InstantPopup);
-    auto* motionMenu = new QMenu(motion);
-    QAction* speed = motionMenu->addAction("Speed");
+    mViewSeg = new controls::Segmented(this);
+    const char* viewIcons[] = {"chart-line", "layout-rows", "arrows-diff"};
+    const char* viewActions[] = {"graphEditor.absoluteView", "graphEditor.stackedView", "graphEditor.normalizedView"};
+    for (int i = 0; i < 3; ++i)
+        mViewSeg->add({}, viewIcons[i], keyedTip(viewActions[i], ""), i);
+    connect(mViewSeg, &controls::Segmented::picked, this, [this](int i) { setViewMode(i); });
+    bar->addWidget(mViewSeg);
+
+    auto* display = new QToolButton(this);
+    display->setText("Display");
+    display->setToolTip("Display\nSpeed and acceleration strips, and how rotation curves show");
+    display->setFocusPolicy(Qt::NoFocus);
+    display->setPopupMode(QToolButton::InstantPopup);
+    controls::setRole(display, "push");
+    auto* displayMenu = new QMenu(display);
+    displayMenu->setToolTipsVisible(true);
+    displayMenu->addSection("Strips");
+    QAction* speed = displayMenu->addAction("Speed");
     speed->setCheckable(true);
     speed->setChecked(mView->settings.speedStrip);
     connect(speed, &QAction::toggled, this, [this](bool on) {
@@ -274,7 +318,7 @@ GraphEditor::GraphEditor(QWidget* parent) : QWidget(parent)
         saveSettings();
         mView->update();
     });
-    QAction* accel = motionMenu->addAction("Acceleration");
+    QAction* accel = displayMenu->addAction("Acceleration");
     accel->setCheckable(true);
     accel->setChecked(mView->settings.accelStrip);
     connect(accel, &QAction::toggled, this, [this](bool on) {
@@ -282,15 +326,15 @@ GraphEditor::GraphEditor(QWidget* parent) : QWidget(parent)
         saveSettings();
         mView->update();
     });
-    motionMenu->addSection("Of");
-    auto* quantityGroup = new QActionGroup(motionMenu);
+    displayMenu->addSection("Strips Show");
+    auto* quantityGroup = new QActionGroup(displayMenu);
     const char* quantityLabels[] = {"Curves", "World Speed (selected objects)", "World Angular Speed (selected objects)"};
     const char* quantityTips[] = {"Each shown curve's rate of change, in its own units per second",
                                   "How fast each selected object moves through the world, parent motion included, cm/s",
                                   "How fast each selected object turns in the world, parent motion included, degrees/s"};
     for (int i = 0; i < 3; ++i)
     {
-        QAction* a = motionMenu->addAction(quantityLabels[i], this, [this, i] {
+        QAction* a = displayMenu->addAction(quantityLabels[i], this, [this, i] {
             mView->settings.quantity = Quantity(i);
             mView->invalidateMotion();
             saveSettings();
@@ -301,38 +345,30 @@ GraphEditor::GraphEditor(QWidget* parent) : QWidget(parent)
         a->setChecked(int(mView->settings.quantity) == i);
         quantityGroup->addAction(a);
     }
-    motionMenu->setToolTipsVisible(true);
-    motionMenu->addSeparator();
-    auto* targetRow = new QWidget(motionMenu);
+    auto* targetRow = new QWidget(displayMenu);
     auto* targetLayout = new QHBoxLayout(targetRow);
     targetLayout->setContentsMargins(24, 2, 8, 2);
     targetLayout->addWidget(new QLabel("Target Speed", targetRow));
-    auto* target = new QDoubleSpinBox(targetRow);
-    target->setRange(0.0, 1e6);
-    target->setDecimals(1);
+    QDoubleSpinBox* target = controls::valueField(0.0, 1e6, 1, {}, targetRow);
     target->setSpecialValueText("None");
-    target->setToolTip("A reference line on the speed strip, in its units (a locomotion speed, say)");
+    target->setToolTip("Target Speed\nA reference line on the speed strip, in its units (a locomotion speed, say)");
     target->setValue(mView->settings.targetSpeed);
+    setSpinDefault(target, 0.0);
     connect(target, &QDoubleSpinBox::valueChanged, this, [this](double v) {
         mView->settings.targetSpeed = v;
         saveSettings();
         mView->update();
     });
     targetLayout->addWidget(target);
-    auto* targetAction = new QWidgetAction(motionMenu);
+    auto* targetAction = new QWidgetAction(displayMenu);
     targetAction->setDefaultWidget(targetRow);
-    motionMenu->addAction(targetAction);
-    motion->setMenu(motionMenu);
-    bar->addWidget(motion);
-
-    auto* rotation = toolButton(this, "rotate-3d", "Rotation curves as Euler angles, quaternion components (read only), or both");
-    rotation->setPopupMode(QToolButton::InstantPopup);
-    auto* rotationMenu = new QMenu(rotation);
-    auto* rotationGroup = new QActionGroup(rotationMenu);
-    const char* rotationLabels[] = {"Euler", "Quaternion", "Euler and Quaternion"};
+    displayMenu->addAction(targetAction);
+    displayMenu->addSection("Rotation Curves");
+    auto* rotationGroup = new QActionGroup(displayMenu);
+    const char* rotationLabels[] = {"Euler", "Quaternion (read only)", "Euler and Quaternion"};
     for (int i = 0; i < 3; ++i)
     {
-        QAction* a = rotationMenu->addAction(rotationLabels[i], this, [this, i] {
+        QAction* a = displayMenu->addAction(rotationLabels[i], this, [this, i] {
             mView->settings.rotation = RotationDisplay(i);
             mView->sel.clear();
             saveSettings();
@@ -342,24 +378,10 @@ GraphEditor::GraphEditor(QWidget* parent) : QWidget(parent)
         a->setChecked(int(mView->settings.rotation) == i);
         rotationGroup->addAction(a);
     }
-    rotation->setMenu(rotationMenu);
-    bar->addWidget(rotation);
+    display->setMenu(displayMenu);
+    bar->addWidget(display);
 
-    bar->addStretch(1);
-    bar->addWidget(new QLabel("Frame", this));
-    mKeyTime = new QLineEdit(this);
-    mKeyTime->setFixedWidth(60);
-    mKeyTime->setToolTip("Selected key's frame. +=, -=, *= or /= shift or scale several keys (scaling is about the first one).");
-    bar->addWidget(mKeyTime);
-    bar->addWidget(new QLabel("Value", this));
-    mKeyValue = new QLineEdit(this);
-    mKeyValue->setFixedWidth(70);
-    mKeyValue->setToolTip("Selected keys' value. +=, -=, *= or /= change each key from its own value.");
-    bar->addWidget(mKeyValue);
-    mValueUnit = new QLabel(this);
-    mValueUnit->setMinimumWidth(16);
-    bar->addWidget(mValueUnit);
-    auto* frameAll = toolButton(this, "zoom-scan", "Frame All");
+    auto* frameAll = toolButton(this, "zoom-scan", keyedTip("graphEditor.frameAll", "A"));
     connect(frameAll, &QToolButton::clicked, this, [this] { frame(false); });
     bar->addWidget(frameAll);
     layout->addLayout(bar);
@@ -478,11 +500,9 @@ void GraphEditor::setViewMode(int mode)
 
 void GraphEditor::syncToolbar()
 {
-    for (int i = 0; i < 3; ++i)
-    {
-        mToolButtons[i]->setChecked(int(mView->settings.tool) == i);
-        mViewButtons[i]->setChecked(int(mView->settings.view) == i);
-    }
+    mToolSeg->setCurrent(int(mView->settings.tool));
+    mViewSeg->setCurrent(int(mView->settings.view));
+    mPivot->setEnabled(mView->settings.tool == Tool::Scale);
     mFalloff->setChecked(mView->settings.falloff);
     mFalloffRadius->setEnabled(mView->settings.falloff);
     if (std::abs(mFalloffRadius->value() - mView->settings.falloffFrames) > 1e-9)
@@ -490,6 +510,30 @@ void GraphEditor::syncToolbar()
         QSignalBlocker block(mFalloffRadius);
         mFalloffRadius->setValue(mView->settings.falloffFrames);
     }
+}
+
+void GraphEditor::syncTangentState()
+{
+    std::optional<int> type;
+    std::optional<bool> broken;
+    bool sameType = true, sameBroken = true;
+    for (const KeySel& k : mView->sel)
+    {
+        auto it = mView->curves.find(k.curve);
+        if (it == mView->curves.end())
+            continue;
+        const int i = it->second.find(k.time);
+        if (i < 0)
+            continue;
+        const anim::Key& key = it->second.keys[size_t(i)];
+        const int t = int(key.out);
+        sameType = sameType && (!type || *type == t);
+        sameBroken = sameBroken && (!broken || *broken == key.broken);
+        type = t;
+        broken = key.broken;
+    }
+    mTangentSeg->setCurrent(type && sameType && *type < 6 ? *type : kMixedSegment);
+    mBrokenSeg->setCurrent(broken && sameBroken ? int(*broken) : kMixedSegment);
 }
 
 void GraphEditor::saveSettings()
@@ -857,6 +901,19 @@ void GraphEditor::swapBuffer()
         log::write(LogLevel::Echo, "# swapped " + std::to_string(count) + " buffer curves\n");
 }
 
+void GraphEditor::fillInfinityMenu(QMenu* menu)
+{
+    for (bool pre : {true, false})
+    {
+        QMenu* inf = menu->addMenu(pre ? "Pre Infinity" : "Post Infinity");
+        for (const char* m : {"constant", "linear", "cycle", "cycleRelative", "oscillate"})
+            inf->addAction(QString(m) == "cycleRelative" ? QString("Cycle with Offset") : niceName(m), [this, pre, m] { applyInfinity(pre, m); });
+    }
+    menu->addAction("Loop Key", [this] { mView->loopKeys(true); })
+        ->setToolTip("Make the last key a loop key: it mirrors the first key and the curve cycles after it");
+    menu->addAction("Clear Loop Key", [this] { mView->loopKeys(false); });
+}
+
 void GraphEditor::fillCurveMenu(QMenu* menu)
 {
     menu->setToolTipsVisible(true);
@@ -900,14 +957,7 @@ void GraphEditor::fillContextMenu(QMenu* menu)
             if (std::string name = mView->commandTarget(c); !name.empty())
                 runUnechoed("keyTangent", {{"args", {name}}, {"weightedTangents", false}});
     });
-    for (bool pre : {true, false})
-    {
-        QMenu* inf = menu->addMenu(pre ? "Pre Infinity" : "Post Infinity");
-        for (const char* m : {"constant", "linear", "cycle", "cycleRelative", "oscillate"})
-            inf->addAction(QString(m) == "cycleRelative" ? QString("Cycle with Offset") : niceName(m), [this, pre, m] { applyInfinity(pre, m); });
-    }
-    menu->addAction("Loop Key", [this] { mView->loopKeys(true); });
-    menu->addAction("Clear Loop Key", [this] { mView->loopKeys(false); });
+    fillInfinityMenu(menu);
     fillCurveMenu(menu->addMenu("Curves"));
     menu->addSeparator();
     menu->addAction("Delete Keys", [this] { deleteSelectedKeys(); })->setEnabled(!mView->sel.empty());
@@ -951,6 +1001,7 @@ void GraphEditor::refreshKeyFields()
     mKeyTime->setPlaceholderText(t && !sameT ? "mixed" : QString());
     mKeyValue->setPlaceholderText(v && !sameV ? "mixed" : QString());
     mValueUnit->setText(sameUnit ? unit : QString());
+    syncTangentState();
 }
 
 void GraphEditor::editKeyField(bool time)

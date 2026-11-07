@@ -6,6 +6,7 @@
 
 #include <string>
 
+class QLabel;
 class QTreeWidget;
 class QTreeWidgetItem;
 
@@ -16,7 +17,8 @@ inline constexpr const char* kDisplayLayersDock = "displayLayers";
 /**
  * Maya's Display Layer editor: one row per layer with V (visibility), P (hide on playback), the display type (blank,
  * T template, R reference), a colour swatch and the name. Clicking the name selects the layer's objects; double-click
- * renames; the right-click menu and the toolbar add, remove, reorder and delete.
+ * renames; the right-click menu and the toolbar add, remove, reorder and delete. Without layers the panel shrinks to its
+ * toolbar and one line saying how to add one.
  */
 class LILA_UI_API DisplayLayersPanel : public QWidget
 {
@@ -49,6 +51,7 @@ private:
     std::string currentLayer() const;
 
     QTreeWidget* mTree = nullptr;
+    QLabel* mEmpty = nullptr;
     int mGraphListener = 0;
     int mPrefListener = 0;
     bool mPending = false;

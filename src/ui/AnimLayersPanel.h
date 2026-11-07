@@ -6,6 +6,7 @@
 
 #include <string>
 
+class QLabel;
 class QTreeWidget;
 class QTreeWidgetItem;
 
@@ -45,6 +46,7 @@ private:
     std::string currentLayer() const;
 
     QTreeWidget* mTree = nullptr;
+    QLabel* mEmpty = nullptr;
     int mGraphListener = 0;
     bool mPending = false;
     bool mFilling = false;

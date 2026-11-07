@@ -19,6 +19,7 @@
 #include "scene/Graph.h"
 #include "scene/Materials.h"
 #include "scene/Node.h"
+#include "ui/Controls.h"
 #include "ui/Actions.h"
 #include "ui/Deletion.h"
 #include "ui/GraphBackend.h"
@@ -27,6 +28,7 @@
 #include "ui/Menus.h"
 #include "ui/NodeEditor.h"
 #include "ui/Panels.h"
+#include "ui/SpinScrub.h"
 #include "ui/TexParams.h"
 #include "ui/TexPreview.h"
 #include "ui/TextureGraphUi.h"
@@ -79,6 +81,25 @@ constexpr int kRoleId = Qt::UserRole + 1;
 constexpr int kRoleLayer = Qt::UserRole + 2;
 constexpr int kRoleFolder = Qt::UserRole + 3;
 constexpr const char* kAllChannels = "";
+
+/** A middle click picks item `index` and commits it as a user pick does (these combos act on activated). */
+void texComboDefaultIndex(QComboBox* c, int index)
+{
+    if (index < 0)
+        return;
+    onMiddleClickReset(
+        c,
+        [c, index] {
+            c->setCurrentIndex(index);
+            Q_EMIT c->activated(index);
+        },
+        c->itemText(index));
+}
+
+void texComboDefault(QComboBox* c, const QString& value)
+{
+    texComboDefaultIndex(c, c->findData(value));
+}
 
 /** Lists the scene's materials, refreshed each time it opens, keeping `current` selected and listed. */
 class MaterialSlotCombo : public QComboBox
@@ -286,14 +307,15 @@ QLabel* boldHeading(QWidget* parent, const QString& text)
     return l;
 }
 
-QSpinBox* percentSpin(QWidget* parent, double opacity)
+QDoubleSpinBox* percentSpin(QWidget* parent, double opacity)
 {
-    auto* s = new QSpinBox(parent);
-    s->setRange(0, 100);
+    auto* s = new controls::SliderField(parent);
+    s->setRange(0.0, 100.0);
+    s->setDecimals(0);
     s->setSuffix("%");
-    s->setKeyboardTracking(false);
-    s->setValue(int(std::lround(opacity * 100.0)));
+    s->setValue(std::round(opacity * 100.0));
     s->setToolTip("Opacity");
+    setSpinDefault(s, 100.0);
     return s;
 }
 
@@ -872,8 +894,9 @@ struct TextureSetPanel::Impl
             b->setChecked(on);
             b->setAutoRaise(true);
             b->setToolTip(qs(c.name) + (on ? ": on, click to leave it to the layers below" : ": off, click to write it"));
-            b->setStyleSheet(on ? "QToolButton { font-size: 8pt; padding: 0 2px; color: #e0e0e0; }"
-                                : "QToolButton { font-size: 8pt; padding: 0 2px; color: #5e5e5e; }");
+            QFont small = b->font();
+            small.setPointSizeF(small.pointSizeF() > 0 ? small.pointSizeF() * 0.85 : 8.0);
+            b->setFont(small);
             QObject::connect(b, &QToolButton::toggled, row, [this, id, c = c.name](bool checked) { toggleChannel(id, c, checked); });
             ch->addWidget(b);
         }
@@ -898,17 +921,21 @@ struct TextureSetPanel::Impl
         const json mr = resolved.value(modeChannel, json::object());
         auto* blend = new QComboBox(right);
         blend->setObjectName("blend:" + qs(id));
+        // Long mode names would otherwise push the row past a 312 px column.
+        blend->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+        blend->setMinimumContentsLength(5);
         blend->setToolTip(shown.empty() ? "Blend mode of every channel (normal and height keep theirs)" : "Blend mode of " + qs(shown));
         const std::vector<std::string> normalModes = {"rnm", "normal"};
         const auto& modes = modeChannel == "normal" && !shown.empty() ? normalModes : tex::layerBlendModes();
         for (const std::string& m : modes)
             blend->addItem(capitalised(m), qs(m));
         blend->setCurrentIndex(std::max(0, blend->findData(qs(mr.value("mode", "normal")))));
+        texComboDefault(blend, "normal");
         QObject::connect(blend, &QComboBox::activated, row, [this, id, blend](int) { setRowMode(id, blend->currentData().toString().toStdString()); });
         rv->addWidget(blend);
         auto* opacity = percentSpin(right, mr.value("opacity", 1.0));
         opacity->setObjectName("opacity:" + qs(id));
-        QObject::connect(opacity, &QSpinBox::valueChanged, row, [this, id](int v) { setRowOpacity(id, v / 100.0); });
+        QObject::connect(opacity, &QDoubleSpinBox::valueChanged, row, [this, id](double v) { setRowOpacity(id, v / 100.0); });
         rv->addWidget(opacity);
         h->addWidget(right);
         return row;
@@ -946,16 +973,19 @@ struct TextureSetPanel::Impl
         h->addWidget(inv);
         auto* mode = new QComboBox(row);
         mode->setObjectName("maskMode:" + qs(id));
+        mode->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+        mode->setMinimumContentsLength(5);
         mode->setToolTip("How it combines with the masks below");
         for (const std::string& md : tex::maskBlendModes())
             mode->addItem(capitalised(md), qs(md));
         mode->setCurrentIndex(std::max(0, mode->findData(qs(m.value("mode", "normal")))));
+        texComboDefault(mode, "normal");
         QObject::connect(mode, &QComboBox::activated, row,
                          [this, layerId, id, mode](int) { setMask(layerId, id, {{"mode", mode->currentData().toString().toStdString()}}); });
         h->addWidget(mode);
         auto* op = percentSpin(row, m.value("opacity", 1.0));
         op->setObjectName("maskOpacity:" + qs(id));
-        QObject::connect(op, &QSpinBox::valueChanged, row, [this, layerId, id](int v) { setMask(layerId, id, {{"opacity", v / 100.0}}); });
+        QObject::connect(op, &QDoubleSpinBox::valueChanged, row, [this, layerId, id](double v) { setMask(layerId, id, {{"opacity", v / 100.0}}); });
         h->addWidget(op);
         return row;
     }
@@ -1054,10 +1084,15 @@ struct TextureSetPanel::Impl
             g->addWidget(dim(chGrid, qs(tex::portTypeName(c.type))), int(i), 1);
             auto* bits = new QComboBox(chGrid);
             bits->setObjectName("bits:" + qs(c.name));
-            bits->addItem("8 bit", 8);
-            bits->addItem("16 bit", 16);
-            bits->addItem("32 bit float", 32);
+            bits->addItem("8-bit", 8);
+            bits->addItem("16-bit", 16);
+            bits->addItem("32-bit Float", 32);
             bits->setCurrentIndex(std::max(0, bits->findData(c.bits)));
+            int defBits = tex::Channel{}.bits;
+            for (const tex::Channel& shipped : tex::SetSettings::makeDefault().channels)
+                if (shipped.name == c.name)
+                    defBits = shipped.bits;
+            texComboDefaultIndex(bits, bits->findData(defBits));
             QObject::connect(bits, &QComboBox::activated, chGrid, [this, i, bits](int) {
                 json s = settings.toJson();
                 s["channels"][i]["bits"] = bits->currentData().toInt();
@@ -1083,9 +1118,10 @@ struct TextureSetPanel::Impl
         newName->setObjectName("newChannel");
         newName->setPlaceholderText("New channel (wetness, strokeDir...)");
         auto* newType = new QComboBox(addRowW);
-        for (const char* t : {"gray", "color", "vector"})
-            newType->addItem(t, t);
-        auto* add = toolButton(addRowW, "plus", "Add the channel");
+        for (auto [label, t] : {std::pair{"Gray", "gray"}, {"Color", "color"}, {"Vector", "vector"}})
+            newType->addItem(label, t);
+        setComboDefault(newType, 0);
+        auto* add = toolButton(addRowW, "plus", "Add Channel: add the named channel");
         auto addChannel = [this, newName, newType] {
             const std::string n = newName->text().trimmed().toStdString();
             if (n.empty() || settings.channel(n))
@@ -1121,13 +1157,15 @@ struct TextureSetPanel::Impl
         w->setObjectName("width");
         auto* hgt = sizeBox(res, settings.height, false);
         hgt->setObjectName("height");
+        texComboDefaultIndex(w, w->findData(tex::SetSettings{}.width));
+        texComboDefaultIndex(hgt, hgt->findData(tex::SetSettings{}.height));
         auto setSize = [this, w, hgt] {
             runUi("texSetSettings", args({json{{"width", w->currentData().toInt()}, {"height", hgt->currentData().toInt()}}}));
         };
         QObject::connect(w, &QComboBox::activated, res, setSize);
         QObject::connect(hgt, &QComboBox::activated, res, setSize);
         rg->addWidget(w, 0, 1);
-        rg->addWidget(new QLabel("x", res), 0, 2);
+        rg->addWidget(new QLabel(QString(QChar(0x00D7)), res), 0, 2);
         rg->addWidget(hgt, 0, 3);
         for (size_t i = 0; i < settings.tiles.size(); ++i)
         {
@@ -1138,6 +1176,8 @@ struct TextureSetPanel::Impl
             tw->setObjectName("tileWidth:" + QString::number(t.udim));
             auto* th = sizeBox(res, t.height, true);
             tw->setToolTip("This tile's width; Set uses the default");
+            texComboDefaultIndex(tw, 0);
+            texComboDefaultIndex(th, 0);
             auto setTile = [this, i, tw, th] {
                 json s = settings.toJson();
                 json& tile = s["tiles"][i];
@@ -1152,7 +1192,7 @@ struct TextureSetPanel::Impl
             QObject::connect(tw, &QComboBox::activated, res, setTile);
             QObject::connect(th, &QComboBox::activated, res, setTile);
             rg->addWidget(tw, r, 1);
-            rg->addWidget(new QLabel("x", res), r, 2);
+            rg->addWidget(new QLabel(QString(QChar(0x00D7)), res), r, 2);
             rg->addWidget(th, r, 3);
             if (settings.tiles.size() > 1)
             {
@@ -1190,45 +1230,55 @@ struct TextureSetPanel::Impl
 
         auto* form = new QFormLayout();
         form->setContentsMargins(0, 0, 0, 0);
+        form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+        v->addWidget(boldHeading(settingsBox, "Surface"));
         auto* conv = new QComboBox(settingsBox);
         conv->addItem("OpenGL (Y+)", "opengl");
         conv->addItem("DirectX (Y-)", "directx");
         conv->setCurrentIndex(std::max(0, conv->findData(qs(settings.normalConvention))));
+        texComboDefault(conv, qs(tex::SetSettings{}.normalConvention));
         QObject::connect(conv, &QComboBox::activated, settingsBox,
                          [this, conv](int) { runUi("texSetSettings", args({json{{"normalConvention", conv->currentData().toString().toStdString()}}})); });
         form->addRow("Normals", conv);
-        auto cmSpin = [&](double value, double lo, double hi, const char* key, const char* tip) {
-            auto* sp = new QDoubleSpinBox(settingsBox);
-            sp->setRange(lo, hi);
+        auto cmSpin = [&](double value, double def, double lo, double hi, const char* key, const char* tip) {
+            QDoubleSpinBox* sp = controls::valueField(lo, hi, 2, {}, settingsBox);
             sp->setDecimals(2);
             sp->setSuffix(" cm");
             sp->setValue(value);
             sp->setToolTip(tip);
-            QObject::connect(sp, &QDoubleSpinBox::editingFinished, settingsBox, [this, sp, key] {
-                runUi("texSetSettings", args({json{{key, sp->value()}}}));
+            setSpinDefault(sp, def);
+            auto commit = [this, sp, key] { runUi("texSetSettings", args({json{{key, sp->value()}}})); };
+            QObject::connect(sp, &QDoubleSpinBox::editingFinished, settingsBox, commit);
+            // A middle-click reset changes the value with no edit to finish; a held button means a scrub still going.
+            QObject::connect(sp, &QDoubleSpinBox::valueChanged, settingsBox, [sp, commit] {
+                if (!sp->hasFocus() && QApplication::mouseButtons() == Qt::NoButton)
+                    commit();
             });
             return sp;
         };
-        form->addRow("Height depth", cmSpin(settings.heightDepth, 0.0, 1000.0, "heightDepth",
+        const tex::SetSettings defaults;
+        form->addRow("Height Depth", cmSpin(settings.heightDepth, defaults.heightDepth, 0.0, 1000.0, "heightDepth",
                                             "cm from height 0 to height 1: the relief the height channel stands for"));
         auto* uvRow = new QWidget(settingsBox);
         auto* uvl = new QHBoxLayout(uvRow);
         uvl->setContentsMargins(0, 0, 0, 0);
-        uvl->addWidget(cmSpin(settings.uvWidth, 0.01, 100000.0, "uvWidth", "World size of the UV square along U"), 1);
-        uvl->addWidget(new QLabel("x", uvRow));
-        uvl->addWidget(cmSpin(settings.uvHeight, 0.01, 100000.0, "uvHeight", "World size of the UV square along V"), 1);
-        form->addRow("UV size", uvRow);
+        uvl->addWidget(cmSpin(settings.uvWidth, defaults.uvWidth, 0.01, 100000.0, "uvWidth", "World size of the UV square along U"), 1);
+        uvl->addWidget(new QLabel(QString(QChar(0x00D7)), uvRow));
+        uvl->addWidget(cmSpin(settings.uvHeight, defaults.uvHeight, 0.01, 100000.0, "uvHeight", "World size of the UV square along V"), 1);
+        form->addRow("UV Size", uvRow);
         auto* fromHeight = new QCheckBox("Normals from height", settingsBox);
         fromHeight->setChecked(settings.normalFromHeight);
+        setCheckDefault(fromHeight, defaults.normalFromHeight);
         fromHeight->setToolTip("Exports write the normal as detail over a 16-bit height, for materials that rebuild normals from it "
                                "(Unreal's MF_LilaHeightNormal), so steep sides light as walls");
         QObject::connect(fromHeight, &QCheckBox::toggled, settingsBox,
                          [this](bool on) { runUi("texSetSettings", args({json{{"normalFromHeight", on}}})); });
         form->addRow("Export", fromHeight);
         form->addRow("Material", materialPicker(settingsBox));
-        auto* bake = new QLabel(settings.bakeProject.empty() ? QString("none") : qs(settings.bakeProject), settingsBox);
+        auto* bake = new QLabel(settings.bakeProject.empty() ? QString("None") : qs(settings.bakeProject), settingsBox);
         bake->setToolTip("The bake project whose maps feed the set's mesh inputs (texSetSettings bakeProject=)");
-        form->addRow("Bake project", bake);
+        form->addRow("Bake Project", bake);
         v->addLayout(form);
     }
 
@@ -1396,6 +1446,7 @@ struct TextureSetPanel::Impl
             for (const std::string& m : c.name == "normal" ? normalModes : tex::layerBlendModes())
                 mode->addItem(capitalised(m), qs(m));
             mode->setCurrentIndex(std::max(0, mode->findData(qs(rc.value("mode", "normal")))));
+            texComboDefault(mode, "normal");
             QObject::connect(mode, &QComboBox::activated, grid, [this, id, mode, c = c.name](int) {
                 if (const json* cur = layer(id))
                     propsLayer({{"channels", {{c, channelEntry(*cur, c, {{"mode", mode->currentData().toString().toStdString()}})}}}});
@@ -1403,7 +1454,7 @@ struct TextureSetPanel::Impl
             g->addWidget(mode, r, 1);
             auto* op = percentSpin(grid, rc.value("opacity", 1.0));
             op->setObjectName("propOpacity:" + qs(c.name));
-            QObject::connect(op, &QSpinBox::valueChanged, grid, [this, id, c = c.name](int value) {
+            QObject::connect(op, &QDoubleSpinBox::valueChanged, grid, [this, id, c = c.name](double value) {
                 if (const json* cur = layer(id))
                     propsLayer({{"channels", {{c, channelEntry(*cur, c, {{"opacity", value / 100.0}})}}}});
             });
@@ -1418,22 +1469,32 @@ struct TextureSetPanel::Impl
             auto* hbOn = new QCheckBox("Height blend", w);
             hbOn->setToolTip("Mix the layer in by its height as well as its mask (needs its height channel on)");
             hbOn->setChecked(hb.value("enabled", false));
+            setCheckDefault(hbOn, false);
             v->addWidget(hbOn);
             auto* form = new QFormLayout();
-            auto* sharp = new QDoubleSpinBox(w);
+            form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            auto* sharp = new controls::SliderField(w);
+            sharp->setDecimals(2);
             sharp->setRange(0.0, 1.0);
             sharp->setSingleStep(0.05);
             sharp->setKeyboardTracking(false);
             sharp->setValue(hb.value("sharpness", 0.8));
-            auto* infl = new QDoubleSpinBox(w);
+            setSpinDefault(sharp, 0.8);
+            auto* infl = new controls::SliderField(w);
+            infl->setDecimals(2);
             infl->setRange(0.0, 4.0);
             infl->setSingleStep(0.05);
             infl->setKeyboardTracking(false);
             infl->setValue(hb.value("influence", 1.0));
+            setSpinDefault(infl, 1.0);
             auto setHb = [this, hbOn, sharp, infl] {
                 propsLayer({{"heightBlend", {{"enabled", hbOn->isChecked()}, {"sharpness", sharp->value()}, {"influence", infl->value()}}}});
             };
             QObject::connect(hbOn, &QCheckBox::toggled, w, setHb);
+            sharp->setEnabled(hbOn->isChecked());
+            infl->setEnabled(hbOn->isChecked());
+            QObject::connect(hbOn, &QCheckBox::toggled, sharp, &QWidget::setEnabled);
+            QObject::connect(hbOn, &QCheckBox::toggled, infl, &QWidget::setEnabled);
             QObject::connect(sharp, &QDoubleSpinBox::valueChanged, w, setHb);
             QObject::connect(infl, &QDoubleSpinBox::valueChanged, w, setHb);
             form->addRow("Sharpness", sharp);
@@ -1444,7 +1505,7 @@ struct TextureSetPanel::Impl
         auto* aForm = new QFormLayout();
         auto* anchor = new QLineEdit(qs(l.value("anchor", "")), w);
         anchor->setObjectName("anchorName");
-        anchor->setPlaceholderText("none");
+        anchor->setPlaceholderText("None");
         anchor->setToolTip("Names the composite right after this layer, for anchor masks and generator inputs of layers above");
         QObject::connect(anchor, &QLineEdit::editingFinished, w, [this, anchor, id, was = l.value("anchor", "")] {
             const std::string next = anchor->text().trimmed().toStdString();
@@ -1467,12 +1528,14 @@ struct TextureSetPanel::Impl
         if (kind == "fill")
         {
             auto* form = new QFormLayout();
-            auto* value = new QDoubleSpinBox(w);
+            auto* value = new controls::SliderField(w);
+            value->setDecimals(2);
             value->setObjectName("maskValue");
             value->setRange(0.0, 1.0);
             value->setSingleStep(0.05);
             value->setKeyboardTracking(false);
             value->setValue(m.value("value", 1.0));
+            setSpinDefault(value, 1.0);
             QObject::connect(value, &QDoubleSpinBox::valueChanged, w, [this](double x) { propsMask({{"value", x}}); });
             form->addRow("Value", value);
             v->addLayout(form);
@@ -1500,6 +1563,7 @@ struct TextureSetPanel::Impl
                             for (const tex::Channel& c : settings.channels)
                                 b->addItem("Anchor " + qs(anchorName) + "." + qs(c.name), qs("anchor:" + anchorName + "." + c.name));
                         b->setCurrentIndex(std::max(0, b->findData(qs(bindings.value(in.id, "")))));
+                        texComboDefaultIndex(b, 0);
                         QObject::connect(b, &QComboBox::activated, w, [this, b, port = in.id](int) {
                             const QString value = b->currentData().toString();
                             propsMask({{"bindings", {{port, value.isEmpty() ? json(nullptr) : json(value.toStdString())}}}});
@@ -1523,13 +1587,14 @@ struct TextureSetPanel::Impl
             for (const tex::Channel& ch : settings.channels)
                 c->addItem(qs(ch.name), qs(ch.name));
             c->setCurrentIndex(std::max(0, c->findData(qs(m.value("channel", "height")))));
+            texComboDefault(c, "height");
             QObject::connect(c, &QComboBox::activated, w, [this, c](int) { propsMask({{"channel", c->currentData().toString().toStdString()}}); });
             form->addRow("Channel", c);
             v->addLayout(form);
         }
         else if (kind == "paint")
         {
-            v->addWidget(dim(w, "Image: " + (m.value("image", "").empty() ? QString("none") : qs(m.value("image", "")))));
+            v->addWidget(dim(w, "Image: " + (m.value("image", "").empty() ? QString("None") : qs(m.value("image", "")))));
         }
     }
 
@@ -1554,7 +1619,7 @@ struct TextureSetPanel::Impl
         else if (l)
             layerProps(w, v, *l);
         else
-            v->addWidget(dim(w, setNode() ? "Select a layer or mask to edit it." : "No texture set."));
+            v->addWidget(dim(w, setNode() ? "No layer selected. Click a layer or mask above to edit it." : "No texture set."));
         v->addStretch(1);
         propsScroll->setWidget(w);
         props = w;
@@ -1756,37 +1821,27 @@ TextureSetPanel::TextureSetPanel(QWidget* parent) : QWidget(parent), d(std::make
     d->sets = new QComboBox(this);
     d->sets->setObjectName("setPicker");
     d->sets->setToolTip("The texture set shown");
-    d->follow = toolButton(this, "pointer", "Follow the selection: show the set of the selected mesh's material");
+    d->follow = new QToolButton(this);
+    d->follow->setText("Follow");
+    d->follow->setToolTip("Follow: show the set of the selected mesh's material");
     d->follow->setCheckable(true);
     d->follow->setChecked(true);
-    auto* newSet = toolButton(this, "plus", "New texture set");
+    controls::setRole(d->follow, "push");
+    auto* newSet = toolButton(this, "plus", "New Texture Set");
     QObject::connect(newSet, &QToolButton::clicked, this, [] { actions::run(json("texture.newSet")); });
     top->addWidget(d->sets, 1);
     top->addWidget(d->follow);
     top->addWidget(newSet);
     v->addLayout(top);
 
-    d->settingsToggle = new QToolButton(this);
-    d->settingsToggle->setText("Channels and Resolution");
-    d->settingsToggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    d->settingsToggle->setIcon(icon("chevron-right"));
-    d->settingsToggle->setCheckable(true);
-    d->settingsToggle->setAutoRaise(true);
     d->settingsBox = new QWidget(this);
     d->settingsBox->setObjectName("setSettings");
-    d->settingsBox->hide();
-    connect(d->settingsToggle, &QToolButton::toggled, this, [this](bool on) {
-        d->settingsBox->setVisible(on);
-        d->settingsToggle->setIcon(icon(on ? "chevron-down" : "chevron-right"));
-    });
-    v->addWidget(d->settingsToggle);
-    v->addWidget(d->settingsBox);
+    v->addWidget(controls::section("Channels and Resolution", d->settingsBox, this, "/textureSets/collapsed", false, &d->settingsToggle));
 
     d->bannerBox = new QWidget(this);
     d->bannerBox->setObjectName("graphModeBanner");
-    d->bannerBox->setStyleSheet("#graphModeBanner { background: #3a3a3a; border: 1px solid #555555; }");
     auto* bh = new QHBoxLayout(d->bannerBox);
-    bh->setContentsMargins(6, 4, 6, 4);
+    bh->setContentsMargins(0, 4, 0, 4);
     auto* warn = new QLabel(d->bannerBox);
     warn->setPixmap(icon("alert-triangle").pixmap(16, 16));
     bh->addWidget(warn);
@@ -1802,13 +1857,13 @@ TextureSetPanel::TextureSetPanel(QWidget* parent) : QWidget(parent), d(std::make
 
     auto* bar = new QHBoxLayout();
     bar->setSpacing(1);
-    auto* addFill = toolButton(this, "bucket", "Add a fill layer above the selection");
+    auto* addFill = toolButton(this, "bucket", "Add Fill Layer: above the selection");
     connect(addFill, &QToolButton::clicked, this, [this] { addLayer("fill"); });
-    auto* addPaint = toolButton(this, "brush", "Add a paint layer above the selection");
+    auto* addPaint = toolButton(this, "brush", "Add Paint Layer: above the selection");
     connect(addPaint, &QToolButton::clicked, this, [this] { addLayer("paint"); });
-    auto* addFolder = toolButton(this, "folder-plus", "Add a folder above the selection");
+    auto* addFolder = toolButton(this, "folder-plus", "Add Folder: above the selection");
     connect(addFolder, &QToolButton::clicked, this, [this] { addLayer("folder"); });
-    auto* more = toolButton(this, "plus", "Add a layer of any kind");
+    auto* more = toolButton(this, "plus", "Add Layer: any kind");
     more->setPopupMode(QToolButton::InstantPopup);
     auto* moreMenu = new QMenu(more);
     connect(moreMenu, &QMenu::aboutToShow, this, [this, moreMenu] {
@@ -1816,7 +1871,7 @@ TextureSetPanel::TextureSetPanel(QWidget* parent) : QWidget(parent), d(std::make
         d->fillLayerMenu(moreMenu);
     });
     more->setMenu(moreMenu);
-    auto* maskBtn = toolButton(this, "mask", "Add a mask or generator to the selected layer");
+    auto* maskBtn = toolButton(this, "mask", "Add Mask: a mask or generator on the selected layer");
     maskBtn->setPopupMode(QToolButton::InstantPopup);
     auto* maskMenu = new QMenu(maskBtn);
     connect(maskMenu, &QMenu::aboutToShow, this, [this, maskMenu] {
@@ -1824,24 +1879,33 @@ TextureSetPanel::TextureSetPanel(QWidget* parent) : QWidget(parent), d(std::make
         d->fillMaskMenu(maskMenu);
     });
     maskBtn->setMenu(maskMenu);
-    auto* dup = toolButton(this, "copy", "Duplicate the selected layer");
+    auto* dup = toolButton(this, "copy", "Duplicate: the selected layer");
     connect(dup, &QToolButton::clicked, this, [this] { duplicateSelected(); });
-    auto* del = toolButton(this, "trash", "Delete the selected layer or mask");
+    auto* del = toolButton(this, "trash", "Delete: the selected layer or mask (Delete)");
     connect(del, &QToolButton::clicked, this, [this] { deleteSelected(); });
     d->channel = new QComboBox(this);
     d->channel->setObjectName("rowChannel");
-    d->channel->setToolTip("The channel the rows' thumbnails, blend modes and opacities show and edit");
+    d->channel->setToolTip("Channel: the one the rows' thumbnails, blend modes and opacities show and edit");
+    d->channel->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    d->channel->setMinimumContentsLength(6);
     connect(d->channel, &QComboBox::currentIndexChanged, this, [this](int) { refresh(); });
-    for (QToolButton* b : {addFill, addPaint, addFolder, more, maskBtn, dup, del})
+    setComboDefault(d->channel, 0);
+    for (QToolButton* b : {addFill, addPaint, addFolder, more})
         bar->addWidget(b);
+    bar->addSpacing(8);
+    bar->addWidget(maskBtn);
+    bar->addSpacing(8);
+    bar->addWidget(dup);
+    bar->addWidget(del);
     bar->addStretch(1);
     bar->addWidget(d->channel);
     v->addLayout(bar);
 
     d->empty = new QWidget(this);
     auto* eh = new QVBoxLayout(d->empty);
-    eh->addWidget(dim(d->empty, "No texture set. Make one for the selected mesh's material to start a layer stack."));
-    auto* make = new QPushButton(icon("plus"), "New Texture Set", d->empty);
+    eh->setContentsMargins(0, 4, 0, 4);
+    eh->addWidget(dim(d->empty, "No texture set. Click New Texture Set to start a layer stack for the selected mesh's material."));
+    auto* make = new QPushButton("New Texture Set", d->empty);
     connect(make, &QPushButton::clicked, this, [] { actions::run(json("texture.newSet")); });
     eh->addWidget(make);
     v->addWidget(d->empty);
@@ -1860,7 +1924,7 @@ TextureSetPanel::TextureSetPanel(QWidget* parent) : QWidget(parent), d(std::make
     auto* shelfHead = new QHBoxLayout();
     shelfHead->addWidget(boldHeading(shelfBox, "Smart Materials"));
     shelfHead->addStretch(1);
-    auto* reload = toolButton(shelfBox, "refresh", "Reread the smart material libraries");
+    auto* reload = toolButton(shelfBox, "refresh", "Reload: reread the smart material libraries");
     connect(reload, &QToolButton::clicked, this, [this] {
         d->shelfKey.clear();
         d->rebuildShelf();
@@ -1881,8 +1945,8 @@ TextureSetPanel::TextureSetPanel(QWidget* parent) : QWidget(parent), d(std::make
             [this](QListWidgetItem* it) { applySmartMaterial(it->data(Qt::UserRole).toString().toStdString()); });
     sv->addWidget(d->shelf, 1);
     deletion::claim(d->shelf, nullptr);
-    auto* apply = new QPushButton(icon("sparkles"), "Apply", shelfBox);
-    apply->setToolTip("Apply the chosen smart material above the selected layer, or the smart mask to it");
+    auto* apply = new QPushButton("Apply", shelfBox);
+    apply->setToolTip("Apply: the chosen smart material above the selected layer, or the smart mask to it");
     connect(apply, &QPushButton::clicked, this, [this] {
         if (QListWidgetItem* it = d->shelf->currentItem())
             applySmartMaterial(it->data(Qt::UserRole).toString().toStdString());

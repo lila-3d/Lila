@@ -37,6 +37,9 @@ inline constexpr const char* kDefaultTabExtent = "lilaDefaultTabExtent";
 /** Dynamic property on a dock: shown, it takes the narrowest width its column allows, whatever it was before. */
 inline constexpr const char* kHugTabExtent = "lilaHugTabExtent";
 
+/** Dynamic property on a dock: its Tabler icon name, for the collapsed sidebar tab (not the window icon, which Qt puts on dock tabs). */
+inline constexpr const char* kPanelIconProperty = "lilaPanelIcon";
+
 /** Dynamic property on a dock: set by keepOwnColumn. */
 inline constexpr const char* kOwnColumn = "lilaOwnColumn";
 
@@ -78,7 +81,8 @@ LILA_UI_API void toggleDock(QDockWidget* dock);
 
 /**
  * Dock title bar: a semibold title, then a docs button when it has a page, collapse, float and close, which stay dim
- * until the pointer is over the bar. Double-click floats or re-docks.
+ * until the pointer is over the bar. Double-click floats or re-docks. In a tab group the tab names the panel, so the bar
+ * takes no room; the tab's right-click menu has its buttons.
  */
 class LILA_UI_API DockTitleBar : public QWidget
 {
@@ -86,6 +90,8 @@ class LILA_UI_API DockTitleBar : public QWidget
 
 public:
     explicit DockTitleBar(QDockWidget* dock);
+    /** Re-checks whether the dock sits in a tab group, which hides the bar. */
+    void refreshTabbed();
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
     void setDocsPage(const std::string& page);
@@ -107,6 +113,7 @@ private:
     QDockWidget* mDock;
     QHBoxLayout* mButtons = nullptr;
     QWidget* mHelp = nullptr;
+    bool mTabbed = false;
 };
 
 /**
@@ -164,6 +171,8 @@ private:
     void dropStaleTabLater(QDockWidget* dock);
     void hookTabBars();
     QDockWidget* dockForTab(QTabBar* bar, int index) const;
+    void hideStaleTabBars();
+    bool mStaleBarsQueued = false;
     void rememberSize(QDockWidget* dock);
     void restoreSize(QDockWidget* dock);
     /** Gives a docked panel squeezed to almost nothing its remembered size, or a default share of the window. */

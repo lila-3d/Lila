@@ -48,6 +48,8 @@ LILA_UI_API bool themeChooserPending();
 LILA_UI_API void setThemeChooserDone();
 /** The first-run picker: Colour, Monotone and Light as cards with a preview; picking one switches live. */
 LILA_UI_API QWidget* makeThemeChooser(QWidget* parent);
+/** Interface scale in percent (general prefs), read once before QApplication is built: QT_SCALE_FACTOR. */
+inline constexpr const char* kUiScalePref = "/ui/scale";
 /** Telemetry opt-ins, both off until chosen. */
 inline constexpr const char* kTelemetryUsagePref = "/telemetry/usage";
 inline constexpr const char* kTelemetryCrashPref = "/telemetry/crashReports";

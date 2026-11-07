@@ -16,6 +16,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QInputDialog>
+#include <QLabel>
 #include <QMenu>
 #include <QPointer>
 #include <QTimer>
@@ -68,14 +69,14 @@ QuickSelectSetsPanel::QuickSelectSetsPanel(QWidget* parent) : QWidget(parent)
 
     auto* bar = new QHBoxLayout;
     bar->setContentsMargins(0, 0, 0, 0);
-    bar->setSpacing(1);
-    auto add = [&](const char* iconName, const QString& tip, auto fn) {
-        QToolButton* b = toolButton(this, iconName, tip);
+    bar->setSpacing(2);
+    auto add = [&](const char* iconName, const QString& tip, auto fn, const QString& text = {}) {
+        QToolButton* b = toolButton(this, iconName, tip, text);
         connect(b, &QToolButton::clicked, this, fn);
         bar->addWidget(b);
         return b;
     };
-    add("plus", "Create a quick select set from the selection", [this] {
+    add("plus", "<b>New Set</b><br>Create a quick select set from the selection.", [this] {
         json r = sets::run("createSet", {{"name", "quickSelectSet1"}, {"quickSelect", true}});
         if (!r.is_string())
             return;
@@ -87,25 +88,26 @@ QuickSelectSetsPanel::QuickSelectSetsPanel(QWidget* parent) : QWidget(parent)
                 rename(it);
             }
     });
-    add("square-plus", "Add the selection to the current set", [this] {
+    bar->addSpacing(10);
+    add("square-plus", "<b>Add Selected</b><br>Add the selection to the current set.", [this] {
         if (std::string set = currentSet(); !set.empty())
             sets::run("addToSet", {{"args", {set}}});
-    });
-    add("square-minus", "Remove the selection from the current set", [this] {
+    }, "Add");
+    add("square-minus", "<b>Remove Selected</b><br>Remove the selection from the current set.", [this] {
         if (std::string set = currentSet(); !set.empty())
             sets::run("removeFromSet", {{"args", {set}}});
-    });
+    }, "Remove");
     bar->addStretch(1);
-    mAllSets = add("filter", "Show every object set, not only quick select sets", [this] { refresh(); });
+    mAllSets = add("filter", "<b>All Sets</b><br>List every object set, not only quick select sets.", [this] { refresh(); }, "All Sets");
     mAllSets->setCheckable(true);
-    add("trash", "Delete the current set (its members stay)", [this] {
+    bar->addSpacing(10);
+    add("trash", "<b>Delete Set</b><br>Delete the current set. Its members stay.", [this] {
         if (std::string set = currentSet(); !set.empty())
             sets::run("deleteSet", {{"args", {set}}});
     });
     v->addLayout(bar);
 
     mTree = new QTreeWidget(this);
-    setEmptyHint(mTree, "No sets yet. + makes a quick select set from the selection.");
     mTree->setColumnCount(2);
     mTree->setHeaderHidden(true);
     mTree->setRootIsDecorated(false);
@@ -125,6 +127,12 @@ QuickSelectSetsPanel::QuickSelectSetsPanel(QWidget* parent) : QWidget(parent)
     header->setSectionResizeMode(0, QHeaderView::Stretch);
     header->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     v->addWidget(mTree, 1);
+    mEmpty = emptyStateLabel("No quick select sets. Click + to make one from the selection.", this);
+    mEmpty->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    mEmpty->setContentsMargins(6, 8, 6, 8);
+    v->addWidget(mEmpty);
+    // Takes the spare height only while the tree is hidden, so the empty panel shrinks to its line.
+    v->addStretch(0);
 
     connect(mTree, &QTreeWidget::itemClicked, this, [](QTreeWidgetItem* item, int) {
         const std::string set = item->data(0, kSetPathRole).toString().toStdString();
@@ -207,16 +215,15 @@ void QuickSelectSetsPanel::refresh()
         item->setText(1, QString::number(count));
         item->setTextAlignment(1, Qt::AlignRight | Qt::AlignVCenter);
         item->setToolTip(0, "Click to select the members (Ctrl or Shift adds them), double-click to rename.");
-        item->setToolTip(1, QString("%1 member(s)").arg(count));
+        item->setToolTip(1, count == 1 ? QString("1 member") : QString("%1 members").arg(count));
         if (set->path() == current)
             mTree->setCurrentItem(item);
     }
-    if (mTree->topLevelItemCount() == 0)
-    {
-        auto* hint = new QTreeWidgetItem(mTree);
-        hint->setFlags(Qt::NoItemFlags);
-        hint->setText(0, "Select something and press + to make a set");
-    }
+    const bool empty = mTree->topLevelItemCount() == 0;
+    mTree->setVisible(!empty);
+    mEmpty->setText(mAllSets->isChecked() ? "No sets. Click + to make a quick select set from the selection."
+                                          : "No quick select sets. Click + to make one from the selection.");
+    mEmpty->setVisible(empty);
     mTree->setUpdatesEnabled(true);
     mFilling = false;
 }

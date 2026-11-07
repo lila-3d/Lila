@@ -103,8 +103,11 @@ struct View
 LILA_UI_API std::vector<View> views();
 LILA_UI_API std::string currentView();
 LILA_UI_API void setCurrentView(const std::string& name);
-/** Whether the current view (and the per-type toggles) shows a section of a type. */
-LILA_UI_API bool sectionShown(const std::string& typeName, const QString& title);
+/**
+ * Whether the current view (and the per-type toggles) shows a section of a type. An added-attribute section (added) is
+ * hidden only by its own toggle, never by a built-in view's word list.
+ */
+LILA_UI_API bool sectionShown(const std::string& typeName, const QString& title, bool added = false);
 /** The per-type toggle, kept in the current view when it is the user's, else in the user's own "Custom" view. */
 LILA_UI_API void setSectionShown(const std::string& typeName, const QString& title, bool shown);
 /** Saves the current view's hidden sections under a name, in the user's prefs or the first studio folder. */

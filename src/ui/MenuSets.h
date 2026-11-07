@@ -12,18 +12,12 @@ struct Menu;
 }
 
 /**
- * Maya's menu sets: the menu bar shows a fixed core plus the menus of the active set, and the set follows the docked
- * shelf's tab. The hotbox and menu search still reach every menu. Off when the general pref /menuSets/enabled is false.
+ * Menu sets: the menu bar shows a fixed core plus the menus of the active set (see MenuContext.h for which set that is).
+ * The hotbox and menu search still reach every menu. The general pref /ui/allMenus shows every menu all the time.
  */
 namespace lila::ui::menuSets
 {
-constexpr const char* kDefault = "Modeling";
-
-/**
- * The set a shelf selects: the general pref /menuSets/shelves ({"My Shelf": "Animation"}) first, then Lila's own
- * shelves, then a set of the same name. Empty when the shelf names no set, so the menu bar keeps the one it has.
- */
-LILA_UI_API std::string forShelf(const std::string& shelf);
+inline constexpr const char* kAllMenusPref = "/ui/allMenus";
 
 LILA_UI_API bool enabled();
 

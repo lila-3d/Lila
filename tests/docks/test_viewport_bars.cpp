@@ -1,8 +1,8 @@
 #include <doctest/doctest.h>
 
-#include "ui/ViewportToolbar.h"
+#include "ui/ViewportHeader.h"
+#include "ui/ViewportWidget.h"
 
-#include <QDoubleSpinBox>
 #include <QMenu>
 #include <QToolButton>
 
@@ -10,41 +10,43 @@ using namespace lila::ui;
 
 namespace
 {
-QToolButton* chevronOf(QWidget& bar)
+QToolButton* chevronOf(QWidget& header)
 {
-    for (QToolButton* b : bar.findChildren<QToolButton*>(Qt::FindDirectChildrenOnly))
+    for (QToolButton* b : header.findChildren<QToolButton*>(Qt::FindDirectChildrenOnly))
         if (b->toolTip() == "More viewport options")
             return b;
     return nullptr;
 }
 
-/** The bar's direct child rows (each group is one), visible ones only. */
-int visibleRows(QWidget& bar)
+QToolButton* buttonWithText(QWidget& header, const QString& prefix)
 {
-    int n = 0;
-    for (QWidget* w : bar.findChildren<QWidget*>(Qt::FindDirectChildrenOnly))
-        if (w->isVisible() && !qobject_cast<QToolButton*>(w) && w->objectName() != "toolbarSeparator")
-            ++n;
-    return n;
+    for (QToolButton* b : header.findChildren<QToolButton*>())
+        if (b->text().startsWith(prefix))
+            return b;
+    return nullptr;
 }
 } // namespace
 
-TEST_CASE("viewport bottom bar keeps the snaps and folds the rest into the chevron as it narrows")
+TEST_CASE("viewport header drops labels, then folds items into the chevron as it narrows")
 {
-    ViewportBottomBar bar(nullptr);
-    bar.resize(1400, bar.sizeHint().height());
-    bar.show();
-    QToolButton* chevron = chevronOf(bar);
+    ViewportWidget view;
+    ViewportHeader header(&view);
+    header.resize(1600, header.sizeHint().height());
+    header.show();
+    QToolButton* chevron = chevronOf(header);
     REQUIRE(chevron);
-    // Highlight, masks, display, symmetry, snaps, exposure and presenter; Retopo Draw's row only shows while that tool runs.
-    CHECK(visibleRows(bar) == 7);
+    QToolButton* snap = buttonWithText(header, "Snap");
+    QToolButton* symmetry = buttonWithText(header, "Symmetry");
+    REQUIRE(snap);
+    REQUIRE(symmetry);
     CHECK_FALSE(chevron->isVisible());
-    CHECK(bar.findChildren<QDoubleSpinBox*>().size() == 2);
+    CHECK(snap->toolButtonStyle() == Qt::ToolButtonTextBesideIcon);
 
-    bar.resize(360, bar.height());
+    header.resize(520, header.height());
+    CHECK(snap->toolButtonStyle() == Qt::ToolButtonIconOnly);
+
+    header.resize(260, header.height());
     CHECK(chevron->isVisible());
-    CHECK(visibleRows(bar) >= 1);
-    CHECK(visibleRows(bar) < 7);
     Q_EMIT chevron->menu()->aboutToShow();
     CHECK_FALSE(chevron->menu()->actions().isEmpty());
 }

@@ -77,7 +77,7 @@ QWidget* garmentSection(scene::NodeId id)
     for (size_t k = 0; k < g.seams.size(); ++k)
     {
         const Seam& s = g.seams[k];
-        auto* item = new QTreeWidgetItem(seams, {QString::number(k), s.reversed ? QString("reversed") : QString()});
+        auto* item = new QTreeWidgetItem(seams, {QString::number(k), s.reversed ? QString("Reversed") : QString()});
         item->setText(0, QString("%1  %2  to  %3").arg(k).arg(sideText(g, s.a), sideText(g, s.b)));
         item->setFirstColumnSpanned(true);
     }
@@ -177,7 +177,7 @@ void registerUi(ext::Context& ctx)
     registerPatternEditor(ctx);
     registerGrabTool(ctx);
     registerAnimation(ctx);
-    menus::addMenu(ctx, {.id = "Tailor", .title = "Tailor", .before = "Rig", .sets = {"Modeling", "Animation"}});
+    menus::addMenu(ctx, {.id = "Tailor", .title = "Tailor", .before = "Rig", .sets = {"Cloth"}});
     int sep = 0;
     for (const char* a : {"tailor.mannequin", "tailor.createBlock", "tailor.drawPanel", "tailor.importGarmentCode", "", "tailor.simulate", "tailor.setFabric",
                           "tailor.sew", "tailor.autoSew", "tailor.check", "window.tailorPatternEditor", "", "tailor.live", "tailor.stopLive", "tailor.grab",
@@ -212,10 +212,11 @@ void registerUi(ext::Context& ctx)
     layouts::add(ctx, "Tailor",
                  {{"version", 1},
                   {"preset",
-                   {{"open", {"shelf", "outliner", "undoHistory", "channelBox", "attributeEditor", "tailorPatternEditor", "timeSlider"}},
+                   {{"open", {"outliner", "channelBox", "attributeEditor", "displayLayers", "tailorPatternEditor", "timeSlider"}},
                     {"raise", {"tailorPatternEditor"}},
                     {"size", {{"tailorPatternEditor", {{"width", 0.42}}}}}}},
                   {"viewport", {{"quad", false}, {"camera", "persp"}}},
+                  {"menuSet", "Cloth"},
                   {"shelf", {{"current", "Tailor"}}}});
 }
 } // namespace tailor

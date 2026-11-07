@@ -11,6 +11,8 @@
 #include "tex/Ports.h"
 #include "tex/TextureSet.h"
 #pragma pop_macro("slots")
+#include "ui/Controls.h"
+#include "ui/FlowLayout.h"
 #include "ui/Icons.h"
 #include "ui/MaterialDraw.h"
 #include "ui/TexPreview.h"
@@ -459,7 +461,7 @@ struct Texture2DView::Impl
     QToolButton* tile = nullptr;
     QToolButton* hist = nullptr;
     QToolButton* onMesh = nullptr;
-    QButtonGroup* solo = nullptr;
+    controls::Segmented* solo = nullptr;
     QLabel* status = nullptr;
     QLabel* pixel = nullptr;
     int listener = 0;
@@ -560,48 +562,57 @@ Texture2DView::Texture2DView(QWidget* parent) : QWidget(parent), d(std::make_uni
     lay->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(0);
 
+    // Source and resolution on one row; view toggles below, wrapping in a narrow dock.
     auto* bar = new QWidget(this);
-    auto* h = new QHBoxLayout(bar);
-    h->setContentsMargins(6, 4, 6, 4);
-    h->setSpacing(3);
+    auto* bv = new QVBoxLayout(bar);
+    bv->setContentsMargins(6, 4, 6, 4);
+    bv->setSpacing(4);
+    auto* h = new QHBoxLayout;
+    h->setSpacing(4);
     d->source = new QComboBox(bar);
-    d->source->setMinimumWidth(160);
+    d->source->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    d->source->setMinimumContentsLength(12);
+    d->source->setToolTip("Source: the texture set channel or node output shown");
     h->addWidget(d->source, 1);
     d->resolution = new QComboBox(bar);
     for (int s : {128, 256, 512, 1024, 2048})
-        d->resolution->addItem(QString::number(s), s);
+        d->resolution->addItem(QString("%1 px").arg(s), s);
     d->resolution->setCurrentIndex(d->resolution->findData(ctl().size));
-    d->resolution->setToolTip("Resolution the output is rendered at");
+    d->resolution->setToolTip("Resolution: the size the output is rendered at");
     h->addWidget(d->resolution);
+    bv->addLayout(h);
 
-    auto toggle = [bar, h](const char* ic, const QString& text, const QString& tip) {
-        auto* b = new QToolButton(bar);
-        b->setCheckable(true);
-        if (*ic)
-            b->setIcon(icon(ic));
-        else
-            b->setText(text);
-        b->setToolTip(tip);
-        h->addWidget(b);
-        return b;
-    };
-    d->tile = toggle("layout-grid", "Tile", "Tile 3 x 3, to check the texture repeats without seams");
-    d->solo = new QButtonGroup(bar);
-    d->solo->setExclusive(true);
+    auto* flow = new FlowLayout(6);
+    flow->setContentsMargins(0, 0, 0, 0);
+    auto* toggles = new QWidget(bar);
+    toggles->setLayout(flow);
+    d->solo = new controls::Segmented(toggles);
     const char* soloNames[] = {"RGB", "R", "G", "B", "A"};
     for (int i = 0; i < 5; ++i)
-    {
-        QToolButton* b = toggle("", soloNames[i], i == 0 ? QString("Show every channel") : QString("Show only %1, as gray").arg(soloNames[i]));
-        d->solo->addButton(b, i);
-        b->setChecked(i == 0);
-    }
-    d->hist = toggle("chart-histogram", "Histogram", "Histogram of the shown channels");
+        d->solo->add(soloNames[i], {}, i == 0 ? QString("RGB: show every channel") : QString("%1: show only %1, as grey").arg(soloNames[i]), i);
+    d->solo->setCurrent(0);
+    d->solo->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+    flow->addWidget(d->solo);
+    auto toggle = [toggles, flow](const QString& text, const QString& tip) {
+        auto* b = new QToolButton(toggles);
+        b->setCheckable(true);
+        b->setText(text);
+        b->setToolTip(tip);
+        b->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        controls::setRole(b, "push");
+        flow->addWidget(b);
+        return b;
+    };
+    d->tile = toggle("Tile", "Tile: 3 x 3, to check the texture repeats without seams");
+    d->hist = toggle("Histogram", "Histogram: of the shown channels");
     d->hist->setChecked(true);
-    d->onMesh = toggle("eye", "On Mesh", "Show this output as base colour on the meshes whose material the texture set drives");
-    auto* fit = new QToolButton(bar);
-    fit->setIcon(icon("maximize"));
-    fit->setToolTip("Fit the image (F, or double-click)");
-    h->addWidget(fit);
+    d->onMesh = toggle("On Mesh", "On Mesh: show this output as base colour on the meshes whose material the texture set drives");
+    auto* fit = new QToolButton(toggles);
+    fit->setText("Fit");
+    fit->setToolTip("Fit: the whole image in the view (F, or double-click)");
+    controls::setRole(fit, "push");
+    flow->addWidget(fit);
+    bv->addWidget(toggles);
     lay->addWidget(bar);
 
     d->canvas = new Canvas(this);
@@ -611,9 +622,9 @@ Texture2DView::Texture2DView(QWidget* parent) : QWidget(parent), d(std::make_uni
     fl->setContentsMargins(6, 2, 6, 4);
     fl->setSpacing(0);
     d->status = new QLabel(foot);
-    d->status->setStyleSheet("color: rgb(170,170,170);");
+    d->status->setStyleSheet(themedStyleSheet("color: #aaaaaa;"));
     d->pixel = new QLabel(foot);
-    d->pixel->setStyleSheet("color: rgb(150,150,150);");
+    d->pixel->setStyleSheet(themedStyleSheet("color: #969696;"));
     d->pixel->setTextInteractionFlags(Qt::TextSelectableByMouse);
     fl->addWidget(d->status);
     fl->addWidget(d->pixel);
@@ -626,7 +637,7 @@ Texture2DView::Texture2DView(QWidget* parent) : QWidget(parent), d(std::make_uni
     });
     connect(d->resolution, &QComboBox::activated, this, [this](int) { setResolution(d->resolution->currentData().toInt()); });
     connect(d->tile, &QToolButton::toggled, this, [this](bool on) { setTiled(on); });
-    connect(d->solo, &QButtonGroup::idClicked, this, [this](int id) { setSolo(id); });
+    connect(d->solo, &controls::Segmented::picked, this, [this](int id) { setSolo(id); });
     connect(d->hist, &QToolButton::toggled, this, [impl](bool on) {
         impl->canvas->histogram = on;
         impl->canvas->update();
@@ -679,8 +690,7 @@ QString Texture2DView::inspect(int x, int y) const
 void Texture2DView::setSolo(int channel)
 {
     d->soloChannel = std::clamp(channel, 0, 4);
-    if (QAbstractButton* b = d->solo->button(d->soloChannel); b && !b->isChecked())
-        b->setChecked(true);
+    d->solo->setCurrent(d->soloChannel);
     d->redisplay();
 }
 

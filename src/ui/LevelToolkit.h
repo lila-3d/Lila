@@ -36,11 +36,15 @@ inline constexpr const char* kBuildSection = "level.build";
 inline constexpr const char* kDressSection = "level.dress";
 inline constexpr const char* kAssetsSection = "level.assets";
 
+/**
+ * One button in a section. Items with a shelf label are the section's daily tools and show as tiles at its top; the rest
+ * are labelled buttons, two to a row, and past six they go in the section's overflow menu.
+ */
 struct Item
 {
-    /** A registered action; an item whose action is empty ends the row. Items whose action isn't registered are skipped. */
+    /** A registered action. Items with an empty or unregistered action are skipped. */
     std::string action;
-    std::string icon; // Tabler name; empty for a text-only button
+    std::string icon; // Tabler name, for a tile; empty falls back to the action's icon
     std::string text; // short button text; empty for the action's label
     std::string shelf; // label of a button for it on the Level shelf; empty for none
 };
@@ -82,15 +86,17 @@ protected:
 
 private:
     void rebuild();
-    /** The panel stops where every button grid still fits its labels and option boxes, open or folded. */
-    void updateMinimumWidth();
-    QToolButton* actionButton(const std::string& id, const QString& iconName, const QString& text, QWidget* parent);
+    /** A tile for a registered action, or null when it isn't one. */
+    QToolButton* tile(const std::string& id, const std::string& iconName, const QString& label, QWidget* parent);
+    /** A labelled push button for a registered action, or null when it isn't one. */
+    QToolButton* push(const std::string& id, const QString& label, QWidget* parent);
+    void refreshButtons();
 
     QScrollArea* mScroll = nullptr;
     QWidget* mBody = nullptr;
     QTimer* mRebuild = nullptr;
+    QTimer* mRefresh = nullptr;
     std::vector<QToolButton*> mButtons;
-    std::vector<QWidget*> mGrids;
     int mSectionListener = 0;
     int mActionListener = 0;
 };

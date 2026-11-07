@@ -6,6 +6,7 @@
 #include "scene/AttrComponents.h"
 #include "scene/Graph.h"
 #include "ui/Icons.h"
+#include "ui/Theme.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -66,7 +67,9 @@ QLabel* statusLabel(QWidget* parent)
     auto* l = new QLabel(parent);
     l->setObjectName("status");
     l->setWordWrap(true);
-    l->setStyleSheet("color: #e0a050;");
+    QPalette pal = l->palette();
+    pal.setColor(QPalette::WindowText, themeColor("issueWarning"));
+    l->setPalette(pal);
     l->hide();
     return l;
 }
@@ -91,11 +94,12 @@ QComboBox* categoryCombo(const std::vector<scene::NodeId>& nodes, const std::str
     auto* c = new QComboBox(parent);
     c->setObjectName("category");
     c->setEditable(true);
-    c->addItem(QString());
+    c->addItem(kCustomCategory);
     for (const std::string& cat : categories(nodes))
-        c->addItem(QString::fromStdString(cat));
+        if (cat != kCustomCategory)
+            c->addItem(QString::fromStdString(cat));
     c->setCurrentText(QString::fromStdString(current));
-    c->lineEdit()->setPlaceholderText("No heading");
+    c->lineEdit()->setPlaceholderText(kCustomCategory);
     return c;
 }
 
@@ -286,7 +290,7 @@ AddPopover::AddPopover(std::vector<scene::NodeId> nodes, std::string category, Q
     f->addRow("Range", range);
     mEnum = field("enum", "low:medium:high", mForm);
     f->addRow("Options", mEnum);
-    mCategory = categoryCombo(mNodes, category, mForm);
+    mCategory = categoryCombo(mNodes, category.empty() ? std::string(kCustomCategory) : category, mForm);
     f->addRow("Heading", mCategory);
     auto* create = new QPushButton("Add", mForm);
     create->setObjectName("create");

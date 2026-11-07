@@ -283,7 +283,8 @@ struct MaterialBrowser::Impl
             }
             items[e.id] = it;
         }
-        status->setText(QString("%1 material%2").arg(found.size()).arg(found.size() == 1 ? "" : "s"));
+        status->setText(found.empty() ? QString("No materials match. Clear the search or the favourites filter.")
+                                      : QString("%1 material%2").arg(found.size()).arg(found.size() == 1 ? "" : "s"));
         if (!keep.empty())
             self->select(keep);
         if (!pending.empty() && render::Renderer::get().running())
@@ -406,10 +407,10 @@ MaterialBrowser::MaterialBrowser(QWidget* parent) : QWidget(parent), d(std::make
     d->favourites = new QToolButton(this);
     d->favourites->setIcon(icon("star"));
     d->favourites->setCheckable(true);
-    d->favourites->setToolTip("Only favourites");
+    d->favourites->setToolTip("Favourites: show only favourites");
     auto* reload = new QToolButton(this);
     reload->setIcon(icon("refresh"));
-    reload->setToolTip("Rescan the material folders");
+    reload->setToolTip("Rescan: reread the material folders");
     top->addWidget(d->search, 1);
     top->addWidget(d->favourites);
     top->addWidget(reload);
@@ -440,10 +441,10 @@ MaterialBrowser::MaterialBrowser(QWidget* parent) : QWidget(parent), d(std::make
     auto* bottom = new QHBoxLayout();
     bottom->addWidget(new QLabel("Preset", this));
     d->presets = new QComboBox(this);
-    d->presets->setToolTip("Parameter preset applied with the material");
+    d->presets->setToolTip("Preset: parameter preset applied with the material");
     bottom->addWidget(d->presets, 1);
     auto* apply = new QPushButton("Apply", this);
-    apply->setToolTip("Put the material on the selected meshes or faces (or drag it onto a mesh)");
+    apply->setToolTip("Apply: put the material on the selected meshes or faces (or drag it onto a mesh)");
     bottom->addWidget(apply);
     v->addLayout(bottom);
     d->status = new QLabel(this);

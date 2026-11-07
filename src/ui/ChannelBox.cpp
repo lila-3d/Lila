@@ -156,7 +156,12 @@ public:
     {
         QStringList choices = mChoices(index.row());
         if (choices.isEmpty())
-            return QStyledItemDelegate::createEditor(parent, option, index);
+        {
+            QWidget* editor = QStyledItemDelegate::createEditor(parent, option, index);
+            if (auto* line = qobject_cast<QLineEdit*>(editor))
+                line->setAlignment(Qt::Alignment(index.data(Qt::TextAlignmentRole).toInt()) & Qt::AlignHorizontal_Mask);
+            return editor;
+        }
         auto* combo = new QComboBox(parent);
         combo->addItems(choices);
         choiceTips::apply(combo, mDocs(index.row()));
@@ -200,7 +205,7 @@ public:
             painter->setBrush(fill);
             painter->drawRoundedRect(QRectF(option.rect).adjusted(1.5, 1.5, -1.5, -1.5), 2.0, 2.0);
             painter->restore();
-            opt.rect.adjust(4, 0, -2, 0);
+            opt.rect.adjust(4, 0, -5, 0);
         }
         QStyledItemDelegate::paint(painter, opt, index);
         if (mChoices(index.row()).isEmpty())
@@ -371,6 +376,9 @@ bool active() { return gSliderBox != nullptr; }
 
 static QIcon cbCrossedIcon(const QString& name);
 
+/** Room left of a channel's label for its state: the keyed bar and a 12 px glyph. */
+constexpr QSize kCbStateIconSize{20, 16};
+
 ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
 {
     gBoxes.push_back(this);
@@ -442,10 +450,14 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
     mFilter->setClearButtonEnabled(true);
     connect(mFilter, &QLineEdit::textChanged, this, [this] { scheduleRefresh(); });
     filterRow->addWidget(mFilter, 1);
+    filterRow->addSpacing(6);
     mNameMode = new QToolButton(this);
     mNameMode->setObjectName("cbNameMode");
     mNameMode->setAutoRaise(true);
-    mNameMode->setToolTip("Names: nice, long or short (shared with the Attribute Editor)");
+    mNameMode->setIcon(icon("letter-case"));
+    mNameMode->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    mNameMode->setToolTip("<b>Channel Names</b><br>Display (Translate X), long (translateX) or short (tx). Click to cycle.<br>"
+                          "Shared with the Attribute Editor.");
     connect(mNameMode, &QToolButton::clicked, this, [] {
         const attrView::NameMode m = attrView::nameMode();
         attrView::setNameMode(m == attrView::NameMode::Nice ? attrView::NameMode::Long
@@ -459,14 +471,14 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
     mSync->setAutoRaise(true);
     mSync->setCheckable(true);
     mSync->setChecked(attrView::syncGraphEditor());
-    mSync->setToolTip("Sync Graph Editor: it shows only the highlighted channels");
+    mSync->setToolTip("<b>Sync Graph Editor</b><br>Show only the highlighted channels in the Graph Editor.");
     connect(mSync, &QToolButton::toggled, this, [](bool on) { attrView::setSyncGraphEditor(on); });
     filterRow->addWidget(mSync);
     auto* settings = new QToolButton(this);
     settings->setObjectName("cbSettings");
     settings->setIcon(icon("settings"));
     settings->setAutoRaise(true);
-    settings->setToolTip("Scrubbing and display: speed, hyperbolic, viewport middle drag, precision, namespaces");
+    settings->setToolTip("<b>Channel Box Settings</b><br>Scrub speed, hyperbolic scrub, viewport middle drag, precision, namespaces.");
     connect(settings, &QToolButton::clicked, this, [this, settings] { showSettings(settings); });
     filterRow->addWidget(settings);
     layout->addLayout(filterRow);
@@ -513,17 +525,35 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
             b->setToolTip(tip(s));
             scheduleRefresh();
         });
+        // State chips, then the kind chips (TRS, Type) after a gap.
+        if (std::string_view(chip.name) == "TRS")
+        {
+            auto* gap = new QWidget(mChipRow);
+            gap->setFixedSize(8, 1);
+            chips->addWidget(gap);
+        }
         chips->addWidget(b);
     }
-    layout->addWidget(mChipRow);
+    auto* chipLine = new QHBoxLayout;
+    chipLine->setSpacing(6);
+    auto* showLabel = new QLabel("Show", this);
+    showLabel->setObjectName("cbChipLabel");
+    showLabel->setToolTip("Filter channels by state or kind. Each chip cycles: only, all but, off.");
+    QPalette dimPal = showLabel->palette();
+    dimPal.setColor(QPalette::WindowText, themeColor("dimText"));
+    showLabel->setPalette(dimPal);
+    showLabel->setContentsMargins(2, 4, 0, 0);
+    chipLine->addWidget(showLabel, 0, Qt::AlignTop);
+    chipLine->addWidget(mChipRow, 1);
+    layout->addLayout(chipLine);
     mHint = new QFrame(this);
     mHint->setObjectName("cbHint");
-    mHint->setStyleSheet(QString("#cbHint { background: %1; border-radius: 3px; }").arg(themeColor("altBase").name()));
     auto* hintRow = new QHBoxLayout(mHint);
     hintRow->setContentsMargins(6, 3, 6, 3);
     mHintText = new QLabel(mHint);
     mHintText->setObjectName("cbHintText");
     mHintText->setWordWrap(true);
+    mHintText->setPalette(dimPal);
     auto* hintOff = new QLabel("<a href=\"off\">Turn off this hint</a>", mHint);
     connect(hintOff, &QLabel::linkActivated, this, [this] {
         attrView::setHintEnabled(false);
@@ -533,7 +563,7 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
     hintRow->addWidget(hintOff);
     mHint->hide();
     layout->addWidget(mHint);
-    auto showMode = [this] { mNameMode->setText(attrView::nameMode() == attrView::NameMode::Nice ? "Nice"
+    auto showMode = [this] { mNameMode->setText(attrView::nameMode() == attrView::NameMode::Nice ? "Display"
                                                 : attrView::nameMode() == attrView::NameMode::Long ? "Long" : "Short"); };
     showMode();
     mViewListener = attrView::addListener([this, showMode, mode = attrView::nameMode(), places = attrView::precision()]() mutable {
@@ -560,6 +590,7 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
     mTable->setMinimumWidth(12 * mTable->fontMetrics().height() + 90 + 2 * mTable->frameWidth());
     mTable->verticalHeader()->setDefaultSectionSize(20);
     mTable->setShowGrid(false);
+    mTable->setIconSize(kCbStateIconSize);
     mTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     mTable->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed | QAbstractItemView::AnyKeyPressed);
     mTable->setProperty("numericEntry", true);
@@ -944,20 +975,58 @@ static QIcon cbCrossedIcon(const QString& name)
     return out;
 }
 
+/** The state's glyph, so it reads without its hue: keyed channels carry the edge bar instead. */
+static const char* cbStateGlyph(uint32_t state)
+{
+    using CB = ChannelBox;
+    if (state & CB::kMuted)
+        return "volume-off";
+    if (state & CB::kBreakdown)
+        return "circle-half";
+    if (state & CB::kKeyed)
+        return nullptr;
+    if (state & CB::kDrivenKey)
+        return "steering-wheel";
+    if (state & CB::kExpression)
+        return "math-function";
+    if (state & CB::kConstraint)
+        return "link";
+    if (state & CB::kConnected)
+        return "plug-connected";
+    if (state & CB::kLocked)
+        return "lock";
+    return nullptr;
+}
+
 static QIcon cbStateIcon(uint32_t state)
 {
     const QColor c = cbStateColor(state);
     if (!c.isValid())
         return {};
-    static std::map<uint32_t, QIcon> cache;
-    const uint32_t key = c.rgb() ^ (state & ChannelBox::kKeyNow ? 0x1000000u : 0u);
+    static std::map<std::pair<QRgb, uint32_t>, QIcon> cache;
+    const std::pair key{c.rgb(), state & (ChannelBox::kKeyed | ChannelBox::kKeyNow | ChannelBox::kMuted | ChannelBox::kBreakdown |
+                                          ChannelBox::kDrivenKey | ChannelBox::kExpression | ChannelBox::kConstraint |
+                                          ChannelBox::kConnected | ChannelBox::kLocked)};
     if (auto it = cache.find(key); it != cache.end())
         return it->second;
-    QPixmap pm(8, 16);
+    constexpr qreal dpr = 2.0;
+    QPixmap pm(QSize(kCbStateIconSize.width(), kCbStateIconSize.height()) * dpr);
+    pm.setDevicePixelRatio(dpr);
     pm.fill(Qt::transparent);
     QPainter p(&pm);
-    // A full stripe on a key at this frame, a thinner one between keys.
-    p.fillRect(QRect(0, 1, (state & ChannelBox::kKeyNow) || !(state & ChannelBox::kKeyed) ? 4 : 2, 14), c);
+    // Keyed: a full bar on a key at this frame, a thinner one between keys.
+    if (state & ChannelBox::kKeyed)
+        p.fillRect(QRect(0, 1, (state & ChannelBox::kKeyNow) ? 4 : 2, 14), c);
+    if (const char* glyph = cbStateGlyph(state))
+    {
+        QPixmap g = icon(glyph).pixmap(QSize(12, 12), dpr);
+        QPainter gp(&g);
+        gp.setCompositionMode(QPainter::CompositionMode_SourceIn);
+        gp.fillRect(g.rect(), c);
+        gp.end();
+        p.drawPixmap(QPointF(7, 2), g);
+    }
+    p.end();
     return cache[key] = QIcon(pm);
 }
 
@@ -1454,6 +1523,8 @@ void ChannelBox::refresh()
             text = attrView::formatNumber(numericOf(v, row.component));
         QTableWidgetItem* item = mTable->item(r, 1);
         item->setText(text);
+        const bool numeric = row.type != scene::PlugType::Bool && row.type != scene::PlugType::Enum;
+        item->setTextAlignment(numeric ? (Qt::AlignRight | Qt::AlignVCenter) : (Qt::AlignLeft | Qt::AlignVCenter));
         // Keyed channels get a gray tint, brighter on a key; other driven channels read as locked.
         scene::NodeId curve = scene::anim::curveFor(g, ref);
         bool driven = !curve && (g.source(ref).has_value() || g.source(scene::PlugRef{owner, row.attrIndex, -1, row.element}).has_value());
@@ -1465,13 +1536,14 @@ void ChannelBox::refresh()
         item->setBackground(locked ? QBrush(themeShade(112)) : tint);
         mTable->item(r, 0)->setBackground(tint);
         item->setForeground(locked ? themeShade(28) : driven ? themeShade(130) : palette().color(QPalette::Text));
+        scene::NodeId source = scene::kNoNode;
+        const uint32_t state = stateOf(ref, &source);
         QFont f = item->font();
         f.setItalic(driven);
+        f.setStrikeOut((state & kMuted) != 0);
         item->setFont(f);
         item->setFlags(driven || locked ? (Qt::ItemIsEnabled | Qt::ItemIsSelectable)
                                         : (Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable));
-        scene::NodeId source = scene::kNoNode;
-        const uint32_t state = stateOf(ref, &source);
         QTableWidgetItem* nameItem = mTable->item(r, 0);
         nameItem->setData(Qt::UserRole, int(state));
         nameItem->setIcon(cbStateIcon(state));

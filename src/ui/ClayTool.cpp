@@ -10,9 +10,11 @@
 #include "scene/Transform.h"
 #include "core/PrefStore.h"
 #include "ui/Actions.h"
+#include "ui/Controls.h"
 #include "ui/DrawOverrides.h"
 #include "ui/Icons.h"
 #include "ui/Panels.h"
+#include "ui/SpinScrub.h"
 #include "ui/Tools.h"
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportTool.h"
@@ -468,42 +470,33 @@ class ClayPalette final : public QWidget
 public:
     explicit ClayPalette(QWidget* parent) : QWidget(parent)
     {
+        constexpr const char* kSections = "clayPalette";
         auto* v = new QVBoxLayout(this);
-        v->setContentsMargins(8, 8, 8, 8);
-        v->setSpacing(8);
+        v->setContentsMargins(12, 8, 12, 8);
+        v->setSpacing(4);
 
-        auto* ops = new QHBoxLayout;
-        ops->setSpacing(2);
-        auto opButton = [&](const char* iconName, const char* text, const char* tip, bool cut) {
-            auto* b = new QToolButton;
-            b->setIcon(icon(iconName));
-            b->setText(text);
-            b->setToolTip(tip);
-            b->setCheckable(true);
-            b->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-            b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-            connect(b, &QToolButton::clicked, this, [cut] {
-                claySettings().cut = cut;
-                settingsChanged();
-            });
-            ops->addWidget(b);
-            return b;
-        };
-        mAdd = opButton("circle-plus", "Add", "Shapes add to the clay. Hold Ctrl to cut once.", false);
-        mCut = opButton("circle-minus", "Cut", "Shapes carve the clay. Hold Ctrl to add once.", true);
-        v->addLayout(ops);
+        mOperation = new controls::Segmented(this);
+        mOperation->add("Add", {}, "Add: shapes add to the clay. Hold Ctrl to cut once.", 0);
+        mOperation->add("Cut", {}, "Cut: shapes carve the clay. Hold Ctrl to add once.", 1);
+        connect(mOperation, &controls::Segmented::picked, this, [](int id) {
+            claySettings().cut = id == 1;
+            settingsChanged();
+        });
+        v->addWidget(mOperation);
 
-        auto* grid = new QGridLayout;
-        grid->setSpacing(2);
+        std::vector<QWidget*> tiles;
         for (size_t i = 0; i < kShapeButtons.size(); ++i)
         {
             const ShapeButton& def = kShapeButtons[i];
             auto* b = new QToolButton;
             b->setIcon(icon(def.icon));
-            b->setIconSize(QSize(22, 22));
-            b->setFixedSize(36, 36);
+            b->setIconSize(QSize(24, 24));
+            b->setText(def.label);
+            b->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+            b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
             b->setCheckable(true);
-            b->setAutoRaise(true);
+            b->setFocusPolicy(Qt::NoFocus);
+            controls::setRole(b, "tile");
             b->setToolTip(def.key ? QString("%1  (%2)").arg(def.label, def.key) : QString(def.label));
             connect(b, &QToolButton::clicked, this, [i] {
                 ClaySettings& s = claySettings();
@@ -512,38 +505,20 @@ public:
                     s.shape = int(i);
                 settingsChanged();
             });
-            grid->addWidget(b, int(i / 4), int(i % 4));
+            tiles.push_back(b);
             mShapes[i] = b;
         }
-        v->addLayout(grid);
-        mShapeName = new QLabel;
-        mShapeName->setAlignment(Qt::AlignHCenter);
-        v->addWidget(mShapeName);
+        v->addWidget(controls::section("Shape", controls::grid(tiles, 4, this), this, kSections));
 
-        mTaper = new QCheckBox("Taper");
-        mTaper->setToolTip("Strokes thin toward their end  (T)");
-        connect(mTaper, &QCheckBox::clicked, this, [](bool on) {
-            claySettings().taper = on;
-            settingsChanged();
-        });
-        v->addWidget(mTaper);
-
-        mChain = new QCheckBox("Chain");
-        mChain->setToolTip("Each shape links to the selected one; Shift-click a shape to chain from it  (C)");
-        connect(mChain, &QCheckBox::clicked, this, [](bool on) {
-            claySettings().chain = on;
-            settingsChanged();
-        });
-        v->addWidget(mChain);
-
-        auto* form = new QFormLayout;
+        auto* sizeBox = new QWidget(this);
+        auto* form = new QFormLayout(sizeBox);
+        form->setContentsMargins(0, 0, 0, 0);
+        form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        form->setVerticalSpacing(4);
         auto spin = [&](const char* label, double lo, const char* tip, double ClaySettings::*field) {
-            auto* s = new QDoubleSpinBox;
-            s->setRange(lo, 1e4);
-            s->setDecimals(2);
-            s->setSuffix(" cm");
+            QDoubleSpinBox* s = controls::valueField(lo, 1e4, 2, "cm", sizeBox);
             s->setToolTip(tip);
-            s->setKeyboardTracking(false);
+            setSpinDefault(s, ClaySettings{}.*field);
             connect(s, &QDoubleSpinBox::valueChanged, this, [field](double value) {
                 claySettings().*field = value;
                 settingsChanged();
@@ -551,14 +526,14 @@ public:
             form->addRow(label, s);
             return s;
         };
-        mRadius = spin("Radius", 0.05, "Size of the next shape or stroke  (B+drag, [ ])", &ClaySettings::radius);
-        mBlend = spin("Blend", 0.0, "How far the next shape melts into the clay  (, .)", &ClaySettings::blend);
-        mThickness = new QDoubleSpinBox;
+        mRadius = spin("Radius", 0.05, "Radius: size of the next shape or stroke  (B+drag, [ ])", &ClaySettings::radius);
+        mBlend = spin("Blend", 0.0, "Blend: how far the next shape melts into the clay  (, .)", &ClaySettings::blend);
+        mThickness = new controls::SliderField(sizeBox);
         mThickness->setRange(0.05, 1.0);
         mThickness->setSingleStep(0.05);
         mThickness->setDecimals(2);
-        mThickness->setToolTip("Link radius at each end, as a fraction of that shape's size: the selected links', else the next one's");
-        mThickness->setKeyboardTracking(false);
+        mThickness->setToolTip("Thickness: link radius at each end, as a fraction of that shape's size: the selected links', else the next one's");
+        setSpinDefault(mThickness, ClaySettings{}.thickness);
         connect(mThickness, &QDoubleSpinBox::valueChanged, this, [](double value) {
             const std::vector<scene::Node*> links = selectedLinks();
             if (links.empty())
@@ -573,23 +548,52 @@ public:
             settingsChanged();
         });
         form->addRow("Thickness", mThickness);
-        v->addLayout(form);
+        v->addWidget(controls::section("Size", sizeBox, this, kSections));
 
-        mMirror = new QCheckBox("Mirror X");
-        connect(mMirror, &QCheckBox::clicked, this, [](bool on) {
+        auto* optionsBox = new QWidget(this);
+        auto* options = new QVBoxLayout(optionsBox);
+        options->setContentsMargins(0, 0, 0, 0);
+        options->setSpacing(4);
+        mTaper = new QCheckBox("Taper", optionsBox);
+        mTaper->setToolTip("Taper: strokes thin toward their end  (T)");
+        // Toggled rather than clicked so a middle-click reset applies too; sync() setting the current state is skipped.
+        connect(mTaper, &QCheckBox::toggled, this, [](bool on) {
+            if (on == claySettings().taper)
+                return;
+            claySettings().taper = on;
+            settingsChanged();
+        });
+        options->addWidget(mTaper);
+        mChain = new QCheckBox("Chain", optionsBox);
+        mChain->setToolTip("Chain: each shape links to the selected one; Shift-click a shape to chain from it  (C)");
+        connect(mChain, &QCheckBox::toggled, this, [](bool on) {
+            if (on == claySettings().chain)
+                return;
+            claySettings().chain = on;
+            settingsChanged();
+        });
+        options->addWidget(mChain);
+        mMirror = new QCheckBox("Mirror X", optionsBox);
+        connect(mMirror, &QCheckBox::toggled, this, [](bool on) {
             if (scene::Node* o = selectedClay())
-                if (scene::Node* surface = clay::surfaceOf(*o))
+                if (scene::Node* surface = clay::surfaceOf(*o); surface && on != (surface->as<int64_t>(surface->type().attrIndex("symmetry")) == 1))
                     callClay("setAttr", {{"args", {surface->path() + ".symmetry", on ? "x" : "off"}}});
         });
-        v->addWidget(mMirror);
-
-        mKeys = new QCheckBox("Show keys");
-        mKeys->setToolTip("List the tool's keys in the corner of the view.");
-        connect(mKeys, &QCheckBox::clicked, this, [](bool on) {
+        options->addWidget(mMirror);
+        mKeys = new QCheckBox("Show Keys", optionsBox);
+        mKeys->setToolTip("Show Keys: list the tool's keys in the corner of the view.");
+        connect(mKeys, &QCheckBox::toggled, this, [](bool on) {
+            if (on == PrefStore::get().value<bool>("general", kClayKeysPref, true))
+                return;
             PrefStore::get().set("general", kClayKeysPref, on);
             viewportTools::requestRedraw();
         });
-        v->addWidget(mKeys);
+        options->addWidget(mKeys);
+        setCheckDefault(mTaper, ClaySettings{}.taper);
+        setCheckDefault(mChain, ClaySettings{}.chain);
+        setCheckDefault(mMirror, false);
+        setCheckDefault(mKeys, true);
+        v->addWidget(controls::section("Options", optionsBox, this, kSections));
         v->addStretch();
 
         mRefresh = new QTimer(this);
@@ -605,12 +609,10 @@ public:
     void sync()
     {
         const ClaySettings& s = claySettings();
-        mAdd->setChecked(!s.cut);
-        mCut->setChecked(s.cut);
+        mOperation->setCurrent(s.cut ? 1 : 0);
         const size_t current = s.stroke ? kToolShapes.size() : size_t(s.shape);
         for (size_t i = 0; i < mShapes.size(); ++i)
             mShapes[i]->setChecked(i == current);
-        mShapeName->setText(kShapeButtons[current].label);
         mTaper->setChecked(s.taper);
         mTaper->setEnabled(s.stroke);
         mChain->setChecked(s.chain);
@@ -618,7 +620,8 @@ public:
         const std::vector<scene::Node*> links = selectedLinks();
         mThickness->setEnabled(!links.empty() || (s.chain && !s.stroke));
         const double thickness = links.empty() ? s.thickness : links.front()->as<double>(links.front()->type().attrIndex("thickness"));
-        for (auto [box, value] : {std::pair{mRadius, s.radius}, std::pair{mBlend, s.blend}, std::pair{mThickness, thickness}})
+        for (auto [box, value] : {std::pair<QDoubleSpinBox*, double>{mRadius, s.radius}, std::pair<QDoubleSpinBox*, double>{mBlend, s.blend},
+                                  std::pair<QDoubleSpinBox*, double>{mThickness, thickness}})
         {
             const QSignalBlocker block(box);
             box->setValue(value);
@@ -627,16 +630,16 @@ public:
         const scene::Node* surface = o ? clay::surfaceOf(*o) : nullptr;
         mMirror->setEnabled(surface);
         mMirror->setChecked(surface && surface->as<int64_t>(surface->type().attrIndex("symmetry")) == 1);
-        mMirror->setToolTip(surface ? QString("Mirror %1 across its YZ plane.").arg(QString::fromStdString(o->name())) : "Select clay to mirror it.");
+        mMirror->setToolTip(surface ? QString("Mirror X: mirror %1 across its YZ plane.").arg(QString::fromStdString(o->name())) : "Mirror X: select clay to mirror it.");
         mKeys->setChecked(PrefStore::get().value<bool>("general", kClayKeysPref, true));
     }
 
 private:
-    QToolButton *mAdd = nullptr, *mCut = nullptr;
+    controls::Segmented* mOperation = nullptr;
     std::array<QToolButton*, kShapeButtons.size()> mShapes{};
-    QLabel* mShapeName = nullptr;
     QCheckBox *mTaper = nullptr, *mChain = nullptr, *mMirror = nullptr, *mKeys = nullptr;
-    QDoubleSpinBox *mRadius = nullptr, *mBlend = nullptr, *mThickness = nullptr;
+    QDoubleSpinBox *mRadius = nullptr, *mBlend = nullptr;
+    controls::SliderField* mThickness = nullptr;
     QTimer* mRefresh = nullptr;
     int mGraphListener = 0;
 };

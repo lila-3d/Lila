@@ -5,9 +5,10 @@
 #include "core/PrefStore.h"
 #include "ui/Actions.h"
 #include "ui/Hotkeys.h"
+#include "ui/Controls.h"
 #include "ui/Icons.h"
+#include "ui/UiCommon.h"
 
-#include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
@@ -16,7 +17,8 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
-#include <tuple>
+#include <string>
+#include <unordered_map>
 
 namespace lila::ui
 {
@@ -32,14 +34,41 @@ QString formatBytes(size_t bytes)
     return QString("%1 MB").arg(double(bytes) / (1024.0 * 1024.0), 0, 'f', 1);
 }
 
-QToolButton* smallToolButton(QWidget* parent, const char* iconName, const QString& tip)
+enum StepFilter
 {
-    auto* b = new QToolButton(parent);
-    b->setIcon(icon(iconName));
-    b->setToolTip(tip);
-    b->setAutoRaise(true);
-    b->setIconSize(QSize(14, 14));
-    return b;
+    kAllSteps = 0,
+    kEditSteps,
+    kSelectionSteps,
+};
+
+/**
+ * A step's label as users read it: an action's label when one action runs that command, else the command name spaced
+ * out ("polyCube" reads "Poly Cube"). Chunk labels that are already words stay as they are.
+ */
+QString stepLabel(const std::string& raw, const std::unordered_map<std::string, std::string>& actionLabels)
+{
+    if (raw.empty())
+        return "Edit";
+    if (raw.find(' ') != std::string::npos || !ops::find(raw))
+        return niceName(raw);
+    if (auto it = actionLabels.find(raw); it != actionLabels.end() && !it->second.empty())
+        return QString::fromStdString(it->second);
+    return niceName(raw);
+}
+
+/** Command name to its one plain action's label; commands several actions run (with different flags) map to "". */
+std::unordered_map<std::string, std::string> commandActionLabels()
+{
+    std::unordered_map<std::string, std::string> out;
+    for (const Action* a : actions::all())
+    {
+        if (a->command.empty())
+            continue;
+        auto [it, added] = out.try_emplace(a->command, a->label);
+        if (!added && it->second != a->label)
+            it->second.clear();
+    }
+    return out;
 }
 } // namespace
 
@@ -68,48 +97,41 @@ UndoHistoryPanel::UndoHistoryPanel(QWidget* parent) : QWidget(parent)
     });
 
     auto* footer = new QHBoxLayout;
-    footer->setContentsMargins(2, 0, 0, 0);
-    mFooter = new QLabel(this);
-    mFooter->setEnabled(false);
-    footer->addWidget(mFooter, 1);
+    footer->setContentsMargins(2, 2, 0, 0);
+    footer->setSpacing(4);
+    mSteps = new controls::Segmented(this);
+    mSteps->setObjectName("undoStepFilter");
+    mSteps->add("All", {}, "<b>All Steps</b><br>List every step.", kAllSteps);
+    mSteps->add("Edits", {}, "<b>Edits</b><br>Hide selection steps. The current step always shows.", kEditSteps);
+    mSteps->add("Selection", {}, "<b>Selection</b><br>List selection steps only. The current step always shows.", kSelectionSteps);
     const bool only = PrefStore::get().value<bool>("general", kOnlySelectionPref, false);
-    mShowSelection = smallToolButton(this, "pointer", "Show selection steps only (the current step always shows)");
-    mShowSelection->setCheckable(true);
-    mShowSelection->setChecked(only);
-    mHideSelection = smallToolButton(this, "pointer-off", "Hide selection steps (the current step always shows)");
-    mHideSelection->setCheckable(true);
-    mHideSelection->setChecked(!only && PrefStore::get().value<bool>("general", kHideSelectionPref, false));
-    // Both on would show nothing, so turning one on turns the other off; both off shows every step.
-    auto filterToggled = [this](QToolButton* other, const char* pref, bool on) {
-        PrefStore::get().set("general", pref, on);
-        if (on && other->isChecked())
-            other->setChecked(false);
+    const bool hide = PrefStore::get().value<bool>("general", kHideSelectionPref, false);
+    mSteps->setCurrent(only ? kSelectionSteps : hide ? kEditSteps : kAllSteps);
+    connect(mSteps, &controls::Segmented::picked, this, [this](int id) {
+        PrefStore::get().set("general", kOnlySelectionPref, id == kSelectionSteps);
+        PrefStore::get().set("general", kHideSelectionPref, id == kEditSteps);
         refresh();
-    };
-    connect(mShowSelection, &QToolButton::toggled, this,
-            [this, filterToggled](bool on) { filterToggled(mHideSelection, kOnlySelectionPref, on); });
-    connect(mHideSelection, &QToolButton::toggled, this,
-            [this, filterToggled](bool on) { filterToggled(mShowSelection, kHideSelectionPref, on); });
-    footer->addWidget(mShowSelection);
-    footer->addWidget(mHideSelection);
-
-    auto* separator = new QFrame(this);
-    separator->setFrameShape(QFrame::VLine);
-    separator->setFrameShadow(QFrame::Plain);
-    separator->setEnabled(false);
-    footer->addWidget(separator);
-
-    for (const auto& [id, iconName, tip] : {
-             std::tuple{"edit.flushUndo", "history-off", "Flush Undo: clears the steps undo would revert, so undo cannot go back past this point"},
-             std::tuple{"edit.flushRedo", "eraser", "Flush Redo: clears the steps redo would replay"},
-             std::tuple{"edit.flushAll", "trash", "Flush All: clears the whole undo and redo history"},
-         })
-    {
-        QToolButton* b = smallToolButton(this, iconName, tip);
-        connect(b, &QToolButton::clicked, this, [action = std::string(id)] { actions::run(nlohmann::json(action)); });
-        footer->addWidget(b);
-    }
+    });
+    footer->addWidget(mSteps);
+    footer->addStretch(1);
+    QToolButton* flush = controls::overflow({"edit.flushUndo", "edit.flushRedo", "edit.flushAll"}, this);
+    flush->setObjectName("undoFlush");
+    flush->setText("Flush");
+    flush->setToolTip("<b>Flush</b><br>Clear undo steps, redo steps or the whole history.");
+    flush->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    footer->addWidget(flush);
     v->addLayout(footer);
+
+    mFooter = new QLabel(this);
+    mFooter->setObjectName("undoMemory");
+    mFooter->setContentsMargins(4, 0, 4, 2);
+    QPalette dim = mFooter->palette();
+    dim.setColor(QPalette::WindowText, palette().color(QPalette::PlaceholderText));
+    mFooter->setPalette(dim);
+    QFont small = mFooter->font();
+    small.setPointSizeF(small.pointSizeF() * 0.92);
+    mFooter->setFont(small);
+    v->addWidget(mFooter);
 
     QPointer<UndoHistoryPanel> self(this);
     UndoStack::get().addListener([self] {
@@ -141,8 +163,9 @@ void UndoHistoryPanel::refresh()
     const UndoStack& u = UndoStack::get();
     std::vector<UndoStack::Step> steps = u.steps();
     const size_t current = u.undoCount();
-    const bool hideSelection = mHideSelection->isChecked();
-    const bool onlySelection = mShowSelection->isChecked();
+    const bool hideSelection = mSteps->current() == kEditSteps;
+    const bool onlySelection = mSteps->current() == kSelectionSteps;
+    const std::unordered_map<std::string, std::string> actionLabels = commandActionLabels();
     const QColor dim = palette().color(QPalette::Disabled, QPalette::Text);
     const QColor faint = palette().color(QPalette::PlaceholderText);
 
@@ -158,14 +181,13 @@ void UndoHistoryPanel::refresh()
             item->setForeground(faint);
         return item;
     };
-    QListWidgetItem* at = add("(start)", 0, true);
+    QListWidgetItem* at = add("Start", 0, true);
     for (size_t i = 0; i < steps.size(); ++i)
     {
         const size_t position = i + 1;
         if (position != current && (steps[i].selectionOnly ? hideSelection : onlySelection))
             continue;
-        QListWidgetItem* item = add(QString::fromStdString(steps[i].label.empty() ? "(edit)" : steps[i].label), position,
-                                    steps[i].selectionOnly);
+        QListWidgetItem* item = add(stepLabel(steps[i].label, actionLabels), position, steps[i].selectionOnly);
         if (position == current)
             at = item;
     }

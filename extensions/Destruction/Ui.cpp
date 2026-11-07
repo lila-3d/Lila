@@ -284,7 +284,7 @@ void registerUi(ext::Context& ctx)
                            },
                        .doc = "Click the selected destruction where another explosion goes off, on the current frame.",
                        .python = "addExplosion(position=[x, y, z], frame=f)"});
-    menus::addMenu(ctx, {.id = "Effects", .title = "Effects", .before = "Rig", .docs = "destruction", .sets = {"Animation", "Level"}});
+    menus::addMenu(ctx, {.id = "Effects", .title = "Effects", .before = "Rig", .docs = "destruction", .sets = {"Effects", "Level", "Animate"}});
     menus::addItem(ctx, {.id = "destruction.menu", .menu = "Effects", .kind = menus::Kind::Submenu, .label = "Destruction"});
     int sep = 0;
     for (const std::string& a : items)

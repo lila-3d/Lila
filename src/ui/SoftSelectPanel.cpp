@@ -1,6 +1,7 @@
 #include "ui/SoftSelectPanel.h"
 
 #include "core/PrefStore.h"
+#include "ui/Controls.h"
 #include "ui/Deletion.h"
 #include "ui/FlowLayout.h"
 #include "ui/Icons.h"
@@ -8,7 +9,6 @@
 #include "ui/Theme.h"
 
 #include <QActionGroup>
-#include <QComboBox>
 #include <QContextMenuEvent>
 #include <QHBoxLayout>
 #include <QInputDialog>
@@ -390,15 +390,15 @@ SoftSelectPanel::SoftSelectPanel(QWidget* parent) : QWidget(parent)
         h->addWidget(b);
         return b;
     };
-    mDraw = tool("scribble", "Draw the falloff freehand");
+    mDraw = tool("scribble", "Draw Curve: draw the falloff freehand");
     mDraw->setCheckable(true);
     connect(mDraw, &QToolButton::toggled, this, [this](bool on) { mEditor->setDrawMode(on); });
     mEditor->onDrawModeChanged = [this](bool on) {
         QSignalBlocker block(mDraw);
         mDraw->setChecked(on);
     };
-    connect(tool("refresh", "Reset to the default smooth falloff"), &QToolButton::clicked, this, [] { ss::setCurrentCurve(ss::Curve()); });
-    connect(tool("device-floppy", "Save the curve as a preset"), &QToolButton::clicked, this, [this] {
+    connect(tool("refresh", "Reset Curve: back to the default smooth falloff"), &QToolButton::clicked, this, [] { ss::setCurrentCurve(ss::Curve()); });
+    connect(tool("device-floppy", "Save Preset: save the curve as a preset"), &QToolButton::clicked, this, [this] {
         bool ok = false;
         QString name = QInputDialog::getText(this, "Save Falloff Preset", "Name:", QLineEdit::Normal, "", &ok).trimmed();
         if (!ok || name.isEmpty())
@@ -410,13 +410,14 @@ SoftSelectPanel::SoftSelectPanel(QWidget* parent) : QWidget(parent)
     h->addStretch(1);
     auto* distance = new QLabel("Distance", tools);
     h->addWidget(distance);
-    mMode = new QComboBox(tools);
-    onMiddleClickReset(distance, [] { PrefStore::get().set("general", ss::kFalloffMode, std::string("volume")); }, "Volume", mMode);
-    mMode->addItem("Volume", "volume");
-    mMode->addItem("Surface", "surface");
-    mMode->setToolTip("Measure the falloff straight through space, or along the mesh's edges");
-    connect(mMode, &QComboBox::activated, this,
-            [this](int) { PrefStore::get().set("general", ss::kFalloffMode, mMode->currentData().toString().toStdString()); });
+    mMode = new controls::Segmented(tools);
+    auto resetMode = [] { PrefStore::get().set("general", ss::kFalloffMode, std::string("volume")); };
+    onMiddleClickReset(distance, resetMode, "Volume", mMode);
+    for (QToolButton* b : {mMode->add("Volume", {}, "Volume: measure the falloff straight through space", 0),
+                           mMode->add("Surface", {}, "Surface: measure the falloff along the mesh's edges", 1)})
+        onMiddleClickReset(b, resetMode, "Volume", mMode);
+    connect(mMode, &controls::Segmented::picked, this,
+            [](int id) { PrefStore::get().set("general", ss::kFalloffMode, std::string(id == 1 ? "surface" : "volume")); });
     h->addWidget(mMode);
     v->addWidget(tools);
 
@@ -444,7 +445,8 @@ QToolButton* SoftSelectPanel::thumbnail(const ss::Preset& p, QWidget* parent, bo
     b->setIcon(curveIcon(p.curve));
     b->setIconSize(QSize(40, 26));
     b->setCheckable(true);
-    b->setAutoRaise(true);
+    b->setFocusPolicy(Qt::NoFocus);
+    controls::setRole(b, "tile");
     b->setToolTip(QString::fromStdString(p.name) + (user ? "\nRight-click to rename or delete" : ""));
     ss::Curve curve = p.curve;
     connect(b, &QToolButton::clicked, this, [this, curve] {
@@ -506,7 +508,7 @@ void SoftSelectPanel::syncFromPrefs()
     }
     {
         QSignalBlocker block(mMode);
-        mMode->setCurrentIndex(ss::surfaceFalloff() ? 1 : 0);
+        mMode->setCurrent(ss::surfaceFalloff() ? 1 : 0);
     }
     markCurrentPreset();
 }

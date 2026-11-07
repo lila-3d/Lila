@@ -4,17 +4,23 @@
 #include "core/Log.h"
 #include "scene/AnimLayer.h"
 #include "scene/Graph.h"
+#include "ui/Controls.h"
 #include "ui/Deletion.h"
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
 #include "ui/NodeLookup.h"
 #include "ui/Panels.h"
+#include "ui/SpinScrub.h"
+#include "ui/Theme.h"
 #include "ui/UiCommands.h"
 #include "ui/UiCommon.h"
 
+#include <QApplication>
 #include <QDoubleSpinBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QLabel>
+#include <QMenu>
 #include <QPointer>
 #include <QTimer>
 #include <QToolButton>
@@ -38,50 +44,64 @@ AnimLayersPanel::AnimLayersPanel(QWidget* parent) : QWidget(parent)
 
     auto* bar = new QHBoxLayout;
     bar->setContentsMargins(0, 0, 0, 0);
-    bar->setSpacing(1);
-    auto add = [&](const char* iconName, const QString& tip, auto fn) {
-        QToolButton* b = toolButton(this, iconName, tip);
+    bar->setSpacing(2);
+    auto onLayer = [this](auto fn) {
+        return [this, fn] {
+            if (std::string l = currentLayer(); !l.empty())
+                fn(l);
+        };
+    };
+    auto push = [&](const QString& text, const QString& tip, auto fn) {
+        auto* b = new QToolButton(this);
+        b->setText(text);
+        b->setToolTip(tip);
+        controls::setRole(b, "push");
         connect(b, &QToolButton::clicked, this, fn);
         bar->addWidget(b);
+        return b;
     };
-    add("plus", "Create an empty layer", [] { runUi("createAnimLayer", {{"empty", true}}); });
-    add("stack-plus", "Create a layer from the selected objects", [] { runUi("createAnimLayer", {{"args", selectionNames()}}); });
-    add("square-plus", "Add the selected objects to the current layer", [this] {
-        if (std::string l = currentLayer(); !l.empty() && !selectionNames().empty())
+    QToolButton* create = push("New", "New Layer\nA layer holding the selected objects' animated channels", [] {
+        runUi("createAnimLayer", {{"args", selectionNames()}});
+    });
+    create->setPopupMode(QToolButton::MenuButtonPopup);
+    auto* createMenu = new QMenu(create);
+    createMenu->addAction("New From Selection", [] { runUi("createAnimLayer", {{"args", selectionNames()}}); });
+    createMenu->addAction("New Empty Layer", [] { runUi("createAnimLayer", {{"empty", true}}); });
+    create->setMenu(createMenu);
+    push("Add", "Add Selected\nAdd the selected objects to the current layer", onLayer([](const std::string& l) {
+        if (!selectionNames().empty())
             runUi("addAnimLayerMembers", {{"args", selectionNames()}, {"layer", l}});
-    });
-    add("stack-minus", "Remove the selected objects from the current layer", [this] {
-        if (std::string l = currentLayer(); !l.empty() && !selectionNames().empty())
+    }));
+    push("Remove", "Remove Selected\nRemove the selected objects from the current layer", onLayer([](const std::string& l) {
+        if (!selectionNames().empty())
             runUi("removeAnimLayerMembers", {{"args", selectionNames()}, {"layer", l}});
-    });
-    add("stack-pop", "Extract the selected objects' animation from the current layer to a new one", [this] {
+    }));
+
+    auto* more = new QToolButton(this);
+    more->setIcon(icon("dots"));
+    more->setToolTip("More Layer Commands");
+    more->setPopupMode(QToolButton::InstantPopup);
+    controls::setRole(more, "overflow");
+    auto* moreMenu = new QMenu(more);
+    moreMenu->addAction(icon("stack-pop"), "Extract to New Layer", [this] {
         if (!selectionNames().empty())
         {
             std::string l = currentLayer();
             runUi("extractAnimLayer", {{"args", selectionNames()}, {"layer", l.empty() ? al::kBaseLayerName : l}});
         }
-    });
-    add("arrow-up", "Move the current layer up", [this] {
-        if (std::string l = currentLayer(); !l.empty())
-            runUi("reorderAnimLayer", {{"args", {l}}, {"by", 1}});
-    });
-    add("arrow-down", "Move the current layer down", [this] {
-        if (std::string l = currentLayer(); !l.empty())
-            runUi("reorderAnimLayer", {{"args", {l}}, {"by", -1}});
-    });
-    add("copy", "Duplicate the current layer", [this] {
-        if (std::string l = currentLayer(); !l.empty())
-            runUi("duplicateAnimLayer", {{"args", {l}}});
-    });
-    add("arrows-join", "Merge the current layer down", [this] {
-        if (std::string l = currentLayer(); !l.empty())
-            runUi("mergeAnimLayers", {{"args", {l}}});
-    });
+    })->setToolTip("Move the selected objects' animation from the current layer to a new one");
+    moreMenu->addAction(icon("copy"), "Duplicate", onLayer([](const std::string& l) { runUi("duplicateAnimLayer", {{"args", {l}}}); }));
+    moreMenu->addAction(icon("arrows-join"), "Merge Down", onLayer([](const std::string& l) { runUi("mergeAnimLayers", {{"args", {l}}}); }));
+    moreMenu->addSeparator();
+    moreMenu->addAction(icon("arrow-up"), "Move Up", onLayer([](const std::string& l) { runUi("reorderAnimLayer", {{"args", {l}}, {"by", 1}}); }));
+    moreMenu->addAction(icon("arrow-down"), "Move Down", onLayer([](const std::string& l) { runUi("reorderAnimLayer", {{"args", {l}}, {"by", -1}}); }));
+    moreMenu->setToolTipsVisible(true);
+    more->setMenu(moreMenu);
+    bar->addWidget(more);
     bar->addStretch(1);
-    add("trash", "Delete the current layer and its keys", [this] {
-        if (std::string l = currentLayer(); !l.empty())
-            runUi("deleteAnimLayer", {{"args", {l}}});
-    });
+    QToolButton* trash = toolButton(this, "trash", "Delete Layer\nDelete the current layer and its keys");
+    connect(trash, &QToolButton::clicked, this, onLayer([](const std::string& l) { runUi("deleteAnimLayer", {{"args", {l}}}); }));
+    bar->addWidget(trash);
     v->addLayout(bar);
 
     mTree = new QTreeWidget(this);
@@ -108,6 +128,9 @@ AnimLayersPanel::AnimLayersPanel(QWidget* parent) : QWidget(parent)
     header->setSectionResizeMode(kWeight, QHeaderView::Fixed);
     header->resizeSection(kWeight, 56);
     v->addWidget(mTree, 1);
+    mEmpty = emptyStateLabel("No animation layers. Click New to make one from the selection.", this);
+    mEmpty->setContentsMargins(8, 6, 8, 6);
+    v->addWidget(mEmpty);
 
     connect(mTree, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* item, int column) { clicked(item, column); });
 
@@ -187,23 +210,27 @@ void AnimLayersPanel::refresh()
         if (l["mute"].get<bool>())
             item->setForeground(kName, dim);
 
-        auto* weight = new QDoubleSpinBox(mTree);
+        auto* weight = new controls::SliderField(mTree);
         weight->setRange(0.0, 1.0);
         weight->setSingleStep(0.05);
         weight->setDecimals(2);
-        weight->setFrame(false);
-        weight->setButtonSymbols(QAbstractSpinBox::NoButtons);
         weight->setValue(l["weight"].get<double>());
-        weight->setToolTip("Layer weight");
+        weight->setToolTip("Weight");
+        setSpinDefault(weight, 1.0);
         const std::string layer = name.toStdString();
-        connect(weight, &QDoubleSpinBox::editingFinished, this, [weight, layer] {
-            runUi("editAnimLayer", {{"args", {layer}}, {"weight", weight->value()}});
+        auto commit = [weight, layer] { runUi("editAnimLayer", {{"args", {layer}}, {"weight", weight->value()}}); };
+        connect(weight, &QDoubleSpinBox::editingFinished, this, commit);
+        // A middle-click reset changes the value with no edit to finish; a held button means a scrub still going.
+        connect(weight, &QDoubleSpinBox::valueChanged, this, [weight, commit] {
+            if (!weight->hasFocus() && QApplication::mouseButtons() == Qt::NoButton)
+                commit();
         });
         mTree->setItemWidget(item, kWeight, weight);
         if (l["active"].get<bool>())
             mTree->setCurrentItem(item);
     }
     mTree->setUpdatesEnabled(true);
+    mEmpty->setVisible(mTree->topLevelItemCount() <= 1);
     mFilling = false;
 }
 

@@ -71,13 +71,17 @@ RelationshipsPanel::RelationshipsPanel(QWidget* parent) : QWidget(parent)
     mSearch->setObjectName("relSearch");
     mSearch->setPlaceholderText("Search channels, sets and layers");
     mSearch->setClearButtonEnabled(true);
+    mSearch->addAction(icon("search"), QLineEdit::LeadingPosition);
     connect(mSearch, &QLineEdit::textChanged, this, [this] { scheduleRefresh(); });
     top->addWidget(mSearch, 1);
     auto* add = new QToolButton(this);
     add->setObjectName("relNewChannel");
     add->setIcon(icon("plus"));
     add->setAutoRaise(true);
-    add->setToolTip("New lighting channel, with the selection in it");
+    add->setText("New Channel");
+    add->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    add->setToolTip("<b>New Channel</b><br>Create a lighting channel holding the selection. Type its name in the search field "
+                    "first to name it.");
     connect(add, &QToolButton::clicked, this, [this] {
         // Typed in place: the search field doubles as the name when it names no group yet.
         std::string name = mSearch->text().trimmed().toStdString();
@@ -105,6 +109,7 @@ RelationshipsPanel::RelationshipsPanel(QWidget* parent) : QWidget(parent)
     mTable->horizontalHeader()->setMinimumSectionSize(24);
     mTable->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
     mTable->setSelectionMode(QAbstractItemView::NoSelection);
+    setEmptyHint(mTable, "Nothing selected. Select objects to see their channels, sets and layers.");
     v->addWidget(mTable, 1);
     connect(mTable, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* item) {
         if (mUpdating || item->row() >= int(mRows.size()) || item->column() >= int(mColumns.size()))

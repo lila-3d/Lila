@@ -237,6 +237,10 @@ void registerBatchCommands()
 int runApp(int argc, char** argv, const host::Options& opts, const fs::path& startupScene)
 {
     QApplication::setAttribute(Qt::AA_DontCreateNativeWidgetSiblings);
+    // Qt reads QT_SCALE_FACTOR only before QApplication exists; a value set in the environment wins.
+    if (qEnvironmentVariableIsEmpty("QT_SCALE_FACTOR"))
+        if (int percent = PrefStore::get().value<int>("general", kUiScalePref, 100); percent != 100 && percent >= 50 && percent <= 300)
+            qputenv("QT_SCALE_FACTOR", QByteArray::number(percent / 100.0));
     QApplication app(argc, argv);
     LILA_THREAD_NAME("Main");
     QApplication::setApplicationName("Lila");

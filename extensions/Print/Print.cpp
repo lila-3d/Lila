@@ -1122,7 +1122,7 @@ void registerUi(ext::Context& ctx)
     ctx.track("clickHook:print.drainHole", [] { ui::viewportHooks::removeClickHook("print.drainHole"); });
     ui::viewportHooks::addDrawer(ctx, "print.legend", [](render::FrameState&, ui::OverlayPainter& p, const ui::ViewInfo& view) { drawLegend(p, view); });
 
-    ui::menus::addMenu(ctx, {.id = "Print", .title = "Print", .before = "Rig", .docs = "3d-printing", .sets = {"Modeling"}});
+    ui::menus::addMenu(ctx, {.id = "Print", .title = "Print", .before = "Rig", .docs = "3d-printing", .sets = {"Print"}});
     auto item = [&](const char* action) { ui::menus::addItem(ctx, {.menu = "Print", .action = action}); };
     auto section = [&](const char* label) { ui::menus::addItem(ctx, {.menu = "Print", .kind = ui::menus::Kind::Section, .label = label}); };
     section("Check");

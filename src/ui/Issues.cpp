@@ -6,6 +6,7 @@
 #include "scene/Graph.h"
 #include "ui/Actions.h"
 #include "ui/AttributeEditor.h"
+#include "ui/Controls.h"
 #include "ui/Icons.h"
 #include "ui/Panels.h"
 #include "ui/Theme.h"
@@ -23,6 +24,7 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <cmath>
 
 namespace lila::ui::issues
@@ -56,23 +58,27 @@ public:
         v->setContentsMargins(4, 4, 4, 4);
         v->setSpacing(4);
         auto* bar = new QHBoxLayout;
+        bar->setSpacing(2);
         auto* validate = new QToolButton(this);
         validate->setText("Validate");
         validate->setIcon(ui::icon("checklist"));
         validate->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-        validate->setToolTip("Run every validator again.");
+        validate->setToolTip("<b>Validate</b><br>Run every validator again.");
+        controls::setRole(validate, "push");
         connect(validate, &QToolButton::clicked, this, [] { run("validate", json::object()); });
-        mShow = new QComboBox(this);
-        mShow->addItem("All", 0);
-        mShow->addItem("Warnings and errors", 1);
-        mShow->addItem("Errors", 2);
-        mShow->setToolTip("The least severity listed.");
-        connect(mShow, &QComboBox::currentIndexChanged, this, [this](int) { refill(); });
+        mShow = new controls::Segmented(this);
+        mShow->setObjectName("validationShow");
+        mShow->add("All", {}, "<b>All</b><br>List errors, warnings and info.", 0);
+        mShow->add("Warnings", {}, "<b>Warnings</b><br>List warnings and errors.", 1);
+        mShow->add("Errors", {}, "<b>Errors</b><br>List errors only.", 2);
+        mShow->setCurrent(0);
+        connect(mShow, &controls::Segmented::picked, this, [this](int) { refill(); });
         mFix = new QToolButton(this);
         mFix->setText("Fix");
         mFix->setIcon(ui::icon("tool"));
         mFix->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-        mFix->setToolTip("Run the selected issues' fixes.");
+        mFix->setToolTip("<b>Fix</b><br>Run the selected issues' fixes.");
+        controls::setRole(mFix, "push");
         connect(mFix, &QToolButton::clicked, this, [this] {
             json ids = json::array();
             for (QTreeWidgetItem* it : mList->selectedItems())
@@ -83,7 +89,8 @@ public:
         });
         auto* clear = new QToolButton(this);
         clear->setText("Clear");
-        clear->setToolTip("Remove the selected issues, or every issue when none are selected.");
+        clear->setToolTip("<b>Clear</b><br>Remove the selected issues, or every issue when none are selected.");
+        controls::setRole(clear, "push");
         connect(clear, &QToolButton::clicked, this, [this] {
             const QList<QTreeWidgetItem*> sel = mList->selectedItems();
             if (sel.isEmpty())
@@ -92,13 +99,20 @@ public:
                 run("clearIssues", {{"id", it->data(0, kIssueRole).toULongLong()}});
         });
         mCount = new QLabel(this);
+        QPalette dim = mCount->palette();
+        dim.setColor(QPalette::WindowText, themeColor("dimText"));
+        mCount->setPalette(dim);
         bar->addWidget(validate);
-        bar->addWidget(mShow);
+        bar->addSpacing(10);
         bar->addWidget(mFix);
         bar->addWidget(clear);
         bar->addStretch(1);
-        bar->addWidget(mCount);
         v->addLayout(bar);
+        auto* filterRow = new QHBoxLayout;
+        filterRow->addWidget(mShow);
+        filterRow->addStretch(1);
+        filterRow->addWidget(mCount);
+        v->addLayout(filterRow);
 
         mList = new QTreeWidget(this);
         mList->setRootIsDecorated(false);
@@ -107,6 +121,7 @@ public:
         mList->header()->setStretchLastSection(false);
         mList->header()->setSectionResizeMode(2, QHeaderView::Stretch);
         mList->setUniformRowHeights(true);
+        setEmptyHint(mList, "No issues. Click Validate to check the scene.");
         v->addWidget(mList, 1);
         connect(mList, &QTreeWidget::itemSelectionChanged, this, [this] { updateFix(); });
         connect(mList, &QTreeWidget::itemActivated, this, [](QTreeWidgetItem* it, int) { reveal(it->data(0, kIssueRole).toULongLong()); });
@@ -155,7 +170,7 @@ private:
         for (QTreeWidgetItem* it : mList->selectedItems())
             selected.push_back(it->data(0, kIssueRole).toULongLong());
         mList->clear();
-        const Severity least = Severity(mShow->currentData().toInt());
+        const Severity least = Severity(std::max(0, mShow->current()));
         std::vector<const dx::Issue*> shown;
         for (const dx::Issue& i : dx::issues())
             if (i.severity >= least)
@@ -173,7 +188,7 @@ private:
             it->setData(0, kIssueRole, QVariant::fromValue<qulonglong>(i->id));
             it->setIcon(0, icon(i->severity, i->blocking()));
             const bool resolved = g.node(i->node) != nullptr;
-            it->setText(0, QString::fromStdString(resolved ? g.node(i->node)->name() : i->object.empty() ? "(scene)" : i->object));
+            it->setText(0, QString::fromStdString(resolved ? g.node(i->node)->name() : i->object.empty() ? "Scene" : i->object));
             it->setToolTip(0, QString::fromStdString(resolved ? g.fullPath(i->node) : i->object.empty() ? "The scene as a whole" : i->object + "\nNo object here yet"));
             if (!resolved && !i->object.empty())
                 it->setForeground(0, themeShade(110));
@@ -201,7 +216,7 @@ private:
     }
 
     QTreeWidget* mList = nullptr;
-    QComboBox* mShow = nullptr;
+    controls::Segmented* mShow = nullptr;
     QToolButton* mFix = nullptr;
     QLabel* mCount = nullptr;
     int mListener = 0;

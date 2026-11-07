@@ -11,6 +11,7 @@
 #include <lila/Log.h>
 #include <lila/Panels.h>
 
+#include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
@@ -24,6 +25,7 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QTimer>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <filesystem>
@@ -468,6 +470,36 @@ private:
     int mDragTo = 0;
 };
 
+/** "stripU" shows as "Strip U", "rect" as "Rect". */
+QString trimDisplayName(const std::string& id)
+{
+    QString out;
+    for (size_t i = 0; i < id.size(); ++i)
+    {
+        const QChar c = QChar(id[i]);
+        if (i == 0)
+            out += c.toUpper();
+        else
+        {
+            if (c.isUpper())
+                out += ' ';
+            out += c;
+        }
+    }
+    return out;
+}
+
+/** A bold sub-header between the editor's groups. */
+QLabel* trimHeader(QWidget* parent, const QString& text)
+{
+    auto* l = new QLabel(text, parent);
+    QFont f = l->font();
+    f.setWeight(QFont::DemiBold);
+    l->setFont(f);
+    l->setContentsMargins(0, 6, 0, 0);
+    return l;
+}
+
 QWidget* makeEditor(QWidget* parent)
 {
     auto* w = new QWidget(parent);
@@ -476,11 +508,29 @@ QWidget* makeEditor(QWidget* parent)
     auto* titleRow = new QHBoxLayout();
     auto* title = new QLabel(w);
     title->setWordWrap(true);
-    auto* view = new QComboBox(w);
-    view->addItems({"Painted", "Normal"});
-    view->setToolTip("Show the sheet's painted colour (its texture set) or its baked normal map.");
+    // Painted or Normal: one exclusive strip, styled by the app's segmented-control roles.
+    auto* viewStrip = new QWidget(w);
+    viewStrip->setAttribute(Qt::WA_StyledBackground);
+    viewStrip->setProperty("role", "segmented");
+    auto* viewRow = new QHBoxLayout(viewStrip);
+    viewRow->setContentsMargins(2, 2, 2, 2);
+    viewRow->setSpacing(2);
+    auto* view = new QButtonGroup(viewStrip);
+    view->setExclusive(true);
+    for (int i = 0; auto [label, tip] : {std::pair{"Painted", "Painted: the sheet's painted colour (its texture set)"},
+                                         {"Normal", "Normal: the sheet's baked normal map"}})
+    {
+        auto* b = new QToolButton(viewStrip);
+        b->setText(label);
+        b->setToolTip(tip);
+        b->setCheckable(true);
+        b->setProperty("role", "segment");
+        view->addButton(b, i++);
+        viewRow->addWidget(b);
+    }
+    view->button(0)->setChecked(true);
     titleRow->addWidget(title, 1);
-    titleRow->addWidget(view);
+    titleRow->addWidget(viewStrip);
     v->addLayout(titleRow);
     auto* canvas = new SheetCanvas(w);
     canvas->setObjectName("trimSheetCanvas");
@@ -491,22 +541,28 @@ QWidget* makeEditor(QWidget* parent)
     v->addWidget(warnings);
 
     // The selected trim.
+    v->addWidget(trimHeader(w, "Trim"));
     auto* props = new QWidget(w);
     auto* form = new QFormLayout(props);
     form->setContentsMargins(0, 0, 0, 0);
+    form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     auto* name = new QLineEdit(props);
     auto* kind = new QComboBox(props);
     for (const char* k : kKindNames)
-        kind->addItem(k);
+        kind->addItem(trimDisplayName(k), QString(k));
     auto* style = new QComboBox(props);
     for (const std::string& s : styleNames())
-        style->addItem(QString::fromStdString(s));
+        style->addItem(trimDisplayName(s), QString::fromStdString(s));
     auto* bevel = new QDoubleSpinBox(props);
+    bevel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    bevel->setButtonSymbols(QAbstractSpinBox::NoButtons);
     bevel->setRange(0.0, 256.0);
     bevel->setSuffix(" px");
     auto* tags = new QLineEdit(props);
     tags->setPlaceholderText("wall, edge, floor...");
-    auto* reserved = new QCheckBox("Auto never picks it; it goes only where you click it", props);
+    auto* reserved = new QCheckBox("Manual only", props);
+    reserved->setToolTip("Reserved: Auto never picks this trim; it goes only where you click it");
     auto* size = new QLabel(props);
     form->addRow("Name", name);
     form->addRow("Size", size);
@@ -517,10 +573,12 @@ QWidget* makeEditor(QWidget* parent)
     form->addRow("Reserved", reserved);
     v->addWidget(props);
 
+    v->addWidget(trimHeader(w, "Sheet"));
     auto* buttons = new QHBoxLayout();
     auto* bake = new QPushButton("Bake", w);
+    bake->setToolTip("Bake: the sheet's relief and maps (changed trims only, or everything after a layout change)");
     auto* material = new QComboBox(w);
-    material->setToolTip("The smart material Texture puts on the sheet.");
+    material->setToolTip("Material: the smart material Texture puts on the sheet");
     try
     {
         for (const json& m : ops::execute("texSmartMaterials", json::object()))
@@ -535,18 +593,20 @@ QWidget* makeEditor(QWidget* parent)
         log::write(LogLevel::Warning, e.what());
     }
     auto* texture = new QPushButton("Texture", w);
-    texture->setToolTip("Replace the sheet's texturing with the chosen smart material.");
+    texture->setToolTip("Texture: replace the sheet's texturing with the chosen smart material");
     auto* detail = new QPushButton("Bake Detail", w);
-    detail->setToolTip("Bake the selected meshes into the sheet on top of its relief (Level > Trim Sheets > Show Trim Sheet High/Low "
-                       "shows where to model them).");
+    detail->setToolTip("Bake Detail: the selected meshes into the sheet on top of its relief (Level > Trim Sheets > Show Trim Sheet "
+                       "High/Low shows where to model them)");
     auto* paint = new QPushButton("Paint", w);
-    paint->setToolTip("Paint the sheet by hand on a flat preview plane.");
-    buttons->addWidget(bake);
-    buttons->addWidget(detail);
-    buttons->addWidget(material, 1);
-    buttons->addWidget(texture);
-    buttons->addWidget(paint);
+    paint->setToolTip("Paint: the sheet by hand on a flat preview plane");
+    buttons->addWidget(bake, 1);
+    buttons->addWidget(detail, 1);
+    buttons->addWidget(paint, 1);
     v->addLayout(buttons);
+    auto* materialRow = new QHBoxLayout();
+    materialRow->addWidget(material, 1);
+    materialRow->addWidget(texture);
+    v->addLayout(materialRow);
 
     // Trims whose profile changed since the last bake rebake alone; a layout change rebakes everything.
     struct State
@@ -584,8 +644,8 @@ QWidget* makeEditor(QWidget* parent)
             name->setText(QString::fromStdString(t.name));
             const glm::dvec2 world = s->worldSize(t);
             size->setText(QString::fromStdString(std::format("{} x {} px, {:.0f} x {:.0f} cm", t.sizePx().x, t.sizePx().y, world.x, world.y)));
-            kind->setCurrentText(QString::fromStdString(t.toJson().value("kind", std::string("stripU"))));
-            style->setCurrentText(QString::fromStdString(std::string(styleName(t.profile.style))));
+            kind->setCurrentIndex(std::max(0, kind->findData(QString::fromStdString(t.toJson().value("kind", std::string("stripU"))))));
+            style->setCurrentIndex(std::max(0, style->findData(QString::fromStdString(std::string(styleName(t.profile.style))))));
             bevel->setValue(t.profile.bevelPx);
             std::string joined;
             for (const std::string& tag : t.tags)
@@ -597,11 +657,11 @@ QWidget* makeEditor(QWidget* parent)
     };
     canvas->onSelect = [=](int i) {
         const QSignalBlocker block(view);
-        view->setEnabled(canvas->hasSet());
-        view->setCurrentIndex(canvas->painted() ? 0 : 1);
+        viewStrip->setEnabled(canvas->hasSet());
+        view->button(canvas->painted() ? 0 : 1)->setChecked(true);
         show(i);
     };
-    QObject::connect(view, &QComboBox::currentIndexChanged, w, [=](int i) { canvas->setPainted(i == 0); });
+    QObject::connect(view, &QButtonGroup::idClicked, w, [=](int i) { canvas->setPainted(i == 0); });
     // Strokes and texture edits are undo steps: redo the painted view once they settle.
     auto* settle = new QTimer(w);
     settle->setSingleShot(true);
@@ -625,8 +685,9 @@ QWidget* makeEditor(QWidget* parent)
         canvas->refresh(true);
     };
     QObject::connect(name, &QLineEdit::editingFinished, w, [=] { apply({{"name", name->text().toStdString()}}); });
-    QObject::connect(kind, &QComboBox::currentTextChanged, w, [=](const QString& k) { apply({{"kind", k.toStdString()}}); });
-    QObject::connect(style, &QComboBox::currentTextChanged, w, [=](const QString& st) { apply({{"profile", {{"style", st.toStdString()}}}}); });
+    QObject::connect(kind, &QComboBox::currentIndexChanged, w, [=](int) { apply({{"kind", kind->currentData().toString().toStdString()}}); });
+    QObject::connect(style, &QComboBox::currentIndexChanged, w,
+                     [=](int) { apply({{"profile", {{"style", style->currentData().toString().toStdString()}}}}); });
     QObject::connect(bevel, &QDoubleSpinBox::editingFinished, w, [=] { apply({{"profile", {{"bevelPx", bevel->value()}}}}); });
     QObject::connect(reserved, &QCheckBox::toggled, w, [=](bool on) { apply({{"reserved", on}}); });
     QObject::connect(tags, &QLineEdit::editingFinished, w, [=] {

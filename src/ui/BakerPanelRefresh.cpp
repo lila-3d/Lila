@@ -162,7 +162,7 @@ json canonicalStack(const json& stack)
     return out;
 }
 
-scene::PlugValue paramValue(const scene::AttrDef& d, const json& params)
+scene::PlugValue bakeParamValue(const scene::AttrDef& d, const json& params)
 {
     if (params.is_object() && params.contains(d.name))
         try
@@ -366,7 +366,7 @@ void BakerPanel::refreshProjects()
     for (const std::string& p : paths)
         mProjects->addItem(icon("texture"), qs(shortName(p)), qs(p));
     if (paths.empty())
-        mProjects->addItem("(no bake project)", QString());
+        mProjects->addItem("No Project", QString());
     mProjects->setCurrentIndex(std::max(0, mProjects->findData(qs(mProject))));
 }
 
@@ -387,6 +387,7 @@ void BakerPanel::refreshTargets()
         const QString where = preset ? QString("Saved preset (%1)").arg(qs(t.file.generic_string())) : QString();
         mTargets->setItemData(mTargets->count() - 1, t.doc.empty() ? where : where.isEmpty() ? qs(t.doc) : qs(t.doc) + "\n" + where, Qt::ToolTipRole);
     }
+    setComboDefault(mTargets, mTargets->findData(QString("substancePainter")));
     int at = mTargets->findData(qs(mTarget));
     if (at < 0 && mTargets->count() > 0)
     {
@@ -416,7 +417,7 @@ void BakerPanel::refreshGroups()
     QTreeWidgetItem* restore = nullptr;
     if (!project || !bake::isProject(*project))
     {
-        auto* hint = new QTreeWidgetItem(mGroups, {"Make a project, or Bake for a target to start"});
+        auto* hint = new QTreeWidgetItem(mGroups, {"No bake project. Pick a target, then Bake for Target."});
         hint->setForeground(0, dim);
         mGroups->setUpdatesEnabled(true);
         return;
@@ -612,6 +613,7 @@ void BakerPanel::refreshDetails()
         mCageStatus->clear();
     mCageGroup = g;
     mCageRow->setEnabled(has);
+    mDetailsEmpty->setVisible(!has);
     for (QWidget* w : {static_cast<QWidget*>(mFrontal), static_cast<QWidget*>(mRear), static_cast<QWidget*>(mCageOffset),
                        static_cast<QWidget*>(mAoScope), static_cast<QWidget*>(mBackfaces), static_cast<QWidget*>(mSelf),
                        static_cast<QWidget*>(mUnlinks->parentWidget())})
@@ -789,7 +791,7 @@ void BakerPanel::refreshParams()
         if (d->step)
             f.step = *d->step;
         FlagFieldWidgets w = makeFlagField(
-            f, fieldValue(*d, paramValue(*d, params)),
+            f, fieldValue(*d, bakeParamValue(*d, params)),
             [this, row, name = d->name](const json& v) {
                 if (mUpdating)
                     return;
@@ -814,7 +816,7 @@ void BakerPanel::refreshParams()
             mParamForm->addRow(QString(), w.field);
         mParamSetters.push_back([d, set = w.set](const json& p) {
             if (set)
-                set(fieldValue(*d, paramValue(*d, p)));
+                set(fieldValue(*d, bakeParamValue(*d, p)));
         });
     }
 }
@@ -1048,6 +1050,8 @@ void BakerPanel::addPackChannels(const std::string& map, const json& channels)
         constant->setSingleStep(0.05);
         setSpinDefault(constant, c == 3 ? 1.0 : 0.0);
         auto* invert = new QCheckBox("Invert", row);
+        setComboDefault(channel, 0);
+        setCheckDefault(invert, false);
 
         const bool isConstant = entry.contains("constant") || !entry.contains("map");
         source->setCurrentIndex(isConstant ? 0 : std::max(0, source->findData(qs(entry.value("map", std::string())))));
@@ -1086,9 +1090,15 @@ void BakerPanel::addPackChannels(const std::string& map, const json& channels)
             (*layout)[c]["channel"] = kChannelKeys[i];
             commit();
         });
-        connect(constant, &QDoubleSpinBox::editingFinished, this, [layout, c, constant, commit] {
+        auto commitConstant = [layout, c, constant, commit] {
             (*layout)[c] = {{"constant", constant->value()}};
             commit();
+        };
+        connect(constant, &QDoubleSpinBox::editingFinished, this, commitConstant);
+        // A middle-click reset changes the value with no edit to finish; a held button means a scrub still going.
+        connect(constant, &QDoubleSpinBox::valueChanged, this, [constant, commitConstant] {
+            if (!constant->hasFocus() && QApplication::mouseButtons() == Qt::NoButton)
+                commitConstant();
         });
         connect(invert, &QCheckBox::toggled, this, [layout, c, commit](bool on) {
             (*layout)[c]["invert"] = on;

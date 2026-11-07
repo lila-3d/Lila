@@ -403,12 +403,11 @@ Block softSelectBlock(const PartOn& on)
 {
     namespace ss = scene::softSelect;
     const PrefStore& prefs = PrefStore::get();
-    bool enabled = prefs.value<bool>("general", ss::kEnabled, false);
     Block b;
-    if (on("state"))
-        b.push_back({"Soft Select:", {enabled ? "On" : "Off"}});
-    if (!enabled)
+    if (!prefs.value<bool>("general", ss::kEnabled, false))
         return b;
+    if (on("state"))
+        b.push_back({"Soft Select:", {"On"}});
     if (on("radius"))
         b.push_back({"Falloff Radius:", {fixed(prefs.value<double>("general", ss::kRadius, 25.0))}});
     if (on("mode"))
@@ -467,8 +466,8 @@ const std::vector<Item>& items()
         {"objectDetails", "Object Details", "Name, type, visibility, smoothness and camera distance of the lead selected object.",
          {{"name", "Object"}, {"type", "Type"}, {"visibility", "Visibility"}, {"distance", "Distance From Camera"}, {"smoothness", "Smoothness"},
           {"count", "Selected Objects"}}},
-        {"symmetry", "Symmetry", "The mirror axis of the selected meshes."},
-        {"softSelect", "Soft Select", "Whether soft selection is on, with its falloff radius and mode.",
+        {"symmetry", "Symmetry", "The mirror axis of the selected meshes, while symmetry is on."},
+        {"softSelect", "Soft Select", "Soft selection with its falloff radius and mode, while it is on.",
          {{"state", "Soft Select"}, {"radius", "Falloff Radius"}, {"mode", "Falloff Mode"}}},
         {"cameraNames", "Camera Names", "The view's camera name along the bottom."},
         {"frameRate", "Frame Rate", "How many frames per second the view draws, with the GPU time of the last frame and its ambient occlusion share.",

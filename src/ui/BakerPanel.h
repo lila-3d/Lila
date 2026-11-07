@@ -170,6 +170,8 @@ private:
     /** Issue rows of the groups tree folded or unfolded against their default (a check open, its meshes folded), by key. */
     QStringList mLintToggled;
     QWidget* mDetails = nullptr;
+    /** "No group selected" over the Group tab's disabled fields. */
+    QLabel* mDetailsEmpty = nullptr;
     QDoubleSpinBox* mFrontal = nullptr;
     QDoubleSpinBox* mRear = nullptr;
     QDoubleSpinBox* mCageOffset = nullptr;

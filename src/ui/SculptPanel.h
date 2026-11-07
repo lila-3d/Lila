@@ -15,8 +15,6 @@ class QDropEvent;
 class QFileSystemWatcher;
 class QPoint;
 class QDoubleSpinBox;
-class QSlider;
-class QGroupBox;
 class QIcon;
 class QLabel;
 class QPushButton;
@@ -30,6 +28,11 @@ class StrokeOptions;
 
 namespace lila::ui
 {
+namespace controls
+{
+class Segmented;
+class SliderField;
+} // namespace controls
 class FlowLayout;
 class FixedRowLayout;
 
@@ -37,9 +40,9 @@ class FixedRowLayout;
 inline constexpr const char* kSculptDock = "sculptPanel";
 
 /**
- * Sculpt tool panel: Enter/Exit Sculpt with the proxy options, brush buttons (registered brushes included),
- * radius/strength/falloff/spacing and which of them brushes share, symmetry, the display material and wireframe, polypaint,
- * mask and freeze operations, and the standalone reprojection tools.
+ * Sculpt tool panel: Enter/Exit Sculpt with the proxy options, the brush grid (registered brushes included),
+ * radius/strength/falloff/spacing and which of them brushes share, symmetry, mask and freeze, presets, polypaint, display,
+ * what Exit leaves, and the standalone reprojection tools in its overflow menu.
  */
 class LILA_UI_API SculptPanel : public QWidget
 {
@@ -59,13 +62,14 @@ private:
     void dragEnterEvent(QDragEnterEvent* e) override;
     void dropEvent(QDropEvent* e) override;
 
-    QGroupBox* mBrushBox = nullptr;
+    QWidget* mBrushBox = nullptr;
     FixedRowLayout* mBrushFlow = nullptr;
     QButtonGroup* mBrushes = nullptr;
     /** Registered brush names, in button order. */
     std::vector<std::string> mCustomBrushes;
     int mBrushRegistryListener = 0;
-    QGroupBox* mPresetBox = nullptr;
+    QWidget* mPresetBox = nullptr;
+    QLabel* mPresetEmpty = nullptr;
     FlowLayout* mPresetFlow = nullptr;
     /** Preset ids, in button order. */
     std::vector<std::string> mPresets;
@@ -78,31 +82,31 @@ private:
     QCheckBox* mShareStrength = nullptr;
     QCheckBox* mShareStroke = nullptr;
     QCheckBox* mWireframe = nullptr;
-    QSlider* mWireOpacity = nullptr;
+    controls::SliderField* mWireOpacity = nullptr;
     QCheckBox* mSeeThrough = nullptr;
-    QSlider* mOpacity = nullptr;
+    controls::SliderField* mOpacity = nullptr;
     QComboBox* mMaterial = nullptr;
     QComboBox* mFalloff = nullptr;
-    QDoubleSpinBox* mRadius = nullptr;
-    QDoubleSpinBox* mStrength = nullptr;
-    QDoubleSpinBox* mSpacing = nullptr;
+    controls::SliderField* mRadius = nullptr;
+    controls::SliderField* mStrength = nullptr;
+    controls::SliderField* mSpacing = nullptr;
     QCheckBox* mFrontFaces = nullptr;
     QCheckBox* mShowCage = nullptr;
-    QComboBox* mMode = nullptr;
-    QSpinBox* mLevels = nullptr;
+    controls::Segmented* mMode = nullptr;
+    controls::SliderField* mLevels = nullptr;
     QWidget* mLevelRow = nullptr;
     QLabel* mLevelLabel = nullptr;
     QToolButton* mLevelDown = nullptr;
     QToolButton* mLevelUp = nullptr;
     QToolButton* mAddLevel = nullptr;
     QToolButton* mDeleteHigher = nullptr;
-    QSpinBox* mResolution = nullptr;
+    controls::SliderField* mResolution = nullptr;
     QComboBox* mExitMethod = nullptr;
     QComboBox* mHighPoly = nullptr;
-    QSpinBox* mHighLevel = nullptr;
-    QSpinBox* mLowLevel = nullptr;
+    controls::SliderField* mHighLevel = nullptr;
+    controls::SliderField* mLowLevel = nullptr;
     QCheckBox* mSymmetryLine = nullptr;
-    QComboBox* mSymmetry = nullptr;
+    controls::Segmented* mSymmetry = nullptr;
     brush::ui::StrokeOptions* mStrokeOptions = nullptr;
     QLabel* mStatus = nullptr;
     QPushButton* mEnter = nullptr;

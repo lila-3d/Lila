@@ -14,6 +14,7 @@
 #include "ui/ChoiceTips.h"
 #include "ui/LocateFlash.h"
 #include "ui/AttributeEditor.h"
+#include "ui/Controls.h"
 #include "ui/Deletion.h"
 #include "ui/NodeLookup.h"
 #include "ui/DockSidebar.h"
@@ -721,11 +722,12 @@ ModifierStackWidget::ModifierStackWidget(QWidget* parent) : QWidget(parent)
     mAdd->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     mAdd->setPopupMode(QToolButton::InstantPopup);
     mAdd->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    controls::setRole(mAdd, "push");
     auto* addMenu = new QMenu(mAdd);
     fillAddModifierMenu(addMenu);
     mAdd->setMenu(addMenu);
     top->addWidget(mAdd, 1);
-    mMore = stackButton("dots-vertical", "Stack actions", mHeader);
+    mMore = stackButton("dots", "<b>Stack Actions</b><br>Apply or bake the whole stack, expand or collapse every card.", mHeader);
     mMore->setPopupMode(QToolButton::InstantPopup);
     auto* more = new QMenu(mMore);
     more->addAction(icon("check"), "Apply All", this, [this] {
@@ -756,7 +758,7 @@ ModifierStackWidget::ModifierStackWidget(QWidget* parent) : QWidget(parent)
     mList = new ModifierCardList(this);
     mListLayout = new QVBoxLayout(mList);
     mListLayout->setContentsMargins(0, 0, 0, 0);
-    mListLayout->setSpacing(6);
+    mListLayout->setSpacing(0);
     mScroll->setWidget(mList);
     outer->addWidget(mScroll, 1);
 
@@ -907,8 +909,10 @@ void ModifierStackWidget::rebuild()
     {
         mTitle->hide();
         mFooter->clear();
-        mListLayout->addStretch(1);
-        mListLayout->addWidget(emptyStateLabel("Select a mesh to see its modifiers.", this));
+        QLabel* empty = emptyStateLabel("No mesh selected. Select a mesh to see its modifiers.", this);
+        empty->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+        empty->setContentsMargins(8, 8, 8, 8);
+        mListLayout->addWidget(empty);
         mListLayout->addStretch(1);
         return;
     }
@@ -926,13 +930,9 @@ void ModifierStackWidget::rebuild()
     }
     if (mods.empty())
     {
-        auto* hint = new QLabel("No modifiers. Add one above, or from Mesh > Add Modifier.", mList);
-        hint->setWordWrap(true);
-        hint->setAlignment(Qt::AlignCenter);
-        QPalette hp = hint->palette();
-        hp.setColor(QPalette::WindowText, gray(130));
-        hint->setPalette(hp);
-        hint->setContentsMargins(8, 12, 8, 12);
+        QLabel* hint = emptyStateLabel("No modifiers. Click Add Modifier to add one.", mList);
+        hint->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+        hint->setContentsMargins(8, 8, 8, 8);
         mListLayout->addWidget(hint);
     }
     mListLayout->addStretch(1);
@@ -985,7 +985,8 @@ QWidget* ModifierStackWidget::buildHeaderFor(QWidget* card, QWidget* body, NodeI
     h->setContentsMargins(2, 2, 2, 2);
     h->setSpacing(2);
 
-    auto* chevron = stackButton(mCollapsed.contains(id) ? "chevron-right" : "chevron-down", "Show or hide the settings (Ctrl: all cards)", header);
+    auto* chevron = stackButton(mCollapsed.contains(id) ? "chevron-right" : "chevron-down",
+                                "<b>Show Settings</b><br>Show or hide this card's settings. Ctrl+click for every card.", header);
     chevron->setObjectName("chevron");
     connect(chevron, &QToolButton::clicked, this, [this, id] {
         bool collapse = !mCollapsed.contains(id);
@@ -1042,7 +1043,8 @@ QWidget* ModifierStackWidget::buildHeaderFor(QWidget* card, QWidget* body, NodeI
     error->hide();
     h->addWidget(error);
 
-    auto* viewport = stackButton("device-desktop", "Show in viewport", header, true);
+    h->addSpacing(4);
+    auto* viewport = stackButton("device-desktop", "<b>Show in Viewport</b><br>Evaluate this modifier in the viewport.", header, true);
     PlugRef enabledPlug{id, mn->enabledAttr, -1};
     connect(viewport, &QToolButton::clicked, this, [enabledPlug](bool on) { setAttr(enabledPlug, on); });
     h->addWidget(viewport);
@@ -1051,16 +1053,17 @@ QWidget* ModifierStackWidget::buildHeaderFor(QWidget* card, QWidget* body, NodeI
     QToolButton* exporter = nullptr;
     if (exportAttr >= 0)
     {
-        exporter = stackButton("file-export", "Apply on export", header, true);
+        exporter = stackButton("file-export", "<b>Apply on Export</b><br>Bake this modifier into exported meshes.", header, true);
         connect(exporter, &QToolButton::clicked, this, [id, exportAttr](bool on) { setAttr({id, exportAttr, -1}, on); });
         h->addWidget(exporter);
     }
 
-    auto* apply = stackButton("check", "Apply: bake this modifier (and those before it) into the base mesh", header);
+    h->addSpacing(8);
+    auto* apply = stackButton("check", "<b>Apply</b><br>Bake this modifier, and those before it, into the base mesh.", header);
     connect(apply, &QToolButton::clicked, this, [id] { runUi("applyModifier", {{"args", {nameOf(id)}}}); });
     h->addWidget(apply);
 
-    auto* menuButton = stackButton("dots-vertical", "More", header);
+    auto* menuButton = stackButton("dots", "<b>More</b><br>Duplicate, reorder, select or delete this modifier.", header);
     menuButton->setPopupMode(QToolButton::InstantPopup);
     auto* menu = new QMenu(menuButton);
     menu->addAction(icon("check"), "Apply", this, [id] { runUi("applyModifier", {{"args", {nameOf(id)}}}); });
@@ -1079,10 +1082,6 @@ QWidget* ModifierStackWidget::buildHeaderFor(QWidget* card, QWidget* body, NodeI
     menu->addAction(icon("trash"), "Delete", this, [id] { runUi("removeModifier", {{"args", {nameOf(id)}}}); });
     menuButton->setMenu(menu);
     h->addWidget(menuButton);
-
-    auto* remove = stackButton("x", "Delete this modifier", header);
-    connect(remove, &QToolButton::clicked, this, [id] { runUi("removeModifier", {{"args", {nameOf(id)}}}); });
-    h->addWidget(remove);
 
     auto* errorText = body->findChild<QLabel*>("errorText");
     mUpdaters.push_back([id, viewport, exporter, exportAttr, error, errorText, name] {
@@ -1124,7 +1123,7 @@ QWidget* ModifierStackWidget::buildMeshInputRow(const PlugRef& ref, QWidget* par
     h->setSpacing(3);
     auto* name = new QLabel(row);
     h->addWidget(name, 1);
-    auto* pick = stackButton("arrow-big-left-lines", "Use the selected mesh as the source (transferSource)", row);
+    auto* pick = stackButton("arrow-big-left-lines", "<b>Use Selected</b><br>Make the selected mesh the transfer source.", row);
     h->addWidget(pick);
     NodeId mod = ref.node;
     connect(pick, &QToolButton::clicked, this, [mod] {
@@ -1142,7 +1141,7 @@ QWidget* ModifierStackWidget::buildMeshInputRow(const PlugRef& ref, QWidget* par
         Graph& g = Graph::current();
         auto src = g.source(ref);
         scene::Node* n = src ? g.node(src->node) : nullptr;
-        name->setText(n ? QString::fromStdString(n->name()) : QString("(none)"));
+        name->setText(n ? QString::fromStdString(n->name()) : QString("None"));
         name->setToolTip(n ? QString::fromStdString(n->fullPath()) : QString());
     });
     return row;
@@ -1156,9 +1155,9 @@ QWidget* ModifierStackWidget::buildArrayCenterRow(NodeId mod, QWidget* parent)
     h->setSpacing(3);
     auto* name = new QLabel(row);
     h->addWidget(name, 1);
-    auto* pick = stackButton("arrow-big-left-lines", "Centre on the selected object's transform (arrayCenter)", row);
-    auto* pivot = stackButton("focus-centered", "Centre on this mesh's pivot (arrayCenter pivot=True)", row);
-    auto* clear = stackButton("unlink", "Back to the object's origin", row);
+    auto* pick = stackButton("arrow-big-left-lines", "<b>Use Selected</b><br>Turn the copies about the selected object's transform.", row);
+    auto* pivot = stackButton("focus-centered", "<b>Use Pivot</b><br>Turn the copies about this mesh's pivot.", row);
+    auto* clear = stackButton("unlink", "<b>Clear</b><br>Turn the copies about the object's origin.", row);
     h->addWidget(pick);
     h->addWidget(pivot);
     h->addWidget(clear);
@@ -1182,7 +1181,7 @@ QWidget* ModifierStackWidget::buildArrayCenterRow(NodeId mod, QWidget* parent)
             return;
         auto src = g.source({mod, m->type().attrIndex("centerMatrix"), -1});
         scene::Node* n = src ? g.node(src->node) : nullptr;
-        name->setText(n ? QString::fromStdString(n->name()) : QString("(none)"));
+        name->setText(n ? QString::fromStdString(n->name()) : QString("None"));
         name->setToolTip(n ? QString::fromStdString(n->fullPath()) : QString());
     });
     return row;
@@ -1220,7 +1219,10 @@ QWidget* ModifierStackWidget::buildParams(NodeId id, bool isModifier)
         {
             heading = def.category;
             auto* h = new QLabel(QString::fromStdString(heading), box);
-            h->setStyleSheet("color: #c8c8c8; font-weight: 600; padding-top: 4px; border-bottom: 1px solid #474747;");
+            QFont hf = h->font();
+            hf.setWeight(QFont::DemiBold);
+            h->setFont(hf);
+            h->setContentsMargins(0, 6, 0, 0);
             form->addRow(h);
         }
         if (def.type == PlugType::Mesh)
@@ -1363,7 +1365,8 @@ QWidget* ModifierStackWidget::buildSourceCard(NodeId source)
     Graph& g = Graph::current();
     auto* card = new QFrame(mList);
     card->setObjectName("modCard");
-    card->setStyleSheet("#modCard { background: #2c2c2c; border: 1px solid #3a3a3a; border-radius: 4px; }");
+    card->setAttribute(Qt::WA_StyledBackground);
+    controls::setRole(card, "section");
     auto* v = new QVBoxLayout(card);
     v->setContentsMargins(0, 0, 0, 0);
     v->setSpacing(0);
@@ -1408,7 +1411,8 @@ QWidget* ModifierStackWidget::buildModifierCard(NodeId mod, int index, int count
 {
     auto* card = new QFrame(mList);
     card->setObjectName("modCard");
-    card->setStyleSheet("#modCard { background: #353535; border: 1px solid #424242; border-radius: 4px; }");
+    card->setAttribute(Qt::WA_StyledBackground);
+    controls::setRole(card, "section");
     auto* v = new QVBoxLayout(card);
     v->setContentsMargins(0, 0, 0, 0);
     v->setSpacing(0);

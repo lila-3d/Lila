@@ -1,4 +1,5 @@
 #include "ui/OptionBox.h"
+#include "ui/Theme.h"
 
 #include "ops/Command.h"
 #include "ops/CommandOptions.h"
@@ -8,6 +9,7 @@
 #include "core/Paths.h"
 #include "core/Workspace.h"
 #include "ui/Actions.h"
+#include "ui/Controls.h"
 #include "ui/LocateFlash.h"
 #include "ui/DocsUi.h"
 #include "ui/FileDialog.h"
@@ -24,6 +26,7 @@
 #include <QDialog>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QCoreApplication>
 #include <QInputDialog>
 #include <QLabel>
 #include <QMenu>
@@ -74,6 +77,31 @@ QWidget* mainWindow()
     return nullptr;
 }
 
+/** Secondary text: the doc line, notes and the Preset label. */
+void optionDim(QWidget* w)
+{
+    QPalette pal = w->palette();
+    for (QPalette::ColorGroup group : {QPalette::Active, QPalette::Inactive})
+        pal.setColor(group, QPalette::WindowText, themeColor("dimText"));
+    w->setPalette(pal);
+}
+
+/** A text header over a group of fields, with the section rule above it. */
+QWidget* optionSectionHeader(const QString& title, QWidget* parent)
+{
+    auto* w = new QWidget(parent);
+    w->setAttribute(Qt::WA_StyledBackground);
+    controls::setRole(w, "section");
+    auto* h = new QHBoxLayout(w);
+    h->setContentsMargins(0, 8, 0, 2);
+    auto* l = new QLabel(title, w);
+    QFont f = l->font();
+    f.setWeight(QFont::DemiBold);
+    l->setFont(f);
+    h->addWidget(l);
+    return w;
+}
+
 class OptionsDialog : public QDialog
 {
 public:
@@ -83,52 +111,60 @@ public:
         setAttribute(Qt::WA_DeleteOnClose);
         setWindowTitle(QString::fromStdString(title(a)) + " Options");
         auto* root = new QVBoxLayout(this);
-        root->setContentsMargins(0, 0, 0, 8);
+        root->setContentsMargins(0, 8, 0, 10);
         root->setSpacing(6);
 
-        auto* bar = new QMenuBar(this);
-        QMenu* edit = bar->addMenu("Edit");
-        edit->addAction("Save Settings", this, [this] { saveSettings(); })
+        // The doc line, then help and a ... menu with the settings, presets and Copy Python.
+        const opt::Override* over = opt::findOverride(mCommand);
+        std::string docsPage = over ? over->docs : std::string();
+        auto* header = new QHBoxLayout();
+        header->setContentsMargins(12, 0, 8, 0);
+        header->setSpacing(4);
+        auto* doc = new QLabel(QString::fromStdString(a.doc), this);
+        doc->setWordWrap(true);
+        doc->setVisible(!a.doc.empty());
+        optionDim(doc);
+        header->addWidget(doc, 1, Qt::AlignTop);
+        if (a.doc.empty())
+            header->addStretch(1);
+        if (!docsPage.empty())
+            header->addWidget(docs::helpButton(docsPage, this), 0, Qt::AlignTop);
+        auto* more = new QToolButton(this);
+        more->setObjectName("optionMore");
+        more->setIcon(icon("dots"));
+        more->setAutoRaise(true);
+        more->setPopupMode(QToolButton::InstantPopup);
+        more->setToolTip("Save or reset these settings, presets, Copy Python");
+        controls::setRole(more, "overflow");
+        auto* menu = new QMenu(more);
+        menu->addAction("Save Settings", this, [this] { saveSettings(); })
             ->setToolTip("Remembers these values for the menu item, hotkeys and shelf buttons without running the command.");
-        edit->addAction("Reset Settings", this, [this] { resetSettings(); });
-        edit->addSeparator();
-        edit->addAction("Save Preset...", this, [this] { savePreset("user"); })
+        menu->addAction("Reset Settings", this, [this] { resetSettings(); });
+        menu->addSeparator();
+        menu->addAction("Save Preset...", this, [this] { savePreset("user"); })
             ->setToolTip("Keeps these values under a name in the Preset menu, for you in every project.");
-        QAction* saveProject = edit->addAction("Save Project Preset...", this, [this] { savePreset("project"); });
+        QAction* saveProject = menu->addAction("Save Project Preset...", this, [this] { savePreset("project"); });
         saveProject->setToolTip("Keeps these values in the project's .lila folder, so everyone working in it gets them.");
-        QAction* remove = edit->addAction("Delete Preset", this, [this] { deletePreset(); });
-        edit->addAction("Import Preset...", this, [this] { importPreset(); });
-        edit->addAction("Show Presets Folder", this, [this] {
+        QAction* remove = menu->addAction("Delete Preset", this, [this] { deletePreset(); });
+        menu->addAction("Import Preset...", this, [this] { importPreset(); });
+        menu->addAction("Show Presets Folder", this, [this] {
             const std::filesystem::path dir = opt::presets::dir(mCommand, "user");
             std::error_code ec;
             std::filesystem::create_directories(dir, ec);
             QDesktopServices::openUrl(QUrl::fromLocalFile(QString::fromStdString(paths::toUtf8(dir))));
         });
-        connect(edit, &QMenu::aboutToShow, this, [this, saveProject, remove] {
+        menu->addSeparator();
+        menu->addAction("Copy Python", this, [this] {
+            QGuiApplication::clipboard()->setText(QString::fromStdString(ops::toPython(mCommand, pendingCall())));
+        });
+        connect(menu, &QMenu::aboutToShow, this, [this, saveProject, remove] {
             saveProject->setEnabled(Workspace::get().isOpen());
             remove->setEnabled(chosenPreset() && chosenPreset()->writable);
         });
-        edit->setToolTipsVisible(true);
-        QMenu* help = bar->addMenu("Help");
-        help->addAction("Copy Python", this, [this] {
-            QGuiApplication::clipboard()->setText(QString::fromStdString(ops::toPython(mCommand, pendingCall())));
-        });
-        root->setMenuBar(bar);
-
-        const opt::Override* over = opt::findOverride(mCommand);
-        std::string docsPage = over ? over->docs : std::string();
-        if (!a.doc.empty() || !docsPage.empty())
-        {
-            auto* header = new QHBoxLayout();
-            header->setContentsMargins(10, 4, 10, 0);
-            auto* doc = new QLabel(QString::fromStdString(a.doc), this);
-            doc->setWordWrap(true);
-            doc->setStyleSheet("color: #9a9a9a;");
-            header->addWidget(doc, 1);
-            if (!docsPage.empty())
-                header->addWidget(docs::helpButton(docsPage, this), 0, Qt::AlignTop);
-            root->addLayout(header);
-        }
+        menu->setToolTipsVisible(true);
+        more->setMenu(menu);
+        header->addWidget(more, 0, Qt::AlignTop);
+        root->addLayout(header);
 
         auto* scroll = new QScrollArea(this);
         scroll->setWidgetResizable(true);
@@ -136,7 +172,7 @@ public:
         scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         auto* body = new QWidget(scroll);
         auto* grid = new QGridLayout(body);
-        grid->setContentsMargins(10, 4, 10, 4);
+        grid->setContentsMargins(12, 4, 12, 4);
         grid->setHorizontalSpacing(8);
         grid->setVerticalSpacing(4);
         grid->setColumnStretch(1, 1);
@@ -153,6 +189,7 @@ public:
                 sections.push_back(f.section);
         // Presets head the box: picking one is the first decision, the fields refine it.
         mPresetLabel = new QLabel("Preset", body);
+        optionDim(mPresetLabel);
         mPresetHost = new QWidget(body);
         auto* presetRow = new QHBoxLayout(mPresetHost);
         presetRow->setContentsMargins(0, 0, 0, 6);
@@ -167,14 +204,7 @@ public:
             if (!any)
                 continue;
             if (!section.empty())
-            {
-                auto* header = new QLabel(QString::fromStdString(section), body);
-                QFont hf = header->font();
-                hf.setWeight(QFont::DemiBold);
-                header->setFont(hf);
-                header->setContentsMargins(0, row ? 8 : 0, 0, 2);
-                grid->addWidget(header, row++, 0, 1, 2);
-            }
+                grid->addWidget(optionSectionHeader(QString::fromStdString(section), body), row++, 0, 1, 2);
             for (const opt::Field& f : fields)
             {
                 if (f.section != section)
@@ -201,21 +231,23 @@ public:
         grid->setRowStretch(row, 1);
         rebuildPresets();
 
+        // Apply is the primary action and Enter's default; Esc or the window's close button closes.
         auto* buttons = new QHBoxLayout();
-        buttons->setContentsMargins(10, 0, 10, 0);
-        auto* applyClose = new QPushButton("Apply and Close", this);
+        buttons->setContentsMargins(12, 4, 12, 0);
+        buttons->setSpacing(6);
+        buttons->addStretch(1);
         auto* apply = new QPushButton("Apply", this);
-        auto* closeButton = new QPushButton("Close", this);
-        applyClose->setDefault(true);
-        for (QPushButton* b : {applyClose, apply, closeButton})
-            buttons->addWidget(b, 1);
+        auto* applyClose = new QPushButton("Apply and Close", this);
+        apply->setDefault(true);
+        applyClose->setAutoDefault(false);
+        buttons->addWidget(apply);
+        buttons->addWidget(applyClose);
         root->addLayout(buttons);
         connect(applyClose, &QPushButton::clicked, this, [this] {
             run();
             close();
         });
         connect(apply, &QPushButton::clicked, this, [this] { run(); });
-        connect(closeButton, &QPushButton::clicked, this, &QDialog::close);
 
         body->adjustSize();
         resize(std::max(420, body->sizeHint().width() + 40), std::min(720, body->sizeHint().height() + 140));
@@ -261,7 +293,7 @@ private:
             return nullptr;
         auto* label = new QLabel(QString::fromStdString(text), parent);
         label->setWordWrap(true);
-        label->setStyleSheet("color: #9a9a9a;");
+        optionDim(label);
         return label;
     }
 
@@ -724,25 +756,109 @@ void decorateMenu(QMenu* menu)
     QObject::connect(menu, &QMenu::aboutToShow, menu, [menu] { markRows(menu); });
 }
 
+namespace
+{
+/**
+ * The option box folded into a panel button: a small triangle in its bottom-right corner. Clicking that corner, a
+ * right-click or a Shift+click opens the options instead of running the button; the corner brightens under the pointer.
+ */
+class OptionCorner : public QObject
+{
+public:
+    OptionCorner(QToolButton* button, std::string actionId) : QObject(button), mButton(button), mActionId(std::move(actionId))
+    {
+        button->setMouseTracking(true);
+        button->installEventFilter(this);
+        button->setProperty("lilaOptionBox", true);
+        const QString hint = "Click corner, right-click or Shift+click for options";
+        if (!button->toolTip().contains(hint))
+            button->setToolTip(button->toolTip().isEmpty() ? hint : button->toolTip() + "\n" + hint);
+    }
+
+protected:
+    bool eventFilter(QObject* obj, QEvent* e) override
+    {
+        if (obj != mButton)
+            return false;
+        switch (e->type())
+        {
+        case QEvent::MouseButtonPress:
+        case QEvent::MouseButtonDblClick:
+        {
+            auto* m = static_cast<QMouseEvent*>(e);
+            const bool corner = m->button() == Qt::LeftButton && inCorner(m->position().toPoint());
+            const bool shift = m->button() == Qt::LeftButton && (m->modifiers() & Qt::ShiftModifier);
+            if (corner || shift || m->button() == Qt::RightButton)
+            {
+                open(mActionId);
+                return true;
+            }
+            return false;
+        }
+        case QEvent::MouseButtonRelease:
+            return static_cast<QMouseEvent*>(e)->button() == Qt::RightButton;
+        case QEvent::ContextMenu:
+            return true;
+        case QEvent::MouseMove:
+        {
+            const bool hot = inCorner(static_cast<QMouseEvent*>(e)->position().toPoint());
+            if (hot != mHot)
+            {
+                mHot = hot;
+                mButton->update();
+            }
+            return false;
+        }
+        case QEvent::Leave:
+            if (mHot)
+            {
+                mHot = false;
+                mButton->update();
+            }
+            return false;
+        case QEvent::Paint:
+        {
+            // Drawn after the button paints itself, on top of its fill.
+            mButton->removeEventFilter(this);
+            QCoreApplication::sendEvent(mButton, e);
+            mButton->installEventFilter(this);
+            QPainter p(mButton);
+            p.setRenderHint(QPainter::Antialiasing);
+            const QRect r = mButton->rect();
+            const int size = mHot ? 7 : 5;
+            QPolygon tri;
+            tri << QPoint(r.right() - 2, r.bottom() - 2 - size) << QPoint(r.right() - 2, r.bottom() - 2) << QPoint(r.right() - 2 - size, r.bottom() - 2);
+            p.setPen(Qt::NoPen);
+            p.setBrush(mHot ? themeColor("brightText") : themeColor("dimText"));
+            p.drawPolygon(tri);
+            return true;
+        }
+        default:
+            return false;
+        }
+    }
+
+private:
+    bool inCorner(QPoint pos) const
+    {
+        const QRect r = mButton->rect();
+        return pos.x() >= r.right() - kZone && pos.y() >= r.bottom() - kZone;
+    }
+
+    static constexpr int kZone = 12;
+    QToolButton* mButton;
+    std::string mActionId;
+    bool mHot = false;
+};
+} // namespace
+
 QWidget* withOptionBox(QToolButton* button, const std::string& actionId, QWidget* parent)
 {
-    if (!button || !available(actionId))
+    (void)parent;
+    if (!button || !available(actionId) || button->property("lilaOptionBox").toBool())
         return button;
-    auto* box = new QWidget(parent);
-    auto* h = new QHBoxLayout(box);
-    h->setContentsMargins(0, 0, 0, 0);
-    h->setSpacing(0);
-    button->setParent(box);
-    h->addWidget(button);
-    auto* square = new QToolButton(box);
-    square->setIcon(icon("app-window"));
-    square->setIconSize(QSize(12, 12));
-    square->setAutoRaise(true);
-    square->setFixedWidth(16);
-    square->setToolTip("Options for " + button->text() + " (or Shift+click the button)");
-    QObject::connect(square, &QToolButton::clicked, square, [actionId] { open(actionId); });
-    h->addWidget(square);
-    return box;
+    new OptionCorner(button, actionId);
+    return button;
 }
 
 void install()

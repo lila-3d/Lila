@@ -6,6 +6,7 @@
 
 #include <string>
 
+class QLabel;
 class QMenu;
 class QToolButton;
 class QTreeWidget;
@@ -39,6 +40,7 @@ private:
 
     QTreeWidget* mTree = nullptr;
     QToolButton* mAllSets = nullptr;
+    QLabel* mEmpty = nullptr;
     int mGraphListener = 0;
     bool mPending = false;
     bool mFilling = false;

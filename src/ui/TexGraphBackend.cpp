@@ -98,7 +98,7 @@ QWidget* imageSizeRow(QWidget* parent, const std::string& set, const json& node)
     if (smaller)
         text += s.width == s.height ? QString("\nset %1").arg(s.width) : QString("\nset %1 \u00d7 %2").arg(s.width).arg(s.height);
     auto* label = new QLabel(text, row);
-    label->setToolTip(smaller ? "The set samples this image below its own resolution" : "Image size");
+    label->setToolTip(smaller ? "The set samples this image below its own resolution" : "Image Size");
     h->addWidget(label, 1);
     if (smaller)
     {
@@ -107,7 +107,7 @@ QWidget* imageSizeRow(QWidget* parent, const std::string& set, const json& node)
         QObject::connect(match, &QPushButton::clicked, row, [set, wantW, wantH, row, label, size] {
             runUi("texSetSettings", argsCall({set, json{{"width", wantW}, {"height", wantH}}}));
             label->setText(QString("%1 \u00d7 %2").arg(size.width()).arg(size.height()));
-            label->setToolTip("Image size");
+            label->setToolTip("Image Size");
             for (QPushButton* b : row->findChildren<QPushButton*>())
                 b->hide();
         });
@@ -294,12 +294,12 @@ public:
     {
         auto* view = new QToolButton(&editor);
         view->setText("2D View");
-        view->setToolTip("Show the 2D View; Ctrl+Shift+click a node to show its output there");
+        view->setToolTip("2D View: show it; Ctrl+Shift+click a node to show its output there");
         QObject::connect(view, &QToolButton::clicked, &editor, [] { panels::show(kTexture2dDock); });
         bar->addWidget(view);
         auto* exportMaps = new QToolButton(&editor);
         exportMaps->setText("Export Maps");
-        exportMaps->setToolTip("Write this set's maps through its export preset (texExport)");
+        exportMaps->setToolTip("Export Maps: write this set's maps through its export preset (texExport)");
         QObject::connect(exportMaps, &QToolButton::clicked, &editor, [&editor] {
             if (!editor.group().isEmpty())
                 if (json r = runUi("texExport", argsCall({editor.group().toStdString()})); r.is_object())
@@ -498,7 +498,7 @@ void registerTextureGraphUi()
                   .doc = "Stop showing the 2D View's output on meshes; they draw their materials again.",
                   .python = "lila.ui.run_action(\"texture.clearPreview\")"});
 
-    menus::addMenu({.id = "Texture", .title = "Texture", .before = "Rig", .sets = {"Modeling"}});
+    menus::addMenu({.id = "Texture", .title = "Texture", .before = "Rig", .sets = {"Texture"}});
     menus::addActions("Texture", {"texture.newSet", "", "window.textureGraph", "window.texture2d", "", "texture.import", "texture.exportMaterial",
                                   "texture.exportNodes", "texture.exportMaps", "", "texture.clearPreview"});
 }

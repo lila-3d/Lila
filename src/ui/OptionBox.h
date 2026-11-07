@@ -62,7 +62,10 @@ LILA_UI_API std::string optionsAt(const QMenu* menu, QAction* a, int globalX, bo
 /** Adds the squares to the menu's rows and its submenus' rows, and the clicks that open them. Idempotent. */
 LILA_UI_API void decorateMenu(QMenu* menu);
 
-/** The button followed by its option box square, for panels; just the button when the action has no options. */
+/**
+ * Folds the action's option box into a panel button: a corner triangle, opened by clicking the corner, right-clicking or
+ * Shift+clicking. Returns the button itself; nothing changes when the action has no options.
+ */
 LILA_UI_API QWidget* withOptionBox(QToolButton* button, const std::string& actionId, QWidget* parent);
 
 /** Makes the rig menu's command actions plain command calls. Call once every action is registered. */

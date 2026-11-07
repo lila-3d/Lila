@@ -7,14 +7,19 @@
 #include "scene/Graph.h"
 #include "ui/Actions.h"
 #include "ui/AttributeEditor.h"
+#include "ui/Controls.h"
+#include "ui/Icons.h"
+#include "ui/Theme.h"
 #include "ui/Shelf.h"
+#include "ui/SpinScrub.h"
+#include "ui/ValueReset.h"
 
 #include <QCheckBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QPushButton>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <nlohmann/json.hpp>
@@ -64,56 +69,77 @@ QWidget* clayPanel(NodeId id)
     size_t quads = 0;
     if (const scene::MeshPtr& m = surface->as<scene::MeshPtr>(at("outMesh")))
         quads = m->faceCapacity();
+    auto* statusRow = new QHBoxLayout;
+    statusRow->setSpacing(6);
+    if (!warning.empty())
+    {
+        // The triangle carries the warning with colour off; the hue only speeds reading it.
+        auto* mark = new QLabel;
+        mark->setPixmap(icon("alert-triangle").pixmap(16, 16));
+        mark->setAlignment(Qt::AlignTop);
+        statusRow->addWidget(mark);
+    }
     auto* status = new QLabel(warning.empty() ? QString("%1 shapes, %2 quads").arg(surface->elements(at("items")).size()).arg(quads)
                                               : QString::fromStdString(warning));
     status->setWordWrap(true);
     if (!warning.empty())
-        status->setStyleSheet("color: #e0a040;");
-    v->addWidget(status);
+    {
+        status->setStyleSheet(QString("color: %1;").arg(themeColor("issueWarning").name()));
+        status->setProperty("lilaRawColors", true);
+    }
+    statusRow->addWidget(status, 1);
+    v->addLayout(statusRow);
 
     auto* form = new QFormLayout;
+    form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
     auto setAttr = [surfacePath](const char* attr, json value) { runClay("setAttr", {{"args", {surfacePath + "." + attr, value}}}); };
+    auto attrDefault = [&](const char* attr) { return valueReset::plugDefault(surface->type().attrs[size_t(at(attr))]).value_or(json()); };
     auto spin = [&](const char* attr, const char* label, const char* tip) {
-        auto* s = new QDoubleSpinBox;
+        auto* s = new controls::SliderField;
         s->setRange(0.01, 5.0);
         s->setSingleStep(0.05);
         s->setDecimals(2);
         s->setSuffix(" cm");
         s->setValue(surface->as<double>(at(attr)));
-        s->setToolTip(tip);
-        s->setKeyboardTracking(false);
+        if (const json d = attrDefault(attr); d.is_number())
+            setSpinDefault(s, d.get<double>());
+        s->setToolTip(QString("%1: %2").arg(label, tip));
         QObject::connect(s, &QDoubleSpinBox::valueChanged, s, [setAttr, attr](double value) { setAttr(attr, value); });
         form->addRow(label, s);
     };
     spin("voxelSize", "Voxel Size", "Surface detail while editing. Smaller is finer and slower.");
     spin("finalVoxelSize", "Final Voxel Size", "Surface detail Convert Clay to Mesh uses.");
-    auto check = [&](const char* label, bool on, const char* tip, std::function<void(bool)> set) {
+    auto check = [&](const char* label, bool on, bool def, const char* tip, std::function<void(bool)> set) {
         auto* c = new QCheckBox(label);
         c->setChecked(on);
+        setCheckDefault(c, def);
         c->setToolTip(tip);
         QObject::connect(c, &QCheckBox::toggled, c, std::move(set));
         form->addRow("", c);
     };
-    check("Mirror X", surface->as<int64_t>(at("symmetry")) == 1, "Mirror the clay across the object's YZ plane.",
+    check("Mirror X", surface->as<int64_t>(at("symmetry")) == 1, attrDefault("symmetry") == 1, "Mirror the clay across the object's YZ plane.",
           [setAttr](bool on) { setAttr("symmetry", on ? "x" : "off"); });
-    check("Sharp Edges", surface->as<bool>(at("sharpEdges")), "Keep hard joins and box edges sharp. For hard-surface clay; slower.",
+    check("Sharp Edges", surface->as<bool>(at("sharpEdges")), attrDefault("sharpEdges") == true, "Keep hard joins and box edges sharp. For hard-surface clay; slower.",
           [setAttr](bool on) { setAttr("sharpEdges", on); });
-    check("Colors", surface->as<bool>(at("colors")), "Write each shape's color to the clay color set.", [setAttr](bool on) { setAttr("colors", on); });
+    check("Colors", surface->as<bool>(at("colors")), attrDefault("colors") == true, "Write each shape's color to the clay color set.", [setAttr](bool on) { setAttr("colors", on); });
     v->addLayout(form);
 
-    auto* row = new QHBoxLayout;
+    std::vector<QWidget*> buttons;
     auto button = [&](const char* text, const char* cmd, json flags, const char* tip) {
-        auto* b = new QPushButton(text);
-        b->setToolTip(tip);
+        auto* b = new QToolButton;
+        b->setText(text);
+        b->setToolTip(QString("%1: %2").arg(text, tip));
+        b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        controls::setRole(b, "push");
         flags["args"] = {objectPath};
-        QObject::connect(b, &QPushButton::clicked, b, [cmd, flags] { runClay(cmd, flags); });
-        row->addWidget(b);
+        QObject::connect(b, &QToolButton::clicked, b, [cmd, flags] { runClay(cmd, flags); });
+        buttons.push_back(b);
     };
     button("Add Shape", "addClayPrimitive", json::object(), "Add a sphere after the other shapes.");
     button("Add Cut", "addClayPrimitive", {{"operation", "subtract"}}, "Add a sphere that carves the clay before it.");
     button("Refresh", "refreshClay", json::object(), "Rewire the shapes in Outliner order.");
     button("Convert", "convertClayToMesh", json::object(), "Bake to a plain mesh at the final voxel size.");
-    v->addLayout(row);
+    v->addWidget(controls::grid(buttons, 2, w));
     return w;
 }
 } // namespace

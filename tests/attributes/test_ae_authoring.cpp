@@ -198,7 +198,7 @@ TEST_CASE("Attribute Editor: search filters rows and sections, added attributes 
     CHECK(rowVisible("Shield"));
 }
 
-TEST_CASE("Extra Attributes: schemas as indented headings, no schema list, hover keeps fields still")
+TEST_CASE("Added attributes: schemas as their own sections, no schema list, hover keeps fields still")
 {
     cmd("newScene");
     cmd("spaceLocator", {{"name", "Prim"}});
@@ -214,7 +214,7 @@ TEST_CASE("Extra Attributes: schemas as indented headings, no schema list, hover
     QStringList headings;
     for (QLabel* l : ae.findChildren<QLabel*>("componentHeading"))
         headings << l->text();
-    CHECK(headings == QStringList{"SpeedAPI", "EmptyAPI"});
+    CHECK(headings == QStringList{"Speed", "Empty"});
     for (QLabel* l : ae.findChildren<QLabel*>())
         CHECK(l->text() != "Usd Api Schemas");
 

@@ -8,12 +8,14 @@
 #include "scene/Modifiers.h"
 #include "scene/Morphs.h"
 #include "ui/Actions.h"
+#include "ui/Controls.h"
 #include "ui/Deletion.h"
 #include "ui/Hotkeys.h"
 #include "ui/NodeLookup.h"
 #include "ui/Icons.h"
 #include "ui/Panels.h"
 #include "ui/SpinScrub.h"
+#include "ui/Theme.h"
 #include "ui/UiCommands.h"
 #include "ui/UiCommon.h"
 #include "ui/ValueReset.h"
@@ -291,13 +293,16 @@ MorphTargetsPanel::MorphTargetsPanel(QWidget* parent) : QWidget(parent)
 
     auto* bar = new QHBoxLayout;
     bar->setContentsMargins(0, 0, 0, 0);
-    bar->setSpacing(1);
-    auto add = [&](const char* iconName, const QString& tip, auto fn) {
-        QToolButton* b = toolButton(this, iconName, tip);
+    bar->setSpacing(2);
+    auto add = [&](const QString& text, const QString& tip, auto fn) {
+        auto* b = new QToolButton(this);
+        b->setText(text);
+        b->setToolTip(tip);
+        controls::setRole(b, "push");
         connect(b, &QToolButton::clicked, this, fn);
         bar->addWidget(b);
     };
-    add("plus", "Add the selected meshes as targets of the last selected mesh (a morph is made if needed)", [] {
+    add("Add Targets", "Add Targets\nAdd the selected meshes as targets of the last selected mesh (a morph is made if needed)", [] {
         json sel = selectionNames();
         if (sel.size() < 2)
         {
@@ -309,7 +314,7 @@ MorphTargetsPanel::MorphTargetsPanel(QWidget* parent) : QWidget(parent)
             args.push_back(sel[i]);
         runUi("addMorphTarget", {{"args", args}});
     });
-    add("square-plus", "Add an empty target to sculpt with Edit", [this] {
+    add("New Empty", "New Empty Target\nAdd an empty target to sculpt with Edit", [this] {
         if (mMorph.empty())
             return;
         bool ok = false;
@@ -317,22 +322,19 @@ MorphTargetsPanel::MorphTargetsPanel(QWidget* parent) : QWidget(parent)
         if (ok && !name.isEmpty())
             runUi("addMorphTarget", {{"args", {mMorph}}, {"name", name.toStdString()}});
     });
-    add("pencil", "Edit the current target: sculpt its shape on an edit mesh, click again to bake it back", [] { onTarget("editMorphTarget"); });
-    add("timeline", "Add an in-between to the current target (weight in the option box)", [] { onTarget("addInBetween"); });
-    add("flip-vertical", "Flip the current target to the other side as a new target", [] { onTarget("mirrorMorphTarget", {{"mode", "flip"}}); });
-    add("arrows-left-right", "Symmetrize the current target", [] { onTarget("mirrorMorphTarget", {{"mode", "symmetrize"}}); });
-    add("copy", "Extract the current target's shape as a mesh", [] { onTarget("extractMorphTarget"); });
-    add("brush", "Sculpt a corrective: copies the posed mesh to sculpt on", [] { actions::run(json("deform.sculptCorrective")); });
-    add("target-arrow", "Add the selected corrective sculpt, driven by the posed joint", [] { actions::run(json("deform.addCorrective")); });
+    bar->addWidget(controls::push("deform.editMorphTarget", this, "Edit"));
+    bar->addWidget(controls::overflow({"deform.addInBetween", "deform.flipMorphTarget", "deform.symmetrizeMorphTarget", "deform.extractMorphTarget",
+                                       "deform.setMorphTarget", "deform.sculptCorrective", "deform.addCorrective"},
+                                      this));
     bar->addStretch(1);
-    add("trash", "Remove the current target", [] {
-        if (std::string t = currentMorphTarget(); !t.empty())
-            runUi("removeMorphTarget", {{"args", {t}}});
-    });
+    QToolButton* trash = toolButton(this, "trash", QString::fromStdString(actions::tooltip("deform.removeMorphTarget")));
+    connect(trash, &QToolButton::clicked, this, [] { actions::run(json("deform.removeMorphTarget")); });
+    bar->addWidget(trash);
     v->addLayout(bar);
 
     mHeader = new QLabel(this);
     mHeader->setContentsMargins(4, 2, 4, 2);
+    mHeader->setForegroundRole(QPalette::PlaceholderText);
     v->addWidget(mHeader);
 
     mTree = new QTreeWidget(this);
@@ -358,6 +360,7 @@ MorphTargetsPanel::MorphTargetsPanel(QWidget* parent) : QWidget(parent)
     header->resizeSection(kValue, 52);
     header->setSectionResizeMode(kEdit, QHeaderView::Fixed);
     header->resizeSection(kEdit, 26);
+    setEmptyHint(mTree, "No morph targets. Select the target meshes, then the base mesh, and click Add Targets.");
     v->addWidget(mTree, 1);
 
     connect(mTree, &QTreeWidget::currentItemChanged, this, [](QTreeWidgetItem* item, QTreeWidgetItem*) {
@@ -435,7 +438,8 @@ void MorphTargetsPanel::refresh()
     if (scene::Node* m = findNode(mMorph))
         if (scene::NodeId mesh = scene::modifiers::meshOf(g, m->id()); mesh != scene::kNoNode)
             meshName = g.node(mesh)->path();
-    mHeader->setText(mMorph.empty() ? QString("Select a mesh with morph targets") : QString::fromStdString(meshName + "  /  " + mMorph));
+    mHeader->setText(QString::fromStdString(meshName + "  /  " + mMorph));
+    mHeader->setVisible(!mMorph.empty());
 
     const std::string keep = gCurrentTarget;
     mTree->setUpdatesEnabled(false);
@@ -503,7 +507,7 @@ void MorphTargetsPanel::refresh()
         mTree->setItemWidget(item, kSlider, slider);
         mTree->setItemWidget(item, kValue, value);
 
-        auto* edit = toolButton(mTree, "pencil", "Edit mode: sculpt this target on an edit mesh; click again to bake it back");
+        auto* edit = toolButton(mTree, "pencil", "Edit Target\nSculpt this target on an edit mesh; click again to bake it back");
         edit->setCheckable(true);
         edit->setChecked(t["editing"].is_string());
         connect(edit, &QToolButton::clicked, this, [node](bool on) { runUi("editMorphTarget", {{"args", {node}}, {"on", on}}); });
@@ -553,13 +557,16 @@ DrivenChannelsPanel::DrivenChannelsPanel(QWidget* parent) : QWidget(parent)
 
     auto* bar = new QHBoxLayout;
     bar->setContentsMargins(0, 0, 0, 0);
-    bar->setSpacing(1);
-    auto add = [&](const char* iconName, const QString& tip, auto fn) {
-        QToolButton* b = toolButton(this, iconName, tip);
+    bar->setSpacing(2);
+    auto add = [&](const QString& text, const QString& tip, auto fn) {
+        auto* b = new QToolButton(this);
+        b->setText(text);
+        b->setToolTip(tip);
+        controls::setRole(b, "push");
         connect(b, &QToolButton::clicked, this, fn);
         bar->addWidget(b);
     };
-    add("key", "Key the current channel at the driver's value now (asks for the driven value)", [this] {
+    add("Set Key", "Set Driven Key\nKey the current channel at the driver's value now (asks for the driven value)", [this] {
         std::string c = current();
         if (c.empty())
             return;
@@ -568,7 +575,7 @@ DrivenChannelsPanel::DrivenChannelsPanel(QWidget* parent) : QWidget(parent)
         if (ok)
             runUi("setDrivenKey", {{"args", {c}}, {"value", v}});
     });
-    add("cursor-text", "Set the curve name the channel bakes into on export (Unreal curve)", [this] {
+    add("Curve Name", "Curve Name\nThe Unreal curve the channel bakes into on export", [this] {
         std::string c = current();
         if (c.empty())
             return;
@@ -578,10 +585,12 @@ DrivenChannelsPanel::DrivenChannelsPanel(QWidget* parent) : QWidget(parent)
             runUi("editDrivenChannel", {{"args", {c}}, {"curveName", name.toStdString()}});
     });
     bar->addStretch(1);
-    add("trash", "Delete the current channel; the driven plug keeps its value", [this] {
+    QToolButton* trash = toolButton(this, "trash", "Delete Channel\nDelete the current channel; the driven plug keeps its value");
+    connect(trash, &QToolButton::clicked, this, [this] {
         if (std::string c = current(); !c.empty())
             runUi("removeDrivenChannel", {{"args", {c}}});
     });
+    bar->addWidget(trash);
     v->addLayout(bar);
 
     auto* split = new QSplitter(Qt::Vertical, this);
@@ -598,6 +607,7 @@ DrivenChannelsPanel::DrivenChannelsPanel(QWidget* parent) : QWidget(parent)
     mTree->setSelectionMode(QAbstractItemView::SingleSelection);
     mTree->setEditTriggers(QAbstractItemView::NoEditTriggers);
     Hotkeys::passThrough(mTree);
+    setEmptyHint(mTree, "No driven channels. In the Channel Box, use Set as Driver, then Drive From on the driven channel.");
 
     auto* lower = new QWidget(split);
     auto* lv = new QVBoxLayout(lower);
@@ -612,8 +622,8 @@ DrivenChannelsPanel::DrivenChannelsPanel(QWidget* parent) : QWidget(parent)
     mKeys->horizontalHeader()->setStretchLastSection(true);
     lv->addWidget(mKeys, 1);
     auto* keyBar = new QHBoxLayout;
-    auto* addKey = toolButton(lower, "plus", "Add a key after the last one");
-    auto* removeKey = toolButton(lower, "minus", "Remove the selected key");
+    auto* addKey = toolButton(lower, "plus", "Add Key\nAdd a key after the last one");
+    auto* removeKey = toolButton(lower, "minus", "Remove Key\nRemove the selected key");
     keyBar->addWidget(addKey);
     keyBar->addWidget(removeKey);
     keyBar->addStretch(1);
@@ -729,9 +739,10 @@ void DrivenChannelsPanel::refreshKeys()
         mKeys->setItem(r, 0, new QTableWidgetItem(QString::number(k.time, 'g', 6)));
         mKeys->setItem(r, 1, new QTableWidgetItem(QString::number(k.value, 'g', 6)));
         auto* combo = new QComboBox(mKeys);
-        combo->addItems(kTangents);
-        combo->setCurrentText(QString::fromUtf8(scene::anim::tangentName(k.out)));
-        connect(combo, &QComboBox::currentTextChanged, this, [this] {
+        for (const QString& t : kTangents)
+            combo->addItem(niceName(t.toStdString()), t);
+        combo->setCurrentIndex(std::max(0, combo->findData(QString::fromUtf8(scene::anim::tangentName(k.out)))));
+        connect(combo, &QComboBox::currentIndexChanged, this, [this] {
             if (!mFilling)
                 commitKeys();
         });
@@ -756,7 +767,7 @@ void DrivenChannelsPanel::commitKeys()
         if (!okIn || !okOut)
             return;
         auto* combo = qobject_cast<QComboBox*>(mKeys->cellWidget(r, 2));
-        keys.push_back({in, out, combo ? combo->currentText().toStdString() : std::string("linear")});
+        keys.push_back({in, out, combo ? combo->currentData().toString().toStdString() : std::string("linear")});
     }
     runUi("editDrivenChannel", {{"args", {c}}, {"keys", keys}});
 }

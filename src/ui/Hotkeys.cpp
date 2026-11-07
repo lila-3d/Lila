@@ -299,6 +299,11 @@ QString Hotkeys::keyFor(const std::string& actionId) const
             if (b.targets.press.is_string() && b.targets.press.get<std::string>() == actionId)
                 return b.keyText;
     }
+    // Panel contexts last (graph editor, UV editor...), so a panel's own keys show in its tooltips.
+    for (auto& [ctx, bindings] : mContexts)
+        for (auto& [chord, b] : bindings)
+            if (b.targets.press.is_string() && b.targets.press.get<std::string>() == actionId)
+                return b.keyText;
     return {};
 }
 

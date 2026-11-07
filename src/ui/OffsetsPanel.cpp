@@ -6,14 +6,18 @@
 #include "scene/Graph.h"
 #include "scene/Offsets.h"
 #include "ui/Actions.h"
+#include "ui/Controls.h"
 #include "ui/Deletion.h"
 #include "ui/NodeLookup.h"
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
 #include "ui/Panels.h"
+#include "ui/SpinScrub.h"
+#include "ui/Theme.h"
 #include "ui/UiCommands.h"
 #include "ui/UiCommon.h"
 
+#include <QApplication>
 #include <QDoubleSpinBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -56,14 +60,17 @@ OffsetsPanel::OffsetsPanel(QWidget* parent) : QWidget(parent)
 
     auto* bar = new QHBoxLayout;
     bar->setContentsMargins(0, 0, 0, 0);
-    bar->setSpacing(1);
-    auto add = [&](const char* iconName, const QString& tip, auto fn) {
-        QToolButton* b = toolButton(this, iconName, tip);
+    bar->setSpacing(2);
+    bar->addWidget(controls::push("anim.createOffset", this, "New Offset"));
+    auto add = [&](const QString& text, const QString& tip, auto fn) {
+        auto* b = new QToolButton(this);
+        b->setText(text);
+        b->setToolTip(tip);
+        controls::setRole(b, "push");
         connect(b, &QToolButton::clicked, this, fn);
         bar->addWidget(b);
     };
-    add("plus", "Offset the selected joints (option box: right-click the action in a menu)", [] { actions::run(json("anim.createOffset")); });
-    add("pointer", "Select the current offset's joints", [this] {
+    add("Select Joints", "Select Joints\nSelect the current offset's joints", [this] {
         std::string o = currentOffset();
         json list = runUi("listOffsets", json::object());
         if (o.empty() || !list.is_array())
@@ -72,15 +79,17 @@ OffsetsPanel::OffsetsPanel(QWidget* parent) : QWidget(parent)
             if (e["name"] == o)
                 runUi("select", {{"args", e["joints"]}});
     });
-    add("arrows-join", "Bake the current offset into the layer below", [this] {
+    add("Bake", "Bake Offset\nBake the current offset into the layer below", [this] {
         if (std::string o = currentOffset(); !o.empty())
             runUi("bakeOffset", {{"args", {o}}});
     });
     bar->addStretch(1);
-    add("trash", "Delete the current offset (the animation underneath is untouched)", [this] {
+    QToolButton* trash = toolButton(this, "trash", "Delete Offset\nDelete the current offset; the animation underneath is untouched");
+    connect(trash, &QToolButton::clicked, this, [this] {
         if (std::string o = currentOffset(); !o.empty())
             runUi("deleteOffset", {{"args", {o}}});
     });
+    bar->addWidget(trash);
     v->addLayout(bar);
 
     mTree = new QTreeWidget(this);
@@ -103,6 +112,7 @@ OffsetsPanel::OffsetsPanel(QWidget* parent) : QWidget(parent)
     header->setSectionResizeMode(kWeight, QHeaderView::Fixed);
     header->resizeSection(kWeight, 56);
     header->setSectionResizeMode(kName, QHeaderView::ResizeToContents);
+    setEmptyHint(mTree, "No offsets. Select joints and click New Offset.");
     v->addWidget(mTree, 1);
 
     connect(mTree, &QTreeWidget::itemClicked, this, [](QTreeWidgetItem* item, int column) {
@@ -181,15 +191,20 @@ void OffsetsPanel::refresh()
         f.setBold(name == active);
         item->setFont(kName, f);
 
-        auto* weight = new QDoubleSpinBox(mTree);
+        auto* weight = new controls::SliderField(mTree);
         weight->setRange(0.0, 1.0);
         weight->setSingleStep(0.05);
         weight->setDecimals(2);
-        weight->setFrame(false);
-        weight->setButtonSymbols(QAbstractSpinBox::NoButtons);
         weight->setValue(o["weight"].get<double>());
-        weight->setToolTip("Offset weight");
-        connect(weight, &QDoubleSpinBox::editingFinished, this, [weight, name] { runUi("editOffset", {{"args", {name}}, {"weight", weight->value()}}); });
+        weight->setToolTip("Weight");
+        setSpinDefault(weight, 1.0);
+        auto commit = [weight, name] { runUi("editOffset", {{"args", {name}}, {"weight", weight->value()}}); };
+        connect(weight, &QDoubleSpinBox::editingFinished, this, commit);
+        // A middle-click reset changes the value with no edit to finish; a held button means a scrub still going.
+        connect(weight, &QDoubleSpinBox::valueChanged, this, [weight, commit] {
+            if (!weight->hasFocus() && QApplication::mouseButtons() == Qt::NoButton)
+                commit();
+        });
         mTree->setItemWidget(item, kWeight, weight);
         if (name == active)
             mTree->setCurrentItem(item);

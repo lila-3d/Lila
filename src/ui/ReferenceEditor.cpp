@@ -7,16 +7,22 @@
 #include "io/References.h"
 #include "io/SceneFile.h"
 #include "scene/Graph.h"
+#include "ui/Controls.h"
 #include "ui/FileDialog.h"
+#include "ui/Icons.h"
+#include "ui/Theme.h"
 
 #include <QFileDialog>
 #include <QFileSystemWatcher>
 #include <QHBoxLayout>
 #include <QHeaderView>
-#include <QPushButton>
+#include <QMenu>
+#include <QToolButton>
 #include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+
+#include <vector>
 
 namespace lila::ui
 {
@@ -26,27 +32,59 @@ ReferenceEditor::ReferenceEditor(QWidget* parent) : QWidget(parent)
 {
     auto* v = new QVBoxLayout(this);
     v->setContentsMargins(4, 4, 4, 4);
+    v->setSpacing(4);
     auto* buttons = new QHBoxLayout;
-    auto button = [&](const char* label, std::function<void()> fn) {
-        auto* b = new QPushButton(label, this);
-        connect(b, &QPushButton::clicked, this, fn);
+    buttons->setSpacing(2);
+    std::vector<QWidget*> needSelection;
+    auto button = [&](const char* label, const QString& tip, std::function<void()> fn) {
+        auto* b = new QToolButton(this);
+        b->setText(label);
+        b->setToolTip(tip);
+        controls::setRole(b, "push");
+        connect(b, &QToolButton::clicked, this, fn);
         buttons->addWidget(b);
+        return b;
     };
-    button("Create...", [this] { createReferenceDialog(this); });
-    button("Reload", [this] { runOnSelected("reloadReference"); });
-    button("Load", [this] { runOnSelected("loadReference"); });
-    button("Unload", [this] { runOnSelected("unloadReference"); });
-    button("Import", [this] { runOnSelected("importReference"); });
-    button("Remove", [this] { runOnSelected("removeReference"); });
+    button("Create...", "<b>Create Reference</b><br>Reference a Lila or Maya scene.", [this] { createReferenceDialog(this); });
+    buttons->addSpacing(10);
+    needSelection.push_back(button("Reload", "<b>Reload</b><br>Read the selected references from disk again.",
+                                   [this] { runOnSelected("reloadReference"); }));
+    needSelection.push_back(button("Load", "<b>Load</b><br>Bring the selected unloaded references back into the scene.",
+                                   [this] { runOnSelected("loadReference"); }));
+    needSelection.push_back(button("Unload", "<b>Unload</b><br>Take the selected references' objects out of the scene, keeping "
+                                             "their edits.",
+                                   [this] { runOnSelected("unloadReference"); }));
     buttons->addStretch(1);
+    auto* more = new QToolButton(this);
+    more->setIcon(icon("dots"));
+    more->setToolTip("<b>More</b><br>Import or remove the selected references.");
+    more->setPopupMode(QToolButton::InstantPopup);
+    auto* moreMenu = new QMenu(more);
+    moreMenu->setToolTipsVisible(true);
+    moreMenu->addAction("Import Objects", this, [this] { runOnSelected("importReference"); })
+        ->setToolTip("Make the selected references' objects part of this scene and drop the reference.");
+    moreMenu->addAction(icon("trash"), "Remove Reference", this, [this] { runOnSelected("removeReference"); })
+        ->setToolTip("Remove the selected references and their objects.");
+    more->setMenu(moreMenu);
+    buttons->addWidget(more);
+    needSelection.push_back(more);
     v->addLayout(buttons);
 
     mTree = new QTreeWidget(this);
     mTree->setHeaderLabels({"Namespace", "State", "Edits", "File"});
+    mTree->headerItem()->setTextAlignment(2, Qt::AlignRight | Qt::AlignVCenter);
     mTree->header()->setSectionResizeMode(3, QHeaderView::Stretch);
     mTree->setRootIsDecorated(false);
     mTree->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    setEmptyHint(mTree, "No references. Click Create to reference a scene.");
     v->addWidget(mTree, 1);
+    auto syncButtons = [this, needSelection] {
+        const bool any = !mTree->selectedItems().isEmpty();
+        for (QWidget* w : needSelection)
+            w->setEnabled(any);
+    };
+    connect(mTree, &QTreeWidget::itemSelectionChanged, this, syncButtons);
+    syncButtons();
 
     // Referenced files edited elsewhere either reload on their own (pref) or get flagged here.
     mWatcher = new QFileSystemWatcher(this);
@@ -115,11 +153,15 @@ void ReferenceEditor::refresh()
     {
         auto* item = new QTreeWidgetItem(mTree);
         item->setText(0, QString::fromStdString(r.value("namespace", "")));
-        item->setText(1, r.value("loaded", true) ? "loaded" : "unloaded");
+        item->setText(1, r.value("loaded", true) ? "Loaded" : "Unloaded");
         item->setText(2, QString::number(r.value("edits", json::array()).size()));
+        item->setTextAlignment(2, Qt::AlignRight | Qt::AlignVCenter);
         item->setText(3, QString::fromStdString(r.value("path", "")));
         if (mChanged.contains(item->text(3)))
-            item->setText(1, item->text(1) + ", changed on disk");
+        {
+            item->setText(1, item->text(1) + ", Changed");
+            item->setToolTip(1, "The file changed on disk. Reload to read it again.");
+        }
     }
     watchFiles();
 }

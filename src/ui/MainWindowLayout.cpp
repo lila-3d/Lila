@@ -52,6 +52,7 @@ void MainWindow::restoreLayout()
         QTimer::singleShot(0, this, [this] {
             applyDefaultDockSizes();
             mSidebars->restoreCollapsed(kDefaultCollapsed);
+            run("applyLayout", {{"name", "Model"}});
         });
     QTimer::singleShot(0, this, &MainWindow::fitToScreen);
     mRestoring = false;
@@ -59,19 +60,15 @@ void MainWindow::restoreLayout()
 
 void MainWindow::applyDefaultDockSizes()
 {
-    if (auto* channels = findChild<QDockWidget*>("channelBox"))
-        resizeDocks({channels}, {kDefaultSidePanelWidth}, Qt::Horizontal);
+    auto* tools = findChild<QDockWidget*>(kModelingToolkitDock);
     auto* outliner = findChild<QDockWidget*>("outliner");
-    auto* undoHistory = findChild<QDockWidget*>(kUndoHistoryDock);
-    auto* quickSets = findChild<QDockWidget*>(kQuickSelectSetsDock);
-    if (outliner && undoHistory && quickSets && outliner->isVisible() && undoHistory->isVisible() && quickSets->isVisible())
-        resizeDocks({outliner, quickSets, undoHistory}, {height() * 3 / 5, height() / 5, height() / 5}, Qt::Vertical);
-    else if (outliner && undoHistory && outliner->isVisible() && undoHistory->isVisible())
-        resizeDocks({outliner, undoHistory}, {height() * 4 / 5, height() / 5}, Qt::Vertical);
-    auto* channels = findChild<QDockWidget*>("channelBox");
-    auto* layers = findChild<QDockWidget*>(kDisplayLayersDock);
-    if (channels && layers && channels->isVisible() && layers->isVisible())
-        resizeDocks({channels, layers}, {height() * 3 / 4, height() / 4}, Qt::Vertical);
+    auto* channels = findChild<QDockWidget*>(kChannelBoxDock);
+    if (tools && tools->isVisible())
+        resizeDocks({tools}, {kToolsColumnWidth}, Qt::Horizontal);
+    if (outliner && outliner->isVisible())
+        resizeDocks({outliner}, {kDataColumnWidth}, Qt::Horizontal);
+    if (outliner && channels && outliner->isVisible() && channels->isVisible())
+        resizeDocks({outliner, channels}, {height() * 9 / 25, height() * 16 / 25}, Qt::Vertical);
 }
 
 void MainWindow::applyChromePrefs()
@@ -79,7 +76,7 @@ void MainWindow::applyChromePrefs()
     PrefStore& p = PrefStore::get();
     menuBar()->setVisible(p.value<bool>("general", "/ui/showMenuBar", true));
     QDockWidget* shelf = findChild<QDockWidget*>("shelf");
-    bool showShelf = p.value<bool>("general", "/ui/showShelf", true);
+    bool showShelf = p.value<bool>("general", "/ui/showShelf", false);
     if (!shelf)
         return;
     shelf->toggleViewAction()->setEnabled(showShelf);

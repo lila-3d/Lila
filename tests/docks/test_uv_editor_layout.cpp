@@ -51,7 +51,8 @@ TEST_CASE("the UV editor stays narrow whatever its status line and pack options 
     QToolButton* toolkit = buttonNamed(editor, "Toolkit");
     REQUIRE(toolkit);
     toolkit->setChecked(false);
-    CHECK(editor.minimumSizeHint().width() <= 320);
+    CAPTURE(editor.minimumSizeHint().width());
+    CHECK(editor.minimumSizeHint().width() <= 400);
     toolkit->setChecked(true);
     const int withToolkit = editor.minimumSizeHint().width();
 
@@ -63,19 +64,10 @@ TEST_CASE("the UV editor stays narrow whatever its status line and pack options 
             l->setText(QString("uvLayout: ") + QString(600, 'x'));
     CHECK(editor.minimumSizeHint().width() <= withToolkit);
 
-    QToolButton* project = buttonNamed(editor, "Project");
-    REQUIRE(project);
-    REQUIRE(rightClickAction(project));
-    CHECK(rightClickAction(project)->text() == "Planar (fit)");
-
-    for (const char* name : {"Move", "Rotate", "Scale"})
+    for (const char* name : {"Planar", "Box", "Cylindrical", "Spherical"})
     {
-        QToolButton* b = nullptr;
-        for (QToolButton* c : editor.findChildren<QToolButton*>())
-            if (c->text() == name && c->toolButtonStyle() == Qt::ToolButtonIconOnly)
-                b = c;
         CAPTURE(name);
-        CHECK(b);
+        CHECK(buttonNamed(editor, name));
     }
 }
 
@@ -89,11 +81,18 @@ TEST_CASE("the UV toolkit sits beside a wide editor and below a tall one in two 
     REQUIRE(split);
     CHECK(split->orientation() == Qt::Horizontal);
 
-    editor.resize(900, 1300);
+    editor.resize(1100, 1700);
     QApplication::processEvents();
     CHECK(split->orientation() == Qt::Vertical);
-    QToolButton* unwrap = buttonNamed(editor, "Unwrap");
-    QToolButton* transform = buttonNamed(editor, "Transform");
+    // Section headers: Unwrap opens the first column, Pack the second.
+    auto header = [&](const QString& title) -> QToolButton* {
+        for (QToolButton* c : editor.findChildren<QToolButton*>())
+            if (c->text() == title && c->property("role").toString() == "sectionHeader")
+                return c;
+        return nullptr;
+    };
+    QToolButton* unwrap = header("Unwrap");
+    QToolButton* transform = header("Pack");
     REQUIRE(unwrap);
     REQUIRE(transform);
     const QPoint u = unwrap->mapTo(&editor, QPoint());

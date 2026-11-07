@@ -64,11 +64,14 @@ private:
     QMenu* refreshKeysOnShow(QMenu* menu);
     /** Lila's own panels, in the order their docks are made (a panel's place() may refer to earlier ones). */
     void registerPanels();
+    /** The default arrangement: toolkits tabbed on the left, the outliner over the inspector tabs on the right. */
+    void arrangeDefaultDocks();
     void createPanelDock(const panels::Panel& p);
     void removePanelDock(const std::string& id);
     void buildMenus();
     /** Shows the menu bar menus of the active menu set and hides the rest. */
     void applyMenuSet();
+    void raiseToolsFor(const std::string& set);
     void buildPanelMenus();
     void buildStatusBar();
     QDockWidget* addDock(const QString& title, const QString& objectName, QWidget* content, Qt::DockWidgetArea area);
@@ -91,7 +94,6 @@ private:
     void refreshRecentFolders();
     void refreshWorkspaceLabel();
     /** Puts the workspace name at the right of the menu bar, beside the layout switcher. */
-    void placeWorkspaceLabel();
     void openFolder();
     void showAbout();
     bool confirmDiscard();
@@ -121,10 +123,10 @@ private:
     QPointer<QMenu> mRecentMenu;
     QPointer<QDialog> mStartupDialog;
     menus::MenuBuilder* mMenus = nullptr;
-    std::string mMenuSet;
     int mPanelListener = 0;
     QTimer* mAutosaveTimer = nullptr;
-    QLabel* mWorkspaceLabel = nullptr;
+    QToolButton* mWorkspaceLabel = nullptr;
+    class TopBar* mTopBar = nullptr;
     QLabel* mSourceLabel = nullptr;
     QToolButton* mMcpButton = nullptr;
     QTimer* mLayoutTimer = nullptr;

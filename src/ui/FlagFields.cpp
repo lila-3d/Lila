@@ -1,5 +1,7 @@
 #include "ui/FlagFields.h"
 #include "ui/ChoiceTips.h"
+#include "ui/Controls.h"
+#include "ui/Theme.h"
 
 #include "ui/FontPicker.h"
 #include "ui/CodeEdit.h"
@@ -38,6 +40,9 @@ public:
         setUsageHint(this, "Drag sideways to scrub; Ctrl for fine steps, Shift for coarse");
     }
 
+    /** Scrubbing steps follow the field's own single step. */
+    void setStepScale(double s) { mScale = s; }
+
 protected:
     void mousePressEvent(QMouseEvent* e) override
     {
@@ -67,11 +72,12 @@ protected:
         mLast = e->globalPosition().x();
         double step = (e->modifiers() & Qt::ControlModifier) ? 0.01 : (e->modifiers() & Qt::ShiftModifier) ? 1.0 : 0.1;
         if (dx != 0.0)
-            mStep(dx * step);
+            mStep(dx * step * mScale);
     }
 
 private:
     std::function<void(double)> mStep;
+    double mScale = 1.0;
     double mLast = 0.0;
     valueReset::ClickTracker mMiddle;
 };
@@ -112,15 +118,62 @@ QString emptyNodeText(const opt::Field& f, const NodePicker& picker, bool list)
     return "None";
 }
 
-QDoubleSpinBox* floatSpin(const opt::Field& f, QWidget* parent)
+bool flagBounded(const opt::Field& f)
 {
-    auto* spin = new QDoubleSpinBox(parent);
-    spin->setRange(std::isnan(f.min) ? -1e6 : f.min, std::isnan(f.max) ? 1e6 : f.max);
-    spin->setDecimals(3);
-    spin->setSingleStep(std::isnan(f.step) ? 0.1 : f.step);
-    spin->setSuffix(QString::fromStdString(f.suffix));
-    spin->setKeyboardTracking(false);
+    return !std::isnan(f.min) && !std::isnan(f.max) && f.max > f.min;
+}
+
+/** The unit as the field shows it after the number: " cm", degrees as a bare degree sign. */
+QString flagSuffix(const std::string& suffix)
+{
+    const QString t = QString::fromStdString(suffix).trimmed();
+    if (t.isEmpty())
+        return {};
+    if (t == "deg" || t == "degrees" || t == QString(QChar(0x00b0)))
+        return QString(QChar(0x00b0));
+    return " " + t;
+}
+
+/**
+ * A number field: right-aligned, unit inside. A bounded one (minimum and maximum both set) is a slider field showing
+ * where the value sits in its range; an unbounded one is a plain value field.
+ */
+QDoubleSpinBox* flagNumber(const opt::Field& f, int decimals, double lo, double hi, QWidget* parent)
+{
+    QDoubleSpinBox* spin = nullptr;
+    if (flagBounded(f))
+    {
+        spin = new controls::SliderField(parent);
+        spin->setDecimals(decimals);
+        spin->setRange(f.min, f.max);
+    }
+    else
+        spin = controls::valueField(lo, hi, decimals, {}, parent);
+    spin->setSingleStep(std::isnan(f.step) ? (decimals ? 0.1 : 1.0) : f.step);
+    spin->setSuffix(flagSuffix(f.suffix));
     return spin;
+}
+
+/** A choice as users read it: the override's label, else the stored value in words ("boundingBox" as "Bounding Box"). */
+QString flagChoiceLabel(const opt::Field& f, size_t i)
+{
+    const std::string& value = f.choices[i];
+    if (i < f.choiceLabels.size() && !f.choiceLabels[i].empty() && f.choiceLabels[i] != value)
+        return QString::fromStdString(f.choiceLabels[i]);
+    if (!value.empty() && value.find_first_not_of("xyzXYZ") == std::string::npos)
+        return QString::fromStdString(value).toUpper();
+    return QString::fromStdString(opt::prettyLabel(value));
+}
+
+/** A row label: right-aligned against its field, dim like the Channel Box's names. */
+void flagLabelStyle(QWidget* w)
+{
+    if (auto* l = qobject_cast<QLabel*>(w))
+        l->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    QPalette pal = w->palette();
+    for (QPalette::ColorGroup group : {QPalette::Active, QPalette::Inactive})
+        pal.setColor(group, QPalette::WindowText, themeColor("dimText"));
+    w->setPalette(pal);
 }
 } // namespace
 
@@ -147,14 +200,11 @@ FlagFieldWidgets makeFlagField(const opt::Field& f, const json& value, std::func
     }
     case opt::FieldKind::Int:
     {
-        auto* spin = new QSpinBox(parent);
         int v = int(std::lround(jsonNumber(value)));
         int d = int(std::lround(jsonNumber(f.defaultValue)));
-        spin->setRange(!std::isnan(f.min) ? int(f.min) : (v < 0 || d < 0) ? -1000000 : 0, std::isnan(f.max) ? 1000000 : int(f.max));
-        spin->setSuffix(QString::fromStdString(f.suffix));
+        QDoubleSpinBox* spin = flagNumber(f, 0, !std::isnan(f.min) ? f.min : (v < 0 || d < 0) ? -1000000 : 0, std::isnan(f.max) ? 1000000 : f.max, parent);
         spin->setValue(v);
-        spin->setKeyboardTracking(false);
-        QObject::connect(spin, &QSpinBox::valueChanged, spin, [changed](int x) { changed(x); });
+        QObject::connect(spin, &QDoubleSpinBox::valueChanged, spin, [changed](double x) { changed(int(std::lround(x))); });
         // An int scrubs a step per ten pixels.
         auto acc = std::make_shared<double>(0.0);
         auto* scrub = new ScrubLabel(label, [spin, acc](double dx) {
@@ -172,16 +222,18 @@ FlagFieldWidgets makeFlagField(const opt::Field& f, const json& value, std::func
         out.field = spin;
         out.set = [spin](const json& x) {
             QSignalBlocker b(spin);
-            spin->setValue(int(std::lround(jsonNumber(x))));
+            spin->setValue(double(std::lround(jsonNumber(x))));
+            spin->update();
         };
         break;
     }
     case opt::FieldKind::Float:
     {
-        QDoubleSpinBox* spin = floatSpin(f, parent);
+        QDoubleSpinBox* spin = flagNumber(f, 3, std::isnan(f.min) ? -1e6 : f.min, std::isnan(f.max) ? 1e6 : f.max, parent);
         spin->setValue(jsonNumber(value));
         QObject::connect(spin, &QDoubleSpinBox::valueChanged, spin, [changed](double x) { changed(x); });
         auto* scrub = new ScrubLabel(label, [spin](double dx) { spin->setValue(spin->value() + dx); }, parent);
+        scrub->setStepScale(spin->singleStep() / 0.1);
         double d = jsonNumber(f.defaultValue);
         setSpinDefault(spin, d);
         onMiddleClickReset(scrub, [spin, d] { spin->setValue(d); }, defText, spin);
@@ -190,6 +242,7 @@ FlagFieldWidgets makeFlagField(const opt::Field& f, const json& value, std::func
         out.set = [spin](const json& x) {
             QSignalBlocker b(spin);
             spin->setValue(jsonNumber(x));
+            spin->update();
         };
         break;
     }
@@ -197,7 +250,7 @@ FlagFieldWidgets makeFlagField(const opt::Field& f, const json& value, std::func
     {
         auto* combo = new QComboBox(parent);
         for (size_t i = 0; i < f.choices.size(); ++i)
-            combo->addItem(QString::fromStdString(i < f.choiceLabels.size() ? f.choiceLabels[i] : f.choices[i]), QString::fromStdString(f.choices[i]));
+            combo->addItem(flagChoiceLabel(f, i), QString::fromStdString(f.choices[i]));
         auto select = [combo](const json& v) {
             int at = combo->findData(QString::fromStdString(v.is_string() ? v.get<std::string>() : std::string()));
             if (at >= 0)
@@ -285,19 +338,18 @@ FlagFieldWidgets makeFlagField(const opt::Field& f, const json& value, std::func
     }
     case opt::FieldKind::Vec3:
     {
-        auto* box = new QWidget(parent);
-        auto* h = new QHBoxLayout(box);
-        h->setContentsMargins(0, 0, 0, 0);
-        h->setSpacing(2);
+        std::vector<QDoubleSpinBox*> made;
+        QWidget* box = controls::vectorField(made, std::isnan(f.min) ? -1e6 : f.min, std::isnan(f.max) ? 1e6 : f.max, 3, {}, parent);
         auto spins = std::make_shared<std::array<QDoubleSpinBox*, 3>>();
         auto emitAll = [spins, changed] { changed(json::array({(*spins)[0]->value(), (*spins)[1]->value(), (*spins)[2]->value()})); };
         for (int i = 0; i < 3; ++i)
         {
-            QDoubleSpinBox* spin = floatSpin(f, box);
+            QDoubleSpinBox* spin = made[size_t(i)];
+            spin->setSingleStep(std::isnan(f.step) ? 0.1 : f.step);
+            spin->setSuffix(flagSuffix(f.suffix));
             spin->setValue(value.is_array() && value.size() == 3 ? jsonNumber(value[i]) : 0.0);
             QObject::connect(spin, &QDoubleSpinBox::valueChanged, spin, [emitAll](double) { emitAll(); });
             (*spins)[i] = spin;
-            h->addWidget(spin);
         }
         out.label = new QLabel(label, parent);
         out.field = box;
@@ -312,6 +364,8 @@ FlagFieldWidgets makeFlagField(const opt::Field& f, const json& value, std::func
     }
     }
     out.field->setToolTip(tip(f));
+    if (out.label)
+        flagLabelStyle(out.label);
     if (auto* combo = qobject_cast<QComboBox*>(out.field); combo && f.kind == opt::FieldKind::Choice)
         choiceTips::apply(combo, f.choiceDocs);
     if (out.label && out.label->toolTip().isEmpty())

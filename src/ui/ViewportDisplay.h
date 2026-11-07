@@ -51,7 +51,6 @@ inline constexpr const char* kGreyBaseColor = "/viewport/greyBaseColor";
 inline constexpr const char* kExposure = "/viewport/exposure"; // stops
 inline constexpr const char* kGamma = "/viewport/gamma";
 inline constexpr const char* kToolbar = "/viewport/toolbar";
-inline constexpr const char* kBottomBar = "/viewport/bottomBar";
 /** Panel toolbar items that need something the scene lacks (joints, materials) hide while it lacks it. */
 inline constexpr const char* kHideUnusedItems = "/viewport/toolbar/hideUnused";
 /** Smooth preview draws the subdivided mesh's own edges; off, only the cage edges, following the smooth surface. */

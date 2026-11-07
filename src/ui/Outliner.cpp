@@ -32,6 +32,7 @@
 #include <QDropEvent>
 #include <QHash>
 #include <QHeaderView>
+#include <QKeySequence>
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QMenu>
@@ -39,6 +40,7 @@
 #include <QPainter>
 #include <QScrollBar>
 #include <QSplitter>
+#include <QStyledItemDelegate>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -58,6 +60,96 @@ constexpr int kSetRole = Qt::UserRole + 4;
 constexpr int kSetMemberRole = Qt::UserRole + 5; // a member row's member string, as setMembers lists it
 constexpr int kSourceRole = Qt::UserRole + 6;    // the outliner::RowSource id of a group row and its rows
 constexpr int kSourceRowRole = Qt::UserRole + 7; // the ExtraRow id of a source's row
+constexpr int kVisRole = Qt::UserRole + 8;       // RowVis: whether the row has an eye and how it reads
+constexpr int kIssueRole = Qt::UserRole + 9;     // worst own issue: severity * 2 + blocking, -1 for none
+constexpr int kIssueCountRole = Qt::UserRole + 10;
+
+enum RowVis
+{
+    kNoEye = 0,
+    kShown,
+    kHiddenSelf,
+    kHiddenAbove,
+};
+
+constexpr int kOutlinerRowHeight = 24;
+constexpr int kEyeSize = 16;
+constexpr int kEyePad = 6;
+
+/** The visibility eye's hit and draw area in a row's rect. */
+QRect outlinerEyeRect(const QRect& row)
+{
+    return QRect(row.right() - kEyePad - kEyeSize + 1, row.top() + (row.height() - kEyeSize) / 2, kEyeSize, kEyeSize);
+}
+
+/** Rows 24 px tall; the issue badge with its count, then the visibility eye, at the row's right edge. */
+class OutlinerRowDelegate : public QStyledItemDelegate
+{
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+    QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override
+    {
+        QSize s = QStyledItemDelegate::sizeHint(option, index);
+        s.setHeight(kOutlinerRowHeight);
+        return s;
+    }
+
+    void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override
+    {
+        const int vis = index.data(kVisRole).toInt();
+        const int issue = index.data(kIssueRole).isValid() ? index.data(kIssueRole).toInt() : -1;
+        if (vis == kNoEye && issue < 0)
+            return QStyledItemDelegate::paint(painter, option, index);
+
+        QStyleOptionViewItem full(option);
+        initStyleOption(&full, index);
+        const QWidget* w = option.widget;
+        QStyle* style = w ? w->style() : QApplication::style();
+        // The row's fill spans the trailing marks too; the name is laid out short of them so it elides first.
+        style->drawPrimitive(QStyle::PE_PanelItemViewItem, &full, painter, w);
+        const QRect eye = outlinerEyeRect(option.rect);
+        int right = vis != kNoEye ? eye.left() - 4 : option.rect.right() - kEyePad;
+        QString count;
+        QRect badge;
+        const QFontMetrics fm(option.font);
+        if (issue >= 0)
+        {
+            const int n = index.data(kIssueCountRole).toInt();
+            count = n > 1 ? QString::number(n) : QString();
+            const int textW = count.isEmpty() ? 0 : fm.horizontalAdvance(count) + 3;
+            badge = QRect(right - textW - 12 + 1, option.rect.top() + (option.rect.height() - 12) / 2, 12, 12);
+            right = badge.left() - 6;
+        }
+        QStyleOptionViewItem opt(option);
+        opt.rect.setRight(right);
+        QStyledItemDelegate::paint(painter, opt, index);
+
+        painter->save();
+        if (issue >= 0)
+        {
+            const auto sev = scene::diagnostics::Severity(issue / 2);
+            const qreal dpr = painter->device()->devicePixelRatioF();
+            QPixmap pm = issues::badge(sev, issue % 2 != 0, int(std::lround(12 * dpr)));
+            pm.setDevicePixelRatio(dpr);
+            painter->drawPixmap(badge.topLeft(), pm);
+            if (!count.isEmpty())
+            {
+                painter->setPen(issues::color(sev));
+                painter->setFont(option.font);
+                painter->drawText(QRect(badge.right() + 4, option.rect.top(), fm.horizontalAdvance(count) + 2, option.rect.height()),
+                                  Qt::AlignLeft | Qt::AlignVCenter, count);
+            }
+        }
+        if (vis != kNoEye)
+        {
+            const bool selected = option.state & QStyle::State_Selected;
+            const QIcon::Mode mode = vis == kShown ? (selected ? QIcon::Active : QIcon::Normal) : QIcon::Disabled;
+            icon(vis == kHiddenSelf ? "eye-off" : "eye").paint(painter, eye, Qt::AlignCenter, mode);
+        }
+        painter->restore();
+    }
+};
 
 std::vector<outliner::RowSource>& rowSources()
 {
@@ -292,8 +384,6 @@ void registerOutlinerActions()
     iconBars::add({.id = "outliner/reveal", .bar = bar, .action = "outliner.revealSelected", .icon = "focus-2"});
     iconBars::add({.id = "outliner/expand", .bar = bar, .action = "outliner.expandAll", .icon = "fold-down"});
     iconBars::add({.id = "outliner/collapse", .bar = bar, .action = "outliner.collapseAll", .icon = "fold-up"});
-    iconBars::add({.id = "outliner/show", .bar = bar, .kind = Kind::Menu, .icon = "eye", .label = "Show",
-                   .menuActions = {"outliner.toggleSets", "outliner.toggleFlagPlaceholderLights"}});
     iconBars::add({.id = "outliner/-copy", .bar = bar, .kind = Kind::Separator});
     iconBars::add({.id = "outliner/copy", .bar = bar, .kind = Kind::Menu, .icon = "copy", .label = "Copy",
                    .menuActions = {"outliner.copyName", "outliner.copyPath"}});
@@ -372,6 +462,8 @@ Outliner::Outliner(QWidget* parent) : QTreeWidget(parent)
     setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
     setUniformRowHeights(true);
     setIconSize(QSize(16, 16));
+    setItemDelegate(new OutlinerRowDelegate(this));
+    setMouseTracking(true);
     setProperty("pickWalk", true);
     setProperty("hotkeyContext", "outliner");
     setProperty("hotkeyHover", true);
@@ -544,8 +636,28 @@ void Outliner::keyPressEvent(QKeyEvent* e)
     QTreeWidget::keyPressEvent(e);
 }
 
+bool Outliner::eyeAt(const QPoint& pos, bool toggle)
+{
+    QTreeWidgetItem* item = itemAt(pos);
+    if (!item || item->data(0, kVisRole).toInt() == kNoEye || !outlinerEyeRect(visualItemRect(item)).contains(pos))
+        return false;
+    if (toggle)
+        if (scene::Node* n = scene::Graph::current().node(item->data(0, kIdRole).toULongLong()))
+            runUi("toggleVisibility", {{"args", {n->path()}}});
+    return true;
+}
+
+void Outliner::mouseDoubleClickEvent(QMouseEvent* e)
+{
+    if (e->button() == Qt::LeftButton && eyeAt(e->position().toPoint(), false))
+        return e->accept();
+    QTreeWidget::mouseDoubleClickEvent(e);
+}
+
 void Outliner::mousePressEvent(QMouseEvent* e)
 {
+    if (e->button() == Qt::LeftButton && e->modifiers() == Qt::NoModifier && eyeAt(e->position().toPoint(), true))
+        return e->accept();
     if (e->button() == Qt::MiddleButton)
     {
         mMoving.clear();
@@ -920,10 +1032,21 @@ void Outliner::restyle(const std::unordered_set<scene::NodeId>* only)
         QString style = iconName + (referenced ? "/r" : "") + (hidden ? "/h" : "") + (kept ? "/k" : "") + (instanced ? "/i" : "") +
                         (flagged ? "/f" : "") + marks.key() + (tinted ? "/t" : "") +
                         (rowIssues ? QString("/v%1").arg(dx::version()) : QString());
+        const RowVis vis = n->type().attrIndex("visibility") < 0 ? kNoEye
+                           : !outliner::visibleSelf(g, id)        ? kHiddenSelf
+                           : hidden                               ? kHiddenAbove
+                                                                  : kShown;
+        if (vis == kHiddenSelf)
+            style += "/o";
         if (item->data(0, kStyleRole).toString() == style)
             continue;
         item->setData(0, kStyleRole, style);
-        item->setIcon(0, rowIcon(iconName, referenced, hidden, flagged, marks));
+        item->setData(0, kVisRole, int(vis));
+        item->setData(0, kIssueRole, marks.own ? QVariant(int(marks.own->severity) * 2 + (marks.own->blocking ? 1 : 0)) : QVariant());
+        item->setData(0, kIssueCountRole, rowIssues ? int(rowIssues->size()) : 0);
+        RowIssues iconMarks = marks;
+        iconMarks.own.reset();
+        item->setIcon(0, rowIcon(iconName, referenced, hidden, flagged, iconMarks));
         QFont f = item->font(0);
         f.setItalic(referenced || instanced);
         item->setFont(0, f);
@@ -1312,30 +1435,118 @@ const char* kFilterSyntax = "Filter the outliner by name. Matches keep their par
                             "  |rig|*   a term with | matches the full path\n"
                             "Case is ignored. Esc clears.";
 
-/** An outliner under its filter box. */
-QWidget* filteredOutliner(QWidget* parent)
+std::optional<bool> outlinerActionState(const std::string& id)
+{
+    return viewportActionState(id, nullptr);
+}
+
+/** The ... menu: every iconBars::kOutliner item as a labelled row, menus as submenus. */
+void fillOutlinerMore(QMenu* menu)
+{
+    menu->clear();
+    bool pendingSeparator = false;
+    for (const iconBars::Item* item : iconBars::itemsIn(iconBars::kOutliner))
+    {
+        if (item->kind == iconBars::Kind::Separator)
+        {
+            pendingSeparator = !menu->isEmpty();
+            continue;
+        }
+        if (pendingSeparator)
+            menu->addSeparator();
+        pendingSeparator = false;
+        if (item->kind == iconBars::Kind::Menu)
+        {
+            const Action* a = item->action.empty() ? nullptr : actions::find(item->action);
+            const QString title = QString::fromStdString(!item->label.empty() ? item->label : a ? a->label : item->id);
+            QMenu* sub = menu->addMenu(icon(QString::fromStdString(item->icon)), title);
+            if (item->fill)
+                item->fill(sub);
+            else
+                iconBars::addActionRows(sub, item->menuActions, outlinerActionState);
+            continue;
+        }
+        iconBars::addActionRows(menu, {item->action}, outlinerActionState);
+        if (QAction* added = menu->actions().isEmpty() ? nullptr : menu->actions().back())
+        {
+            if (!item->label.empty())
+                added->setText(QString::fromStdString(item->label));
+            if (const QString key = Hotkeys::get().keyFor(item->action); !key.isEmpty())
+                added->setShortcut(QKeySequence(key));
+            if (!item->icon.empty())
+                added->setIcon(icon(QString::fromStdString(item->icon)));
+        }
+    }
+    menu->setToolTipsVisible(true);
+}
+
+QToolButton* outlinerMenuButton(QWidget* parent, const char* iconName, const QString& tip, const char* objectName)
+{
+    auto* b = new QToolButton(parent);
+    b->setObjectName(objectName);
+    b->setAutoRaise(true);
+    b->setIcon(icon(iconName));
+    b->setToolTip(tip);
+    b->setPopupMode(QToolButton::InstantPopup);
+    b->setMenu(new QMenu(b));
+    b->menu()->setToolTipsVisible(true);
+    return b;
+}
+
+/**
+ * An outliner under its filter row: the filter field and its options; the first pane also carries + (new groups and
+ * sets) and ... (the rarer outliner actions, extension items included).
+ */
+QWidget* filteredOutliner(QWidget* parent, bool primary)
 {
     auto* pane = new QWidget(parent);
     auto* v = new QVBoxLayout(pane);
     v->setContentsMargins(0, 0, 0, 0);
-    v->setSpacing(2);
+    v->setSpacing(4);
     auto* row = new QHBoxLayout();
     row->setContentsMargins(0, 0, 0, 0);
     row->setSpacing(2);
     auto* edit = new FilterEdit(pane);
+    edit->setObjectName("outlinerFilter");
     edit->setPlaceholderText("Filter");
     edit->setClearButtonEnabled(true);
-    edit->addAction(icon("filter"), QLineEdit::LeadingPosition);
+    edit->addAction(icon("search"), QLineEdit::LeadingPosition);
     edit->setToolTip(kFilterSyntax);
     completion::attachSceneFilter(edit);
-    auto* regex = new QToolButton(pane);
-    regex->setCheckable(true);
-    regex->setAutoRaise(true);
-    regex->setIcon(icon("regex"));
-    regex->setToolTip("Regular expressions: each space separated term is a regex searched in the name (in the full path "
-                      "when it holds \\|). ! and type: still apply.");
     row->addWidget(edit, 1);
-    row->addWidget(regex);
+
+    auto* options = outlinerMenuButton(pane, "filter", "<b>Filter Options</b><br>Regular expressions and what the outliner lists.",
+                                       "outlinerFilterOptions");
+    QAction* regex = options->menu()->addAction("Regular Expressions");
+    regex->setObjectName("outlinerRegex");
+    regex->setCheckable(true);
+    regex->setToolTip("Each space separated term is a regex searched in the name (in the full path when it holds \\|). "
+                      "! and type: still apply.");
+    options->menu()->addSeparator();
+    QMenu* listMenu = options->menu();
+    QList<QAction*> fixed = listMenu->actions();
+    QObject::connect(listMenu, &QMenu::aboutToShow, listMenu, [listMenu, fixed] {
+        for (QAction* a : listMenu->actions())
+            if (!fixed.contains(a))
+            {
+                listMenu->removeAction(a);
+                a->deleteLater();
+            }
+        iconBars::addActionRows(listMenu, {"#Show", "outliner.toggleSets", "outliner.toggleFlagPlaceholderLights"}, outlinerActionState);
+    });
+    row->addWidget(options);
+
+    if (primary)
+    {
+        row->addSpacing(4);
+        auto* add = outlinerMenuButton(pane, "plus", "<b>New</b><br>Group the selection, or make an empty group or a set.", "outlinerAdd");
+        iconBars::addActionRows(add->menu(), {"edit.group", "create.emptyGroup", "", "sets.create", "sets.createQuickSelect"},
+                                outlinerActionState);
+        row->addWidget(add);
+        auto* more = outlinerMenuButton(pane, "dots", "<b>More</b><br>Rename, naming, expand and collapse, copy names.", "outlinerMore");
+        QObject::connect(more->menu(), &QMenu::aboutToShow, more, [m = more->menu()] { fillOutlinerMore(m); });
+        row->addWidget(more);
+    }
     v->addLayout(row);
     auto* tree = new Outliner(pane);
     v->addWidget(tree, 1);
@@ -1343,15 +1554,16 @@ QWidget* filteredOutliner(QWidget* parent)
     auto* debounce = new QTimer(pane);
     debounce->setSingleShot(true);
     debounce->setInterval(120);
-    auto apply = [edit, regex, tree] {
+    auto apply = [edit, regex, options, tree] {
         outliner::Filter f(edit->text().toStdString(), regex->isChecked());
         achievementRules::outlinerFilter(edit->text().toStdString());
         edit->setToolTip(f.valid() ? QString(kFilterSyntax) : QString::fromStdString(f.error()) + "\n\n" + kFilterSyntax);
+        options->setIcon(icon(regex->isChecked() ? "regex" : "filter"));
         tree->setFilter(std::move(f));
     };
     QObject::connect(debounce, &QTimer::timeout, pane, apply);
     QObject::connect(edit, &QLineEdit::textChanged, debounce, qOverload<>(&QTimer::start));
-    QObject::connect(regex, &QToolButton::toggled, pane, apply);
+    QObject::connect(regex, &QAction::toggled, pane, apply);
     return pane;
 }
 
@@ -1396,13 +1608,10 @@ OutlinerPanel::OutlinerPanel(QWidget* parent) : QWidget(parent)
 {
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    auto* bar = new iconBars::IconBar(iconBars::kOutliner, Qt::Horizontal, 16, [](const std::string& id) { return viewportActionState(id, nullptr); }, this);
-    bar->setFill(true);
-    layout->addWidget(bar);
     auto* split = new GripSplitter(Qt::Vertical, this);
     split->setHandleWidth(5);
-    split->addWidget(filteredOutliner(split));
-    split->addWidget(filteredOutliner(split));
+    split->addWidget(filteredOutliner(split, true));
+    split->addWidget(filteredOutliner(split, false));
     split->setCollapsible(0, false);
     split->setCollapsible(1, true);
     split->setStretchFactor(0, 1);

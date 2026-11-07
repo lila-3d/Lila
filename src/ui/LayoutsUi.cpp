@@ -11,6 +11,7 @@
 #include "ui/Panels.h"
 #include "ui/Icons.h"
 #include "ui/Layouts.h"
+#include "ui/MenuContext.h"
 #include "ui/Shelf.h"
 #include "ui/TearOff.h"
 #include "ui/TearOffLogic.h"
@@ -46,26 +47,13 @@ namespace lila::ui
 {
 namespace
 {
-using json = nlohmann::json;
+using nlohmann::json;
 }
 
 namespace
 {
-/** Re-reads the layout list each time it opens, so files dropped into a layouts folder show up. */
-class LayoutSwitcher : public QComboBox
-{
-public:
-    LayoutSwitcher(std::function<void()> refresh, QWidget* parent) : QComboBox(parent), mRefresh(std::move(refresh)) {}
-
-    void showPopup() override
-    {
-        mRefresh();
-        QComboBox::showPopup();
-    }
-
-private:
-    std::function<void()> mRefresh;
-};
+/** The layouts that always have a tab; the rest are one click away in the tab strip's + menu. */
+const std::vector<std::string> kTabLayouts = {"Model", "UV", "Sculpt", "Texture", "Bake", "Rig", "Animate", "Level"};
 
 QString displayName(const layouts::Entry& e)
 {
@@ -125,32 +113,19 @@ LayoutController::LayoutController(QMainWindow* window, DockSidebars* sidebars, 
     connect(mMenu, &QMenu::aboutToShow, this, &LayoutController::fillMenu);
     fillMenu();
 
-    auto* corner = new QWidget(window);
-    auto* row = new QHBoxLayout(corner);
-    row->setContentsMargins(0, 0, 4, 0);
+    mTabs = new QWidget(window);
+    mTabs->setObjectName("layoutTabs");
+    mTabs->setAttribute(Qt::WA_StyledBackground);
+    auto* row = new QHBoxLayout(mTabs);
+    row->setContentsMargins(2, 2, 2, 2);
     row->setSpacing(2);
-    mSwitcher = new LayoutSwitcher([this] { refreshSwitcher(); }, corner);
-    mSwitcher->setSizeAdjustPolicy(QComboBox::AdjustToContents);
-    mSwitcher->setMinimumContentsLength(10);
-    mSwitcher->setToolTip("Layout: pick one to rearrange the panels");
-    connect(mSwitcher, &QComboBox::activated, this, [this](int index) {
-        std::string name = mSwitcher->itemData(index).toString().toStdString();
-        if (!name.empty())
-            run("applyLayout", {{"name", name}});
-        refreshSwitcher();
-    });
-    auto* more = new QToolButton(corner);
-    more->setIcon(icon("layout"));
-    more->setAutoRaise(true);
-    more->setPopupMode(QToolButton::InstantPopup);
-    more->setMenu(mMenu);
-    more->setToolTip("Layouts: save, manage, add to shelf");
-    row->addWidget(more);
-    row->addWidget(mSwitcher);
-    // Keeps whatever already sits in the corner, the workspace name.
-    if (QWidget* existing = window->menuBar()->cornerWidget(Qt::TopRightCorner))
-        row->insertWidget(0, existing);
-    window->menuBar()->setCornerWidget(corner, Qt::TopRightCorner);
+    mMore = new QToolButton(mTabs);
+    mMore->setIcon(icon("plus"));
+    mMore->setPopupMode(QToolButton::InstantPopup);
+    mMore->setMenu(mMenu);
+    mMore->setToolTip("More layouts: Effects, Groom, Print, Script, your own; save and manage layouts");
+    mMore->setProperty("layoutMore", true);
+    row->addWidget(mMore);
     refreshSwitcher();
 
     mPrefListener = PrefStore::get().onChanged([self](const std::string& file) {
@@ -226,29 +201,43 @@ void LayoutController::fillMenu()
 void LayoutController::refreshSwitcher()
 {
     refreshLayoutActions();
-    if (!mSwitcher)
+    if (!mTabs)
         return;
-    std::vector<layouts::Entry> all = layouts::list();
-    std::string cur = layouts::current();
-    QStringList want;
-    for (const layouts::Entry& e : all)
-        want << displayName(e);
-    bool same = mSwitcher->count() == int(all.size()) + (cur.empty() ? 1 : 0);
-    for (int i = 0, offset = cur.empty() ? 1 : 0; same && i < int(all.size()); ++i)
-        same = mSwitcher->itemText(i + offset) == want[i];
-    if (!same)
+    // The fixed tabs, then the current layout when it is not one of them, so the applied layout always shows.
+    std::vector<std::string> names;
+    for (const std::string& n : kTabLayouts)
+        if (layouts::find(n))
+            names.push_back(n);
+    const std::string cur = layouts::current();
+    if (!cur.empty() && std::find(names.begin(), names.end(), cur) == names.end() && layouts::find(cur))
+        names.push_back(cur);
+    std::vector<std::string> shown;
+    for (QToolButton* b : mTabButtons)
+        shown.push_back(b->property("layoutName").toString().toStdString());
+    if (shown != names)
     {
-        QSignalBlocker block(mSwitcher);
-        mSwitcher->clear();
-        // No layout applied yet: show a placeholder rather than claiming one.
-        if (cur.empty())
-            mSwitcher->addItem("Layout", QString());
-        for (const layouts::Entry& e : all)
-            mSwitcher->addItem(displayName(e), QString::fromStdString(e.name));
+        for (QToolButton* b : mTabButtons)
+            delete b;
+        mTabButtons.clear();
+        auto* row = static_cast<QHBoxLayout*>(mTabs->layout());
+        for (const std::string& n : names)
+        {
+            auto* b = new QToolButton(mTabs);
+            b->setText(QString::fromStdString(n));
+            b->setCheckable(true);
+            b->setProperty("layoutName", QString::fromStdString(n));
+            b->setToolTip(QString("%1 layout: arranges the panels and starts the %1 menus. Every tool and menu works in any layout.")
+                              .arg(QString::fromStdString(n)));
+            connect(b, &QToolButton::clicked, this, [this, n] {
+                run("applyLayout", {{"name", n}});
+                refreshSwitcher();
+            });
+            row->insertWidget(row->count() - 1, b);
+            mTabButtons.push_back(b);
+        }
     }
-    QSignalBlocker block(mSwitcher);
-    int index = mSwitcher->findData(QString::fromStdString(cur));
-    mSwitcher->setCurrentIndex(index >= 0 ? index : 0);
+    for (QToolButton* b : mTabButtons)
+        b->setChecked(b->property("layoutName").toString().toStdString() == cur);
 }
 
 void LayoutController::refreshLayoutActions()
@@ -319,6 +308,7 @@ json LayoutController::capture() const
     }
     QDockWidget* shelf = dock("shelf");
     return {{"version", 1},
+            {"menuSet", menuContext::layoutSet()},
             {"tabSizes", std::move(tabSizes)},
             {"state", mWindow->saveState().toBase64().toStdString()},
             {"docks", std::move(docks)},
@@ -498,6 +488,8 @@ void LayoutController::apply(const json& layout)
     else if (layout.contains("preset"))
         applyPreset(layout["preset"]);
 
+    menuContext::setLayoutSet(layout.value("menuSet", std::string("Model")));
+
     json view = layout.value("viewport", json::object());
     if (view.is_object())
     {
@@ -528,8 +520,12 @@ void LayoutController::apply(const json& layout)
             // share of the window.
             if (s.value("width", json()) == "fit")
                 window->resizeDocks({d}, {d->minimumSizeHint().width()}, Qt::Horizontal);
+            // Up to 1 a share of the window, above it logical pixels.
             else if (s.contains("width") && s["width"].is_number())
-                window->resizeDocks({d}, {int(s["width"].get<double>() * window->width())}, Qt::Horizontal);
+            {
+                const double w = s["width"].get<double>();
+                window->resizeDocks({d}, {w > 1.0 ? int(w) : int(w * window->width())}, Qt::Horizontal);
+            }
             if (s.contains("height"))
                 window->resizeDocks({d}, {int(s["height"].get<double>() * window->height())}, Qt::Vertical);
         }

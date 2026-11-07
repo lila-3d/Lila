@@ -17,6 +17,11 @@ class QSlider;
 class QToolButton;
 class QTreeWidget;
 
+namespace lila::ui::controls
+{
+class Segmented;
+}
+
 namespace lila::ui
 {
 namespace graphed
@@ -82,8 +87,12 @@ private:
     void refreshKeyFields();
     void editKeyField(bool time);
     void fillContextMenu(QMenu* menu);
+    /** Pre and post infinity, loop key. */
+    void fillInfinityMenu(QMenu* menu);
     void fillCurveMenu(QMenu* menu);
     void syncToolbar();
+    /** Shows the selected keys' shared tangent type and broken state on the toolbar, none when mixed. */
+    void syncTangentState();
     void saveSettings();
 
     QTreeWidget* mChannels = nullptr;
@@ -91,8 +100,11 @@ private:
     QLineEdit* mKeyTime = nullptr;
     QLineEdit* mKeyValue = nullptr;
     QLabel* mValueUnit = nullptr;
-    QToolButton* mToolButtons[3] = {};
-    QToolButton* mViewButtons[3] = {};
+    controls::Segmented* mToolSeg = nullptr;
+    controls::Segmented* mViewSeg = nullptr;
+    controls::Segmented* mTangentSeg = nullptr;
+    controls::Segmented* mBrokenSeg = nullptr;
+    QComboBox* mPivot = nullptr;
     QToolButton* mFalloff = nullptr;
     QDoubleSpinBox* mFalloffRadius = nullptr;
     QComboBox* mTweenMode = nullptr;

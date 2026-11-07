@@ -1,7 +1,9 @@
 #include "ui/AttributeEditor.h"
 #include "ui/AttrAuthoring.h"
 #include "ui/AttrView.h"
+#include "ui/ChannelBox.h"
 #include "ui/ChoiceTips.h"
+#include "ui/Controls.h"
 #include "ui/DrivePopover.h"
 #include "ui/DocsUi.h"
 #include "core/PrefStore.h"
@@ -49,7 +51,9 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPointer>
+#include <QRegularExpression>
 #include <QScrollArea>
 #include <QStyle>
 #include <QTimer>
@@ -73,6 +77,29 @@ std::vector<AttributeEditor*> gEditors;
 /** An issue to scroll to once an editor shows its object. */
 uint64_t gPendingReveal = 0;
 
+/** Secondary text: dim while enabled, the theme's disabled colour when the row is switched off. */
+void aeDim(QWidget* w, const char* token = "dimText")
+{
+    QPalette pal = w->palette();
+    for (QPalette::ColorGroup group : {QPalette::Active, QPalette::Inactive})
+        pal.setColor(group, QPalette::WindowText, themeColor(token));
+    w->setPalette(pal);
+}
+
+void aeBold(QWidget* w)
+{
+    QFont f = w->font();
+    f.setWeight(QFont::DemiBold);
+    w->setFont(f);
+}
+
+QFont aeSmallFont(const QFont& base)
+{
+    QFont f = base;
+    f.setPixelSize(11);
+    return f;
+}
+
 /**
  * A row label that elides instead of holding its full width, so a narrow editor squeezes names before fields. An issue
  * on its attribute puts a badge before the name.
@@ -80,7 +107,11 @@ uint64_t gPendingReveal = 0;
 class AttrRowLabel final : public QLabel
 {
 public:
-    explicit AttrRowLabel(const QString& text) : QLabel(text) { setAlignment(Qt::AlignRight | Qt::AlignVCenter); }
+    explicit AttrRowLabel(const QString& text) : QLabel(text)
+    {
+        setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        aeDim(this);
+    }
     QSize minimumSizeHint() const override { return {fontMetrics().horizontalAdvance("Wwwww"), QLabel::minimumSizeHint().height()}; }
     void setMark(QPixmap mark)
     {
@@ -235,6 +266,8 @@ public:
     explicit RowGestures(QWidget* on) : QObject(on) { on->installEventFilter(this); }
 
     std::function<void()> doubleClicked;
+    /** A left press and release without a drag. */
+    std::function<void()> clicked;
     /** Starts a drag of this mime type and text from a press and move; empty for none. */
     QString dragMime, dragText;
     std::function<bool(const QMimeData*)> accepts;
@@ -262,12 +295,13 @@ protected:
             break;
         case QEvent::MouseButtonPress:
             mPress = static_cast<QMouseEvent*>(e)->pos();
-            mPressed = static_cast<QMouseEvent*>(e)->button() == Qt::LeftButton && !dragMime.isEmpty();
+            mDown = static_cast<QMouseEvent*>(e)->button() == Qt::LeftButton;
+            mPressed = mDown && !dragMime.isEmpty();
             break;
         case QEvent::MouseMove:
             if (mPressed && (static_cast<QMouseEvent*>(e)->pos() - mPress).manhattanLength() >= QApplication::startDragDistance())
             {
-                mPressed = false;
+                mPressed = mDown = false;
                 auto* data = new QMimeData;
                 data->setData(dragMime, dragText.toUtf8());
                 auto* drag = new QDrag(w);
@@ -277,7 +311,15 @@ protected:
                 return true;
             }
             break;
-        case QEvent::MouseButtonRelease: mPressed = false; break;
+        case QEvent::MouseButtonRelease:
+            if (mDown && clicked && static_cast<QMouseEvent*>(e)->button() == Qt::LeftButton)
+            {
+                mDown = mPressed = false;
+                clicked();
+                return true;
+            }
+            mPressed = mDown = false;
+            break;
         case QEvent::DragEnter:
         case QEvent::DragMove:
         {
@@ -308,6 +350,7 @@ protected:
 private:
     QPoint mPress;
     bool mPressed = false;
+    bool mDown = false;
 };
 
 std::string mimeText(const QMimeData* d, const char* format) { return QString::fromUtf8(d->data(format)).toStdString(); }
@@ -322,7 +365,7 @@ void markIssues(QWidget* w, const std::vector<const dx::Issue*>& list)
     if (auto* label = dynamic_cast<AttrRowLabel*>(w))
         label->setMark(issues::badge(worst->severity, worst->blocking, label->fontMetrics().height() - 4));
     else
-        w->setStyleSheet(w->styleSheet() + QString(" color: %1;").arg(issues::color(worst->severity).name()));
+        aeDim(w, worst->severity == dx::Severity::Error ? "issueError" : worst->severity == dx::Severity::Warning ? "issueWarning" : "issueInfo");
 }
 
 /** A number a scrub drives: its plug, its component of a vector (-1 for a scalar) and the attr name setAttr takes. */
@@ -507,13 +550,60 @@ private:
     double mAccum = 0.0;
 };
 
-/** A number box that fills the field column; a ranged one shows its value as a fill across that range. */
+/** The Channel Box's channel-state hues, so a state reads the same in both panels. */
+QColor aeStateColor(uint32_t state)
+{
+    using CB = ChannelBox;
+    if (state & CB::kMuted)
+        return QColor(154, 123, 82);
+    if (state & CB::kBreakdown)
+        return QColor(91, 180, 107);
+    if (state & CB::kKeyed)
+        return QColor(205, 91, 91);
+    if (state & CB::kDrivenKey)
+        return QColor(91, 143, 214);
+    if (state & CB::kExpression)
+        return QColor(167, 123, 214);
+    if (state & CB::kConstraint)
+        return QColor(107, 176, 200);
+    if (state & CB::kConnected)
+        return QColor(214, 194, 91);
+    if (state & CB::kLocked)
+        return QColor(138, 138, 138);
+    return {};
+}
+
+/** The shape each driven or locked state carries besides its hue; keyed and muted use the edge bar instead. */
+const char* aeStateGlyph(uint32_t state)
+{
+    using CB = ChannelBox;
+    if (state & CB::kLocked)
+        return "lock";
+    if (state & CB::kConstraint)
+        return "anchor";
+    if (state & CB::kExpression)
+        return "math-function";
+    if (state & (CB::kConnected | CB::kDrivenKey))
+        return "link";
+    return nullptr;
+}
+
+/**
+ * A number field: value right-aligned, unit dim at the right end, an axis letter at the left for a vector's component.
+ * A ranged one shows its value as a fill across that range. Channel states show as a 4 px edge bar (keyed, muted) or a
+ * glyph (locked, connected, constrained), each in the Channel Box's hue; muted also strikes the value.
+ */
 class NumberField final : public QLineEdit
 {
 public:
-    explicit NumberField(std::optional<std::pair<double, double>> span) : mSpan(span)
+    NumberField(std::optional<std::pair<double, double>> span, QString unit = {}, char axis = 0)
+        : mSpan(span), mUnit(std::move(unit)), mAxis(axis)
     {
         setCursor(Qt::SizeHorCursor);
+        setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        setAttribute(Qt::WA_Hover);
+        setMinimumHeight(24);
+        placeMarks();
     }
 
     void showValue(double v)
@@ -529,17 +619,23 @@ public:
         }
     }
 
+    void setState(uint32_t state)
+    {
+        if (state == mState)
+            return;
+        mState = state;
+        placeMarks();
+        update();
+    }
+
 protected:
     void paintEvent(QPaintEvent* e) override
     {
-        QLineEdit::paintEvent(e);
-        if (!mSpan || hasFocus() || mFill <= 0.0)
-            return;
-        QPainter p(this);
-        QColor fill = themeColor("accent");
-        fill.setAlpha(isReadOnly() ? 28 : 56);
-        const QRect r = rect().adjusted(1, 1, -1, -1);
-        p.fillRect(QRect(r.left(), r.top(), int(std::round(r.width() * mFill)), r.height()), fill);
+        if (hasFocus())
+            QLineEdit::paintEvent(e);
+        else
+            paintResting();
+        paintMarks();
     }
     void focusInEvent(QFocusEvent* e) override
     {
@@ -553,8 +649,86 @@ protected:
     }
 
 private:
+    static constexpr int kPad = 7;
+
+    int glyphRoom() const { return aeStateGlyph(mState) ? 14 : 0; }
+    int axisRoom() const { return mAxis ? fontMetrics().horizontalAdvance(QChar(mAxis)) + 5 : 0; }
+
+    void placeMarks()
+    {
+        const int right = mUnit.isEmpty() ? 0 : QFontMetrics(aeSmallFont(font())).horizontalAdvance(mUnit) + 3;
+        setTextMargins(axisRoom() + glyphRoom(), 0, right, 0);
+    }
+
+    /** The field at rest, drawn here so the range fill sits under the value rather than over it. */
+    void paintResting()
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        QPainterPath clip;
+        clip.addRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 4, 4);
+        p.setClipPath(clip);
+        if (!isReadOnly())
+            p.fillRect(rect(), underMouse() && isEnabled() ? themeColor("hover") : themeColor("input"));
+        if (mSpan && mFill > 0.0)
+        {
+            QColor fill = themeColor("sliderFill");
+            if (isReadOnly() || !isEnabled())
+                fill.setAlphaF(0.5f);
+            p.fillRect(QRectF(0, 0, width() * mFill, height()), fill);
+        }
+        p.setClipping(false);
+        const QMargins m = textMargins();
+        const QRect r = rect().adjusted(kPad + m.left(), 0, -kPad - m.right(), 0);
+        QFont f = font();
+        f.setStrikeOut((mState & ChannelBox::kMuted) != 0);
+        p.setFont(f);
+        p.setPen(isEnabled() ? palette().color(QPalette::Text) : themeColor("disabled"));
+        p.drawText(r, Qt::AlignRight | Qt::AlignVCenter, QFontMetrics(f).elidedText(text(), Qt::ElideLeft, r.width()));
+    }
+
+    void paintMarks()
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        const QColor state = aeStateColor(mState);
+        if (state.isValid() && (mState & (ChannelBox::kKeyed | ChannelBox::kMuted)))
+            p.fillRect(QRect(0, 2, 4, height() - 4), state);
+        int x = kPad;
+        if (mAxis)
+        {
+            QFont f = font();
+            f.setWeight(QFont::DemiBold);
+            p.setFont(f);
+            const char* token = mAxis == 'X' ? "axisX" : mAxis == 'Y' ? "axisY" : "axisZ";
+            p.setPen(isEnabled() ? themeColor(token) : themeColor("disabled"));
+            p.drawText(QRect(x, 0, axisRoom(), height()), Qt::AlignLeft | Qt::AlignVCenter, QString(QChar(mAxis)));
+            x += axisRoom();
+        }
+        if (const char* glyph = aeStateGlyph(mState))
+        {
+            const qreal dpr = devicePixelRatioF();
+            QPixmap pm = icon(glyph).pixmap(QSize(12, 12), dpr);
+            {
+                QPainter tint(&pm);
+                tint.setCompositionMode(QPainter::CompositionMode_SourceIn);
+                tint.fillRect(pm.rect(), state);
+            }
+            p.drawPixmap(x, (height() - 12) / 2, pm);
+        }
+        if (!mUnit.isEmpty())
+        {
+            p.setFont(aeSmallFont(font()));
+            p.setPen(themeColor(isEnabled() ? "dimText" : "disabled"));
+            p.drawText(rect().adjusted(0, 0, -kPad, 0), Qt::AlignRight | Qt::AlignVCenter, mUnit);
+        }
+    }
+
     std::optional<std::pair<double, double>> mSpan;
+    QString mUnit;
+    char mAxis = 0;
     double mFill = 0.0;
+    uint32_t mState = 0;
 };
 
 /** The range a field's fill spans: the soft range, else the hard one; none unless both ends are known. */
@@ -587,34 +761,162 @@ QString browseStart(const std::string& stored)
     return Workspace::get().isOpen() ? QString::fromStdU16String(Workspace::get().root().u16string()) : QString();
 }
 
-/** Collapsible section header, Maya frameLayout style, in the color of the worst issue on its component. */
-QWidget* section(const QString& title, QWidget* content, const std::vector<const dx::Issue*>& marks = {})
+/** The unit a number shows inside its field, read from the attr's doc ("in degrees", "object space, cm"). */
+QString aeUnitOf(const scene::AttrDef& def)
 {
-    auto* box = new QWidget;
-    auto* v = new QVBoxLayout(box);
-    v->setContentsMargins(0, 0, 0, 0);
+    if (def.type != PlugType::Float && def.type != PlugType::Vec3)
+        return {};
+    static const QRegularExpression degrees(R"(\bdegrees?\b)", QRegularExpression::CaseInsensitiveOption), cm(R"(\bcm\b)");
+    const QString doc = QString::fromStdString(def.doc);
+    if (def.name == "rotate" || def.name == "rotateAxis" || def.name == "jointOrient" || doc.contains(degrees))
+        return QString(QChar(0x00b0));
+    if (def.name == "translate" || doc.contains(cm))
+        return "cm";
+    return {};
+}
+
+/** An enum value as users read it: "boundingBoxCenter" as "Bounding Box Center", axis names upper case. */
+QString aeEnumLabel(const std::string& name)
+{
+    if (name.empty())
+        return {};
+    if (name.find_first_not_of("xyzXYZ") == std::string::npos)
+        return QString::fromStdString(name).toUpper();
+    bool acronym = name.find(' ') != std::string::npos;
+    for (size_t i = 1; i < name.size() && !acronym; ++i)
+        acronym = std::isupper(static_cast<unsigned char>(name[i])) && std::isupper(static_cast<unsigned char>(name[i - 1]));
+    if (!acronym)
+        return attrView::niceName(name);
+    QString out = QString::fromStdString(name);
+    out[0] = out[0].toUpper();
+    return out;
+}
+
+std::vector<std::string> aeEnumLabels(const scene::AttrDef& def)
+{
+    std::vector<std::string> out;
+    for (const std::string& e : def.enumNames)
+        out.push_back(aeEnumLabel(e).toStdString());
+    return out;
+}
+
+/** A USD API schema as a heading: "PhysicsRigidBodyAPI" as "Physics Rigid Body", "CollectionAPI:lights" as "Collection Lights". */
+QString aeSchemaLabel(const std::string& schema)
+{
+    std::string base = schema, instance;
+    if (size_t colon = schema.find(':'); colon != std::string::npos)
+    {
+        base = schema.substr(0, colon);
+        instance = schema.substr(colon + 1);
+    }
+    if (base.size() > 3 && base.ends_with("API"))
+        base.resize(base.size() - 3);
+    QString out = attrView::niceName(base);
+    if (!instance.empty())
+        out += " " + attrView::niceName(instance);
+    return out;
+}
+
+/** What a bool switches by name: enableFoo, useFoo and fooEnabled switch the foo attrs; a plain foo switches fooBar. */
+std::string aeSwitchStem(const std::string& name)
+{
+    for (std::string_view pre : {std::string_view("enable"), std::string_view("use")})
+        if (name.size() > pre.size() && name.starts_with(pre) && std::isupper(static_cast<unsigned char>(name[pre.size()])))
+        {
+            std::string stem = name.substr(pre.size());
+            stem[0] = char(std::tolower(static_cast<unsigned char>(stem[0])));
+            return stem;
+        }
+    if (name.size() > 7 && name.ends_with("Enabled"))
+        return name.substr(0, name.size() - 7);
+    return name;
+}
+
+/** True when the bool sw turns def on and off (def does nothing while sw is off). */
+bool aeSwitches(const scene::AttrDef& sw, const scene::AttrDef& def)
+{
+    if (sw.type != PlugType::Bool || (sw.flags & (scene::AttrHidden | scene::AttrArray)) || !(sw.flags & scene::AttrInput) ||
+        sw.name == def.name || def.name.find('.') != std::string::npos)
+        return false;
+    const std::string stem = aeSwitchStem(sw.name);
+    return def.name.size() > stem.size() && def.name.starts_with(stem) && std::isupper(static_cast<unsigned char>(def.name[stem.size()]));
+}
+
+/** A section: its box (header row over content), the header that folds it, and the header row extras go on. */
+struct AeSection
+{
+    QWidget* box = nullptr;
+    QToolButton* header = nullptr;
+    QHBoxLayout* head = nullptr;
+};
+
+constexpr const char* kHoverOnly = "aeHoverOnly";
+
+/**
+ * A collapsible section: a text header over content, split from the section above by the section rule. An issue on its
+ * component puts the issue's badge (a shape as well as a hue) in the header.
+ */
+AeSection aeSection(const QString& title, QWidget* content, const std::vector<const dx::Issue*>& marks = {})
+{
+    AeSection s;
+    s.box = new QWidget;
+    s.box->setAttribute(Qt::WA_StyledBackground);
+    controls::setRole(s.box, "section");
+    auto* v = new QVBoxLayout(s.box);
+    v->setContentsMargins(0, 2, 0, 8);
     v->setSpacing(2);
-    auto* header = new QToolButton;
-    header->setText(title);
-    header->setCheckable(true);
-    header->setChecked(true);
-    header->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    header->setArrowType(Qt::DownArrow);
-    header->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    QString style = "text-align: left; font-weight: 600; padding: 3px;";
+    auto* head = new QWidget(s.box);
+    head->setObjectName("aeSectionHead");
+    s.head = new QHBoxLayout(head);
+    s.head->setContentsMargins(0, 0, 6, 0);
+    s.head->setSpacing(4);
+    s.header = new QToolButton(head);
+    s.header->setObjectName("aeSectionHeader");
+    s.header->setText(title);
+    s.header->setCheckable(true);
+    s.header->setChecked(true);
+    s.header->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    s.header->setIcon(icon("chevron-down"));
+    s.header->setIconSize(QSize(14, 14));
+    s.header->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    controls::setRole(s.header, "sectionHeader");
+    s.head->addWidget(s.header, 1);
     if (std::optional<issues::Worst> worst = issues::worst(marks))
     {
-        style += QString(" color: %1;").arg(issues::color(worst->severity).name());
-        header->setToolTip(issues::lines(marks));
+        auto* badge = new QLabel(head);
+        badge->setObjectName("aeSectionIssue");
+        const int h = badge->fontMetrics().height() - 2;
+        badge->setPixmap(issues::badge(worst->severity, worst->blocking, h));
+        badge->setToolTip(issues::lines(marks));
+        s.head->addWidget(badge);
+        s.header->setToolTip(issues::lines(marks));
     }
-    header->setStyleSheet("QToolButton { " + style + " }");
-    QObject::connect(header, &QToolButton::toggled, content, [header, content](bool on) {
+    QObject::connect(s.header, &QToolButton::toggled, content, [header = s.header, content](bool on) {
         content->setVisible(on);
-        header->setArrowType(on ? Qt::DownArrow : Qt::RightArrow);
+        header->setIcon(icon(on ? "chevron-down" : "chevron-right"));
     });
-    v->addWidget(header);
+    v->addWidget(head);
     v->addWidget(content);
-    return box;
+    return s;
+}
+
+/** Puts the title on title (a header checkbox, a draggable component name) beside the chevron; header->text() keeps it for search. */
+void aeTitleOn(const AeSection& s, QWidget* title, QWidget* tag = nullptr)
+{
+    s.header->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    s.header->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    s.head->setStretch(0, 0);
+    s.head->insertWidget(1, title);
+    int at = 2;
+    if (tag)
+        s.head->insertWidget(at++, tag);
+    s.head->insertStretch(at, 1);
+}
+
+QToolButton* aeHeaderOf(QWidget* box)
+{
+    QWidget* head = box ? box->findChild<QWidget*>("aeSectionHead", Qt::FindDirectChildrenOnly) : nullptr;
+    return head ? head->findChild<QToolButton*>("aeSectionHeader", Qt::FindDirectChildrenOnly) : nullptr;
 }
 
 std::vector<attributeEditor::Section*> extraSections()
@@ -646,6 +948,32 @@ Registry<attributeEditor::AttrFilter>& attributeEditor::filters()
                           return k != Kind::Directional && k != Kind::Dome;
                       if (attr == "texture")
                           return k == Kind::Dome || k == Kind::Point || spot;
+                      return true;
+                  }},
+                 kLilaOwner);
+        made.put("lila.meshSymmetry",
+                 {.typeName = "mesh",
+                  .enabled = [](const scene::Node& n, const std::string& attr) {
+                      // Enum attrs compared by their value's name, so reordered enum names keep working.
+                      auto is = [&n](const char* a, std::string_view name) {
+                          const int i = n.type().attrIndex(a);
+                          if (i < 0)
+                              return false;
+                          const scene::AttrDef& d = n.type().attrs[size_t(i)];
+                          const int64_t v = n.as<int64_t>(i);
+                          return v >= 0 && size_t(v) < d.enumNames.size() && d.enumNames[size_t(v)] == name;
+                      };
+                      const bool on = !is("symmetry", "off"), radial = is("symmetry", "radial"), custom = is("symmetryPlane", "custom");
+                      if (attr == "symmetryPlane")
+                          return on;
+                      if (attr == "symmetryOffset")
+                          return on && custom;
+                      if (attr == "radialCenter")
+                          return radial && custom;
+                      if (attr == "radialDirection")
+                          return radial && is("radialAxis", "custom");
+                      if (attr.starts_with("radial"))
+                          return radial;
                       return true;
                   }},
                  kLilaOwner);
@@ -711,7 +1039,7 @@ AttributeEditor::AttributeEditor(QWidget* parent) : QWidget(parent)
 {
     deletion::claimScene(this);
     auto* outer = new QVBoxLayout(this);
-    outer->setContentsMargins(4, 4, 4, 4);
+    outer->setContentsMargins(8, 6, 8, 4);
     outer->setSpacing(4);
     // A label column plus a row of three float fields.
     setMinimumWidth(fontMetrics().averageCharWidth() * 42);
@@ -720,9 +1048,10 @@ AttributeEditor::AttributeEditor(QWidget* parent) : QWidget(parent)
     attrView::installKeyWatch();
     auto* top = new QHBoxLayout;
     mType = new QLabel(this);
-    mType->setStyleSheet("color: #9a9a9a;");
+    aeDim(mType);
     mName = new QLineEdit(this);
-    top->addWidget(new QLabel("Name", this));
+    mName->setPlaceholderText("Name");
+    mName->setAccessibleName("Name");
     top->addWidget(mName, 1);
     top->addWidget(mType);
     outer->addLayout(top);
@@ -798,8 +1127,8 @@ AttributeEditor::AttributeEditor(QWidget* parent) : QWidget(parent)
     mBody = new QWidget;
     mBody->setObjectName("aeBody");
     mBodyLayout = new QVBoxLayout(mBody);
-    mBodyLayout->setContentsMargins(0, 0, 0, 0);
-    mBodyLayout->setSpacing(6);
+    mBodyLayout->setContentsMargins(0, 4, 0, 0);
+    mBodyLayout->setSpacing(0);
     scroll->setWidget(mBody);
     outer->addWidget(scroll, 1);
 
@@ -1042,7 +1371,31 @@ void AttributeEditor::runOnNode(const char* command, json call)
     }
 }
 
-void AttributeEditor::removeCategory(const std::string& category) { runOnNode("deleteAttr", {{"category", category}}); }
+void AttributeEditor::removeCategory(const std::string& category)
+{
+    scene::Node* n = Graph::current().node(mNode);
+    if (!n)
+        return;
+    UndoChunk chunk("Remove " + category);
+    // Custom also holds the attributes added without a category.
+    if (category == attrAuthoring::kCustomCategory)
+    {
+        std::vector<std::string> loose;
+        bool named = false;
+        for (const scene::AttrDef& d : n->type().attrs)
+            if ((d.flags & scene::AttrUser) && d.name != "usdApiSchemas")
+            {
+                if (d.category.empty())
+                    loose.push_back(d.name);
+                named |= d.category == category;
+            }
+        for (const std::string& attr : loose)
+            runOnNode("deleteAttr", {{"attribute", attr}});
+        if (!named)
+            return;
+    }
+    runOnNode("deleteAttr", {{"category", category}});
+}
 
 void AttributeEditor::removeElement(const std::string& attr)
 {
@@ -1067,6 +1420,7 @@ QWidget* AttributeEditor::colorSwatch(const scene::AttrDef& def, scene::NodeId i
 {
     // A data display: the swatch shows the stored linear colour in sRGB.
     auto* b = new QToolButton;
+    b->setProperty("lilaRawColors", true);
     b->setMinimumWidth(36);
     b->setEnabled(!readOnly);
     std::string attr = def.name;
@@ -1079,7 +1433,7 @@ QWidget* AttributeEditor::colorSwatch(const scene::AttrDef& def, scene::NodeId i
     mUpdaters.push_back([b, current] {
         glm::dvec3 c = current();
         QColor q = QColor::fromRgbF(float(linearToSrgb(c.x)), float(linearToSrgb(c.y)), float(linearToSrgb(c.z)));
-        b->setStyleSheet(QString("QToolButton { background: %1; border: 1px solid #141414; }").arg(q.name()));
+        b->setStyleSheet(QString("QToolButton { background: %1; border-radius: 4px; }").arg(q.name()));
     });
     connect(b, &QToolButton::clicked, this, [b, attr, title, id, index, current] {
         const scene::Node* n = Graph::current().node(id);
@@ -1172,7 +1526,7 @@ void AttributeEditor::rebuild()
         return;
     }
     if (QWidget* list = issueList())
-        mBodyLayout->addWidget(section("Issues", list));
+        mBodyLayout->addWidget(aeSection("Issues", list).box);
     /** The issues on a component as a whole: a type, a category or a section by its title. */
     auto componentIssues = [&](std::string_view typeName, std::string_view category, const QString& title) {
         std::vector<const dx::Issue*> out;
@@ -1203,6 +1557,37 @@ void AttributeEditor::rebuild()
                 if (int index = n->type().attrIndex(t); index >= 0)
                     mTriggers.insert(index);
         }
+    /** Greys out a row while its switch is off: a bool its name extends, or a filter's enabled test. */
+    auto switchWith = [&](const scene::AttrDef& def, QWidget* label, QWidget* field) {
+        const scene::AttrDef* sw = nullptr;
+        for (const scene::AttrDef& s : n->type().attrs)
+            if (aeSwitches(s, def) && (!sw || s.name.size() > sw->name.size()))
+                sw = &s;
+        std::vector<std::function<bool(const scene::Node&, const std::string&)>> tests;
+        for (const attributeEditor::AttrFilter* f : filters)
+            if (f->enabled)
+                tests.push_back(f->enabled);
+        if (!sw && tests.empty())
+            return;
+        const int swIndex = sw ? n->type().attrIndex(sw->name) : -1;
+        mUpdaters.push_back([label, field, id, swIndex, tests, name = def.name] {
+            Graph& graph = Graph::current();
+            const scene::Node* node = graph.node(id);
+            if (!node)
+                return;
+            bool on = true;
+            if (swIndex >= 0)
+            {
+                const scene::PlugValue& v = graph.value({id, swIndex});
+                if (auto* b = std::get_if<bool>(&v))
+                    on = *b;
+            }
+            for (const auto& test : tests)
+                on = on && test(*node, name);
+            label->setEnabled(on);
+            field->setEnabled(on);
+        });
+    };
     /** Adds one attr's row to form; false when the attr shows no editor. */
     auto addRow = [&](QFormLayout* form, const scene::AttrDef& def, int element, QString labelText) -> bool {
         if (def.flags & scene::AttrHidden)
@@ -1223,14 +1608,14 @@ void AttributeEditor::rebuild()
         std::vector<ScrubTarget> scrubbed;
         const NumberScrub::Commit commit = [this](const std::string& a, const json& v) { set(a, v); };
 
+        const QString unit = aeUnitOf(def);
         auto numberEdit = [&](int component) {
             const std::optional<std::pair<double, double>> span = fillSpan(def);
-            auto* e = new NumberField(span);
-            e->setAlignment(Qt::AlignRight);
+            auto* e = new NumberField(span, unit, component >= 0 && !(def.flags & scene::AttrColor) ? char('X' + component) : 0);
             e->setReadOnly(readOnly);
             if (readOnly)
                 e->unsetCursor();
-            e->setMinimumWidth(e->fontMetrics().horizontalAdvance("-0.000") + 8);
+            e->setMinimumWidth(e->fontMetrics().horizontalAdvance("-0.0") + 8 + e->textMargins().left() + e->textMargins().right());
             e->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
             std::string target = component >= 0 ? def.childNames[component] : attr;
             if (!readOnly)
@@ -1289,6 +1674,7 @@ void AttributeEditor::rebuild()
                     d = double(*i);
                 e->setText(attrView::formatNumber(d));
                 e->showValue(d);
+                e->setState(ChannelBox::stateOf({ref.node, ref.attr, component, ref.element}));
             });
             return e;
         };
@@ -1302,7 +1688,7 @@ void AttributeEditor::rebuild()
             field = new QWidget;
             auto* h = new QHBoxLayout(field);
             h->setContentsMargins(0, 0, 0, 0);
-            h->setSpacing(3);
+            h->setSpacing(2);
             for (int c = 0; c < 3; ++c)
                 h->addWidget(numberEdit(c), 1);
             if ((def.flags & scene::AttrColor) && element < 0)
@@ -1326,11 +1712,34 @@ void AttributeEditor::rebuild()
         }
         case PlugType::Enum:
         {
-            auto* combo = new QComboBox;
+            std::vector<QString> shown;
+            int chars = 0;
             for (const std::string& e : def.enumNames)
-                combo->addItem(QString::fromStdString(e));
+            {
+                shown.push_back(aeEnumLabel(e));
+                chars += int(shown.back().size());
+            }
+            // A short exclusive choice (an axis, a plane) reads at a glance as one strip.
+            if (shown.size() >= 2 && shown.size() <= 4 && chars <= 18)
+            {
+                auto* strip = new controls::Segmented;
+                const std::vector<std::string> docs = choiceTips::forAttr(def);
+                for (size_t i = 0; i < shown.size(); ++i)
+                    strip->add(shown[i], {}, i < docs.size() ? QString::fromStdString(docs[i]) : QString(), int(i));
+                strip->setEnabled(!readOnly);
+                connect(strip, &controls::Segmented::picked, this, [this, attr](int i) { set(attr, int64_t(i)); });
+                mUpdaters.push_back([strip, ref] {
+                    QSignalBlocker block(strip);
+                    strip->setCurrent(int(std::get<int64_t>(Graph::current().value(ref))));
+                });
+                field = strip;
+                break;
+            }
+            auto* combo = new QComboBox;
+            for (size_t i = 0; i < shown.size(); ++i)
+                combo->addItem(shown[i], qlonglong(i));
             combo->setEnabled(!readOnly);
-            connect(combo, &QComboBox::activated, this, [this, attr](int i) { set(attr, int64_t(i)); });
+            connect(combo, &QComboBox::activated, this, [this, attr, combo](int i) { set(attr, int64_t(combo->itemData(i).toLongLong())); });
             mUpdaters.push_back([combo, ref, owner = this] {
                 QSignalBlocker block(combo);
                 combo->setPlaceholderText("--");
@@ -1519,10 +1928,10 @@ void AttributeEditor::rebuild()
         label->setToolTip(QString::fromStdString(def.name + (def.shortName.empty() ? "" : " (" + def.shortName + ")") +
                                                  (def.doc.empty() ? "" : "\n" + def.doc)));
         if (readOnly)
-            label->setStyleSheet("color: #8a8a8a;");
+            aeDim(label, "disabled");
         else if (std::optional<json> d = valueReset::plugDefault(def))
             onMiddleClickReset(label, [this, attr, v = *d] { set(attr, v); },
-                               QString::fromStdString(valueReset::describe(*d, def.enumNames)), field);
+                               QString::fromStdString(valueReset::describe(*d, aeEnumLabels(def))), field);
         if (!scrubbed.empty())
             new NumberScrub(label, std::move(scrubbed), commit);
         std::vector<const dx::Issue*> rowIssues;
@@ -1590,7 +1999,7 @@ void AttributeEditor::rebuild()
                 src = g.source({ref.node, ref.attr, c, -1});
             if (const scene::Node* from = src ? g.node(src->node) : nullptr; from && !from->type().isA("animCurve") && !from->type().isA("animCurveRQ"))
             {
-                auto* link = new QLabel(QString("<a href=\"x\">\u2190 %1</a>").arg(QString::fromStdString(g.plugName(*src)).toHtmlEscaped()), row);
+                auto* link = new QLabel(QString("<a href=\"x\">%1</a>").arg(QString::fromStdString(g.plugName(*src)).toHtmlEscaped()), row);
                 link->setObjectName("aeSourceLink");
                 link->setToolTip("Driven by this plug: click to show its node here");
                 connect(link, &QLabel::linkActivated, this, [this, id = src->node] { focusNode(id); });
@@ -1598,14 +2007,8 @@ void AttributeEditor::rebuild()
             }
             auto* badge = new QLabel(row);
             badge->setObjectName("multiBadge");
-            const QColor accent = themeColor("accent");
-            badge->setStyleSheet(QString("QLabel { color: %1; background: rgba(%2, %3, %4, 51); border-radius: 6px; padding: 0 4px; "
-                                         "font-size: 10px; font-weight: 600; }")
-                                     .arg(accent.name())
-                                     .arg(accent.red())
-                                     .arg(accent.green())
-                                     .arg(accent.blue()));
-            badge->setProperty("lilaRawColors", true);
+            badge->setFont(aeSmallFont(badge->font()));
+            aeDim(badge);
             if (auto it = mBadgeCounts.find(def.name); it != mBadgeCounts.end())
                 badge->setText(QString("\u00d7%1").arg(it->second));
             else
@@ -1616,6 +2019,8 @@ void AttributeEditor::rebuild()
             h->addWidget(badge);
             field = row;
         }
+        if (element < 0)
+            switchWith(def, label, field);
         new LabelEdgeDrag(label, [this](int x, bool done) { dragLabelEdge(x, done); }, [this] { resetLabelEdge(); });
         mSearchRows.push_back({form, label, def});
         form->addRow(label, field);
@@ -1646,7 +2051,7 @@ void AttributeEditor::rebuild()
             for (const scene::PlugRef& e : g.elements({id, index}))
                 indices.push_back(e.element);
         auto* heading = new QLabel(niceName(addPlug));
-        heading->setStyleSheet("color: #c8c8c8; padding-top: 4px;");
+        heading->setContentsMargins(0, 4, 0, 0);
         heading->setToolTip(QString::fromStdString(def.doc));
         form->addRow(heading);
         int added = 1;
@@ -1684,197 +2089,116 @@ void AttributeEditor::rebuild()
         form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
         form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
         form->setRowWrapPolicy(QFormLayout::DontWrapRows);
-        form->setContentsMargins(8, 2, 4, 2);
-        form->setSpacing(3);
+        form->setContentsMargins(4, 0, 6, 0);
+        form->setHorizontalSpacing(8);
+        form->setVerticalSpacing(4);
         return form;
     };
-    /**
-     * A group's heading row in form, over its rows: a chevron folds them (remembered per heading), a rule underlines
-     * it. Returns the heading label and the form its rows go in.
-     */
-    auto subHeading = [&](QFormLayout* form, const std::string& title, std::function<void()> remove = {}) -> std::pair<QLabel*, QFormLayout*> {
-        auto* l = new QLabel(QString::fromStdString(title));
-        l->setStyleSheet("color: #c8c8c8; font-weight: 600;");
-        markIssues(l, componentIssues({}, title, QString::fromStdString(title)));
-        noteComponent(title, l);
-        auto* row = new QWidget;
-        row->setObjectName("groupHeading");
-        row->setStyleSheet("#groupHeading { border-bottom: 1px solid #474747; }");
-        auto* h = new QHBoxLayout(row);
-        h->setContentsMargins(0, 8, 0, 1);
-        h->setSpacing(2);
-        auto* fold = new QToolButton;
-        fold->setObjectName("groupFold");
-        fold->setAutoRaise(true);
-        fold->setCheckable(true);
-        fold->setIconSize(QSize(12, 12));
-        fold->setToolTip("Fold " + QString::fromStdString(title));
-        h->addWidget(fold);
-        h->addWidget(l, 1);
-        auto* body = new QWidget;
-        QFormLayout* rows = newForm(body);
-        rows->setContentsMargins(0, 2, 0, 2);
-        std::string safe = title;
-        for (char& c : safe)
-            if (c == '/' || c == '~')
-                c = '_';
-        const std::string pointer = "/foldedGroups/" + safe;
-        auto setFolded = [fold, body](bool folded) {
-            body->setVisible(!folded);
-            fold->setIcon(icon(folded ? "chevron-right" : "chevron-down"));
-        };
-        const bool folded = PrefStore::get().value("attributeEditor", pointer, false);
-        fold->setChecked(folded);
-        setFolded(folded);
-        connect(fold, &QToolButton::toggled, body, [setFolded, pointer](bool on) {
-            setFolded(on);
-            if (on)
-                PrefStore::get().set("attributeEditor", pointer, true);
-            else
-                PrefStore::get().remove("attributeEditor", pointer);
-        });
-        form->addRow(row);
-        form->addRow(body);
-        if (!remove)
-            return {l, rows};
-        auto* plus = new QToolButton;
-        plus->setObjectName("headingAdd");
-        plus->setIcon(icon("plus"));
-        plus->setAutoRaise(true);
-        plus->setToolTip(QString::fromStdString("Add an attribute under " + title));
-        connect(plus, &QToolButton::clicked, this, [this, plus, title] { openAdd(plus, title); });
-        h->addWidget(plus);
-        auto* x = new QToolButton;
-        x->setIcon(icon("x"));
-        x->setAutoRaise(true);
-        x->setToolTip(QString::fromStdString("Remove " + title + " and its attributes"));
-        connect(x, &QToolButton::clicked, this, std::move(remove));
-        h->addWidget(x);
-        return {l, rows};
+    auto visible = [&](const scene::AttrDef& def) {
+        if (def.flags & scene::AttrHidden)
+            return false;
+        for (const attributeEditor::AttrFilter* f : filters)
+            if (f->shows && !f->shows(*n, def.name))
+                return false;
+        return true;
+    };
+    /** The bool every other shown attr of a section depends on, which then sits in the section's header. */
+    auto headerSwitch = [&](const std::vector<const scene::AttrDef*>& defs) -> const scene::AttrDef* {
+        std::vector<const scene::AttrDef*> shown;
+        for (const scene::AttrDef* d : defs)
+            if (visible(*d))
+                shown.push_back(d);
+        if (shown.size() < 2)
+            return nullptr;
+        for (const scene::AttrDef* sw : shown)
+            if (std::all_of(shown.begin(), shown.end(), [sw](const scene::AttrDef* d) { return d == sw || aeSwitches(*sw, *d); }))
+                return sw;
+        return nullptr;
+    };
+    /** A section of attr rows; null box when no row shows, unless keepEmpty (a component without attributes yet). */
+    auto attrSection = [&](const QString& title, const std::vector<const scene::AttrDef*>& defs, const std::vector<const dx::Issue*>& marks,
+                           const QString& about, bool allowSwitch, bool keepEmpty) -> AeSection {
+        auto* content = new QWidget;
+        QFormLayout* form = newForm(content);
+        const scene::AttrDef* sw = allowSwitch ? headerSwitch(defs) : nullptr;
+        int added = 0;
+        for (const scene::AttrDef* d : defs)
+            if (d != sw)
+                added += addAttrRows(form, *d);
+        if (!added && !keepEmpty)
+        {
+            delete content;
+            return {};
+        }
+        if (added && !about.isEmpty())
+        {
+            auto* note = new QLabel(about);
+            note->setWordWrap(true);
+            aeDim(note);
+            form->insertRow(0, note);
+        }
+        AeSection s = aeSection(title, content, marks);
+        if (sw)
+        {
+            const scene::PlugRef ref{id, n->type().attrIndex(sw->name)};
+            auto* check = new QCheckBox(title);
+            check->setObjectName("aeSectionSwitch");
+            aeBold(check);
+            check->setToolTip(QString::fromStdString(sw->doc));
+            check->setEnabled((sw->flags & scene::AttrInput) && !g.source(ref));
+            connect(check, &QCheckBox::clicked, this, [this, attr = sw->name](bool on) { set(attr, on); });
+            mUpdaters.push_back([check, ref, owner = this] {
+                QSignalBlocker block(check);
+                const scene::PlugValue v = Graph::current().value(ref);
+                if (owner->mixed(ref))
+                    check->setCheckState(Qt::PartiallyChecked);
+                else if (auto* b = std::get_if<bool>(&v))
+                    check->setChecked(*b);
+            });
+            mAttrWidgets.emplace(sw->name, check);
+            aeTitleOn(s, check);
+        }
+        return s;
     };
 
-    // Attrs with a category show together under its heading in a Parameters section, in attr order.
+    // Attrs with a category show as that category's section, in attr order; those with only a nice name as Parameters.
     std::vector<const scene::AttrDef*> parameters;
     for (const scene::NodeType* t : chain)
         for (const scene::AttrDef& def : t->ownAttrs)
             if (!def.category.empty() || (!def.niceName.empty() && !(def.flags & scene::AttrHidden)))
                 parameters.push_back(&def);
-    if (!parameters.empty())
     {
-        auto* content = new QWidget;
-        QFormLayout* form = newForm(content);
         std::vector<std::string> categories{""};
         for (const scene::AttrDef* d : parameters)
             if (std::find(categories.begin(), categories.end(), d->category) == categories.end())
                 categories.push_back(d->category);
-        int added = 0;
         for (const std::string& c : categories)
         {
-            QFormLayout* rows = c.empty() ? form : subHeading(form, c).second;
+            std::vector<const scene::AttrDef*> defs;
             for (const scene::AttrDef* d : parameters)
                 if (d->category == c)
-                    added += addAttrRows(rows, *d);
+                    defs.push_back(d);
+            const QString title = c.empty() ? QString("Parameters") : QString::fromStdString(c);
+            AeSection s = attrSection(title, defs, c.empty() ? std::vector<const dx::Issue*>{} : componentIssues({}, c, title), {}, true, false);
+            if (!s.box)
+                continue;
+            noteComponent(c, s.box);
+            mBodyLayout->addWidget(s.box);
         }
-        if (added)
-            mBodyLayout->addWidget(section("Parameters", content));
-        else
-            delete content;
     }
 
     for (const scene::NodeType* t : chain)
     {
-        auto* content = new QWidget;
-        QFormLayout* form = newForm(content);
-        int added = 0;
+        std::vector<const scene::AttrDef*> defs;
         for (const scene::AttrDef& def : t->ownAttrs)
-        {
-            if (std::find(parameters.begin(), parameters.end(), &def) != parameters.end())
-                continue;
-            added += addAttrRows(form, def);
-        }
-        if (added && !t->doc.empty())
-        {
-            auto* about = new QLabel(QString::fromStdString(t->doc));
-            about->setWordWrap(true);
-            about->setStyleSheet("color: #9a9a9a;");
-            form->insertRow(0, about);
-        }
-        if (added)
-        {
-            const QString title = niceName(t->name) + " Attributes";
-            QWidget* box = section(title, content, componentIssues(t->name, {}, title));
-            noteComponent(t->name, box);
-            mBodyLayout->addWidget(box);
-        }
-        else
-            delete content;
-    }
-    {
-        auto* content = new QWidget;
-        QFormLayout* form = newForm(content);
-        int added = 0;
-        std::vector<std::string> categories{""};
-        auto addCategory = [&](const std::string& c) {
-            if (std::find(categories.begin(), categories.end(), c) == categories.end())
-                categories.push_back(c);
-        };
-        // The schema list itself stays out: each schema is its heading, and removing the heading removes it.
-        const int schemaList = n->type().attrIndex("usdApiSchemas");
-        auto shownExtra = [&](const scene::AttrDef& def) { return (def.flags & scene::AttrUser) && def.name != "usdApiSchemas"; };
-        for (const scene::AttrDef& def : n->type().attrs)
-            if (shownExtra(def))
-                addCategory(def.category);
-        if (schemaList >= 0 && n->type().attrs[size_t(schemaList)].type == scene::PlugType::String)
-            for (const auto& [index, v] : n->elements(schemaList))
-                if (const std::string* s = std::get_if<std::string>(&v); s && !s->empty())
-                    addCategory(*s);
-        for (const std::string& c : categories)
-        {
-            QFormLayout* rows = form;
-            if (!c.empty())
-            {
-                QLabel* heading = nullptr;
-                std::tie(heading, rows) = subHeading(form, c, [this, c] { removeCategory(c); });
-                ++added;
-                // Only USD objects look up labels: listing USD's schemas loads OpenUSDCore.
-                if (schemaList >= 0)
-                    heading->setText(QString::fromStdString(scene::attrComponents::labelOf(c)));
-                heading->setObjectName("componentHeading");
-                heading->setContextMenuPolicy(Qt::CustomContextMenu);
-                connect(heading, &QWidget::customContextMenuRequested, this, [this, heading, c](const QPoint& at) { headingMenu(c, heading, at); });
-                heading->setAcceptDrops(true);
-                heading->setCursor(Qt::OpenHandCursor);
-                auto* gestures = new RowGestures(heading);
-                gestures->dragMime = kHeadingMime;
-                gestures->dragText = QString::fromStdString(c);
-                gestures->accepts = [c](const QMimeData* d) {
-                    return d->hasFormat(kAttrMime) || (d->hasFormat(kHeadingMime) && mimeText(d, kHeadingMime) != c);
-                };
-                gestures->dropped = [this, c](const QMimeData* d) {
-                    if (d->hasFormat(kAttrMime))
-                        dropAttr(mimeText(d, kAttrMime), {}, c);
-                    else
-                        dropHeading(mimeText(d, kHeadingMime), c);
-                };
-            }
-            for (const scene::AttrDef& def : n->type().attrs)
-                if (shownExtra(def) && def.category == c)
-                    added += addAttrRows(rows, def);
-        }
-        if (added)
-        {
-            auto* add = new QToolButton;
-            add->setObjectName("extraAdd");
-            add->setIcon(icon("plus"));
-            add->setText("Add Attribute");
-            add->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-            add->setAutoRaise(true);
-            connect(add, &QToolButton::clicked, this, [this, add] { openAdd(add); });
-            form->addRow(QString(), add);
-            mBodyLayout->addWidget(section("Extra Attributes", content));
-        }
-        else
-            delete content;
+            if (std::find(parameters.begin(), parameters.end(), &def) == parameters.end())
+                defs.push_back(&def);
+        const QString title = niceName(t->name);
+        AeSection s = attrSection(title, defs, componentIssues(t->name, {}, title), QString::fromStdString(t->doc), true, false);
+        if (!s.box)
+            continue;
+        noteComponent(t->name, s.box);
+        mBodyLayout->addWidget(s.box);
     }
     {
         // Drives: what this object's plugs feed, each a link to the node it drives.
@@ -1889,14 +2213,18 @@ void AttributeEditor::rebuild()
             if (!to || to->type().isA("animCurve") || to->type().isA("animCurveRQ"))
                 continue;
             const std::string from = g.plugName(src);
-            auto* link = new QLabel(QString("<a href=\"x\">\u2192 %1</a>").arg(QString::fromStdString(g.plugName(dst)).toHtmlEscaped()));
+            auto* link = new QLabel(QString("<a href=\"x\">%1</a>").arg(QString::fromStdString(g.plugName(dst)).toHtmlEscaped()));
             link->setObjectName("aeDrivesLink");
+            link->setToolTip("Show the driven node here");
             connect(link, &QLabel::linkActivated, this, [this, nodeId = dst.node] { focusNode(nodeId); });
-            form->addRow(QString::fromStdString(from.substr(from.find('.') + 1)), link);
+            auto* label = new QLabel(QString::fromStdString(from.substr(from.find('.') + 1)));
+            label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            aeDim(label);
+            form->addRow(label, link);
             ++added;
         }
         if (added)
-            mBodyLayout->addWidget(section("Drives", content));
+            mBodyLayout->addWidget(aeSection("Drives", content).box);
         else
             delete content;
     }
@@ -1905,26 +2233,150 @@ void AttributeEditor::rebuild()
             if (QWidget* w = extra->make(id))
             {
                 const QString title = QString::fromStdString(extra->title);
-                QWidget* box = section(title, w, componentIssues({}, {}, title));
+                QWidget* box = aeSection(title, w, componentIssues({}, {}, title)).box;
                 noteComponent(extra->title, box);
                 mBodyLayout->addWidget(box);
             }
+
+    // Added attributes: a divider carrying Add Attribute, then one section per category; uncategorised ones are Custom.
+    std::set<QWidget*> addedBoxes;
+    {
+        auto* divider = new QWidget;
+        divider->setObjectName("aeAddedDivider");
+        auto* dh = new QHBoxLayout(divider);
+        dh->setContentsMargins(4, 10, 6, 4);
+        dh->setSpacing(8);
+        auto* word = new QLabel("Added", divider);
+        word->setFont(aeSmallFont(word->font()));
+        aeDim(word);
+        auto* rule = new QFrame(divider);
+        rule->setFrameShape(QFrame::NoFrame);
+        rule->setFixedHeight(1);
+        rule->setAutoFillBackground(true);
+        QPalette rulePal = rule->palette();
+        rulePal.setColor(QPalette::Window, themeColor("border"));
+        rule->setPalette(rulePal);
+        auto* add = new QToolButton(divider);
+        add->setObjectName("extraAdd");
+        add->setIcon(icon("plus"));
+        add->setText("Add Attribute");
+        add->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        add->setAutoRaise(true);
+        add->setToolTip("Add an attribute or component to this object");
+        connect(add, &QToolButton::clicked, this, [this, add] { openAdd(add); });
+        dh->addWidget(word);
+        dh->addWidget(rule, 1, Qt::AlignVCenter);
+        dh->addWidget(add);
+        mBodyLayout->addWidget(divider);
+
+        auto keyOf = [](const std::string& c) { return c.empty() ? std::string(attrAuthoring::kCustomCategory) : c; };
+        std::vector<std::string> categories;
+        auto addCategory = [&](const std::string& c) {
+            if (std::find(categories.begin(), categories.end(), c) == categories.end())
+                categories.push_back(c);
+        };
+        // The schema list itself stays out: each schema is its section, and removing the section removes it.
+        const int schemaList = n->type().attrIndex("usdApiSchemas");
+        auto shownExtra = [&](const scene::AttrDef& def) { return (def.flags & scene::AttrUser) && def.name != "usdApiSchemas"; };
+        for (const scene::AttrDef& def : n->type().attrs)
+            if (shownExtra(def))
+                addCategory(keyOf(def.category));
+        std::set<std::string> schemas;
+        if (schemaList >= 0 && n->type().attrs[size_t(schemaList)].type == scene::PlugType::String)
+            for (const auto& [index, v] : n->elements(schemaList))
+                if (const std::string* s = std::get_if<std::string>(&v); s && !s->empty())
+                {
+                    addCategory(*s);
+                    schemas.insert(*s);
+                }
+        for (const std::string& c : categories)
+        {
+            std::vector<const scene::AttrDef*> defs;
+            for (const scene::AttrDef& def : n->type().attrs)
+                if (shownExtra(def) && keyOf(def.category) == c)
+                    defs.push_back(&def);
+            const bool usd = schemas.contains(c);
+            QString label = QString::fromStdString(c);
+            // Only USD objects look up labels: listing USD's schemas loads OpenUSDCore.
+            if (schemaList >= 0)
+                label = QString::fromStdString(scene::attrComponents::labelOf(c));
+            if (usd && label == QString::fromStdString(c))
+                label = aeSchemaLabel(c);
+            AeSection s = attrSection(label, defs, componentIssues({}, c, QString::fromStdString(c)), {}, false, true);
+            auto* heading = new QLabel(label);
+            heading->setObjectName("componentHeading");
+            aeBold(heading);
+            heading->setToolTip(QString::fromStdString(c) + "\nDrag onto another heading to move its attributes; right-click for more");
+            QLabel* tag = nullptr;
+            if (usd)
+            {
+                tag = new QLabel("USD");
+                tag->setFont(aeSmallFont(tag->font()));
+                aeDim(tag);
+                tag->setToolTip("A USD API schema applied to this prim");
+            }
+            aeTitleOn(s, heading, tag);
+            heading->setContextMenuPolicy(Qt::CustomContextMenu);
+            connect(heading, &QWidget::customContextMenuRequested, this, [this, heading, c](const QPoint& at) { headingMenu(c, heading, at); });
+            heading->setAcceptDrops(true);
+            heading->setCursor(Qt::OpenHandCursor);
+            auto* gestures = new RowGestures(heading);
+            gestures->dragMime = kHeadingMime;
+            gestures->dragText = QString::fromStdString(c);
+            gestures->clicked = [header = s.header] { header->toggle(); };
+            gestures->accepts = [c](const QMimeData* d) {
+                return d->hasFormat(kAttrMime) || (d->hasFormat(kHeadingMime) && mimeText(d, kHeadingMime) != c);
+            };
+            gestures->dropped = [this, c](const QMimeData* d) {
+                if (d->hasFormat(kAttrMime))
+                    dropAttr(mimeText(d, kAttrMime), {}, c);
+                else
+                    dropHeading(mimeText(d, kHeadingMime), c);
+            };
+            auto* plus = new QToolButton;
+            plus->setObjectName("headingAdd");
+            plus->setIcon(icon("plus"));
+            plus->setAutoRaise(true);
+            plus->setToolTip("Add an attribute under " + label);
+            plus->setProperty(kHoverOnly, true);
+            connect(plus, &QToolButton::clicked, this, [this, plus, c] { openAdd(plus, c); });
+            s.head->addWidget(plus);
+            auto* x = new QToolButton;
+            x->setIcon(icon("x"));
+            x->setAutoRaise(true);
+            x->setToolTip("Remove " + label + " and its attributes");
+            x->setProperty(kHoverOnly, true);
+            connect(x, &QToolButton::clicked, this, [this, c] { removeCategory(c); });
+            s.head->addWidget(x);
+            noteComponent(c, s.box);
+            addedBoxes.insert(s.box);
+            mBodyLayout->addWidget(s.box);
+        }
+    }
     for (int i = 0; i < mBodyLayout->count(); ++i)
         if (QWidget* box = mBodyLayout->itemAt(i)->widget())
-            if (auto* header = box->findChild<QToolButton*>(QString(), Qt::FindDirectChildrenOnly))
+            if (QToolButton* header = aeHeaderOf(box))
             {
-                mSections.emplace_back(box, header->text());
+                mSections.push_back({box, header->text(), addedBoxes.contains(box)});
                 rememberCollapse(box, n->type().registered().name + ":" + header->text().toStdString());
-                auto* help = new QToolButton(header);
+                QWidget* head = header->parentWidget();
+                auto* help = new QToolButton(head);
                 help->setObjectName("sectionHelp");
                 help->setIcon(icon("help-circle"));
                 help->setAutoRaise(true);
                 help->setToolTip("Open the docs for " + QString::fromStdString(n->type().registered().name));
-                auto* hl = new QHBoxLayout(header);
-                hl->setContentsMargins(0, 0, 2, 0);
-                hl->addStretch(1);
-                hl->addWidget(help);
+                help->setProperty(kHoverOnly, true);
+                static_cast<QHBoxLayout*>(head->layout())->addWidget(help);
                 connect(help, &QToolButton::clicked, this, [page = attrView::helpPageFor(n->type())] { docs::open(page); });
+                // Header tools show while the pointer is over the header, so resting headers stay plain text.
+                std::vector<QWidget*> tools;
+                for (QWidget* w : head->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly))
+                    if (w->property(kHoverOnly).toBool())
+                    {
+                        w->hide();
+                        tools.push_back(w);
+                    }
+                (new RowGestures(head))->reveal = std::move(tools);
             }
     mBodyLayout->addStretch(1);
     updateValues();
@@ -2027,7 +2479,6 @@ void AttributeEditor::rebuildHeader()
 
     // The selected objects, lead first; a click makes one the lead without touching the selection.
     const std::vector<scene::NodeId> sel = attrView::selectionLeadFirst();
-    const QColor accent = themeColor("accent");
     for (size_t i = 0; i < sel.size() && i < 4; ++i)
     {
         const scene::Node* n = g.node(sel[i]);
@@ -2040,7 +2491,7 @@ void AttributeEditor::rebuildHeader()
         chip->setAutoRaise(true);
         chip->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
         if (i == 0)
-            chip->setStyleSheet("QToolButton { font-weight: 600; }");
+            aeBold(chip);
         connect(chip, &QToolButton::clicked, this, [this, id = sel[i]] {
             mFocus = scene::kNoNode;
             mPinned = false;
@@ -2053,13 +2504,12 @@ void AttributeEditor::rebuildHeader()
     if (sel.size() > 4)
     {
         auto* more = new QLabel(QString("+%1").arg(sel.size() - 4), chipArea);
-        more->setStyleSheet(QString("color: %1;").arg(themeColor("dimText").name()));
+        aeDim(more);
         flow->addWidget(more);
     }
     mMultiPill = new QLabel(chipArea);
     mMultiPill->setObjectName("multiEditPill");
-    mMultiPill->setProperty("lilaRawColors", true);
-    mMultiPill->setStyleSheet(QString("QLabel { color: %1; border: 1px solid %1; border-radius: 3px; padding: 1px 6px; }").arg(accent.name()));
+    aeBold(mMultiPill);
     mMultiPill->hide();
     flow->addWidget(mMultiPill);
 
@@ -2085,7 +2535,7 @@ void AttributeEditor::rebuildHeader()
         if (!related.empty())
         {
             auto* sep = new QLabel(QString::fromUtf8("·"), chipArea);
-            sep->setStyleSheet(QString("color: %1;").arg(themeColor("dimText").name()));
+            aeDim(sep);
             flow->addWidget(sep);
         }
         for (size_t i = 0; i < related.size() && i < 4; ++i)
@@ -2190,13 +2640,14 @@ void AttributeEditor::showViewPopover(QWidget* anchor)
     {
         v->addWidget(new QLabel("<b>Sections</b>", pop));
         const std::string type = n->type().registered().name;
-        for (const auto& [box, title] : mSections)
+        for (const SectionEntry& s : mSections)
         {
+            const QString title = s.title;
             if (title == "Issues")
                 continue;
             auto* cb = new QCheckBox(title, pop);
             cb->setObjectName("sectionToggle");
-            cb->setChecked(attrView::sectionShown(type, title));
+            cb->setChecked(attrView::sectionShown(type, title, s.added));
             connect(cb, &QCheckBox::toggled, pop, [type, title](bool on) { attrView::setSectionShown(type, title, on); });
             v->addWidget(cb);
         }
@@ -2388,20 +2839,20 @@ void AttributeEditor::applySearch()
             for (QWidget* w = r.form->parentWidget(); w && w != mBody; w = w->parentWidget())
                 hit.insert(w);
     }
-    for (const auto& [box, title] : mSections)
+    for (const auto& [box, title, added] : mSections)
     {
         const scene::Node* shown = Graph::current().node(mNode);
-        const bool inView = !shown || title == "Issues" || attrView::sectionShown(shown->type().registered().name, title);
+        const bool inView = !shown || title == "Issues" || attrView::sectionShown(shown->type().registered().name, title, added);
         const bool show = inView && (q.isEmpty() || hit.contains(box) || title.contains(q, Qt::CaseInsensitive));
         box->setVisible(show);
         if (q.isEmpty() || !show)
             continue;
         // Searching opens the sections it finds rows in, without remembering them open.
-        if (auto* header = box->findChild<QToolButton*>(QString(), Qt::FindDirectChildrenOnly))
+        if (QToolButton* header = aeHeaderOf(box))
         {
             QSignalBlocker block(header);
             header->setChecked(true);
-            header->setArrowType(Qt::DownArrow);
+            header->setIcon(icon("chevron-down"));
             if (QLayoutItem* item = box->layout()->itemAt(1); item && item->widget())
                 item->widget()->setVisible(true);
         }
@@ -2410,7 +2861,7 @@ void AttributeEditor::applySearch()
 
 void AttributeEditor::rememberCollapse(QWidget* section, const std::string& key)
 {
-    auto* header = section->findChild<QToolButton*>(QString(), Qt::FindDirectChildrenOnly);
+    QToolButton* header = aeHeaderOf(section);
     if (!header)
         return;
     std::string safe = key;
@@ -2457,7 +2908,7 @@ void AttributeEditor::fitLabels()
     constexpr int kFieldRoom = 90;
     const int width = mScroll->viewport()->width();
     const double fraction = mDragFraction >= 0.0 ? mDragFraction : PrefStore::get().value("attributeEditor", "/labelFraction", 0.0);
-    const int wanted = fraction > 0.0 ? int(std::lround(fraction * width)) : std::min(longest, int(width * 0.4));
+    const int wanted = fraction > 0.0 ? int(std::lround(fraction * width)) : std::min(longest, int(width * 0.34));
     mLabelEdge = std::clamp(wanted, shortest, std::max(shortest, width - kFieldRoom));
     for (const Row& r : rows)
     {

@@ -1,4 +1,5 @@
 #include "ui/MainWindowDetail.h"
+#include "ui/ViewportHeaderConfig.h"
 #include "ui/CameraBookmarks.h"
 #include "ui/CreditsDialog.h"
 #include "ui/LicensesDialog.h"
@@ -19,6 +20,7 @@ using namespace mainWindowDetail;
 
 void MainWindow::registerActions()
 {
+    viewportHeader::registerActions();
     actions::add({"file.new", "New Scene", "File", [this] {
                       if (confirmDiscard())
                           actions::run(json{{"command", "newScene"}});

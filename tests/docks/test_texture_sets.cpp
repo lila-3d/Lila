@@ -26,6 +26,7 @@
 #include <QListWidget>
 #include <QMainWindow>
 #include <QPushButton>
+#include <QDoubleSpinBox>
 #include <QSpinBox>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -123,7 +124,7 @@ TEST_CASE("texture set panel builds a layer stack through tex commands, and undo
     CHECK(layerIn(stack()["layers"], a)->at("resolved")["emissive"]["enabled"].get<bool>());
 
     // The row's opacity sets every channel's (the channel picker shows all channels).
-    auto* opacity = panel->findChild<QSpinBox*>(QString::fromStdString("opacity:" + a));
+    auto* opacity = panel->findChild<QDoubleSpinBox*>(QString::fromStdString("opacity:" + a));
     REQUIRE(opacity);
     executed.clear();
     opacity->setValue(50);
@@ -138,9 +139,9 @@ TEST_CASE("texture set panel builds a layer stack through tex commands, and undo
     REQUIRE(UndoStack::get().undo());
     pumpWithDeletes();
     CHECK(layerIn(stack()["layers"], a)->at("resolved")["baseColor"]["opacity"].get<double>() == doctest::Approx(1.0));
-    opacity = panel->findChild<QSpinBox*>(QString::fromStdString("opacity:" + a));
+    opacity = panel->findChild<QDoubleSpinBox*>(QString::fromStdString("opacity:" + a));
     REQUIRE(opacity);
-    CHECK(opacity->value() == 100);
+    CHECK(opacity->value() == doctest::Approx(100.0));
 
     // Hiding a layer, and a folder taking a dropped layer.
     executed.clear();

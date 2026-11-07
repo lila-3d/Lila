@@ -43,6 +43,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <map>
 
@@ -54,6 +56,8 @@
 
 namespace lila::ui
 {
+namespace fs = std::filesystem;
+
 namespace
 {
 /**
@@ -329,11 +333,11 @@ namespace
 {
 QColor qcolor(themes::Rgba c) { return QColor(c.r, c.g, c.b, c.a); }
 
-/** Whether a theme's neutral ramp is Monotone's, so greys map to themselves and nothing needs rewriting. */
+/** Whether every neutral anchor is its own grey, so greys map to themselves and nothing needs rewriting. */
 bool monotoneRamp(const themes::Theme& t)
 {
     for (const themes::TokenInfo& info : themes::tokens())
-        if (info.level >= 0 && !themes::isDefault(t, info.id))
+        if (info.level >= 0 && t.color(info.id) != themes::Rgba{uint8_t(info.level), uint8_t(info.level), uint8_t(info.level), 255})
             return false;
     return true;
 }
@@ -342,28 +346,194 @@ bool gFirstRun = false;
 /** The resolved theme last pushed into the palette, to skip prefs changes that leave it alone. */
 std::string gApplied;
 
+/**
+ * Glyphs the app sheet draws (check mark, combo arrow), written as SVG in the theme's colours. Style sheets only take
+ * images from files, and Tabler's SVGs draw in currentColor, which a sheet image cannot set.
+ */
+QString sheetGlyph(const char* name, const std::string& color)
+{
+    static const std::map<std::string, std::string> paths = {
+        {"check", R"(<path d="M5 12l5 5l10 -10"/>)"},
+        {"chevron-down", R"(<path d="M6 9l6 6l6 -6"/>)"},
+        {"chevron-right", R"(<path d="M9 6l6 6l-6 6"/>)"},
+    };
+    fs::path dir = paths::userConfigDir() / "cache" / "sheet";
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    std::string hex = color.substr(1);
+    fs::path file = dir / (std::string(name) + "-" + hex + ".svg");
+    if (!fs::exists(file, ec))
+    {
+        std::ofstream out(file, std::ios::binary);
+        out << R"(<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke=")" << color
+            << R"(" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">)" << paths.at(name) << "</svg>";
+    }
+    return QString::fromStdString(file.generic_string());
+}
+
+/**
+ * The control vocabulary, app-wide: borderless controls separated by a fill step, fields one step above the panel,
+ * selection as the brightest fill, text tabs with an underline, slim scroll bars and 2 px chrome gaps between panels.
+ */
 QString appStyleSheet(const themes::Theme& t)
 {
-    auto c = [&](const char* id) { return QString::fromStdString(themes::formatColor(t.color(id))); };
-    return QString(R"(
-        QToolTip { border: 1px solid %1; padding: 3px; }
-        QDockWidget::title { background: %2; padding: 4px 6px; }
-        QMainWindow::separator { background: %3; width: 3px; height: 3px; }
-        QMainWindow::separator:hover { background: %4; }
-        QStatusBar { background: %5; }
-        QStatusBar QToolButton { border: none; padding: 1px 8px; }
-        QStatusBar QToolButton:checked { background: %6; }
-        QToolBar#sidebarStatus QToolButton:checked { background: %10; }
-        QTabBar#shelfTabs::tab { background: transparent; border: none; border-bottom: 2px solid transparent;
-                                 padding: 4px 10px 3px; margin-right: 2px; color: %7; }
-        QTabBar#shelfTabs::tab:hover { color: %8; }
-        QTabBar#shelfTabs::tab:selected { color: %8; border-bottom-color: %9; }
-        QWidget#shelfPanel QToolButton { border: none; border-radius: 4px; padding: 2px 6px; background: transparent; }
-        QWidget#shelfPanel QToolButton:hover { background: %10; }
-        QWidget#shelfPanel QToolButton:pressed { background: %6; }
-    )")
-        .arg(c("border"), c("panel"), c("separator"), c("hover"), c("statusBar"), c("checked"), c("dimText"), c("text"), c("accent"))
-        .arg(c("button"));
+    auto hex = [&](const char* id) { return themes::formatColor(t.color(id)); };
+    std::map<QString, QString> v = {
+        {"chrome", QString::fromStdString(hex("chrome"))},
+        {"panel", QString::fromStdString(hex("window"))},
+        {"field", QString::fromStdString(hex("input"))},
+        {"raised", QString::fromStdString(hex("button"))},
+        {"hover", QString::fromStdString(hex("hover"))},
+        {"pressed", QString::fromStdString(hex("pressed"))},
+        {"sel", QString::fromStdString(hex("checked"))},
+        {"selText", QString::fromStdString(hex("highlightText"))},
+        {"rule", QString::fromStdString(hex("rule"))},
+        {"dim", QString::fromStdString(hex("dimText"))},
+        {"text", QString::fromStdString(hex("text"))},
+        {"bright", QString::fromStdString(hex("brightText"))},
+        {"disabled", QString::fromStdString(hex("disabled"))},
+        {"focus", QString::fromStdString(hex("accent"))},
+        {"tooltip", QString::fromStdString(hex("tooltip"))},
+        {"tooltipText", QString::fromStdString(hex("tooltipText"))},
+        {"scroll", QString::fromStdString(hex("scrollbar"))},
+        {"menu", QString::fromStdString(hex("menu"))},
+        {"checkImg", sheetGlyph("check", hex("window"))},
+        {"comboImg", sheetGlyph("chevron-down", hex("dimText"))},
+    };
+    QString sheet = R"(
+        QMainWindow { background: $chrome; }
+        QMainWindow::separator { background: $chrome; width: 2px; height: 2px; }
+        QMainWindow::separator:hover { background: $pressed; }
+        QDockWidget::title { background: $panel; padding: 7px 8px 6px 12px; }
+        QToolTip { background: $tooltip; color: $tooltipText; border: 1px solid $rule; padding: 4px 6px; }
+
+        QMenuBar { background: $chrome; padding: 0 4px; }
+        QMenuBar::item { background: transparent; padding: 5px 9px; border-radius: 4px; color: $text; }
+        QMenuBar::item:selected { background: $hover; }
+        QMenuBar::item:pressed { background: $pressed; }
+
+        QStatusBar { background: $chrome; color: $dim; }
+        QStatusBar::item { border: none; }
+        QStatusBar QToolButton { padding: 1px 8px; color: $dim; }
+        QStatusBar QLabel { color: $dim; }
+
+        QToolButton { background: transparent; border: none; border-radius: 4px; padding: 3px; color: $text; }
+        QToolButton:hover { background: $hover; }
+        QToolButton:pressed { background: $pressed; }
+        QToolButton:checked { background: $sel; color: $selText; }
+        QToolButton:disabled { color: $disabled; }
+        QToolButton[popupMode="1"] { padding-right: 18px; }
+        QToolButton::menu-button { border: none; border-left: 1px solid $chrome; width: 16px; border-top-right-radius: 4px; border-bottom-right-radius: 4px; }
+        QToolButton::menu-button:hover { background: $pressed; }
+
+        QPushButton { background: $raised; border: none; border-radius: 4px; padding: 5px 12px; color: $text; }
+        QPushButton:hover { background: $hover; }
+        QPushButton:pressed { background: $pressed; }
+        QPushButton:checked { background: $sel; color: $selText; }
+        QPushButton:disabled { color: $disabled; }
+        QPushButton:default { background: $sel; color: $selText; }
+        QPushButton:flat { background: transparent; }
+        QPushButton:flat:hover { background: $hover; }
+
+        QLineEdit, QAbstractSpinBox { background: $field; border: 1px solid transparent; border-radius: 4px; padding: 3px 6px;
+                                      color: $text; selection-background-color: $sel; selection-color: $selText; }
+        QLineEdit:hover, QAbstractSpinBox:hover { background: $hover; }
+        QLineEdit:focus, QAbstractSpinBox:focus { border-color: $focus; background: $field; }
+        QLineEdit:disabled, QAbstractSpinBox:disabled { color: $disabled; }
+        QLineEdit[readOnly="true"] { background: transparent; }
+        QAbstractSpinBox::up-button, QAbstractSpinBox::down-button { width: 0; border: none; }
+        QAbstractSpinBox::up-arrow, QAbstractSpinBox::down-arrow { width: 0; height: 0; }
+
+        QComboBox { background: $field; border: 1px solid transparent; border-radius: 4px; padding: 3px 6px; color: $text; }
+        QComboBox:hover { background: $hover; }
+        QComboBox:focus { border-color: $focus; }
+        QComboBox:on { background: $pressed; }
+        QComboBox:disabled { color: $disabled; }
+        QComboBox::drop-down { border: none; width: 18px; }
+        QComboBox::down-arrow { image: url($comboImg); width: 12px; height: 12px; }
+        QComboBox QAbstractItemView { background: $menu; border: 1px solid $rule; selection-background-color: $sel; selection-color: $selText; outline: 0; }
+
+        QCheckBox, QRadioButton { spacing: 8px; color: $text; }
+        QCheckBox:disabled, QRadioButton:disabled { color: $disabled; }
+        QCheckBox::indicator { width: 14px; height: 14px; border-radius: 3px; background: $field; border: 1px solid $rule; }
+        QCheckBox::indicator:hover { background: $hover; }
+        QCheckBox::indicator:checked { background: $bright; border-color: $bright; image: url($checkImg); }
+        QCheckBox::indicator:indeterminate { background: $dim; border-color: $dim; }
+        QCheckBox::indicator:disabled { background: transparent; border-color: $rule; }
+        QCheckBox::indicator:checked:disabled { background: $disabled; border-color: $disabled; }
+
+        QTabBar::tab { background: transparent; border: none; border-bottom: 2px solid transparent; padding: 6px 10px 5px; color: $dim; }
+        QTabBar::tab:hover { color: $text; }
+        QTabBar::tab:selected { color: $bright; border-bottom-color: $bright; }
+        QTabBar::tab:disabled { color: $disabled; }
+        QTabWidget::pane { border: none; }
+        QTabBar::close-button { subcontrol-position: right; }
+
+        QAbstractItemView { border: none; outline: 0; }
+        QScrollArea { border: none; }
+        QHeaderView::section { background: $panel; border: none; border-bottom: 1px solid $rule; padding: 4px 6px; color: $dim; }
+        QGroupBox { border: none; margin-top: 22px; font-weight: 600; }
+        QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 0; padding: 0; color: $bright; }
+
+        QScrollBar:vertical { background: transparent; width: 10px; margin: 0; }
+        QScrollBar:horizontal { background: transparent; height: 10px; margin: 0; }
+        QScrollBar::handle { background: $scroll; border-radius: 3px; margin: 2px; }
+        QScrollBar::handle:hover { background: $pressed; }
+        QScrollBar::handle:vertical { min-height: 24px; }
+        QScrollBar::handle:horizontal { min-width: 24px; }
+        QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; border: none; }
+        QScrollBar::add-page, QScrollBar::sub-page { background: none; }
+
+        QWidget[role="section"] { border-top: 1px solid $rule; }
+        QLabel[role="hint"], QLabel[role="dim"] { color: $dim; }
+        QToolButton[role="sectionHeader"] { background: transparent; color: $text; font-weight: 600; text-align: left; padding: 5px 2px; }
+        QToolButton[role="sectionHeader"]:checked { background: transparent; color: $bright; }
+        QToolButton[role="sectionHeader"]:hover { background: transparent; color: $bright; }
+        QToolButton[role="tile"] { background: transparent; padding: 4px 2px 3px; color: $text; }
+        QToolButton[role="tile"]:hover { background: $hover; }
+        QToolButton[role="tile"]:pressed { background: $pressed; }
+        QToolButton[role="tile"]:checked { background: $sel; color: $selText; }
+        QToolButton[role="push"] { background: $raised; padding: 4px 10px; text-align: left; }
+        QToolButton[role="push"]:hover { background: $hover; }
+        QToolButton[role="push"]:pressed { background: $pressed; }
+        QToolButton[role="push"]:checked { background: $sel; color: $selText; }
+        QToolButton[role="push"]:disabled { color: $disabled; }
+        QToolButton[role="push"][popupMode="1"] { padding-right: 24px; }
+        QToolButton[role="overflow"] { background: transparent; color: $dim; text-align: left; padding: 4px 6px; }
+        QToolButton[role="overflow"]:hover { background: $hover; color: $text; }
+        QToolButton[role="overflow"]::menu-indicator { image: none; width: 0; }
+        QWidget[role="segmented"] { background: $chrome; border-radius: 5px; }
+        QToolButton[role="segment"] { background: transparent; color: $dim; padding: 3px 10px; border-radius: 3px; font-weight: 500; }
+        QToolButton[role="segment"]:hover { background: $hover; color: $text; }
+        QToolButton[role="segment"]:checked { background: $sel; color: $selText; }
+        QDoubleSpinBox[role="slider"], QDoubleSpinBox[role="slider"]:hover, QDoubleSpinBox[role="slider"]:focus { background: transparent; }
+        QDoubleSpinBox[role="axis"] { padding-left: 20px; }
+
+        QWidget#layoutTabs { background: $panel; border-radius: 6px; }
+        QWidget#layoutTabs QToolButton { padding: 4px 12px; color: $dim; font-weight: 500; }
+        QWidget#layoutTabs QToolButton:hover { color: $text; background: $hover; }
+        QWidget#layoutTabs QToolButton:checked { color: $selText; background: $sel; }
+        QWidget#layoutTabs QToolButton[layoutMore="true"] { padding: 4px 6px; }
+        QWidget#layoutTabs QToolButton[layoutMore="true"]::menu-indicator { image: none; width: 0; }
+        QToolButton#topSearch { background: $panel; color: $dim; padding: 4px 10px; text-align: left; }
+        QToolButton#topSearch:hover { background: $hover; color: $text; }
+        QToolButton#unrealSend { background: $raised; color: $bright; padding: 4px 26px 4px 10px; font-weight: 500; }
+        QToolButton#unrealSend:hover { background: $hover; }
+        QToolButton#menuPin { background: $sel; color: $selText; padding: 3px 8px; }
+        QToolButton#topFolder { color: $dim; padding: 3px 8px; }
+        QToolButton#topFolder:hover { color: $text; }
+        QToolButton#topFolder::menu-indicator { image: none; width: 0; }
+
+        QToolBar#sidebarStatus QToolButton:checked { background: $raised; }
+        QTabBar#shelfTabs::tab { padding: 4px 10px 3px; margin-right: 2px; }
+        QWidget#shelfPanel QToolButton { padding: 2px 6px; }
+    )";
+    // Longest names first, so $selText is not read as $sel.
+    std::vector<std::pair<QString, QString>> ordered(v.begin(), v.end());
+    std::sort(ordered.begin(), ordered.end(), [](const auto& a, const auto& b) { return a.first.size() > b.first.size(); });
+    for (const auto& [key, value] : ordered)
+        sheet.replace("$" + key, value);
+    return sheet;
 }
 
 void applyColors(QApplication& app)
@@ -408,6 +578,15 @@ void applyColors(QApplication& app)
     QPalette scroll = p;
     scroll.setColor(QPalette::Button, tok("scrollbar"));
     app.setPalette(scroll, "QScrollBar");
+    // Lists and trees sit on the panel; fields are the step up, so a list is never a box inside a box.
+    QPalette list = p;
+    list.setColor(QPalette::Base, tok("window"));
+    list.setColor(QPalette::AlternateBase, tok("altBase"));
+    app.setPalette(list, "QAbstractItemView");
+    QPalette code = p;
+    code.setColor(QPalette::Base, tok("menu"));
+    app.setPalette(code, "QPlainTextEdit");
+    app.setPalette(code, "QTextEdit");
 
     QString sheet = appStyleSheet(t);
     if (app.styleSheet() != sheet)

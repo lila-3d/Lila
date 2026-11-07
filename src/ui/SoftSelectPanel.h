@@ -8,11 +8,14 @@
 
 #include <functional>
 
-class QComboBox;
 class QToolButton;
 
 namespace lila::ui
 {
+namespace controls
+{
+class Segmented;
+}
 class FlowLayout;
 
 /**
@@ -80,7 +83,7 @@ private:
     QWidget* mPresetBox = nullptr;
     QWidget* mUserBox = nullptr;
     FlowLayout* mUser = nullptr;
-    QComboBox* mMode = nullptr;
+    controls::Segmented* mMode = nullptr;
     QToolButton* mDraw = nullptr;
     std::vector<std::pair<QToolButton*, scene::softSelect::Curve>> mThumbs;
     nlohmann::json mUserJson;

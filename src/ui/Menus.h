@@ -41,7 +41,7 @@ struct Menu
     /** A docs page ("curves") whose "Open <Page> Docs" row ends the menu; empty for none. */
     std::string docs;
     /**
-     * The menu sets ("Modeling", "Rigging", "Animation", "Level") whose menu bar shows this menu, Maya's menu sets.
+     * The menu sets ("Model", "Rig", "Animate", "Level"; menuContext::sets() lists them all) whose menu bar shows this menu.
      * Empty shows it in every set. The hotbox and menu search always reach every menu.
      */
     std::vector<std::string> sets;

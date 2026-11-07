@@ -809,9 +809,8 @@ void registerBuiltins()
     togglePref("viewport.greyBaseColor", "Grey Base Color", vd::kGreyBaseColor, false,
                "Materials shade with a 50% grey base color, keeping their normal, packed and other maps, opacity and shading model.");
     togglePref("viewport.toggleEnvBackground", "Environment Background", "/viewport/env/background", true, "Shows the HDRI behind the scene.");
-    togglePref("viewport.toggleToolbar", "Show Toolbar", vd::kToolbar, true, "The icon row at the top of each viewport panel.");
-    togglePref("viewport.toggleBottomBar", "Show Bottom Bar", vd::kBottomBar, true,
-               "The row along the bottom of each viewport panel: highlight under the cursor, selection masks, symmetry and snapping.");
+    togglePref("viewport.toggleToolbar", "Show Viewport Header", vd::kToolbar, true,
+               "The row at the top of each viewport panel: component mode, shading, symmetry, soft select, snapping, overlays and camera.");
     togglePref("viewport.toggleHighlightSelection", "Highlight Selection", vd::kHighlightSelection, true,
                "Selected objects draw highlighted. Turn off to watch a selected mesh change without the highlight in the way; "
                "component modes still show their components.");

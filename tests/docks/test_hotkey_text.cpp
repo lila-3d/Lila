@@ -154,8 +154,7 @@ TEST_CASE("held undo repeats on the pref cadence, ignoring key autorepeat, and a
 
 TEST_CASE("Shift+F1 to Shift+F5 switch to the built-in layouts in order")
 {
-    const char* ids[] = {"layout.apply.Modeling", "layout.apply.UV Editing", "layout.apply.Rigging", "layout.apply.Animation",
-                         "layout.apply.Scripting"};
+    const char* ids[] = {"layout.apply.Model", "layout.apply.UV", "layout.apply.Rig", "layout.apply.Animate", "layout.apply.Script"};
     for (const char* id : ids)
         actions::add({.id = id, .label = id, .category = "Test", .run = [id] { ranActions().push_back(id); }, .doc = "Test stand-in."});
     QWidget w;

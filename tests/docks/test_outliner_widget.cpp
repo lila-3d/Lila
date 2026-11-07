@@ -8,6 +8,7 @@
 #include "scene/SceneCommands.h"
 #include "ui/Actions.h"
 #include "ui/Outliner.h"
+#include "ui/Theme.h"
 
 #include <QApplication>
 
@@ -53,7 +54,7 @@ TEST_CASE("outliner rows: icons, hidden dimming, reveal and kept collapse state"
     QApplication::processEvents();
     loc = outlinerRow(o, "loc");
     CHECK(style(loc) == "crosshair/h");
-    CHECK(loc->foreground(0).color() == QColor(100, 100, 100));
+    CHECK(loc->foreground(0).color() == ui::themeShade(100));
     run("undo");
     QApplication::processEvents();
     CHECK(style(outlinerRow(o, "loc")) == "crosshair");

@@ -17,6 +17,7 @@
 #include "scene/Transform.h"
 #include "ui/Actions.h"
 #include "ui/AttributeEditor.h"
+#include "ui/Controls.h"
 #include "ui/Icons.h"
 #include "ui/NodeHandles.h"
 #include "ui/Panels.h"
@@ -203,7 +204,7 @@ struct GroomPaletteButton
     const char* icon;
     const char* label;
 };
-constexpr std::array<GroomPaletteButton, size_t(HairMode::Count)> kModeButtons = {{{"line", "Lock"},
+constexpr std::array<GroomPaletteButton, std::size_t(HairMode::Count)> kModeButtons = {{{"line", "Lock"},
                                                                               {"arrows-shuffle", "Braid"},
                                                                               {"link", "Rope"},
                                                                               {"spiral", "Ringlet"},
@@ -211,7 +212,7 @@ constexpr std::array<GroomPaletteButton, size_t(HairMode::Count)> kModeButtons =
                                                                               {"pennant", "Ponytail"},
                                                                               {"lifebuoy", "Bun"},
                                                                               {"grip-horizontal", "Bangs"}}};
-constexpr std::array<GroomPaletteButton, size_t(groom::Brush::Count)> kBrushButtons = {{{"hand-move", "Comb"},
+constexpr std::array<GroomPaletteButton, std::size_t(groom::Brush::Count)> kBrushButtons = {{{"hand-move", "Comb"},
                                                                                    {"blur", "Smooth"},
                                                                                    {"ruler", "Length"},
                                                                                    {"arrows-maximize", "Puff"},
@@ -253,17 +254,20 @@ class GroomPalette final : public QWidget
 public:
     explicit GroomPalette(QWidget* parent) : QWidget(parent)
     {
+        constexpr const char* kSections = "groomPalette";
         auto* v = new QVBoxLayout(this);
-        v->setContentsMargins(8, 8, 8, 8);
-        v->setSpacing(8);
-        auto iconButton = [this](const GroomPaletteButton& def, std::function<void()> fn) {
+        v->setContentsMargins(12, 8, 12, 8);
+        v->setSpacing(4);
+        auto tileButton = [this](const GroomPaletteButton& def, std::function<void()> fn) {
             auto* b = new QToolButton;
             b->setIcon(icon(def.icon));
-            b->setIconSize(QSize(22, 22));
-            b->setFixedSize(36, 36);
+            b->setIconSize(QSize(24, 24));
+            b->setText(def.label);
+            b->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+            b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
             b->setCheckable(true);
-            b->setAutoRaise(true);
             b->setFocusPolicy(Qt::NoFocus);
+            controls::setRole(b, "tile");
             b->setToolTip(def.label);
             connect(b, &QToolButton::clicked, this, std::move(fn));
             return b;
@@ -272,26 +276,23 @@ public:
         mDraw = new QWidget;
         auto* dv = new QVBoxLayout(mDraw);
         dv->setContentsMargins(0, 0, 0, 0);
-        auto* modes = new QGridLayout;
-        modes->setSpacing(2);
+        dv->setSpacing(4);
+        std::vector<QWidget*> modeTiles;
         for (size_t i = 0; i < kModeButtons.size(); ++i)
         {
-            mModes[i] = iconButton(kModeButtons[i], [i] { setDrawHairMode(HairMode(i)); });
-            modes->addWidget(mModes[i], int(i / 4), int(i % 4));
+            mModes[i] = tileButton(kModeButtons[i], [i] { setDrawHairMode(HairMode(i)); });
+            modeTiles.push_back(mModes[i]);
         }
-        dv->addLayout(modes);
-        mModeName = new QLabel;
-        mModeName->setAlignment(Qt::AlignHCenter);
-        dv->addWidget(mModeName);
-        auto* form = new QFormLayout;
-        auto spin = [&](const char* label, double lo, double hi, const char* suffix, const char* tip, double DrawHairSettings::*field) {
-            auto* s = new QDoubleSpinBox;
-            s->setRange(lo, hi);
-            s->setDecimals(2);
+        dv->addWidget(controls::section("Mode", controls::grid(modeTiles, 4, mDraw), mDraw, kSections));
+        auto* fields = new QWidget(mDraw);
+        auto* form = new QFormLayout(fields);
+        form->setContentsMargins(0, 0, 0, 0);
+        form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        form->setVerticalSpacing(4);
+        auto spin = [&](const char* label, double lo, double hi, const char* unit, const char* tip, double DrawHairSettings::*field) {
+            QDoubleSpinBox* s = controls::valueField(lo, hi, 2, unit, fields);
             s->setSingleStep(0.1);
-            s->setSuffix(suffix);
-            s->setToolTip(tip);
-            s->setKeyboardTracking(false);
+            s->setToolTip(QString("%1: %2").arg(label, tip));
             mFields.push_back({s, field});
             connect(s, &QDoubleSpinBox::valueChanged, this, [field](double value) {
                 drawHairSettings().*field = value;
@@ -300,63 +301,81 @@ public:
             form->addRow(label, s);
             return s;
         };
-        mWidth = spin("Width", 0.05, 20.0, "x", "New locks' width, times the groom's  (B+drag, [ ], Ctrl+scroll)", &DrawHairSettings::width);
-        mThickness = spin("Thickness", 0.05, 10.0, "x", "New locks' thickness, times the groom's  (B+drag up and down)", &DrawHairSettings::thickness);
-        mLift = spin("Lift", 0.0, 100.0, " cm", "How far above the scalp the stroke draws.", &DrawHairSettings::lift);
-        mSize = spin("Size", 0.01, 100.0, " cm", "Braid and rope half width, ringlet radius.", &DrawHairSettings::size);
-        mPeriod = spin("Turn", 0.05, 500.0, " cm", "Length of one turn of a braid, rope or ringlet.", &DrawHairSettings::period);
-        mPartRadius = spin("Reach", 0.01, 100.0, " cm", "How far from a parting line locks turn.", &DrawHairSettings::partRadius);
-        mLength = spin("Length", 0.01, 1000.0, " cm", "Length of a ponytail, bun or bangs.", &DrawHairSettings::presetLength);
-        mCount = new QSpinBox;
-        mCount->setRange(1, 4096);
-        mCount->setToolTip("Locks in a ponytail, bun or bangs.");
-        connect(mCount, &QSpinBox::valueChanged, this, [](int value) {
-            drawHairSettings().presetCount = value;
+        mWidth = spin("Width", 0.05, 20.0, "x", "new locks' width, times the groom's  (B+drag, [ ], Ctrl+scroll)", &DrawHairSettings::width);
+        mThickness = spin("Thickness", 0.05, 10.0, "x", "new locks' thickness, times the groom's  (B+drag up and down)", &DrawHairSettings::thickness);
+        mLift = spin("Lift", 0.0, 100.0, "cm", "how far above the scalp the stroke draws.", &DrawHairSettings::lift);
+        mSize = spin("Size", 0.01, 100.0, "cm", "braid and rope half width, ringlet radius.", &DrawHairSettings::size);
+        mPeriod = spin("Turn", 0.05, 500.0, "cm", "length of one turn of a braid, rope or ringlet.", &DrawHairSettings::period);
+        mPartRadius = spin("Reach", 0.01, 100.0, "cm", "how far from a parting line locks turn.", &DrawHairSettings::partRadius);
+        mLength = spin("Length", 0.01, 1000.0, "cm", "length of a ponytail, bun or bangs.", &DrawHairSettings::presetLength);
+        mCount = controls::valueField(1, 4096, 0, {}, fields);
+        mCount->setToolTip("Count: locks in a ponytail, bun or bangs.");
+        connect(mCount, &QDoubleSpinBox::valueChanged, this, [](double value) {
+            drawHairSettings().presetCount = int(std::lround(value));
             saveDrawHair();
         });
         form->addRow("Count", mCount);
-        dv->addLayout(form);
+        dv->addWidget(controls::section("Settings", fields, mDraw, kSections));
         v->addWidget(mDraw);
 
         mSculpt = new QWidget;
         auto* sv = new QVBoxLayout(mSculpt);
         sv->setContentsMargins(0, 0, 0, 0);
+        sv->setSpacing(4);
         for (int set = 0; set < 2; ++set)
         {
-            auto* title = new QLabel(set ? "Locks" : "Strands");
-            sv->addWidget(title);
-            auto* grid = new QGridLayout;
-            grid->setSpacing(2);
+            std::vector<QWidget*> brushTiles;
             const int first = set ? int(groom::kFirstLockBrush) : 0, last = set ? int(groom::Brush::Count) : int(groom::kFirstLockBrush);
             for (int i = first; i < last; ++i)
             {
-                mBrushes[size_t(i)] = iconButton(kBrushButtons[size_t(i)], [i] { setCurveSculptBrush(i); });
-                grid->addWidget(mBrushes[size_t(i)], (i - first) / 5, (i - first) % 5);
+                mBrushes[size_t(i)] = tileButton(kBrushButtons[size_t(i)], [i] { setCurveSculptBrush(i); });
+                brushTiles.push_back(mBrushes[size_t(i)]);
             }
-            sv->addLayout(grid);
+            sv->addWidget(controls::section(set ? "Locks" : "Strands", controls::grid(brushTiles, 4, mSculpt), mSculpt, kSections));
         }
-        mBrushName = new QLabel;
-        mBrushName->setAlignment(Qt::AlignHCenter);
-        sv->addWidget(mBrushName);
         mSettleGrab = new QCheckBox("Settle While Grabbing");
         mSettleGrab->setFocusPolicy(Qt::NoFocus);
-        mSettleGrab->setToolTip("Grab settles the locks around it, so they make room.");
+        mSettleGrab->setToolTip("Settle While Grabbing: Grab settles the locks around it, so they make room.");
         setCheckDefault(mSettleGrab, true);
-        connect(mSettleGrab, &QCheckBox::clicked, this, [](bool on) { setCurveSculptSettleGrab(on); });
-        sv->addWidget(mSettleGrab);
+        // Toggled rather than clicked so a middle-click reset applies too; sync() setting the current state is skipped.
+        connect(mSettleGrab, &QCheckBox::toggled, this, [](bool on) {
+            if (on != curveSculptSettleGrab())
+                setCurveSculptSettleGrab(on);
+        });
         v->addWidget(mSculpt);
 
-        mMirror = new QCheckBox("Mirror X");
+        auto* optionsBox = new QWidget(this);
+        auto* options = new QVBoxLayout(optionsBox);
+        options->setContentsMargins(0, 0, 0, 0);
+        options->setSpacing(4);
+        mSettleGrab->setParent(optionsBox);
+        options->addWidget(mSettleGrab);
+        mMirror = new QCheckBox("Mirror X", optionsBox);
         mMirror->setFocusPolicy(Qt::NoFocus);
-        connect(mMirror, &QCheckBox::clicked, this, [](bool on) {
-            if (Node* guides = groomPaletteGuides())
+        setCheckDefault(mMirror, false);
+        connect(mMirror, &QCheckBox::toggled, this, [](bool on) {
+            if (Node* guides = groomPaletteGuides(); guides && on != (curve::symmetryAxis(*guides) == 0))
                 runUi("setAttr", {{"args", {guides->path() + ".symmetry", on ? "x" : "off"}}});
         });
-        v->addWidget(mMirror);
-        auto* reset = new QPushButton("Reset");
+        options->addWidget(mMirror);
+        mKeys = new QCheckBox("Show Keys", optionsBox);
+        mKeys->setFocusPolicy(Qt::NoFocus);
+        mKeys->setToolTip("Show Keys: list the tool's keys in the corner of the view.");
+        setCheckDefault(mKeys, true);
+        connect(mKeys, &QCheckBox::toggled, this, [](bool on) {
+            if (on == groomKeysShown())
+                return;
+            PrefStore::get().set("general", kGroomKeysPref, on);
+            viewportTools::requestRedraw();
+        });
+        options->addWidget(mKeys);
+        auto* reset = new QToolButton(optionsBox);
+        reset->setText("Reset Settings");
+        reset->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         reset->setFocusPolicy(Qt::NoFocus);
-        reset->setToolTip("Put the current mode's or brush's settings back to their defaults.");
-        connect(reset, &QPushButton::clicked, this, [this] {
+        reset->setToolTip("Reset Settings: put the current mode's or brush's settings back to their defaults.");
+        controls::setRole(reset, "push");
+        connect(reset, &QToolButton::clicked, this, [this] {
             if (!mDrawPage)
             {
                 resetCurveSculptSettings();
@@ -366,16 +385,8 @@ public:
             s = defaultsFor(s.mode);
             saveDrawHair();
         });
-        v->addWidget(reset);
-        mKeys = new QCheckBox("Show keys");
-        mKeys->setFocusPolicy(Qt::NoFocus);
-        mKeys->setToolTip("List the tool's keys in the corner of the view.");
-        setCheckDefault(mKeys, true);
-        connect(mKeys, &QCheckBox::clicked, this, [](bool on) {
-            PrefStore::get().set("general", kGroomKeysPref, on);
-            viewportTools::requestRedraw();
-        });
-        v->addWidget(mKeys);
+        options->addWidget(reset);
+        v->addWidget(controls::section("Options", optionsBox, this, kSections));
         v->addStretch();
 
         mRefresh = new QTimer(this);
@@ -401,7 +412,6 @@ public:
         const DrawHairSettings& s = drawHairSettings();
         for (size_t i = 0; i < mModes.size(); ++i)
             mModes[i]->setChecked(HairMode(i) == s.mode);
-        mModeName->setText(kModeLabels[size_t(s.mode)]);
         for (auto [box, value] : {std::pair{mWidth, s.width}, std::pair{mThickness, s.thickness}, std::pair{mLift, s.lift}, std::pair{mSize, s.size}, std::pair{mPeriod, s.period},
                                   std::pair{mPartRadius, s.partRadius}, std::pair{mLength, s.presetLength}})
         {
@@ -428,13 +438,13 @@ public:
         const int brush = curveSculptBrush();
         for (size_t i = 0; i < mBrushes.size(); ++i)
             mBrushes[i]->setChecked(int(i) == brush);
-        mBrushName->setText(kBrushButtons[size_t(std::clamp(brush, 0, int(mBrushes.size()) - 1))].label);
+        mSettleGrab->setVisible(!mDrawPage);
         mSettleGrab->setChecked(curveSculptSettleGrab());
         mSettleGrab->setEnabled(brush == int(groom::Brush::Grab));
         const Node* guides = groomPaletteGuides();
         mMirror->setEnabled(guides);
         mMirror->setChecked(guides && curve::symmetryAxis(*guides) == 0);
-        mMirror->setToolTip(guides ? QString("Mirror %1 across X.").arg(QString::fromStdString(guides->name())) : "Select a groom to mirror its guides.");
+        mMirror->setToolTip(guides ? QString("Mirror X: mirror %1 across X.").arg(QString::fromStdString(guides->name())) : "Mirror X: select a groom to mirror its guides.");
         mKeys->setChecked(groomKeysShown());
     }
 
@@ -443,9 +453,8 @@ private:
     QWidget *mDraw = nullptr, *mSculpt = nullptr;
     std::array<QToolButton*, kModeButtons.size()> mModes{};
     std::array<QToolButton*, kBrushButtons.size()> mBrushes{};
-    QLabel *mModeName = nullptr, *mBrushName = nullptr;
     QDoubleSpinBox *mWidth = nullptr, *mThickness = nullptr, *mLift = nullptr, *mSize = nullptr, *mPeriod = nullptr, *mPartRadius = nullptr, *mLength = nullptr;
-    QSpinBox* mCount = nullptr;
+    QDoubleSpinBox* mCount = nullptr;
     std::vector<std::pair<QDoubleSpinBox*, double DrawHairSettings::*>> mFields;
     QCheckBox *mSettleGrab = nullptr, *mMirror = nullptr, *mKeys = nullptr;
     QTimer* mRefresh = nullptr;

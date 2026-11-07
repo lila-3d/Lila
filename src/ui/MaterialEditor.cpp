@@ -15,6 +15,7 @@
 #include "ui/Actions.h"
 #include "ui/ChoiceTips.h"
 #include "ui/ColorPopup.h"
+#include "ui/Controls.h"
 #include "ui/LocateFlash.h"
 #include "ui/Deletion.h"
 #include "ui/DockSidebar.h"
@@ -400,10 +401,10 @@ MaterialEditor::MaterialEditor(QWidget* parent) : QWidget(parent)
     };
     mAssign = iconButton("brush", "Assign: to the selected objects, or the selected faces in face mode.");
     auto* add = iconButton("plus", "New: create a material; with objects or faces selected, also assign it to them.");
-    auto* del = mDelete = iconButton("trash", "Delete the material.");
-    auto* showAssigned = iconButton("target", "Show the material assigned to the selected object.");
+    auto* del = mDelete = iconButton("trash", "Delete: the material.");
+    auto* showAssigned = iconButton("target", "Show Assigned: the material assigned to the selected object.");
     auto* selectUsers = mSelectUsers =
-        iconButton("pointer", "Select what this material is assigned to: whole objects, or just the faces where it covers part of a mesh.");
+        iconButton("pointer", "Select Users: what this material is assigned to, whole objects or just the faces where it covers part of a mesh.");
     for (QPushButton* b : {mAssign, add, del, showAssigned, selectUsers})
         buttons->addWidget(b);
     buttons->addStretch();
@@ -679,7 +680,8 @@ void MaterialEditor::rebuild()
     if (!n)
     {
         mPreview->clear();
-        auto* hint = new QLabel("No material. New creates one; faces bind to a material through the slot of the same name.", mBody);
+        auto* hint = new QLabel("No material. Click + to create one, or pick one in the list.", mBody);
+        hint->setForegroundRole(QPalette::PlaceholderText);
         hint->setWordWrap(true);
         mBodyLayout->addWidget(hint);
         mBodyLayout->addStretch();
@@ -691,6 +693,7 @@ void MaterialEditor::rebuild()
     int row = 0;
     auto label = [&](const char* text) {
         auto* l = new QLabel(text, mBody);
+        l->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         grid->addWidget(l, row, 0);
         return l;
     };
@@ -702,7 +705,11 @@ void MaterialEditor::rebuild()
                                QString::fromStdString(valueReset::describe(*d, def.enumNames)), field);
     };
     auto section = [&](const char* text) {
-        auto* l = new QLabel(QString("<b>%1</b>").arg(text), mBody);
+        auto* l = new QLabel(text, mBody);
+        QFont f = l->font();
+        f.setWeight(QFont::DemiBold);
+        l->setFont(f);
+        l->setContentsMargins(0, row ? 8 : 0, 0, 2);
         grid->addWidget(l, row++, 0, 1, 3);
     };
 
@@ -769,73 +776,57 @@ void MaterialEditor::rebuild()
         });
     };
 
-    auto slider = [&](const char* text, int attr, double lo, double hi) {
+    // A bounded number as a slider field: live without undo while it moves, one undo step once it settles.
+    auto slider = [&](const char* text, int attr, double lo, double hi, const QString& unit = {}) {
         QLabel* l = label(text);
-        auto* s = new QSlider(Qt::Horizontal, mBody);
+        auto* s = new controls::SliderField(mBody);
+        s->setRange(lo, hi);
+        s->setDecimals(3);
+        s->setSingleStep((hi - lo) / 100.0);
+        if (!unit.isEmpty())
+            s->setSuffix(" " + unit);
         resettable(l, attr, s);
-        s->setRange(0, 1000);
-        auto* value = new QLineEdit(mBody);
-        value->setFixedWidth(56);
-        auto* validator = new QDoubleValidator(value);
-        validator->setLocale(QLocale::c());
-        value->setValidator(validator);
-        grid->addWidget(s, row, 1);
-        grid->addWidget(value, row++, 2);
-        auto toValue = [lo, hi](int v) { return lo + (hi - lo) * v / 1000.0; };
-        // Live while dragging without undo; the release commits once, as one undo step.
-        connect(s, &QSlider::sliderPressed, this, [this] { mDragging = true; });
-        connect(s, &QSlider::valueChanged, this, [this, s, attr, toValue, value](int v) {
-            value->setText(QString::number(toValue(v), 'f', 3));
+        if (std::optional<json> d = valueReset::plugDefault(n->type().attrs[size_t(attr)]); d && d->is_number())
+            setSpinDefault(s, d->get<double>());
+        l->setBuddy(s);
+        grid->addWidget(s, row++, 1, 1, 2);
+        auto* commit = new QTimer(s);
+        commit->setSingleShot(true);
+        commit->setInterval(300);
+        connect(s, &QDoubleSpinBox::valueChanged, this, [this, s, attr, commit](double v) {
             scene::Node* m = current();
-            if (!m || !s->isSliderDown())
+            if (!m)
                 return;
+            if (!commit->isActive())
+                s->setProperty("start", m->as<double>(attr));
+            mDragging = true;
             UndoStack::get().setEnabled(false);
-            scene::Graph::current().setValue({m->id(), attr, -1}, toValue(v));
+            scene::Graph::current().setValue({m->id(), attr, -1}, v);
             UndoStack::get().setEnabled(true);
+            commit->start();
         });
-        connect(s, &QSlider::sliderReleased, this, [this, s, attr, toValue] {
+        connect(commit, &QTimer::timeout, this, [this, s, attr] {
             mDragging = false;
             if (scene::Node* m = current())
             {
-                double v = toValue(s->value());
+                const double v = s->value();
                 UndoStack::get().setEnabled(false);
                 scene::Graph::current().setValue({m->id(), attr, -1}, s->property("start").toDouble());
                 UndoStack::get().setEnabled(true);
                 setAttr(attr, v);
             }
         });
-        // A typed value may go past the slider's range; Enter or leaving the field commits it as one undo step.
-        connect(value, &QLineEdit::editingFinished, this, [this, value, attr] {
+        mUpdaters.push_back([this, s, attr, lo, hi, commit] {
             scene::Node* m = current();
-            if (!m)
+            if (!m || commit->isActive())
                 return;
-            bool ok = false;
-            double v = QLocale::c().toDouble(value->text(), &ok);
-            // Focus leaving an untouched field must not round the stored value to the three shown decimals.
-            if (ok && value->isModified() && v != m->as<double>(attr))
-                setAttr(attr, v);
-            value->setText(QString::number(m->as<double>(attr), 'f', 3));
-        });
-        connect(s, &QSlider::actionTriggered, this, [this, s, attr, toValue](int action) {
-            if (action == QAbstractSlider::SliderMove)
-                return;
-            // Clicks on the groove and keys step without a drag.
-            QTimer::singleShot(0, this, [this, s, attr, toValue] {
-                if (!s->isSliderDown())
-                    setAttr(attr, toValue(s->value()));
-            });
-        });
-        mUpdaters.push_back([this, s, attr, lo, hi, value] {
-            scene::Node* m = current();
-            if (!m || s->isSliderDown())
-                return;
-            double v = m->as<double>(attr);
-            s->setProperty("start", v);
+            const double v = m->as<double>(attr);
             QSignalBlocker block(s);
-            s->setValue(int(std::lround((std::clamp(v, lo, hi) - lo) / (hi - lo) * 1000.0)));
-            if (!value->hasFocus())
-                value->setText(QString::number(v, 'f', 3));
+            // A value set past the range from a script widens it rather than being clamped here.
+            s->setRange(std::min(lo, v), std::max(hi, v));
+            s->setValue(v);
         });
+        return s;
     };
 
     // Items show `labels` when given (one per enum name), else the stored enum names.
@@ -848,6 +839,7 @@ void MaterialEditor::rebuild()
         if (tip)
             c->setToolTip(tip);
         resettable(l, attr, c);
+        resettable(c, attr, c);
         const auto& names = n->type().attrs[size_t(attr)].enumNames;
         for (size_t i = 0; i < names.size(); ++i)
             c->addItem(i < size_t(labels.size()) ? labels[qsizetype(i)] : QString::fromStdString(names[i]));
@@ -908,6 +900,7 @@ void MaterialEditor::rebuild()
                 for (const QString& s : labels)
                     c->addItem(k == 0 ? "U: " + s : k == 1 ? "V: " + s : s);
                 oh->addWidget(c, 1);
+                resettable(c, first + k, c);
                 connect(c, &QComboBox::activated, this, [this, a = first + k](int i) { setAttr(a, i); });
                 mUpdaters.push_back([this, c, a = first + k] {
                     if (scene::Node* m = current())
@@ -929,7 +922,7 @@ void MaterialEditor::rebuild()
         });
     };
 
-    auto check = [&](const char* text, int attr) {
+    auto check = [&](const char* text, int attr) -> QCheckBox* {
         auto* c = new QCheckBox(text, mBody);
         grid->addWidget(c, row++, 1, 1, 2);
         resettable(c, attr, c);
@@ -941,12 +934,15 @@ void MaterialEditor::rebuild()
                 c->setChecked(m->as<bool>(attr));
             }
         });
+        return c;
     };
 
     auto intSpin = [&](const char* text, int attr, int lo, int hi) {
         QLabel* l = label(text);
         auto* spin = new QSpinBox(mBody);
         spin->setRange(lo, hi);
+        spin->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
         resettable(l, attr, spin);
         if (std::optional<json> d = valueReset::plugDefault(n->type().attrs[size_t(attr)]))
             setSpinDefault(spin, d->get<double>());
@@ -1030,7 +1026,7 @@ void MaterialEditor::rebuild()
         break;
     case ShadingModel::Hair:
         slider("Anisotropy", kAnisotropy, 0.0, 1.0);
-        slider("Strand Rotation", kAnisotropyRotation, -180.0, 180.0);
+        slider("Strand Rotation", kAnisotropyRotation, -180.0, 180.0, QString(QChar(0x00B0)));
         slider("Highlight Shift", kHairShift, 0.0, 1.0);
         break;
     case ShadingModel::Eye:
@@ -1051,7 +1047,7 @@ void MaterialEditor::rebuild()
     slider("Specular", kSpecular, 0.0, 1.0);
     slider("Roughness", kRoughness, 0.0, 1.0);
     texture("Roughness Map", "roughness", kRoughnessMap);
-    slider("Bevel (cm)", kBevelRadius, 0.0, 5.0);
+    slider("Bevel", kBevelRadius, 0.0, 5.0, "cm");
     texture("Occlusion Map", "ambientOcclusion", kAmbientOcclusionMap);
     texture("Packed Map", "orm", kOrmMap);
     combo("Packed Layout", kPackedLayout, {"ORM", "MRO"},
@@ -1073,10 +1069,14 @@ void MaterialEditor::rebuild()
         }
     });
     texture("Height Map", "height", kHeightMap);
-    check("Normals From Height", kNormalFromHeight);
-    slider("Height Depth (cm)", kHeightDepth, 0.0, 20.0);
-    slider("UV Width (cm)", kHeightUvWidth, 10.0, 1000.0);
-    slider("UV Height (cm)", kHeightUvHeight, 10.0, 1000.0);
+    QCheckBox* fromHeight = check("Normals From Height", kNormalFromHeight);
+    std::vector<QWidget*> heightFields = {slider("Height Depth", kHeightDepth, 0.0, 20.0, "cm"),
+                                          slider("UV Width", kHeightUvWidth, 10.0, 1000.0, "cm"),
+                                          slider("UV Height", kHeightUvHeight, 10.0, 1000.0, "cm")};
+    mUpdaters.push_back([fromHeight, heightFields] {
+        for (QWidget* f : heightFields)
+            f->setEnabled(fromHeight->isChecked());
+    });
     section("Emissive");
     color("Emissive Color", kEmissiveColor);
     texture("Emissive Map", "emissive", kEmissiveMap);
@@ -1089,6 +1089,8 @@ void MaterialEditor::rebuild()
     QLabel* uvLabel = label("UV Set");
     auto* uv = new QSpinBox(mBody);
     uv->setRange(0, 1);
+    uv->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    uv->setButtonSymbols(QAbstractSpinBox::NoButtons);
     resettable(uvLabel, kUvSet, uv);
     if (std::optional<json> d = valueReset::plugDefault(n->type().attrs[size_t(kUvSet)]))
         setSpinDefault(uv, d->get<double>());

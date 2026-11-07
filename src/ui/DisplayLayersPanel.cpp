@@ -20,6 +20,7 @@
 #include <QCursor>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QLabel>
 #include <QMenu>
 #include <QPainter>
 #include <QPointer>
@@ -108,36 +109,40 @@ DisplayLayersPanel::DisplayLayersPanel(QWidget* parent) : QWidget(parent)
 
     auto* bar = new QHBoxLayout;
     bar->setContentsMargins(0, 0, 0, 0);
-    bar->setSpacing(1);
-    auto add = [&](const char* iconName, const QString& tip, auto fn) {
-        QToolButton* b = toolButton(this, iconName, tip);
+    bar->setSpacing(2);
+    auto add = [&](const char* iconName, const QString& tip, const QString& text, auto fn) {
+        QToolButton* b = toolButton(this, iconName, tip, text);
         connect(b, &QToolButton::clicked, this, fn);
         bar->addWidget(b);
+        return b;
     };
-    add("plus", "Create an empty layer", [] {
+    add("plus", "<b>New Layer</b><br>Create an empty display layer.", {}, [] {
         if (json r = runUi("createDisplayLayer", {{"empty", true}}); r.is_string())
             activeLayer() = r.get<std::string>();
-    });
-    add("stack-plus", "Create a layer from the selected objects", [] { createFromSelected(); });
-    add("square-plus", "Add the selected objects to the current layer", [this] { addSelected(currentLayer()); });
-    add("stack-minus", "Remove the selected objects from their layers", [] { removeSelected(); });
-    add("arrow-up", "Move the current layer up", [this] {
+    })->setObjectName("layersNew");
+    add("stack-plus", "<b>New from Selection</b><br>Create a layer holding the selected objects.", "From Selection",
+        [] { createFromSelected(); });
+    bar->addSpacing(10);
+    add("square-plus", "<b>Add Selected</b><br>Add the selected objects to the current layer.", "Add",
+        [this] { addSelected(currentLayer()); });
+    add("stack-minus", "<b>Remove Selected</b><br>Take the selected objects out of their layers.", "Remove", [] { removeSelected(); });
+    bar->addStretch(1);
+    add("arrow-up", "<b>Move Up</b><br>Move the current layer up.", {}, [this] {
         if (QTreeWidgetItem* it = mTree->currentItem(); it && mTree->indexOfTopLevelItem(it) > 0)
             runUi("reorderDisplayLayer", {{"args", {currentLayer()}}, {"index", mTree->indexOfTopLevelItem(it) - 1}});
     });
-    add("arrow-down", "Move the current layer down", [this] {
+    add("arrow-down", "<b>Move Down</b><br>Move the current layer down.", {}, [this] {
         if (QTreeWidgetItem* it = mTree->currentItem())
             runUi("reorderDisplayLayer", {{"args", {currentLayer()}}, {"index", mTree->indexOfTopLevelItem(it) + 1}});
     });
-    bar->addStretch(1);
-    add("trash", "Delete the current layer (its objects stay)", [this] {
+    bar->addSpacing(10);
+    add("trash", "<b>Delete Layer</b><br>Delete the current layer. Its objects stay.", {}, [this] {
         if (std::string layer = currentLayer(); !layer.empty())
             runUi("deleteDisplayLayer", {{"args", {layer}}});
     });
     v->addLayout(bar);
 
     mTree = new QTreeWidget(this);
-    setEmptyHint(mTree, "No display layers yet. The buttons above make one, empty or from the selection.");
     mTree->setColumnCount(kColumnCount);
     mTree->setHeaderHidden(true);
     mTree->setRootIsDecorated(false);
@@ -162,6 +167,13 @@ DisplayLayersPanel::DisplayLayersPanel(QWidget* parent) : QWidget(parent)
     }
     header->setSectionResizeMode(kName, QHeaderView::Stretch);
     v->addWidget(mTree, 1);
+    mEmpty = emptyStateLabel("No display layers. Click + to add one, or create one from the selection.", this);
+    mEmpty->setObjectName("layersEmpty");
+    mEmpty->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    mEmpty->setContentsMargins(6, 8, 6, 8);
+    v->addWidget(mEmpty);
+    // Takes the spare height only while the tree is hidden, so the empty panel shrinks to its line.
+    v->addStretch(0);
 
     connect(mTree, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* item, int column) { clicked(item, column); });
     connect(mTree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* item, int column) {
@@ -255,15 +267,17 @@ void DisplayLayersPanel::refresh()
 
         const bool visible = info["visibility"].get<bool>();
         item->setIcon(kV, icon(visible ? "eye" : "eye-off"));
-        item->setToolTip(kV, "V: visibility");
+        item->setToolTip(kV, visible ? "<b>Visible</b><br>Click to hide the layer." : "<b>Hidden</b><br>Click to show the layer.");
 
         const bool p = info["hideOnPlayback"].get<bool>();
         item->setIcon(kP, p ? QIcon() : icon("run"));
-        item->setToolTip(kP, p ? "P: hidden while the animation plays" : "P: shown while the animation plays");
+        item->setToolTip(kP, p ? "<b>Hidden on Playback</b><br>Click to show the layer while the animation plays."
+                                : "<b>Shown on Playback</b><br>Click to hide the layer while the animation plays.");
 
         const std::string type = info["displayType"].get<std::string>();
         item->setIcon(kType, type == "template" ? icon("cube") : type == "reference" ? icon("lock") : QIcon());
-        item->setToolTip(kType, "Display type: blank normal, cube template (grey wire, not pickable), lock reference (not pickable). Click to cycle.");
+        item->setToolTip(kType, "<b>Display Type</b><br>Blank: normal. Cube: template (grey wire, not pickable). Lock: reference (not "
+                                 "pickable). Click to cycle.");
 
         item->setIcon(kSwatch, layerSwatch(info["color"], frame));
         item->setToolTip(kSwatch, info["color"].is_null() ? "No color: click to pick one" : "Wireframe color: click to change");
@@ -280,6 +294,9 @@ void DisplayLayersPanel::refresh()
             mTree->setCurrentItem(item);
     }
     mTree->setUpdatesEnabled(true);
+    const bool empty = mTree->topLevelItemCount() == 0;
+    mTree->setVisible(!empty);
+    mEmpty->setVisible(empty);
     mFilling = false;
 }
 

@@ -94,8 +94,8 @@ const std::vector<View>& builtIns()
 {
     static const std::vector<View> v = {
         {"Default", "lila", {}, {}},
-        {"Lookdev", "lila", {}, {"Material", "Shad", "Light", "Render", "Display", "Texture", "Extra", "Parameters"}},
-        {"Rigging", "lila", {}, {"Transform", "Joint", "Constraint", "Deform", "Skin", "Driver", "Extra", "Parameters", "Pose", "Ik"}},
+        {"Lookdev", "lila", {}, {"Material", "Shad", "Light", "Render", "Display", "Texture", "Parameters"}},
+        {"Rigging", "lila", {}, {"Transform", "Joint", "Constraint", "Deform", "Skin", "Driver", "Parameters", "Pose", "Ik"}},
     };
     return v;
 }
@@ -376,14 +376,14 @@ void setCurrentView(const std::string& name)
     notify();
 }
 
-bool sectionShown(const std::string& typeName, const QString& title)
+bool sectionShown(const std::string& typeName, const QString& title, bool added)
 {
     std::optional<View> v = findView(currentView());
     if (!v)
         return true;
     if (auto it = v->hidden.find(hiddenKey(typeName)); it != v->hidden.end() && it->second.contains(title.toStdString()))
         return false;
-    if (v->onlyContaining.empty())
+    if (v->onlyContaining.empty() || added)
         return true;
     for (const std::string& word : v->onlyContaining)
         if (title.contains(QString::fromStdString(word), Qt::CaseInsensitive))

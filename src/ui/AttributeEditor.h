@@ -50,15 +50,18 @@ LILA_UI_API std::vector<std::pair<std::string, QWidget*>> buildSections(scene::N
 
 /**
  * Which of a type's attributes the editor shows for one node, so settings that do not apply to it (a point light's cone)
- * stay out of the way. The editor rebuilds when an attribute named in triggers changes.
+ * stay out of the way. The editor rebuilds when an attribute named in triggers changes. enabled greys out rows that show
+ * but do nothing while their switch is off (symmetry's plane while symmetry is off); it is asked on every value change.
+ * A bool attr also switches the attrs its name prefixes (smoothPreview: smoothPreviewLevels) without a filter.
  */
 struct AttrFilter
 {
     std::string typeName;
     std::vector<std::string> triggers;
     std::function<bool(const scene::Node& node, const std::string& attr)> shows;
+    std::function<bool(const scene::Node& node, const std::string& attr)> enabled;
 };
-/** Holds "lila.light" from first use. */
+/** Holds "lila.light" and "lila.meshSymmetry" from first use. */
 LILA_UI_API Registry<AttrFilter>& filters();
 
 /** Scrolls open editors to the issue's attribute or component once they show its object (select it after). */
@@ -88,7 +91,7 @@ private:
     void removeElement(const std::string& attr);
     /** Runs the command on the shown node, its path as the first argument; errors go to the log. */
     void runOnNode(const char* command, scene::json call);
-    /** Deletes the added attributes under one heading of Extra Attributes: a component. */
+    /** Deletes the added attributes under one heading: a component. */
     void removeCategory(const std::string& category);
     QWidget* colorSwatch(const scene::AttrDef& def, scene::NodeId id, int index, bool readOnly);
     /**
@@ -161,8 +164,15 @@ private:
         scene::AttrDef def;
     };
     std::vector<SearchRow> mSearchRows;
+    struct SectionEntry
+    {
+        QWidget* box;
+        QString title;
+        /** An added-attribute category, which built-in views never hide. */
+        bool added;
+    };
     /** Every section box with its title, for the search. */
-    std::vector<std::pair<QWidget*, QString>> mSections;
+    std::vector<SectionEntry> mSections;
     QLabel* mType = nullptr;
     QScrollArea* mScroll = nullptr;
     QWidget* mBody = nullptr;

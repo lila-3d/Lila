@@ -20,6 +20,7 @@
 #include "ui/Issues.h"
 #include "ui/LocateFlash.h"
 #include "ui/SceneDialogs.h"
+#include "ui/MenuSets.h"
 #include "ui/Theme.h"
 #include "ui/LodDisplay.h"
 #include "ui/RigViewport.h"
@@ -703,8 +704,10 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         sectionHeader(ui, "Theme");
         addWideRow(ui, "Theme", makeThemeEditor(), themes::kThemePref);
         sectionHeader(ui, "Chrome");
+        intChoiceField(ui, "UI scale (applies after restart)", kUiScalePref, {{"100%", 100}, {"125%", 125}, {"150%", 150}, {"175%", 175}, {"200%", 200}}, 100);
         toggleField(ui, "Show menu bar (the hotbox still has the menus)", "/ui/showMenuBar", true);
-        toggleField(ui, "Show shelf (` still opens the floating shelf)", "/ui/showShelf", true);
+        toggleField(ui, "Show shelf (` still opens the floating shelf)", "/ui/showShelf", false);
+        toggleField(ui, "Show all menus (otherwise the menu bar follows what you are doing)", menuSets::kAllMenusPref, false);
         toggleField(ui, "Flash windows as they open", kLocateFlashPref, true);
         numberField(ui, "Flash pulses", kLocateFlashPulsesPref, 1.0, 1.0, 10.0, 1.0, 0);
         numberField(ui, "Flash pulse length (s)", kLocateFlashPulseSecondsPref, 0.4, 0.1, 5.0, 0.1, 2);
@@ -838,7 +841,6 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         toggleField(viewport, "Click selects edges by their center", scene::componentPick::kEdgesByCenter, false);
         toggleField(viewport, "Click selects faces by their center", scene::componentPick::kFacesByCenter, false);
         sectionHeader(viewport, "Panel Bars");
-        toggleField(viewport, "Show the bottom bar (highlight, selection masks, symmetry, snapping)", vd::kBottomBar, true);
         toggleField(viewport, "Hide toolbar items the scene has no use for (X-Ray Joints with no joints)", vd::kHideUnusedItems, true);
         sectionHeader(viewport, "Debug Drawing");
         toggleField(viewport, "Show debug drawing", "/debugDraw/show", true);

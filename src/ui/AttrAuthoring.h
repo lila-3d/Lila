@@ -38,6 +38,9 @@ LILA_UI_API json parseValue(const std::string& type, const QString& text, const 
 LILA_UI_API QString valueText(const json& v);
 /** Whether an attribute matches the Attribute Editor's search: nice, long and short names and its doc, case blind. */
 LILA_UI_API bool matches(const scene::AttrDef& def, const QString& query);
+/** The heading added attributes go under when none is given, and where the Attribute Editor shows uncategorised ones. */
+inline constexpr const char* kCustomCategory = "Custom";
+
 /** The headings (categories) the nodes' added attributes use, in first-use order. */
 LILA_UI_API std::vector<std::string> categories(const std::vector<scene::NodeId>& nodes);
 

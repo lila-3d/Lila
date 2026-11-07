@@ -9,8 +9,10 @@
 #include <functional>
 #include <set>
 #include <string>
+#include <vector>
 
 class QComboBox;
+class QToolButton;
 class QDockWidget;
 class QMainWindow;
 class QMenu;
@@ -35,6 +37,8 @@ public:
     ~LayoutController() override;
 
     QMenu* menu() const { return mMenu; }
+    /** The layout tab strip (Model, UV, Sculpt... and a + menu with the rest), for the window's top bar. */
+    QWidget* tabs() const { return mTabs; }
 
     nlohmann::json capture() const;
     void apply(const nlohmann::json& layout);
@@ -62,7 +66,9 @@ private:
     ViewportLayout* mViewports;
     std::function<void()> mReset;
     QMenu* mMenu = nullptr;
-    QComboBox* mSwitcher = nullptr;
+    QWidget* mTabs = nullptr;
+    QToolButton* mMore = nullptr;
+    std::vector<QToolButton*> mTabButtons;
     int mPrefListener = 0;
     int mContributedListener = 0;
     std::set<std::string> mLayoutActions;

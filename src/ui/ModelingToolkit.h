@@ -7,11 +7,6 @@
 #include <string>
 #include <vector>
 
-class QButtonGroup;
-class QComboBox;
-class QDoubleSpinBox;
-class QSpinBox;
-class QListWidget;
 class QTimer;
 class QToolButton;
 
@@ -21,9 +16,9 @@ namespace lila::ui
 inline constexpr const char* kModelingToolkitDock = "modelingToolkit";
 
 /**
- * Maya's Modeling Toolkit: component modes, selection options and helpers, then collapsible sections of mesh,
- * component and tool buttons (each runs a registered action), the last operation's live settings and the selected
- * mesh's modifier stack.
+ * The Modeling Toolkit: the daily edit tools as tiles, then labelled groups of mesh, component and selection commands
+ * with the rest in overflow menus, then collapsed sections for normals, shaping, retopology, auto bevel, curves to mesh
+ * and the last operation's live settings. Component modes, soft select and symmetry live in the viewport header.
  */
 class LILA_UI_API ModelingToolkit : public QWidget
 {
@@ -37,22 +32,16 @@ protected:
     void showEvent(QShowEvent* e) override;
 
 private:
-    /** Button for a registered action; text is a short form of the action's label and falls back to it when it is not one. */
-    QToolButton* actionButton(const std::string& id, const QString& iconName, const QString& text, QWidget* parent);
-    void refreshTooltips();
+    /** A tile for a registered action, or null when it isn't one. */
+    QToolButton* tile(const std::string& id, const char* iconName, const QString& label, QWidget* parent);
+    /** A labelled push button for a registered action, or null when it isn't one. */
+    QToolButton* push(const std::string& id, const QString& label, QWidget* parent);
+    QToolButton* track(QToolButton* b, const std::string& id);
     void refreshState();
 
-    QButtonGroup* mModes = nullptr;
-    QToolButton* mSoft = nullptr;
-    QDoubleSpinBox* mSoftRadius = nullptr;
-    QComboBox* mSymmetry = nullptr;
-    QToolButton* mCameraBased = nullptr;
-    QToolButton* mBackface = nullptr;
-    QSpinBox* mPaintRadius = nullptr;
     QTimer* mRefresh = nullptr;
     std::vector<QToolButton*> mButtons;
     int mGraphListener = 0;
-    int mComponentListener = 0;
     int mPrefListener = 0;
 };
 

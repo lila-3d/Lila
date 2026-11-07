@@ -54,45 +54,49 @@ fs::path pathFor(const std::string& name, Origin origin)
     return dir.empty() ? fs::path() : dir / (file + u8".json");
 }
 
-json preset(std::vector<std::string> open, std::vector<std::string> raise, json size = json::object(), std::vector<std::string> bottom = {},
-            std::string shelf = {}, json columns = json::array())
+/**
+ * A built-in layout: the docks it opens (everything else closes), the tabs it brings to the front, sizes as shares of
+ * the window, docks split off under their column ("bottom") and the menu set it starts with. The docks' columns and
+ * tab groups come from the window's default arrangement, which every layout starts from.
+ */
+json preset(std::vector<std::string> open, std::vector<std::string> raise, std::string menuSet, json size = json::object(),
+            std::vector<std::string> bottom = {}, json columns = json::array())
 {
     json p{{"open", open}, {"raise", raise}, {"size", std::move(size)}};
     if (!bottom.empty())
         p["bottom"] = bottom;
     if (!columns.empty())
         p["columns"] = std::move(columns);
-    json layout{{"version", 1}, {"preset", std::move(p)}, {"viewport", {{"quad", false}, {"camera", "persp"}}}};
-    if (!shelf.empty())
-        layout["shelf"] = {{"current", std::move(shelf)}};
-    return layout;
+    return {{"version", 1}, {"preset", std::move(p)}, {"menuSet", std::move(menuSet)}, {"viewport", {{"quad", false}, {"camera", "persp"}}}};
 }
 
 const std::vector<std::pair<std::string, json>>& presets()
 {
+    // Every layout keeps the outliner and the inspector (channels, attributes) on the right: the selection is always
+    // one click from its values, whatever the work.
+    static const std::vector<std::string> data = {"outliner", "channelBox", "attributeEditor", "displayLayers"};
+    auto with = [](std::vector<std::string> extra) {
+        std::vector<std::string> all = data;
+        all.insert(all.end(), extra.begin(), extra.end());
+        return all;
+    };
     static const std::vector<std::pair<std::string, json>> all = {
-        {"Modeling", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "channelBox", "attributeEditor", "modelingToolkit",
-                             "modifierStack", "displayLayers", "timeSlider"},
-                            {"modelingToolkit"}, {{"modelingToolkit", {{"width", "fit"}}}, {"modifierStack", {{"height", 0.35}}}},
-                            {"modifierStack"})},
-        {"Level", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "channelBox", "attributeEditor", "levelToolkit", "stagehand.library",
-                          "displayLayers", "timeSlider"},
-                         {"levelToolkit"}, {{"levelToolkit", {{"width", "fit"}}}, {"stagehand.library", {{"height", 0.35}}}}, {"stagehand.library"}, "Level")},
-        {"UV Editing", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "uvEditor", "channelBox", "attributeEditor", "materialEditor",
-                               "displayLayers"},
-                              {"uvEditor", "channelBox"}, {{"uvEditor", {{"width", 0.24}}}, {"materialEditor", {{"height", 0.4}}}, {"displayLayers", {{"height", 0.15}}}},
-                              {}, {}, json::array({{"uvEditor"}, {"channelBox", "materialEditor", "displayLayers"}}))},
-        {"Baking", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "baker", "channelBox", "attributeEditor", "displayLayers"},
-                          {"baker", "channelBox"}, {{"baker", {{"width", 0.21}}}}, {}, {},
-                          json::array({{"baker"}, {"channelBox", "displayLayers"}}))},
-        {"Rigging", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "channelBox", "attributeEditor", "displayLayers", "scriptOutput",
-                            "timeSlider"},
-                           {"channelBox"})},
-        {"Animation", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "channelBox", "displayLayers", "graphEditor", "scriptOutput", "timeSlider"},
-                             {"graphEditor"}, {{"graphEditor", {{"height", 0.35}}}})},
-        {"Scripting", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "channelBox", "displayLayers", "scriptEditor", "scriptOutput", "apiReference",
-                              "timeSlider"},
-                             {"scriptEditor"}, {{"scriptEditor", {{"height", 0.45}}}})},
+        {"Model", preset(with({"modelingToolkit", "topologyToolkit", "curveToolkit", "modifierStack"}), {"modelingToolkit", "channelBox"}, "Model")},
+        // The UV editor takes its own full-height column beside the viewport; the data column stays whole beyond it.
+        {"UV", preset(with({"uvEditor", "modelingToolkit"}), {"uvEditor", "modelingToolkit", "channelBox"}, "UV", {{"uvEditor", {{"width", 520}}}}, {},
+                      json::array({{"uvEditor"}, {"outliner", "channelBox"}}))},
+        {"Sculpt", preset(with({}), {"channelBox"}, "Sculpt")},
+        {"Texture", preset(with({"textureSets", "baker", "materialEditor"}), {"textureSets", "materialEditor"}, "Texture")},
+        {"Bake", preset(with({"baker", "textureSets", "materialEditor"}), {"baker", "channelBox"}, "Texture")},
+        {"Rig", preset(with({"timeSlider"}), {"channelBox"}, "Rig", {{"outliner", {{"height", 0.5}}}})},
+        {"Animate", preset(with({"animLayers", "graphEditor", "timeSlider"}), {"graphEditor", "channelBox"}, "Animate",
+                           {{"outliner", {{"height", 0.45}}}, {"graphEditor", {{"height", 0.32}}}})},
+        {"Level", preset(with({"levelToolkit", "stagehand.library", "modelingToolkit"}), {"levelToolkit", "channelBox"}, "Level",
+                         {{"stagehand.library", {{"height", 0.4}}}}, {"stagehand.library"})},
+        {"Effects", preset(with({"timeSlider"}), {"channelBox"}, "Effects")},
+        {"Groom", preset(with({}), {"channelBox"}, "Groom")},
+        {"Print", preset(with({"modelingToolkit"}), {"modelingToolkit", "channelBox"}, "Print")},
+        {"Script", preset(with({"scriptEditor", "scriptOutput"}), {"scriptEditor", "channelBox"}, "Script", {{"scriptEditor", {{"height", 0.45}}}})},
     };
     return all;
 }

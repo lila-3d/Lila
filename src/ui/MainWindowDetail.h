@@ -149,8 +149,11 @@ namespace lila::ui::mainWindowDetail
 inline constexpr const char* kLayoutFile = "layouts/main";
 inline constexpr const char* kChannelBoxDock = "channelBox";
 // A saved layout older than this is dropped once, so everyone gets a changed default.
-inline constexpr int kLayoutVersion = 5;
-inline const QStringList kDefaultCollapsed = {"sourceControl", "referenceEditor", "materialEditor", "uvEditor", "scriptEditor", "scriptOutput", kTerminalDock};
+inline constexpr int kLayoutVersion = 6;
+inline const QStringList kDefaultCollapsed = {};
+/** Default widths of the tools column (left) and the data column (right), in logical pixels. */
+inline constexpr int kToolsColumnWidth = 312;
+inline constexpr int kDataColumnWidth = 392;
 inline constexpr int kDefaultSidePanelWidth = 340;
 
 /** Maya's help line: the status bar shows what's under the cursor straight away, without waiting for the tooltip. */

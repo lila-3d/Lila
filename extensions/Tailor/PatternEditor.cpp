@@ -4,10 +4,13 @@
 #include "Tailor.h"
 #include "TailorCore.h"
 
+#include "PanelKit.h"
+
 #include <lila/Command.h>
 #include <lila/Events.h>
 #include <lila/Extension.h>
 #include <lila/Graph.h>
+#include <lila/Icons.h>
 #include <lila/Log.h>
 #include <lila/Mesh.h>
 #include <lila/Node.h>
@@ -903,27 +906,33 @@ QWidget* makePatternEditor(QWidget* parent)
     col->setContentsMargins(0, 0, 0, 0);
     col->setSpacing(0);
     auto* bar = new QHBoxLayout;
-    bar->setContentsMargins(6, 4, 6, 4);
+    bar->setContentsMargins(8, 4, 8, 4);
+    bar->setSpacing(2);
     auto* view = new PatternView(w);
-    auto button = [&](const QString& text, const QString& tip, bool checkable) {
+    panelkit::Segmented modes = panelkit::segmented(w);
+    modes.add("Edit", "Edit: drag points; double-click an edge to add a point; Delete removes the hovered point.", int(PatternView::Mode::Edit));
+    modes.add("Sew", "Sew: click one edge, then another, to sew them; hold Shift on the second to sew them the same way round.",
+               int(PatternView::Mode::Sew));
+    modes.add("Pen", "Pen: click to place outline points, drag to curve through them; click the first point, double-click or "
+                          "press Enter to close the new panel. Esc cancels.", int(PatternView::Mode::Pen));
+    modes.add("Notch", "Notch: click an edge to mark a notch. Seams with as many notches on each side sew notch to notch.",
+               int(PatternView::Mode::Notch));
+    modes.setCurrent(int(PatternView::Mode::Edit));
+    bar->addWidget(modes.widget);
+    bar->addSpacing(8);
+    auto button = [&](const QString& text, const QString& tip) {
         auto* b = new QToolButton(w);
         b->setText(text);
         b->setToolTip(tip);
-        b->setCheckable(checkable);
-        b->setAutoExclusive(checkable);
+        panelkit::setRole(b, "push");
         bar->addWidget(b);
         return b;
     };
-    QToolButton* edit = button("Edit", "Drag points; double-click an edge to add a point; Delete removes the hovered point.", true);
-    QToolButton* sew = button("Sew", "Click one edge, then another, to sew them; hold Shift on the second to sew them the same way round.", true);
-    QToolButton* pen = button("Pen", "Click to place outline points, drag to curve through them; click the first point, double-click or "
-                                     "press Enter to close the new panel. Esc cancels.", true);
-    QToolButton* notch = button("Notch", "Click an edge to mark a notch. Seams with as many notches on each side sew notch to notch.", true);
-    edit->setChecked(true);
-    QToolButton* add = button("Add Panel", "Add a 40 x 60 cm panel in front of the garment.", false);
-    QToolButton* autoSew = button("Auto-Sew", "Sew the unsewn edges that meet where the panels are placed, with lengths that match.", false);
-    QToolButton* fit = button("Fit", "Frame every panel (F).", false);
+    QToolButton* add = button("Add Panel", "Add Panel: a 40 x 60 cm panel in front of the garment.");
+    QToolButton* autoSew = button("Auto-Sew", "Auto-Sew: sew the unsewn edges that meet where the panels are placed, with lengths that match.");
+    QToolButton* fit = button("Frame", "Frame: fit every panel in the view (F).");
     auto* title = new QLabel(w);
+    panelkit::setRole(title, "dim");
     // The garment name never widens the panel; the toolbar sets its floor.
     title->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     bar->addSpacing(12);
@@ -942,14 +951,17 @@ QWidget* makePatternEditor(QWidget* parent)
         issues->clear();
         if (found.empty())
         {
-            issues->addItem("No problems found.");
+            auto* none = new QListWidgetItem("No problems found.");
+            none->setFlags(Qt::NoItemFlags);
+            issues->addItem(none);
             return;
         }
         for (const json& f : found)
         {
             const std::string level = f.value("level", "info");
             auto* item = new QListWidgetItem(QString::fromStdString(f.value("message", "") + "\n" + f.value("tip", "")));
-            item->setForeground(level == "error" ? QColor(240, 110, 100) : level == "warning" ? QColor(240, 200, 110) : QColor(170, 190, 220));
+            // The glyph's shape carries the level: circle error, triangle warning, i for a note.
+            item->setIcon(ui::icon(level == "error" ? "alert-circle" : level == "warning" ? "alert-triangle" : "info-circle"));
             item->setData(Qt::UserRole, QString::fromStdString(f.value("panel", "")));
             item->setData(Qt::UserRole + 1, f.contains("seam") ? f["seam"].get<int>() : -1);
             issues->addItem(item);
@@ -966,10 +978,7 @@ QWidget* makePatternEditor(QWidget* parent)
         view->highlight(pi, item->data(Qt::UserRole + 1).toInt());
     });
 
-    QObject::connect(edit, &QToolButton::clicked, view, [view] { view->setMode(PatternView::Mode::Edit); });
-    QObject::connect(sew, &QToolButton::clicked, view, [view] { view->setMode(PatternView::Mode::Sew); });
-    QObject::connect(pen, &QToolButton::clicked, view, [view] { view->setMode(PatternView::Mode::Pen); });
-    QObject::connect(notch, &QToolButton::clicked, view, [view] { view->setMode(PatternView::Mode::Notch); });
+    QObject::connect(modes.group, &QButtonGroup::idClicked, view, [view](int mode) { view->setMode(PatternView::Mode(mode)); });
     QObject::connect(add, &QToolButton::clicked, view, [view] { view->addPanel(); });
     QObject::connect(autoSew, &QToolButton::clicked, view, [view] { view->autoSew(); });
     QObject::connect(fit, &QToolButton::clicked, view, [view] { view->fit(); });

@@ -24,6 +24,7 @@
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QLabel>
+#include <QMenu>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QTableWidget>
@@ -147,12 +148,59 @@ QToolButton* toolButton(QWidget* parent, const char* icon, const QString& tip, s
     return b;
 }
 
-QPushButton* textButton(QWidget* parent, const QString& label, const QString& tip, std::function<void()> fn)
+QToolButton* textButton(QWidget* parent, const QString& label, const QString& tip, std::function<void()> fn)
 {
-    auto* b = new QPushButton(label, parent);
+    auto* b = new QToolButton(parent);
+    b->setText(label);
     b->setToolTip(tip);
-    QObject::connect(b, &QPushButton::clicked, parent, [fn = std::move(fn)] { fn(); });
+    b->setProperty("role", "push");
+    QObject::connect(b, &QToolButton::clicked, parent, [fn = std::move(fn)] { fn(); });
     return b;
+}
+
+/** The action's tooltip: its label, hotkey and doc. */
+QString actionTip(const char* id)
+{
+    return QString::fromStdString(actions::tooltip(id));
+}
+
+QLabel* groupLabel(QWidget* parent, const QString& text)
+{
+    auto* l = new QLabel(text, parent);
+    l->setForegroundRole(QPalette::PlaceholderText);
+    return l;
+}
+
+struct MoreRow
+{
+    const char* label;
+    QString tip;
+    std::function<void()> run;
+};
+
+/** "...": a menu of rarer commands. */
+QToolButton* moreButton(QWidget* parent, std::initializer_list<MoreRow> rows)
+{
+    auto* b = new QToolButton(parent);
+    b->setIcon(ui::icon("dots"));
+    b->setToolTip("More Commands");
+    b->setPopupMode(QToolButton::InstantPopup);
+    b->setProperty("role", "overflow");
+    auto* menu = new QMenu(b);
+    menu->setToolTipsVisible(true);
+    for (const MoreRow& r : rows)
+        menu->addAction(r.label, r.run)->setToolTip(r.tip);
+    b->setMenu(menu);
+    return b;
+}
+
+/** A number field: right-aligned, unit inside, no step buttons. */
+void numberStyle(QAbstractSpinBox* s, const QString& unit)
+{
+    s->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    s->setButtonSymbols(QAbstractSpinBox::NoButtons);
+    if (auto* d = qobject_cast<QDoubleSpinBox*>(s); d && !unit.isEmpty())
+        d->setSuffix(" " + unit);
 }
 
 QString frameText(double f)
@@ -170,23 +218,21 @@ QWidget* makeStacker(QWidget* parent)
     v->setContentsMargins(4, 4, 4, 4);
 
     auto* header = new QLabel(w);
+    header->setForegroundRole(QPalette::PlaceholderText);
     v->addWidget(header);
 
     auto* tools = new QHBoxLayout;
     tools->setSpacing(1);
-    tools->addWidget(toolButton(w, "square-plus", "Create a key after the selected key, holding its pose, one gap later",
-                                [] { onCharacter("stackerCreateKey", afterSelected()); }));
-    tools->addWidget(toolButton(w, "trash", "Delete the selected keys with their timing", [] { onKeys("stackerDeleteKey"); }));
-    tools->addWidget(toolButton(w, "copy", "Copy the selected keys", [] { onKeys("stackerCopyKeys"); }));
-    tools->addWidget(toolButton(w, "clipboard", "Paste the copied keys onto the selected keys", [] { onKeys("stackerPasteKeys"); }));
-    tools->addWidget(toolButton(w, "row-insert-bottom", "Insert the copied keys after the selected key",
-                                [] { onCharacter("stackerInsertKeys", afterSelected()); }));
-    tools->addWidget(toolButton(w, "flip-vertical", "Mirror the pose at the selected keys", [] { onKeys("stackerMirrorKeys"); }));
-    tools->addSpacing(8);
-    QToolButton* prevGhost = toolButton(w, "arrow-bar-to-left", "Ghost the previous key", {}, true);
-    QToolButton* nextGhost = toolButton(w, "arrow-bar-to-right", "Ghost the next key", {}, true);
-    QToolButton* loop = toolButton(w, "repeat", "Loop key: the last key mirrors the first and the cycle repeats",
-                                   [] { onCharacter("stackerLoopKey"); }, true);
+    tools->addWidget(toolButton(w, "square-plus", actionTip("puppeteer.stacker.createKey"), [] { onCharacter("stackerCreateKey", afterSelected()); }));
+    tools->addWidget(toolButton(w, "trash", actionTip("puppeteer.stacker.deleteKey"), [] { onKeys("stackerDeleteKey"); }));
+    tools->addWidget(toolButton(w, "copy", actionTip("puppeteer.stacker.copy"), [] { onKeys("stackerCopyKeys"); }));
+    tools->addWidget(toolButton(w, "clipboard", actionTip("puppeteer.stacker.paste"), [] { onKeys("stackerPasteKeys"); }));
+    tools->addWidget(toolButton(w, "row-insert-bottom", actionTip("puppeteer.stacker.insert"), [] { onCharacter("stackerInsertKeys", afterSelected()); }));
+    tools->addWidget(toolButton(w, "flip-vertical", actionTip("puppeteer.stacker.mirror"), [] { onKeys("stackerMirrorKeys"); }));
+    tools->addSpacing(10);
+    QToolButton* prevGhost = toolButton(w, "arrow-bar-to-left", "Ghost Previous Key\nShow the pose of the key before the current frame", {}, true);
+    QToolButton* nextGhost = toolButton(w, "arrow-bar-to-right", "Ghost Next Key\nShow the pose of the key after the current frame", {}, true);
+    QToolButton* loop = toolButton(w, "repeat", "Loop Key\nThe last key mirrors the first and the cycle repeats", [] { onCharacter("stackerLoopKey"); }, true);
     for (QToolButton* b : {prevGhost, nextGhost, loop})
         tools->addWidget(b);
     tools->addStretch(1);
@@ -213,6 +259,7 @@ QWidget* makeStacker(QWidget* parent)
     v->addWidget(table, 1);
 
     auto* quick = new QHBoxLayout;
+    quick->setSpacing(2);
     auto select = [table](const char* which) {
         const json r = onCharacter("stackerSelect", {{"which", which}});
         if (!r.is_array())
@@ -223,33 +270,38 @@ QWidget* makeStacker(QWidget* parent)
                 if (QTableWidgetItem* it = table->item(int(i.get<int64_t>()), c))
                     it->setSelected(true);
     };
-    quick->addWidget(textButton(w, "All", "Select every key but the loop key", [select] { select("all"); }));
-    quick->addWidget(textButton(w, "1st Half", "Select the first half of the cycle", [select] { select("firstHalf"); }));
-    quick->addWidget(textButton(w, "2nd Half", "Select the second half of the cycle", [select] { select("secondHalf"); }));
-    quick->addSpacing(8);
-    quick->addWidget(textButton(w, "B", "Mark the selected keys as breakdowns", [] { onKeys("stackerMarkKey", {{"mark", "breakdown"}}); }));
-    quick->addWidget(textButton(w, "E", "Mark the selected keys as extremes", [] { onKeys("stackerMarkKey", {{"mark", "extreme"}}); }));
-    quick->addWidget(toolButton(w, "minus", "Clear the selected keys' marks", [] { onKeys("stackerMarkKey", {{"mark", "none"}}); }));
+    quick->addWidget(groupLabel(w, "Select"));
+    quick->addWidget(textButton(w, "All", "Select All\nEvery key but the loop key", [select] { select("all"); }));
+    quick->addWidget(textButton(w, "1st Half", "Select First Half\nThe first half of the cycle", [select] { select("firstHalf"); }));
+    quick->addWidget(textButton(w, "2nd Half", "Select Second Half\nThe second half of the cycle", [select] { select("secondHalf"); }));
     quick->addStretch(1);
     v->addLayout(quick);
 
+    auto* marks = new QHBoxLayout;
+    marks->setSpacing(2);
+    marks->addWidget(groupLabel(w, "Mark"));
+    marks->addWidget(textButton(w, "Breakdown", "Mark Breakdown\nMark the selected keys as breakdowns", [] { onKeys("stackerMarkKey", {{"mark", "breakdown"}}); }));
+    marks->addWidget(textButton(w, "Extreme", "Mark Extreme\nMark the selected keys as extremes", [] { onKeys("stackerMarkKey", {{"mark", "extreme"}}); }));
+    marks->addWidget(textButton(w, "Clear", "Clear Marks\nClear the selected keys' marks", [] { onKeys("stackerMarkKey", {{"mark", "none"}}); }));
+    marks->addStretch(1);
+    v->addLayout(marks);
+
     auto* reset = new QHBoxLayout;
+    reset->setSpacing(2);
     auto* pose = new QComboBox(w);
-    pose->addItems({"bind", "ref"});
+    pose->addItem("Bind", "bind");
+    pose->addItem("Ref", "ref");
     pose->setEditable(true);
-    pose->setToolTip("Library pose to reset to");
+    pose->setToolTip("Reset Pose\nThe library pose Reset goes back to; type any pose name");
     auto* tBox = new QCheckBox("T", w);
     auto* rBox = new QCheckBox("R", w);
     auto* sBox = new QCheckBox("S", w);
     for (QCheckBox* c : {tBox, rBox, sBox})
         c->setChecked(true);
-    tBox->setToolTip("Reset translate");
-    rBox->setToolTip("Reset rotate");
-    sBox->setToolTip("Reset scale");
-    reset->addWidget(pose);
-    for (QCheckBox* c : {tBox, rBox, sBox})
-        reset->addWidget(c);
-    reset->addWidget(toolButton(w, "restore", "Reset the selected keys to the pose, in the ticked channels", [pose, tBox, rBox, sBox] {
+    tBox->setToolTip("Translate\nReset translate");
+    rBox->setToolTip("Rotate\nReset rotate");
+    sBox->setToolTip("Scale\nReset scale");
+    reset->addWidget(textButton(w, "Reset", "Reset Keys\nReset the selected keys to the pose, in the ticked channels", [pose, tBox, rBox, sBox] {
         json channels = json::array();
         if (tBox->isChecked())
             channels.push_back("translate");
@@ -259,13 +311,18 @@ QWidget* makeStacker(QWidget* parent)
             channels.push_back("scale");
         if (channels.size() == 3)
             channels = json::array();
-        onKeys("stackerResetKeys", {{"pose", pose->currentText().toStdString()}, {"channels", channels}});
+        // A listed pose sends its stored name; anything typed is a pose name as it stands.
+        const int i = pose->currentIndex();
+        const QString name = i >= 0 && pose->itemText(i) == pose->currentText() ? pose->itemData(i).toString() : pose->currentText();
+        onKeys("stackerResetKeys", {{"pose", name.toStdString()}, {"channels", channels}});
     }));
-    reset->addSpacing(8);
-    reset->addWidget(toolButton(w, "arrow-autofit-content", "Shorten the selected keys' gaps by a frame",
-                                [] { onKeys("stackerNudgeGap", {{"by", -1.0}}); }));
-    reset->addWidget(toolButton(w, "arrow-autofit-width", "Lengthen the selected keys' gaps by a frame",
-                                [] { onKeys("stackerNudgeGap", {{"by", 1.0}}); }));
+    reset->addWidget(pose);
+    for (QCheckBox* c : {tBox, rBox, sBox})
+        reset->addWidget(c);
+    reset->addSpacing(10);
+    reset->addWidget(groupLabel(w, "Gap"));
+    reset->addWidget(toolButton(w, "arrow-autofit-content", actionTip("puppeteer.stacker.gapDecrease"), [] { onKeys("stackerNudgeGap", {{"by", -1.0}}); }));
+    reset->addWidget(toolButton(w, "arrow-autofit-width", actionTip("puppeteer.stacker.gapIncrease"), [] { onKeys("stackerNudgeGap", {{"by", 1.0}}); }));
     reset->addStretch(1);
     v->addLayout(reset);
 
@@ -286,7 +343,7 @@ QWidget* makeStacker(QWidget* parent)
         table->setRowCount(0);
         if (!keys.is_object())
         {
-            header->setText("Select a character");
+            header->setText("No character. Select a Puppeteer character to stack its keys.");
             *filling = false;
             return;
         }
@@ -410,45 +467,45 @@ QWidget* makeMixer(QWidget* parent)
     };
 
     auto* row1 = new QHBoxLayout;
-    row1->setSpacing(1);
-    row1->addWidget(toolButton(w, "square-plus", "New layer with the selected joints", [] { runCommand("createAnimLayer"); }));
-    row1->addWidget(toolButton(w, "layers-subtract", "Extract the selected joints' animation from the active layer to a new layer",
-                               [] { runCommand("extractAnimLayer"); }));
-    row1->addWidget(toolButton(w, "git-merge", "Merge the selected layers down", [selectedLayers] {
-        if (!selectedLayers().empty())
-            runCommand("mergeAnimLayers", {{"args", selectedLayers()}});
-    }));
-    row1->addWidget(toolButton(w, "copy-plus", "Duplicate the layer", [current] {
-        if (!current().empty())
-            runCommand("duplicateAnimLayer", {{"args", {current()}}});
-    }));
-    auto deleteLayers = [selectedLayers] {
-        if (!selectedLayers().empty())
-            runCommand("deleteAnimLayer", {{"args", selectedLayers()}});
-    };
-    row1->addWidget(toolButton(w, "trash", "Delete the selected layers", deleteLayers));
-    ui::deletion::claim(tree, deleteLayers);
-    row1->addWidget(toolButton(w, "arrow-up", "Move the layer up the stack", [current] {
-        if (!current().empty())
-            runCommand("reorderAnimLayer", {{"args", {current()}}, {"by", 1}});
-    }));
-    row1->addWidget(toolButton(w, "arrow-down", "Move the layer down the stack", [current] {
-        if (!current().empty())
-            runCommand("reorderAnimLayer", {{"args", {current()}}, {"by", -1}});
-    }));
-    row1->addSpacing(8);
-    row1->addWidget(toolButton(w, "pencil", "Edit joints: add the selected joints to the layer and key into it", [current] {
+    row1->setSpacing(2);
+    row1->addWidget(textButton(w, "New", "New Layer\nA layer with the selected joints", [] { runCommand("createAnimLayer"); }));
+    row1->addWidget(textButton(w, "Add Joints", "Add Joints\nAdd the selected joints to the layer and key into it", [current] {
         if (current().empty())
             return;
         runCommand("addAnimLayerMembers", {{"layer", current()}});
         runCommand("setActiveAnimLayer", {{"args", {current()}}});
     }));
-    row1->addWidget(toolButton(w, "minus", "Take the selected joints off the layer", [current] {
+    row1->addWidget(textButton(w, "Remove Joints", "Remove Joints\nTake the selected joints off the layer", [current] {
         if (!current().empty())
             runCommand("removeAnimLayerMembers", {{"layer", current()}});
     }));
+    row1->addWidget(moreButton(w, {
+        {"Extract to New Layer", "Move the selected joints' animation from the active layer to a new layer", [] { runCommand("extractAnimLayer"); }},
+        {"Merge Down", "Merge the selected layers down", [selectedLayers] {
+             if (!selectedLayers().empty())
+                 runCommand("mergeAnimLayers", {{"args", selectedLayers()}});
+         }},
+        {"Duplicate", "Duplicate the layer", [current] {
+             if (!current().empty())
+                 runCommand("duplicateAnimLayer", {{"args", {current()}}});
+         }},
+        {"Move Up", "Move the layer up the stack", [current] {
+             if (!current().empty())
+                 runCommand("reorderAnimLayer", {{"args", {current()}}, {"by", 1}});
+         }},
+        {"Move Down", "Move the layer down the stack", [current] {
+             if (!current().empty())
+                 runCommand("reorderAnimLayer", {{"args", {current()}}, {"by", -1}});
+         }},
+    }));
+    auto deleteLayers = [selectedLayers] {
+        if (!selectedLayers().empty())
+            runCommand("deleteAnimLayer", {{"args", selectedLayers()}});
+    };
+    ui::deletion::claim(tree, deleteLayers);
     row1->addStretch(1);
-    v->addLayout(row1);
+    row1->addWidget(toolButton(w, "trash", "Delete Layers\nDelete the selected layers", deleteLayers));
+    v->insertLayout(0, row1);
 
     auto filling = std::make_shared<bool>(false);
     auto fill = [w, tree, filling] {
@@ -479,10 +536,11 @@ QWidget* makeMixer(QWidget* parent)
             auto* eye = new QToolButton(tree);
             eye->setAutoRaise(true);
             eye->setIcon(ui::icon(r.mute ? "eye-off" : "eye"));
-            eye->setToolTip("Mute the layer");
+            eye->setToolTip(r.mute ? "Muted\nClick to unmute the layer" : "Mute\nClick to mute the layer");
             QObject::connect(eye, &QToolButton::clicked, w, [name, r] { runCommand("editAnimLayer", {{"args", {name.toStdString()}}, {"mute", !r.mute}}); });
             tree->setItemWidget(it, 0, eye);
             auto* weight = new QDoubleSpinBox(tree);
+            numberStyle(weight, {});
             weight->setRange(0.0, 1.0);
             weight->setSingleStep(0.05);
             weight->setValue(r.weight);
@@ -491,15 +549,17 @@ QWidget* makeMixer(QWidget* parent)
                              [name](double x) { runCommand("editAnimLayer", {{"args", {name.toStdString()}}, {"weight", x}}); });
             tree->setItemWidget(it, 2, weight);
             auto* mode = new QComboBox(tree);
-            mode->addItems({"additive", "override"});
-            mode->setCurrentText(QString::fromStdString(r.mode));
-            QObject::connect(mode, &QComboBox::currentTextChanged, w,
-                             [name](const QString& m) { runCommand("editAnimLayer", {{"args", {name.toStdString()}}, {"mode", m.toStdString()}}); });
+            mode->addItem("Additive", "additive");
+            mode->addItem("Override", "override");
+            mode->setCurrentIndex(std::max(0, mode->findData(QString::fromStdString(r.mode))));
+            QObject::connect(mode, &QComboBox::currentIndexChanged, w, [name, mode] {
+                runCommand("editAnimLayer", {{"args", {name.toStdString()}}, {"mode", mode->currentData().toString().toStdString()}});
+            });
             tree->setItemWidget(it, 3, mode);
             auto* lock = new QToolButton(tree);
             lock->setAutoRaise(true);
             lock->setIcon(ui::icon(r.lock ? "lock" : "lock-open"));
-            lock->setToolTip("Lock the layer: no keys or joint changes");
+            lock->setToolTip(r.lock ? "Locked\nClick to unlock the layer" : "Lock\nNo keys or joint changes on the layer");
             QObject::connect(lock, &QToolButton::clicked, w, [name, r] { runCommand("editAnimLayer", {{"args", {name.toStdString()}}, {"lock", !r.lock}}); });
             tree->setItemWidget(it, 4, lock);
             if (name == keep)
@@ -570,14 +630,14 @@ QWidget* makeBank(QWidget* parent)
     };
 
     auto* row = new QHBoxLayout;
-    row->setSpacing(1);
-    row->addWidget(toolButton(w, "square-plus", "New take for the selected character", [] {
+    row->setSpacing(2);
+    row->addWidget(textButton(w, "New", "New Take\nA take for the selected character", [] {
         json call = json::object();
         if (const std::string ch = currentCharacter(); !ch.empty())
             call["root"] = ch;
         runCommand("createTake", call);
     }));
-    row->addWidget(toolButton(w, "copy-plus", "Duplicate the take (_01, _02 ...)", [currentTake] {
+    row->addWidget(textButton(w, "Duplicate", "Duplicate Take\nA copy named _01, _02 ...", [currentTake] {
         if (!currentTake().empty())
             runCommand("bankDuplicateTake", {{"args", {currentTake()}}});
     }));
@@ -585,37 +645,38 @@ QWidget* makeBank(QWidget* parent)
         if (!currentTake().empty())
             runCommand("deleteTake", {{"args", {currentTake()}}});
     };
-    row->addWidget(toolButton(w, "trash", "Delete the take and its animation", deleteTake));
     ui::deletion::claim(tree, deleteTake);
-    row->addWidget(toolButton(w, "folder-plus", "File the take under a folder", [w, tree, currentTake] {
-        if (currentTake().empty())
-            return;
-        bool ok = false;
-        const QString now = tree->currentItem()->data(0, Qt::UserRole + 1).toString();
-        const QString f = QInputDialog::getText(w, "Take Folder", "Folder (a/b, empty for none):", QLineEdit::Normal, now, &ok);
-        if (ok)
-            runCommand("editTake", {{"args", {currentTake()}}, {"folder", normalFolder(f.toStdString())}});
-    }));
-    row->addSpacing(8);
-    row->addWidget(toolButton(w, "file-import", "Import a take from a .lilatake file", [w] {
-        const QString path = ui::fileDialog::getOpenFileName(w, "Import Take", QString(), "Takes (*.lilatake);;All files (*)");
-        if (path.isEmpty())
-            return;
-        json call = {{"args", {path.toStdString()}}};
-        if (const std::string ch = currentCharacter(); !ch.empty())
-            call["root"] = ch;
-        runCommand("importTake", call);
-    }));
-    row->addWidget(toolButton(w, "file-export", "Export the take to a .lilatake file", [w, currentTake] {
-        if (currentTake().empty())
-            return;
-        const QString path = ui::fileDialog::getSaveFileName(w, "Export Take", QString::fromStdString(currentTake() + ".lilatake"),
-                                                          "Takes (*.lilatake)");
-        if (!path.isEmpty())
-            runCommand("exportTake", {{"args", {currentTake()}}, {"path", path.toStdString()}});
+    row->addWidget(moreButton(w, {
+        {"Move to Folder...", "File the take under a folder", [w, tree, currentTake] {
+             if (currentTake().empty())
+                 return;
+             bool ok = false;
+             const QString now = tree->currentItem()->data(0, Qt::UserRole + 1).toString();
+             const QString f = QInputDialog::getText(w, "Take Folder", "Folder (a/b, empty for none):", QLineEdit::Normal, now, &ok);
+             if (ok)
+                 runCommand("editTake", {{"args", {currentTake()}}, {"folder", normalFolder(f.toStdString())}});
+         }},
+        {"Import Take...", "Import a take from a .lilatake file", [w] {
+             const QString path = ui::fileDialog::getOpenFileName(w, "Import Take", QString(), "Takes (*.lilatake);;All files (*)");
+             if (path.isEmpty())
+                 return;
+             json call = {{"args", {path.toStdString()}}};
+             if (const std::string ch = currentCharacter(); !ch.empty())
+                 call["root"] = ch;
+             runCommand("importTake", call);
+         }},
+        {"Export Take...", "Export the take to a .lilatake file", [w, currentTake] {
+             if (currentTake().empty())
+                 return;
+             const QString path = ui::fileDialog::getSaveFileName(w, "Export Take", QString::fromStdString(currentTake() + ".lilatake"),
+                                                               "Takes (*.lilatake)");
+             if (!path.isEmpty())
+                 runCommand("exportTake", {{"args", {currentTake()}}, {"path", path.toStdString()}});
+         }},
     }));
     row->addStretch(1);
-    v->addLayout(row);
+    row->addWidget(toolButton(w, "trash", "Delete Take\nDelete the take and its animation", deleteTake));
+    v->insertLayout(0, row);
 
     auto filling = std::make_shared<bool>(false);
     auto fill = [tree, filling] {
@@ -666,43 +727,48 @@ QWidget* makeCycleMaker(QWidget* parent)
     v->setContentsMargins(4, 4, 4, 4);
 
     auto* axis = new QComboBox(w);
-    axis->addItems({"x", "y", "z"});
-    axis->setToolTip("Axis the mirror plane faces");
+    for (const char* a : {"x", "y", "z"})
+        axis->addItem(QString(a).toUpper(), a);
+    axis->setToolTip("Mirror Axis\nThe axis the mirror plane faces");
+    auto axisName = [axis] { return axis->currentData().toString().toStdString(); };
     auto* cycle = new QHBoxLayout;
-    cycle->addWidget(textButton(w, "Cycle Step", "Build the second step from the first half of the cycle, mirrored",
-                                [axis] { onCharacter("cycleStep", {{"axis", axis->currentText().toStdString()}}); }));
-    cycle->addWidget(textButton(w, "Cycle Side", "Give the opposite side of the selected joints their motion half a cycle later",
-                                [axis] { runCommand("cycleSide", {{"axis", axis->currentText().toStdString()}}); }));
-    cycle->addWidget(textButton(w, "Loop Key", "Turn the character's loop key on or off", [] { onCharacter("stackerLoopKey"); }));
-    cycle->addWidget(new QLabel("Mirror", w));
+    cycle->setSpacing(2);
+    cycle->addWidget(textButton(w, "Cycle Step", actionTip("puppeteer.cycle.step"), [axisName] { onCharacter("cycleStep", {{"axis", axisName()}}); }));
+    cycle->addWidget(textButton(w, "Cycle Side", actionTip("puppeteer.cycle.side"), [axisName] { runCommand("cycleSide", {{"axis", axisName()}}); }));
+    cycle->addWidget(textButton(w, "Loop Key", actionTip("puppeteer.stacker.loopKey"), [] { onCharacter("stackerLoopKey"); }));
+    cycle->addSpacing(10);
+    cycle->addWidget(groupLabel(w, "Mirror Axis"));
     cycle->addWidget(axis);
     cycle->addStretch(1);
     v->addLayout(cycle);
 
     auto* box = new QGroupBox("Walk / Run", w);
     auto* form = new QFormLayout(box);
-    auto spin = [box, form](const char* label, double lo, double hi, double def, const char* tip, int decimals = 1) {
+    form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    auto spin = [box, form](const char* label, double lo, double hi, double def, const char* unit, const char* tip, int decimals = 1) {
         auto* s = new QDoubleSpinBox(box);
+        numberStyle(s, unit);
         s->setRange(lo, hi);
         s->setDecimals(decimals);
         s->setValue(def);
-        s->setToolTip(tip);
+        s->setToolTip(QString("%1\n%2").arg(label, tip));
         form->addRow(label, s);
         return s;
     };
     auto* run = new QCheckBox("Run", box);
     run->setToolTip("Shorter contact, a flight phase, the bounce inverted");
     form->addRow(run);
-    QDoubleSpinBox* stride = spin("Stride", 0, 500, 50, "cm each foot travels under the body while planted");
-    QDoubleSpinBox* speed = spin("Speed", 0, 2000, 0, "cm/s; above zero it sets the cycle length from the stride");
-    QDoubleSpinBox* length = spin("Cycle Length", 4, 480, 32, "Frames per cycle (two steps), when speed is zero", 0);
-    QDoubleSpinBox* bounce = spin("Bounce", 0, 50, 3, "cm the pelvis rises and falls");
-    QDoubleSpinBox* step = spin("Step Height", 0, 100, 10, "cm the swinging foot lifts");
-    QDoubleSpinBox* arms = spin("Arm Swing", 0, 90, 20, "Degrees each arm swings either way");
-    QDoubleSpinBox* lean = spin("Lean", -45, 45, 4, "Degrees the spine leans forward");
-    QDoubleSpinBox* sway = spin("Sway", 0, 30, 2, "cm the pelvis shifts over the planted foot");
-    QDoubleSpinBox* twist = spin("Twist", 0, 45, 6, "Degrees the pelvis turns with the legs");
+    QDoubleSpinBox* stride = spin("Stride", 0, 500, 50, "cm", "How far each foot travels under the body while planted");
+    QDoubleSpinBox* speed = spin("Speed", 0, 2000, 0, "cm/s", "Above zero it sets the cycle length from the stride");
+    QDoubleSpinBox* length = spin("Cycle Length", 4, 480, 32, "f", "Frames per cycle (two steps), when speed is zero", 0);
+    QDoubleSpinBox* bounce = spin("Bounce", 0, 50, 3, "cm", "How far the pelvis rises and falls");
+    QDoubleSpinBox* step = spin("Step Height", 0, 100, 10, "cm", "How high the swinging foot lifts");
+    QDoubleSpinBox* arms = spin("Arm Swing", 0, 90, 20, "°", "How far each arm swings either way");
+    QDoubleSpinBox* lean = spin("Lean", -45, 45, 4, "°", "How far the spine leans forward");
+    QDoubleSpinBox* sway = spin("Sway", 0, 30, 2, "cm", "How far the pelvis shifts over the planted foot");
+    QDoubleSpinBox* twist = spin("Twist", 0, 45, 6, "°", "How far the pelvis turns with the legs");
     auto* keysPerStep = new QSpinBox(box);
+    numberStyle(keysPerStep, {});
     keysPerStep->setRange(1, 32);
     keysPerStep->setValue(4);
     form->addRow("Keys per Step", keysPerStep);
@@ -711,7 +777,7 @@ QWidget* makeCycleMaker(QWidget* parent)
         bounce->setValue(on ? 6 : 3);
         length->setValue(on ? 20 : 32);
     });
-    form->addRow(textButton(box, "Generate", "Key a looping cycle into a new take for the selected character", [=] {
+    form->addRow(textButton(box, "Generate", "Generate\nKey a looping cycle into a new take for the selected character", [=] {
         onCharacter("walkCycle", {{"run", run->isChecked()},
                              {"stride", stride->value()},
                              {"speed", speed->value()},

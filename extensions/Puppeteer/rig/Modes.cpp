@@ -147,10 +147,11 @@ std::optional<std::vector<std::string>> animateRedirect(const selectionHandlers:
 
 // Registration --------------------------------------------------------------------------------------------------------
 
-json preset(std::vector<std::string> open, std::vector<std::string> raise, json size = json::object())
+json preset(std::vector<std::string> open, std::vector<std::string> raise, std::string menuSet, json size = json::object())
 {
     return {{"version", 1},
             {"preset", {{"open", open}, {"raise", raise}, {"size", std::move(size)}}},
+            {"menuSet", std::move(menuSet)},
             {"viewport", {{"quad", false}, {"camera", "persp"}}}};
 }
 
@@ -209,7 +210,7 @@ void registerModeActions(ext::Context& ctx)
 
 void registerMenus(ext::Context& ctx)
 {
-    menus::addMenu(ctx, {.id = "Puppeteer", .title = "Puppeteer", .sets = {"Rigging", "Animation"}});
+    menus::addMenu(ctx, {.id = "Puppeteer", .title = "Puppeteer", .sets = {"Rig", "Animate"}});
     for (const char* a : {"mode.puppeteerRig", "mode.puppeteerAnimate", "", "puppeteer.rig.character", "puppeteer.rig.ikChain",
                           "puppeteer.rig.reverseFoot", "puppeteer.rig.looker", "puppeteer.rig.space"})
         menus::addItem(ctx, *a ? menus::Item{.menu = "Puppeteer", .action = a} : menus::Item{.menu = "Puppeteer", .kind = menus::Kind::Separator});
@@ -251,9 +252,10 @@ void registerShelf(ext::Context& ctx)
 void registerModeBundles(ext::Context& ctx)
 {
     layouts::add(ctx, kRigLayout,
-                 preset({"shelf", "outliner", "undoHistory", "channelBox", "attributeEditor", "scriptOutput", "timeSlider"}, {"channelBox"}));
+                 preset({"outliner", "channelBox", "attributeEditor", "displayLayers", "timeSlider"}, {"channelBox"}, "Rig"));
     layouts::add(ctx, kAnimateLayout,
-                 preset({"shelf", "outliner", "channelBox", "graphEditor", "timeSlider"}, {"graphEditor"}, {{"graphEditor", {{"height", 0.3}}}}));
+                 preset({"outliner", "channelBox", "attributeEditor", "displayLayers", "graphEditor", "timeSlider"}, {"graphEditor", "channelBox"}, "Animate",
+                        {{"graphEditor", {{"height", 0.3}}}}));
 
     selectionHandlers::add(ctx, {.id = kRigSelection, .label = "Puppeteer Rig: joint under mesh", .redirect = baseRedirect, .hover = baseHover,
                                  .candidates = baseCandidates});

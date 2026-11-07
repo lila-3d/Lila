@@ -1,6 +1,7 @@
 #include "ui/NodeEditor.h"
 
 #include "ui/ColorPopup.h"
+#include "ui/Controls.h"
 #include "ui/NodeCanvas.h"
 #include "ui/Hotkeys.h"
 #include "ui/PreferencesDialog.h"
@@ -544,7 +545,15 @@ void NodeEditor::buildToolbar()
     mBar = new QWidget(this);
     auto* bar = new QHBoxLayout(mBar);
     bar->setContentsMargins(6, 4, 6, 4);
+    bar->setSpacing(2);
     const GraphBackend& b = *mBackend;
+    auto pushButton = [this](const QString& text, const QString& tip) {
+        auto* btn = new QToolButton(mBar);
+        btn->setText(text);
+        btn->setToolTip(tip);
+        controls::setRole(btn, "push");
+        return btn;
+    };
 
     std::vector<std::string> backendIds = graphBackends::ids();
     if (backendIds.size() > 1)
@@ -554,7 +563,7 @@ void NodeEditor::buildToolbar()
             if (GraphBackendPtr other = graphBackends::find(id))
                 picker->addItem(other->title(), qs(id));
         picker->setCurrentIndex(std::max(0, picker->findData(qs(b.id()))));
-        picker->setToolTip("What kind of graph this editor shows");
+        picker->setToolTip("Graph Type\nWhat kind of graph this editor shows");
         connect(picker, &QComboBox::activated, this, [this, picker](int i) {
             std::string id = picker->itemData(i).toString().toStdString();
             QTimer::singleShot(0, this, [this, id] { setBackend(id); });
@@ -564,7 +573,9 @@ void NodeEditor::buildToolbar()
 
     mGroups = new QComboBox(mBar);
     mGroups->setMinimumWidth(180);
-    bar->addWidget(new QLabel(b.groupNoun(), mBar));
+    auto* groupLabel = new QLabel(b.groupNoun(), mBar);
+    groupLabel->setForegroundRole(QPalette::PlaceholderText);
+    bar->addWidget(groupLabel);
     bar->addWidget(mGroups);
     connect(mGroups, &QComboBox::currentTextChanged, this, [this](const QString& t) {
         if (!mRefreshing && t != mGroup)
@@ -572,22 +583,18 @@ void NodeEditor::buildToolbar()
     });
     if (std::string action = b.newGroupAction(); !action.empty())
     {
-        auto* newBtn = new QToolButton(mBar);
-        newBtn->setText("New");
-        newBtn->setToolTip("New " + b.title().toLower() + " group");
+        QToolButton* newBtn = pushButton("New", QString::fromStdString(actions::tooltip(action)));
         connect(newBtn, &QToolButton::clicked, this, [action] { actions::run(json(action)); });
         bar->addWidget(newBtn);
     }
-    auto* addBtn = new QToolButton(mBar);
-    addBtn->setText("Add Node");
-    addBtn->setToolTip("Add a node (Tab or Shift+A over the canvas)");
+    bar->addSpacing(10);
+    QToolButton* addBtn = pushButton("Add Node", "Add Node  (Tab, Shift+A)\nOver the canvas, the menu opens at the cursor");
     connect(addBtn, &QToolButton::clicked, this, [this] { openAddMenu(mCanvas->mapToScene(mCanvas->viewport()->rect().center()), nullptr); });
     bar->addWidget(addBtn);
     b.addToolbarButtons(bar, *this);
     if (b.supports("SaveGroup"))
     {
-        auto* saveBtn = new QToolButton(mBar);
-        saveBtn->setText("Save to Library");
+        QToolButton* saveBtn = pushButton("Save to Library", "Save to Library\nKeep this group in your library for every scene");
         connect(saveBtn, &QToolButton::clicked, this, [this] {
             if (mGroup.isEmpty())
                 return;
@@ -598,28 +605,31 @@ void NodeEditor::buildToolbar()
         bar->addWidget(saveBtn);
     }
     bool files = !b.fileSuffixes().empty();
-    if (files && b.supports("ExportGroup"))
+    if (files && (b.supports("ExportGroup") || b.supports("ImportGroup")))
     {
-        auto* exportBtn = new QToolButton(mBar);
-        exportBtn->setIcon(icon("file-export"));
-        exportBtn->setToolTip("Export this group (and the groups nested in it) to a ." + qs(b.fileSuffixes().front()) + " file to share");
-        connect(exportBtn, &QToolButton::clicked, this, [this] { exportGroup(); });
-        bar->addWidget(exportBtn);
-    }
-    if (files && b.supports("ImportGroup"))
-    {
-        auto* importBtn = new QToolButton(mBar);
-        importBtn->setIcon(icon("file-import"));
-        importBtn->setToolTip("Import node groups from a ." + qs(b.fileSuffixes().front()) + " file; you can also drop the file on the canvas");
-        connect(importBtn, &QToolButton::clicked, this, [this] {
-            QStringList patterns;
-            for (const std::string& suffix : mBackend->fileSuffixes())
-                patterns << "*." + qs(suffix);
-            QStringList files = ui::fileDialog::getOpenFileNames(this, "Import Node Groups", QString(), "Node groups (" + patterns.join(' ') + ");;All files (*)");
-            if (!files.isEmpty())
-                importGroups(files);
-        });
-        bar->addWidget(importBtn);
+        auto* more = new QToolButton(mBar);
+        more->setIcon(icon("dots"));
+        more->setToolTip("More\nExport and import node groups");
+        more->setPopupMode(QToolButton::InstantPopup);
+        controls::setRole(more, "overflow");
+        auto* menu = new QMenu(more);
+        menu->setToolTipsVisible(true);
+        const QString suffix = qs(b.fileSuffixes().front());
+        if (b.supports("ExportGroup"))
+            menu->addAction(icon("file-export"), "Export Group...", this, [this] { exportGroup(); })
+                ->setToolTip("Export this group (and the groups nested in it) to a ." + suffix + " file to share");
+        if (b.supports("ImportGroup"))
+            menu->addAction(icon("file-import"), "Import Groups...", this, [this] {
+                    QStringList patterns;
+                    for (const std::string& ext : mBackend->fileSuffixes())
+                        patterns << "*." + qs(ext);
+                    QStringList files = ui::fileDialog::getOpenFileNames(this, "Import Node Groups", QString(), "Node groups (" + patterns.join(' ') + ");;All files (*)");
+                    if (!files.isEmpty())
+                        importGroups(files);
+                })
+                ->setToolTip("Import node groups from a ." + suffix + " file; you can also drop the file on the canvas");
+        more->setMenu(menu);
+        bar->addWidget(more);
     }
     bar->addStretch(1);
     mSendBtn = nullptr;
@@ -629,6 +639,7 @@ void NodeEditor::buildToolbar()
         mSendBtn->setIcon(icon("send"));
         mSendBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         mSendBtn->setPopupMode(QToolButton::MenuButtonPopup);
+        controls::setRole(mSendBtn, "push");
         auto* sendMenu = new QMenu(mSendBtn);
         animatedSend::fillMenu(sendMenu, this, [this] { return sendTargets(); });
         mSendBtn->setMenu(sendMenu);

@@ -10,9 +10,11 @@
 #include "scene/Poses.h"
 #include "ui/Actions.h"
 #include "ui/ColorPopup.h"
+#include "ui/Controls.h"
 #include "ui/Deletion.h"
 #include "ui/Icons.h"
 #include "ui/Panels.h"
+#include "ui/SpinScrub.h"
 #include "ui/Theme.h"
 #include "ui/FileDialog.h"
 #include "ui/UiCommands.h"
@@ -209,19 +211,23 @@ public:
 
         auto* top = new QHBoxLayout;
         mPicker = new QComboBox(this);
-        mPicker->setToolTip("Picker document: scene pickers and pickers rig templates provide");
+        mPicker->setToolTip("Picker\nScene pickers and pickers rig templates provide");
         mPicker->setSizeAdjustPolicy(QComboBox::AdjustToContents);
         mPicker->setMinimumContentsLength(10);
         top->addWidget(mPicker, 1);
         mNamespace = new QComboBox(this);
-        mNamespace->setToolTip("Character: the namespace the picker's targets resolve in. It follows the selection");
+        mNamespace->setToolTip("Character\nThe namespace the picker's targets resolve in; follows the selection");
         mNamespace->setSizeAdjustPolicy(QComboBox::AdjustToContents);
         top->addWidget(mNamespace, 1);
-        mEditButton = toolButton("pencil", "Edit mode: move, resize, add and recolour items");
+        mEditButton = new QToolButton(this);
+        mEditButton->setText("Edit");
+        mEditButton->setToolTip("Edit Picker\nMove, resize, add and recolour items");
         mEditButton->setCheckable(true);
+        controls::setRole(mEditButton, "push");
         top->addWidget(mEditButton);
-        auto* menuButton = toolButton("menu-2", "Picker, page and file commands");
+        auto* menuButton = toolButton("dots", "More\nPicker, page and file commands");
         menuButton->setPopupMode(QToolButton::InstantPopup);
+        controls::setRole(menuButton, "overflow");
         auto* menu = new QMenu(menuButton);
         connect(menu, &QMenu::aboutToShow, this, [this, menu] { fillMenu(menu); });
         menuButton->setMenu(menu);
@@ -238,32 +244,51 @@ public:
             edit->addWidget(b);
             return b;
         };
-        add("square", "Add a rectangle", [this] { addShape("rect"); });
-        add("circle", "Add a circle", [this] { addShape("circle"); });
-        add("typography", "Add a text label", [this] { addShape("text"); });
-        add("hand-click", "Add an item per selected node", [this] { addFromSelection(); });
-        add("trash", "Delete the selected items", [this] { removeItems(); });
-        add("flip-vertical", "Mirror the selected items to the other side", [this] { mirrorItems(); });
-        add("palette", "Colour of the selected items", [this] { pickColor(); });
-        edit->addSpacing(6);
-        add("layout-align-left", "Align left edges", [this] { alignItems("left"); });
-        add("layout-align-center", "Centre horizontally", [this] { alignItems("hcenter"); });
-        add("layout-align-right", "Align right edges", [this] { alignItems("right"); });
-        add("layout-align-top", "Align top edges", [this] { alignItems("top"); });
-        add("layout-align-middle", "Centre vertically", [this] { alignItems("vcenter"); });
-        add("layout-align-bottom", "Align bottom edges", [this] { alignItems("bottom"); });
-        add("layout-distribute-horizontal", "Even horizontal gaps", [this] { distributeItems("horizontal"); });
-        add("layout-distribute-vertical", "Even vertical gaps", [this] { distributeItems("vertical"); });
-        edit->addSpacing(6);
-        QToolButton* snapButton = toolButton("grid-dots", "Snap moves and resizes to the grid");
+        auto label = [&](const char* text) {
+            auto* l = new QLabel(text, mEditBar);
+            l->setForegroundRole(QPalette::PlaceholderText);
+            edit->addWidget(l);
+            edit->addSpacing(2);
+        };
+        label("Add");
+        add("square", "Rectangle\nAdd a rectangle", [this] { addShape("rect"); });
+        add("circle", "Circle\nAdd a circle", [this] { addShape("circle"); });
+        add("typography", "Text\nAdd a text label", [this] { addShape("text"); });
+        add("hand-click", "From Selection\nAdd an item per selected node", [this] { addFromSelection(); });
+        edit->addSpacing(10);
+        add("palette", "Colour\nColour of the selected items", [this] { pickColor(); });
+        add("flip-vertical", "Mirror\nMirror the selected items to the other side", [this] { mirrorItems(); });
+        auto* align = new QToolButton(mEditBar);
+        align->setText("Align");
+        align->setToolTip("Align\nLine up or space out the selected items");
+        align->setPopupMode(QToolButton::InstantPopup);
+        controls::setRole(align, "push");
+        auto* alignMenu = new QMenu(align);
+        for (auto [iconName, text, how] : {std::tuple{"layout-align-left", "Left Edges", "left"}, {"layout-align-center", "Centre Horizontally", "hcenter"},
+                                           {"layout-align-right", "Right Edges", "right"}, {"layout-align-top", "Top Edges", "top"},
+                                           {"layout-align-middle", "Centre Vertically", "vcenter"}, {"layout-align-bottom", "Bottom Edges", "bottom"}})
+            alignMenu->addAction(icon(iconName), text, this, [this, how] { alignItems(how); });
+        alignMenu->addSeparator();
+        alignMenu->addAction(icon("layout-distribute-horizontal"), "Even Horizontal Gaps", this, [this] { distributeItems("horizontal"); });
+        alignMenu->addAction(icon("layout-distribute-vertical"), "Even Vertical Gaps", this, [this] { distributeItems("vertical"); });
+        align->setMenu(alignMenu);
+        edit->addWidget(align);
+        add("trash", "Delete\nDelete the selected items", [this] { removeItems(); });
+        edit->addSpacing(10);
+        auto* snapButton = new QToolButton(mEditBar);
+        snapButton->setText("Snap");
+        snapButton->setToolTip("Snap\nSnap moves and resizes to the grid");
         snapButton->setCheckable(true);
         snapButton->setChecked(true);
+        controls::setRole(snapButton, "push");
         edit->addWidget(snapButton);
-        auto* gridSize = new QDoubleSpinBox(mEditBar);
+        auto* gridSize = new controls::SliderField(mEditBar);
         gridSize->setRange(1, 128);
         gridSize->setDecimals(0);
         gridSize->setValue(8);
-        gridSize->setToolTip("Grid size in page units");
+        setSpinDefault(gridSize, 8);
+        gridSize->setFixedWidth(64);
+        gridSize->setToolTip("Grid Size\nIn page units");
         edit->addWidget(gridSize);
         edit->addStretch(1);
         layout->addWidget(mEditBar);
@@ -282,7 +307,10 @@ public:
                 removeItems();
         });
 
-        connect(snapButton, &QToolButton::toggled, this, [this](bool on) { mCanvas->snapping = on; });
+        connect(snapButton, &QToolButton::toggled, this, [this, gridSize](bool on) {
+            mCanvas->snapping = on;
+            gridSize->setEnabled(on);
+        });
         connect(gridSize, &QDoubleSpinBox::valueChanged, this, [this](double v) {
             mCanvas->grid = v;
             mCanvas->update();
@@ -930,7 +958,7 @@ void PickerCanvas::paintEvent(QPaintEvent*)
     {
         g.setPen(gray(140));
         g.drawText(rect().adjusted(12, 12, -12, -12), Qt::AlignCenter | Qt::TextWordWrap,
-                   "No picker yet.\nSelect a rig's controls and use the menu's New Picker from Selection, or import a .lilapicker file.");
+                   "No picker. Select a rig's controls and choose New Picker from Selection in the ... menu, or import a .lilapicker file.");
         return;
     }
     QRectF pageRect(toView({0, 0}), QSizeF(p->width * mZoom, p->height * mZoom));

@@ -113,15 +113,14 @@ void registerItems(std::function<ViewportWidget*()> active)
     add({.id = "toolBox/lasso", .action = "select.lassoTool", .icon = "lasso"});
     add({.id = "toolBox/paint", .kind = Kind::Menu, .action = "select.paintTool", .icon = "brush",
          .menuActions = {"select.paintRadiusSmaller", "select.paintRadiusLarger"}});
-    add({.id = "toolBox/-modes", .kind = Kind::Separator});
-    add({.id = "toolBox/object", .action = "select.objectMode", .icon = "cube"});
-    add({.id = "toolBox/vertex", .action = "select.vertexMode", .icon = "point"});
-    add({.id = "toolBox/edge", .action = "select.edgeMode", .icon = "line"});
-    add({.id = "toolBox/face", .action = "select.faceMode", .icon = "square"});
-    add({.id = "toolBox/-options", .kind = Kind::Separator});
-    add({.id = "toolBox/soft", .action = "softSelect.toggle", .icon = "ripple"});
-    add({.id = "toolBox/masks", .kind = Kind::Menu, .icon = "filter", .label = "Selection Masks",
-         .menuActions = {"select.mask.curve", "select.mask.mesh", "select.mask.joint", "select.mask.light", "select.mask.locator", "select.mask.other"}});
+    // Component modes, soft select and selection masks live on the viewport header; the column below shows what each
+    // view draws, by object type.
+    add({.id = "toolBox/-show", .kind = Kind::Separator});
+    add({.id = "toolBox/showMesh", .action = "viewport.show.mesh", .icon = "box"});
+    add({.id = "toolBox/showCurve", .action = "viewport.show.curve", .icon = "vector-spline"});
+    add({.id = "toolBox/showJoint", .action = "viewport.show.joint", .icon = "bone"});
+    add({.id = "toolBox/showLight", .action = "viewport.show.light", .icon = "bulb"});
+    add({.id = "toolBox/showLocator", .action = "viewport.show.locator", .icon = "crosshair"});
     add({.id = "toolBox/-display", .kind = Kind::Separator});
     add({.id = "toolBox/backfaceTint", .action = "viewport.aid.backfaceTint", .icon = "arrows-exchange"});
     add({.id = "toolBox/display", .kind = Kind::Menu, .icon = "eye", .label = "Mesh Display (active view)",

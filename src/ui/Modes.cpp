@@ -270,6 +270,8 @@ QWidget* createSwitcher(QWidget* parent)
         for (const Mode* m : registry().allInOrder())
             self->addItem(QString::fromStdString(m->label), QString::fromStdString(m->id));
         self->setCurrentIndex(self->findData(QString::fromStdString(current())));
+        // One mode has nothing to switch to.
+        self->setVisible(self->count() > 1);
     };
     refresh();
     QObject::connect(box, &QComboBox::activated, box, [box](int index) {

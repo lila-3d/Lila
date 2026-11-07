@@ -85,6 +85,8 @@ QSpinBox* intSpin(QWidget* parent, int lo, int hi, int value)
     auto* s = new QSpinBox(parent);
     s->setRange(lo, hi);
     s->setValue(value);
+    s->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    s->setButtonSymbols(QAbstractSpinBox::NoButtons);
     return s;
 }
 } // namespace
@@ -98,6 +100,7 @@ RenamePanel::RenamePanel(QWidget* parent) : QWidget(parent)
     form->setContentsMargins(0, 0, 0, 0);
     form->setSpacing(3);
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
     v->addLayout(form);
 
     auto row = [this](std::initializer_list<QWidget*> widgets) {
@@ -109,15 +112,21 @@ RenamePanel::RenamePanel(QWidget* parent) : QWidget(parent)
             h->addWidget(x, qobject_cast<QLineEdit*>(x) ? 1 : 0);
         return w;
     };
-    auto label = [this](const char* text) { return new QLabel(text, this); };
+    auto label = [this](const char* text) {
+        auto* l = new QLabel(text, this);
+        QPalette pal = l->palette();
+        pal.setColor(QPalette::WindowText, themeColor("dimText"));
+        l->setPalette(pal);
+        return l;
+    };
 
     mScope = new QComboBox(this);
-    mScope->addItems({"Selection", "Selection, outliner order", "Hierarchy"});
+    mScope->addItems({"Selection Order", "Outliner Order", "Hierarchy"});
     mScope->setToolTip("Selection numbers in the order you picked; Hierarchy renames each selected object and everything under it, top to bottom.");
     form->addRow("Rename", mScope);
 
     mBase = new QLineEdit(this);
-    mBase->setPlaceholderText("new name, e.g. tail");
+    mBase->setPlaceholderText("New name, e.g. tail");
     mBase->setToolTip("Replaces every name and numbers them: tail with padding 2 gives tail_01, tail_02... Put # in it to place the number yourself.");
     mSeparator = new QLineEdit("_", this);
     mSeparator->setMaximumWidth(28);
@@ -130,14 +139,15 @@ RenamePanel::RenamePanel(QWidget* parent) : QWidget(parent)
     form->addRow("Padding", row({mPadding, label("Start"), mStart, label("Step"), mStep}));
 
     mFind = new QLineEdit(this);
-    mFind->setPlaceholderText("find");
+    mFind->setPlaceholderText("Text to find");
     mReplace = new QLineEdit(this);
-    mReplace->setPlaceholderText("replace with");
+    mReplace->setPlaceholderText("Replacement");
     mReplace->setToolTip("# numbers the objects (## for 01), {name}, {parent} and {type} insert those; with regex, $1 is the first group.");
     form->addRow("Find", mFind);
     form->addRow("Replace", mReplace);
     mRegex = new QCheckBox("Regex", this);
-    mMatchCase = new QCheckBox("Match case", this);
+    mRegex->setToolTip("Treat Find as a regular expression.");
+    mMatchCase = new QCheckBox("Match Case", this);
     form->addRow("", row({mRegex, mMatchCase}));
 
     mStripStart = intSpin(this, 0, 999, 0);
@@ -155,14 +165,14 @@ RenamePanel::RenamePanel(QWidget* parent) : QWidget(parent)
     form->addRow("Case", mCase);
 
     mPrefix = new QLineEdit(this);
-    mPrefix->setPlaceholderText("prefix");
+    mPrefix->setPlaceholderText("Prefix");
     mSuffix = new QLineEdit(this);
-    mSuffix->setPlaceholderText("suffix");
+    mSuffix->setPlaceholderText("Suffix");
     form->addRow("Add", row({mPrefix, mSuffix}));
 
     mPreview = new QTreeWidget(this);
     mPreview->setColumnCount(2);
-    mPreview->setHeaderLabels({"Name", "New name"});
+    mPreview->setHeaderLabels({"Name", "New Name"});
     mPreview->setRootIsDecorated(false);
     mPreview->setUniformRowHeights(true);
     mPreview->setSelectionMode(QAbstractItemView::NoSelection);
@@ -272,7 +282,7 @@ void RenamePanel::refresh()
         }
         else if (status == "empty")
         {
-            item->setText(1, "(empty, kept)");
+            item->setText(1, "Empty: kept");
             item->setForeground(1, themeColor("statusWarning"));
         }
         else if (status == "clash")

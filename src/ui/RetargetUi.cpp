@@ -6,10 +6,13 @@
 #include "scene/Graph.h"
 #include "scene/Rig.h"
 #include "ui/Actions.h"
+#include "ui/Controls.h"
 #include "ui/FileDialog.h"
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
 #include "ui/Panels.h"
+#include "ui/SpinScrub.h"
+#include "ui/Theme.h"
 #include "ui/UiCommands.h"
 
 #include <QApplication>
@@ -129,27 +132,38 @@ const std::map<std::string, QStringList>& enums()
     return e;
 }
 
-QDoubleSpinBox* valueSpin(QWidget* parent, double v)
+QDoubleSpinBox* valueSpin(QWidget* parent, double v, char axis = 0)
 {
-    auto* s = new QDoubleSpinBox(parent);
-    s->setRange(-1e6, 1e6);
-    s->setDecimals(3);
+    QDoubleSpinBox* s = axis ? controls::axisField(axis, -1e6, 1e6, 3, {}, parent) : controls::valueField(-1e6, 1e6, 3, {}, parent);
     s->setSingleStep(0.05);
     s->setValue(v);
-    s->setKeyboardTracking(false);
     return s;
+}
+
+/** A bold text header over a group of settings, with its explanation as the tooltip. */
+QLabel* retargetHeader(QWidget* parent, const QString& title, const QString& tip = {})
+{
+    auto* l = new QLabel(title, parent);
+    QFont f = l->font();
+    f.setWeight(QFont::DemiBold);
+    l->setFont(f);
+    l->setContentsMargins(0, 8, 0, 2);
+    l->setToolTip(tip);
+    return l;
 }
 
 /**
  * An editor for one JSON value: a check box, a number, a choice, a line of text or three numbers. onEdit gets the
- * new value. Null for values it can't edit (nested objects).
+ * new value. Null for values it can't edit (nested objects). A `def` of the value's kind is what a middle click restores.
  */
-QWidget* settingEditor(QWidget* parent, const std::string& key, const json& v, std::function<void(json)> onEdit)
+QWidget* settingEditor(QWidget* parent, const std::string& key, const json& v, std::function<void(json)> onEdit, const json& def = {})
 {
     if (v.is_boolean())
     {
         auto* c = new QCheckBox(parent);
         c->setChecked(v.get<bool>());
+        if (def.is_boolean())
+            setCheckDefault(c, def.get<bool>());
         QObject::connect(c, &QCheckBox::toggled, c, [onEdit](bool on) { onEdit(on); });
         return c;
     }
@@ -158,13 +172,19 @@ QWidget* settingEditor(QWidget* parent, const std::string& key, const json& v, s
         auto* s = new QSpinBox(parent);
         s->setRange(-100000, 100000);
         s->setValue(v.get<int>());
+        if (def.is_number())
+            setSpinDefault(s, def.get<double>());
         s->setKeyboardTracking(false);
+        s->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        s->setButtonSymbols(QAbstractSpinBox::NoButtons);
         QObject::connect(s, &QSpinBox::valueChanged, s, [onEdit](int x) { onEdit(x); });
         return s;
     }
     if (v.is_number())
     {
         QDoubleSpinBox* s = valueSpin(parent, v.get<double>());
+        if (def.is_number())
+            setSpinDefault(s, def.get<double>());
         QObject::connect(s, &QDoubleSpinBox::valueChanged, s, [onEdit](double x) { onEdit(x); });
         return s;
     }
@@ -173,9 +193,12 @@ QWidget* settingEditor(QWidget* parent, const std::string& key, const json& v, s
         if (auto it = enums().find(key); it != enums().end())
         {
             auto* c = new QComboBox(parent);
-            c->addItems(it->second);
-            c->setCurrentText(QString::fromStdString(v.get<std::string>()));
-            QObject::connect(c, &QComboBox::currentTextChanged, c, [onEdit](const QString& t) { onEdit(t.toStdString()); });
+            for (const QString& choice : it->second)
+                c->addItem(titleCase(choice.toStdString()), choice);
+            c->setCurrentIndex(std::max(0, c->findData(QString::fromStdString(v.get<std::string>()))));
+            if (def.is_string())
+                setComboDefault(c, c->findData(QString::fromStdString(def.get<std::string>())));
+            QObject::connect(c, &QComboBox::currentIndexChanged, c, [c, onEdit] { onEdit(c->currentData().toString().toStdString()); });
             return c;
         }
         auto* e = new QLineEdit(QString::fromStdString(v.get<std::string>()), parent);
@@ -191,7 +214,9 @@ QWidget* settingEditor(QWidget* parent, const std::string& key, const json& v, s
         auto boxes = std::make_shared<std::array<QDoubleSpinBox*, 3>>();
         for (int k = 0; k < 3; ++k)
         {
-            (*boxes)[size_t(k)] = valueSpin(w, v[size_t(k)].get<double>());
+            (*boxes)[size_t(k)] = valueSpin(w, v[size_t(k)].get<double>(), char('X' + k));
+            if (def.is_array() && def.size() == 3 && def[size_t(k)].is_number())
+                setSpinDefault((*boxes)[size_t(k)], def[size_t(k)].get<double>());
             h->addWidget((*boxes)[size_t(k)]);
             QObject::connect((*boxes)[size_t(k)], &QDoubleSpinBox::valueChanged, w, [boxes, onEdit](double) {
                 onEdit(json::array({(*boxes)[0]->value(), (*boxes)[1]->value(), (*boxes)[2]->value()}));
@@ -202,17 +227,19 @@ QWidget* settingEditor(QWidget* parent, const std::string& key, const json& v, s
     return nullptr;
 }
 
-/** A form over a JSON object's plain values; onEdit gets {key: value} for each change. */
-QWidget* objectForm(QWidget* parent, const json& obj, const std::function<void(json)>& onEdit)
+/** A form over a JSON object's plain values; onEdit gets {key: value} for each change. `defaults` holds the factory values. */
+QWidget* objectForm(QWidget* parent, const json& obj, const std::function<void(json)>& onEdit, const json& defaults = {})
 {
     auto* w = new QWidget(parent);
     auto* f = new QFormLayout(w);
     f->setContentsMargins(4, 2, 4, 2);
     f->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    f->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
     for (const auto& [key, value] : obj.items())
     {
         const std::string k = key;
-        if (QWidget* e = settingEditor(w, k, value, [k, onEdit](json v) { onEdit(json{{k, std::move(v)}}); }))
+        const json def = defaults.is_object() ? defaults.value(k, json()) : json();
+        if (QWidget* e = settingEditor(w, k, value, [k, onEdit](json v) { onEdit(json{{k, std::move(v)}}); }, def))
             f->addRow(titleCase(k), e);
     }
     return w;
@@ -248,10 +275,13 @@ QWidget* listEditor(QWidget* parent, const json& list, const json& blank, const 
         {
             const std::string k = keys[c];
             const json value = (*data)[r].contains(k) ? (*data)[r][k] : blank[k];
-            if (QWidget* e = settingEditor(tree, k, value, [data, r, k, onChange](json nv) {
-                    (*data)[r][k] = std::move(nv);
-                    onChange(*data);
-                }))
+            if (QWidget* e = settingEditor(
+                    tree, k, value,
+                    [data, r, k, onChange](json nv) {
+                        (*data)[r][k] = std::move(nv);
+                        onChange(*data);
+                    },
+                    blank[k]))
                 tree->setItemWidget(item, int(c), e);
         }
     }
@@ -260,10 +290,10 @@ QWidget* listEditor(QWidget* parent, const json& list, const json& blank, const 
     auto* bar = new QHBoxLayout;
     auto* add = new QToolButton(w);
     add->setIcon(icon("plus"));
-    add->setToolTip("Add a row");
+    add->setToolTip("Add Row");
     auto* remove = new QToolButton(w);
     remove->setIcon(icon("minus"));
-    remove->setToolTip("Remove the selected row");
+    remove->setToolTip("Remove Row\nRemove the selected row");
     bar->addWidget(add);
     bar->addWidget(remove);
     bar->addStretch(1);
@@ -280,6 +310,17 @@ QWidget* listEditor(QWidget* parent, const json& list, const json& blank, const 
         onChange(*data);
     });
     return w;
+}
+
+/** One chain's settings as a fresh chain has them: fk, ik and plant defaults. */
+const json& defaultChainJson()
+{
+    static const json chain = [] {
+        retarget::Settings s;
+        s.chains.emplace_back();
+        return s.toJson()["chains"][0];
+    }();
+    return chain;
 }
 
 QWidget* scrolled(QWidget* inner)
@@ -304,17 +345,22 @@ public:
 
         auto* top = new QHBoxLayout;
         mPick = new QComboBox(this);
-        mPick->setToolTip("The retargeter to edit");
+        mPick->setToolTip("Retargeter\nThe retargeter to edit");
         top->addWidget(mPick, 1);
-        auto button = [&](const char* iconName, const QString& tip, std::function<void()> fn) {
+        QHBoxLayout* row = top;
+        auto button = [&](const QString& text, const QString& tip, std::function<void()> fn) {
             auto* b = new QToolButton(this);
-            b->setIcon(icon(iconName));
+            b->setText(text);
             b->setToolTip(tip);
-            b->setAutoRaise(true);
+            controls::setRole(b, "push");
             connect(b, &QToolButton::clicked, this, fn);
-            top->addWidget(b);
+            row->addWidget(b);
         };
-        button("plus", "New retargeter from the selection: select a joint of the source skeleton, then one of the target's", [this] {
+        auto* create = new QToolButton(this);
+        create->setIcon(icon("plus"));
+        create->setToolTip("New Retargeter\nSelect a joint of the source skeleton, then one of the target's");
+        top->addWidget(create);
+        connect(create, &QToolButton::clicked, this, [this] {
             const QStringList sel = selectedSkeletons();
             if (sel.size() != 2)
             {
@@ -326,41 +372,57 @@ public:
                 mCurrent = r["retargeter"].get<std::string>();
             refresh();
         });
-        button("player-play", "Retarget: key the target into a take", [this] {
-            if (mCurrent.empty())
-                return;
-            const json r = runUi("retarget", {{"retargeter", mCurrent}, {"mode", mMode->currentText().toStdString()}});
-            if (r.is_object())
-                mReport->setText(reportText(r));
-        });
-        button("arrows-maximize", "Align the target's retarget pose to the source's", [this] {
-            if (!mCurrent.empty())
-                runUi("alignRetargetPose", {{"args", {mCurrent}}});
-        });
-        button("camera", "Capture both skeletons' current poses as this pair's retarget poses", [this] {
-            if (!mCurrent.empty())
-                runUi("alignRetargetPose", {{"args", {mCurrent}}, {"align", false}, {"captureSource", true}, {"captureTarget", true}});
-        });
-        button("restore", "Reset the retarget poses to each rig's own", [this] {
-            if (!mCurrent.empty())
-                runUi("alignRetargetPose", {{"args", {mCurrent}}, {"align", false}, {"reset", true}});
-        });
         v->addLayout(top);
 
         auto* modeRow = new QHBoxLayout;
-        modeRow->addWidget(new QLabel("Mode", this));
+        modeRow->setSpacing(2);
+        auto* modeLabel = new QLabel("Mode", this);
+        modeLabel->setForegroundRole(QPalette::PlaceholderText);
+        modeRow->addWidget(modeLabel);
         mMode = new QComboBox(this);
-        mMode->addItems({"auto", "fk", "semantic"});
-        mMode->setToolTip("fk: chain to chain, the same kind of body. semantic: a body with other limbs. auto: semantic when the leg counts differ.");
+        mMode->addItem("Automatic", "auto");
+        mMode->addItem("FK", "fk");
+        mMode->addItem("Semantic", "semantic");
+        setComboDefault(mMode, 0);
+        mMode->setToolTip("Mode\nFK: chain to chain, the same kind of body. Semantic: a body with other limbs. Automatic: semantic when the leg counts differ.");
         modeRow->addWidget(mMode);
         modeRow->addStretch(1);
+        row = modeRow;
+        button("Retarget", "Retarget\nKey the target into a take", [this] {
+            if (mCurrent.empty())
+                return;
+            const json r = runUi("retarget", {{"retargeter", mCurrent}, {"mode", mMode->currentData().toString().toStdString()}});
+            if (r.is_object())
+                mReport->setText(reportText(r));
+        });
         v->addLayout(modeRow);
+
+        auto* poseRow = new QHBoxLayout;
+        poseRow->setSpacing(2);
+        auto* poseLabel = new QLabel("Pose", this);
+        poseLabel->setForegroundRole(QPalette::PlaceholderText);
+        poseRow->addWidget(poseLabel);
+        row = poseRow;
+        button("Align", "Align Pose\nAlign the target's retarget pose to the source's", [this] {
+            if (!mCurrent.empty())
+                runUi("alignRetargetPose", {{"args", {mCurrent}}});
+        });
+        button("Capture", "Capture Poses\nBoth skeletons' current poses become this pair's retarget poses", [this] {
+            if (!mCurrent.empty())
+                runUi("alignRetargetPose", {{"args", {mCurrent}}, {"align", false}, {"captureSource", true}, {"captureTarget", true}});
+        });
+        button("Reset", "Reset Poses\nReset the retarget poses to each rig's own", [this] {
+            if (!mCurrent.empty())
+                runUi("alignRetargetPose", {{"args", {mCurrent}}, {"align", false}, {"reset", true}});
+        });
+        v->addLayout(poseRow);
 
         mTabs = new QTabWidget(this);
         v->addWidget(mTabs, 1);
         mReport = new QLabel(this);
         mReport->setWordWrap(true);
         mReport->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        mReport->setForegroundRole(QPalette::PlaceholderText);
         v->addWidget(mReport);
 
         connect(mPick, &QComboBox::currentTextChanged, this, [this](const QString& t) {
@@ -453,9 +515,8 @@ private:
         }
         if (mCurrent.empty())
         {
-            auto* hint = new QLabel("No retargeter yet. Select a joint of the source skeleton, then one of the target's, and press +. "
-                                    "Animate > Retarget Animation does it all in one step.");
-            hint->setWordWrap(true);
+            QLabel* hint = emptyStateLabel("No retargeter. Select a joint of the source skeleton, then one of the target's, and click +.", nullptr);
+            hint->setToolTip("Animation > Retarget Animation makes one and retargets in one step");
             mTabs->addTab(hint, "Retargeter");
             return;
         }
@@ -503,6 +564,7 @@ private:
             {
                 auto* on = new QCheckBox(tree);
                 on->setChecked(c[part].value("enabled", true));
+                setCheckDefault(on, true);
                 connect(on, &QCheckBox::toggled, this, [this, target, part](bool b) { edit({{"chain", {{"target", target}, {part, {{"enabled", b}}}}}}); });
                 tree->setItemWidget(item, col++, on);
             }
@@ -528,11 +590,10 @@ private:
                 if (c["target"] == target)
                     for (const char* part : {"fk", "ik", "plant"})
                     {
-                        auto* title = new QLabel(QString("<b>%1</b>").arg(QString(part).toUpper()), details);
-                        dv->addWidget(title);
-                        dv->addWidget(objectForm(details, c[part], [this, target, part](json patch) {
-                            edit({{"chain", {{"target", target}, {part, patch}}}});
-                        }));
+                        dv->addWidget(retargetHeader(details, std::string_view(part) == "plant" ? QString("Plant") : QString(part).toUpper()));
+                        dv->addWidget(objectForm(
+                            details, c[part], [this, target, part](json patch) { edit({{"chain", {{"target", target}, {part, patch}}}}); },
+                            defaultChainJson()[part]));
                     }
             dv->addStretch(1);
         });
@@ -548,12 +609,13 @@ private:
         json globals = json::object();
         for (const char* k : {"enableRoot", "enableFk", "enableIk", "fullBody", "scale", "copyCurves"})
             globals[k] = s[k];
-        v->addWidget(new QLabel("<b>Passes</b>", w));
-        v->addWidget(objectForm(w, globals, [this](json patch) { edit(patch); }));
-        v->addWidget(new QLabel("<b>Root</b>", w));
-        v->addWidget(objectForm(w, s["root"], [this](json patch) { edit({{"root", patch}}); }));
-        v->addWidget(new QLabel("<b>Stride warping</b>", w));
-        v->addWidget(objectForm(w, s["warp"], [this](json patch) { edit({{"warp", patch}}); }));
+        const json defaults = retarget::Settings{}.toJson();
+        v->addWidget(retargetHeader(w, "Passes"));
+        v->addWidget(objectForm(w, globals, [this](json patch) { edit(patch); }, defaults));
+        v->addWidget(retargetHeader(w, "Root"));
+        v->addWidget(objectForm(w, s["root"], [this](json patch) { edit({{"root", patch}}); }, defaults["root"]));
+        v->addWidget(retargetHeader(w, "Stride Warping"));
+        v->addWidget(objectForm(w, s["warp"], [this](json patch) { edit({{"warp", patch}}); }, defaults["warp"]));
         v->addStretch(1);
         return scrolled(w);
     }
@@ -562,13 +624,13 @@ private:
     {
         auto* w = new QWidget;
         auto* v = new QVBoxLayout(w);
-        v->addWidget(new QLabel("<b>Pinned bones</b>: a bone copying another's transform last", w));
+        v->addWidget(retargetHeader(w, "Pinned Bones", "A bone copying another's transform last"));
         v->addWidget(listEditor(w, s["pins"], {{"bone", ""}, {"to", ""}, {"translate", true}, {"rotate", true}, {"maintainOffset", true}},
                                 [this](json l) { edit({{"pins", l}}); }));
-        v->addWidget(new QLabel("<b>Contacts</b>: a hand held on the body where the source's is", w));
+        v->addWidget(retargetHeader(w, "Contacts", "A hand held on the body where the source's is"));
         v->addWidget(listEditor(w, s["contacts"], {{"effector", ""}, {"body", ""}, {"bodyParam", 1.0}, {"distance", 8.0}},
                                 [this](json l) { edit({{"contacts", l}}); }));
-        v->addWidget(new QLabel("<b>Curves</b>: animated attributes copied renamed", w));
+        v->addWidget(retargetHeader(w, "Curves", "Animated attributes copied, renamed"));
         v->addWidget(listEditor(w, s["curves"], {{"source", ""}, {"target", ""}}, [this](json l) { edit({{"curves", l}}); }));
         return scrolled(w);
     }
@@ -589,18 +651,29 @@ private:
                 continue;
             const std::string rig = g.path(rn);
             auto* head = new QHBoxLayout;
-            head->addWidget(new QLabel(QString("<b>%1</b>: %2").arg(target ? "Target" : "Source", QString::fromStdString(rig)), w), 1);
-            auto* again = new QPushButton("Characterize Again", w);
-            again->setToolTip("Find the chains again from the skeleton as it is posed now (the retarget pose becomes this pose)");
+            QLabel* rigTitle = retargetHeader(w, target ? "Target" : "Source", QString::fromStdString(rig));
+            head->addWidget(rigTitle);
+            auto* rigPath = new QLabel(QString::fromStdString(rig), w);
+            rigPath->setForegroundRole(QPalette::PlaceholderText);
+            head->addWidget(rigPath, 1, Qt::AlignBottom);
+            auto* again = new QToolButton(w);
+            again->setText("Characterize Again");
+            controls::setRole(again, "push");
+            again->setToolTip("Characterize Again\nFind the chains again from the skeleton as it is posed now (the retarget pose becomes this pose)");
             const std::string topPath = g.path(top);
-            connect(again, &QPushButton::clicked, this, [topPath] { runUi("characterize", {{"args", {topPath}}}); });
+            connect(again, &QToolButton::clicked, this, [topPath] { runUi("characterize", {{"args", {topPath}}}); });
             head->addWidget(again);
             v->addLayout(head);
             const json def = query("editRetargetRig", {{"args", {rig}}, {"query", true}});
             if (!def.is_object())
                 continue;
             for (const std::string& note : def.value("notes", std::vector<std::string>()))
-                v->addWidget(new QLabel("Note: " + QString::fromStdString(note), w));
+            {
+                auto* l = new QLabel(QString::fromStdString(note), w);
+                l->setWordWrap(true);
+                l->setForegroundRole(QPalette::PlaceholderText);
+                v->addWidget(l);
+            }
             v->addWidget(objectForm(w, {{"pelvis", def["pelvis"]}, {"ground", def["ground"]}}, [this, rig](json patch) { editRig(rig, patch); }));
             v->addWidget(listEditor(w, def["chains"],
                                     {{"name", ""}, {"role", "other"}, {"side", "center"}, {"index", 0}, {"start", ""}, {"end", ""}, {"goal", ""}},
@@ -670,11 +743,14 @@ public:
         form->addRow("Take", mTake);
         mMode = new QComboBox(this);
         mMode->addItems({"Automatic", "Same kind of body", "Different body"});
+        setComboDefault(mMode, 0);
         mMode->setToolTip("Different body: a clip on a body with other limbs (a person's walk on a dog or a spider), kept as a gait.");
         form->addRow("Bodies", mMode);
         mGait = new QComboBox(this);
-        mGait->addItems({"auto", "walk", "trot", "pace", "canter", "gallop", "tripod", "tetrapod", "wave"});
+        for (const char* gait : {"auto", "walk", "trot", "pace", "canter", "gallop", "tripod", "tetrapod", "wave"})
+            mGait->addItem(std::string_view(gait) == "auto" ? QString("Automatic") : titleCase(gait), gait);
         mGait->setToolTip("For a different body: the gait its legs keep");
+        setComboDefault(mGait, 0);
         form->addRow("Gait", mGait);
         v->addLayout(form);
 
@@ -780,7 +856,7 @@ private:
             call["take"] = mTake->text().toStdString();
         const char* modes[] = {"auto", "fk", "semantic"};
         call["mode"] = modes[std::clamp(mMode->currentIndex(), 0, 2)];
-        call["gait"] = mGait->currentText().toStdString();
+        call["gait"] = mGait->currentData().toString().toStdString();
         std::string error;
         json r;
         if (!tryRunUi("retarget", call, &r, &error))

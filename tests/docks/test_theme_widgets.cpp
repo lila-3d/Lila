@@ -29,13 +29,17 @@ struct UseTheme
 };
 } // namespace
 
-TEST_CASE("Monotone leaves greys and style sheets exactly as written")
+TEST_CASE("Monotone maps the greys widgets were written with onto its ramp")
 {
     UseTheme mono("Monotone");
-    for (int v : {0, 18, 34, 58, 105, 150, 212, 255})
-        CHECK(ui::themeShade(v, 90) == QColor(v, v, v, 90));
-    QString sheet = "QToolBar { background: #2c2c2c; border: 1px solid #3a3a3a; color: rgb(150,150,150); }";
-    CHECK(ui::themedStyleSheet(sheet) == sheet);
+    // Panels sit at window (written as 48), fields and buttons one step above it (written as 36 and 58).
+    CHECK(ui::themeShade(0, 90) == QColor(0, 0, 0, 90));
+    CHECK(ui::themeShade(48) == QColor(0x28, 0x28, 0x28));
+    CHECK(ui::themeShade(36) == QColor(0x33, 0x33, 0x33));
+    CHECK(ui::themeShade(58) == QColor(0x33, 0x33, 0x33));
+    CHECK(ui::themeShade(150) == QColor(0x8c, 0x8c, 0x8c));
+    QString sheet = "QToolBar { background: #303030; color: rgb(150,150,150); border-color: #ff0000; }";
+    CHECK(ui::themedStyleSheet(sheet) == "QToolBar { background: #282828; color: #8c8c8c; border-color: #ff0000; }");
     const glm::vec4 legacy(0.92f, 0.92f, 0.92f, 1.0f);
     CHECK(ui::themeLinear("wireSelected", legacy) == legacy);
 }

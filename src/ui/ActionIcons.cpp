@@ -640,7 +640,6 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"viewport.cameraSettings", "camera-cog"},
     {"window.renderSettings", "adjustments"},
     {"viewport.toggleToolbar", "layout-navbar"},
-    {"viewport.toggleBottomBar", "layout-bottombar"},
     {"window.toggleToolBox", "layout-sidebar"},
     {"viewport.resetExposure", "sun"},
     {"anim.setKey", "key"},

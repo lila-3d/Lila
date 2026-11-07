@@ -19,6 +19,13 @@ bool guarded(QObject* obj)
     return qobject_cast<QAbstractSlider*>(obj) && !qobject_cast<QScrollBar*>(obj);
 }
 
+/** Qt focuses a WheelFocus widget the wheel lands on before any filter sees the event, so such fields lose WheelFocus. */
+void dropWheelFocus(QWidget* w)
+{
+    if ((w->focusPolicy() & Qt::WheelFocus) == Qt::WheelFocus)
+        w->setFocusPolicy(Qt::StrongFocus);
+}
+
 class WheelGuard : public QObject
 {
 public:
@@ -27,13 +34,9 @@ public:
 protected:
     bool eventFilter(QObject* obj, QEvent* e) override
     {
-        if (e->type() == QEvent::Polish && guarded(obj))
-        {
-            // Qt focuses a WheelFocus widget the wheel lands on before any filter sees the event.
-            auto* w = static_cast<QWidget*>(obj);
-            if ((w->focusPolicy() & Qt::WheelFocus) == Qt::WheelFocus)
-                w->setFocusPolicy(Qt::StrongFocus);
-        }
+        // Show too: a field polished before the guard was installed never sends Polish again.
+        if ((e->type() == QEvent::Polish || e->type() == QEvent::Show) && guarded(obj))
+            dropWheelFocus(static_cast<QWidget*>(obj));
         else if (e->type() == QEvent::Wheel)
         {
             // Scrolling anywhere else ends a field's hold on the wheel, so the page scrolling past it leaves it alone.
@@ -56,5 +59,8 @@ protected:
 void installWheelGuard(QObject* parent)
 {
     qApp->installEventFilter(new WheelGuard(parent));
+    for (QWidget* w : QApplication::allWidgets())
+        if (guarded(w))
+            dropWheelFocus(w);
 }
 } // namespace lila::ui

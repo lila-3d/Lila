@@ -5,6 +5,8 @@
 #include "TreeSchema.h"
 #include "lila/FileDialog.h"
 
+#include "PanelKit.h"
+
 #include <lila/Command.h>
 #include <lila/Graph.h>
 #include <lila/LevelToolkit.h>
@@ -23,11 +25,8 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPointer>
-#include <QPushButton>
 #include <QRandomGenerator>
 #include <QScrollArea>
-#include <QSlider>
-#include <QSpinBox>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -301,49 +300,30 @@ void trigger(const char* id)
 
 // ------------------------------------------------------------------------------------------------ panel
 
-QPushButton* button(const char* actionId, QWidget* parent)
+/** A push button running the action, labelled `label` or the action's own label. */
+QToolButton* button(const char* actionId, QWidget* parent, const QString& label = {})
 {
-    for (const ActionDef& d : actionDefs())
-        if (std::string(d.id) == actionId)
-        {
-            QString label = d.label;
-            auto* b = new QPushButton(label, parent);
-            b->setToolTip(d.doc);
-            QObject::connect(b, &QPushButton::clicked, b, [id = std::string(actionId)] { trigger(id.c_str()); });
-            return b;
-        }
-    return new QPushButton(actionId, parent);
+    return panelkit::push(actionId, parent, label);
 }
 
-/** A titled section whose body folds away under its header. */
-QWidget* section(QVBoxLayout* into, const QString& title, bool collapsed, QFormLayout*& form)
+/** A titled section whose form body folds away under its header. */
+QWidget* treeSection(QVBoxLayout* into, QWidget* parent, const QString& title, bool collapsed, QFormLayout*& form)
 {
-    auto* head = new QToolButton;
-    head->setText(title);
-    head->setCheckable(true);
-    head->setChecked(!collapsed);
-    head->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    head->setArrowType(collapsed ? Qt::RightArrow : Qt::DownArrow);
-    head->setAutoRaise(true);
     auto* body = new QWidget;
     form = new QFormLayout(body);
-    form->setContentsMargins(8, 2, 2, 6);
-    body->setVisible(!collapsed);
-    QObject::connect(head, &QToolButton::toggled, body, [head, body](bool on) {
-        body->setVisible(on);
-        head->setArrowType(on ? Qt::DownArrow : Qt::RightArrow);
-    });
-    into->addWidget(head);
-    into->addWidget(body);
+    form->setContentsMargins(0, 0, 0, 0);
+    form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    form->setVerticalSpacing(4);
+    into->addWidget(panelkit::section(title, body, parent, "treeGenerator", !collapsed));
     return body;
 }
 
-QDoubleSpinBox* spin(double lo, double hi, int decimals)
+/** "packed" -> "Packed": a stored choice as the panel shows it. */
+QString treeChoiceName(const std::string& value)
 {
-    auto* s = new QDoubleSpinBox;
-    s->setRange(lo, hi);
-    s->setDecimals(decimals);
-    s->setKeyboardTracking(false);
+    QString s = QString::fromStdString(value);
+    if (!s.isEmpty())
+        s[0] = s[0].toUpper();
     return s;
 }
 
@@ -351,7 +331,9 @@ QDoubleSpinBox* spin(double lo, double hi, int decimals)
 QWidget* editor(const Field& f, std::vector<std::function<void()>>& shows)
 {
     const std::string key = f.key();
-    const double unit = (f.kind == Kind::Length || f.kind == Kind::LengthRange) ? kUnitsPerMetre : 1.0;
+    const bool length = f.kind == Kind::Length || f.kind == Kind::LengthRange;
+    const double unit = length ? kUnitsPerMetre : 1.0;
+    const QString suffix = length ? "cm" : "";
     auto values = [] () -> json& { return state().values; };
     switch (f.kind)
     {
@@ -361,8 +343,11 @@ QWidget* editor(const Field& f, std::vector<std::function<void()>>& shows)
         auto* w = new QWidget;
         auto* h = new QHBoxLayout(w);
         h->setContentsMargins(0, 0, 0, 0);
-        QDoubleSpinBox* a = spin(f.fieldMin * unit, f.fieldMax * unit, 3);
-        QDoubleSpinBox* b = spin(f.fieldMin * unit, f.fieldMax * unit, 3);
+        h->setSpacing(2);
+        QDoubleSpinBox* a = panelkit::valueField(f.fieldMin * unit, f.fieldMax * unit, 3, suffix, w);
+        QDoubleSpinBox* b = panelkit::valueField(f.fieldMin * unit, f.fieldMax * unit, 3, suffix, w);
+        a->setToolTip("Low");
+        b->setToolTip("High");
         h->addWidget(a);
         h->addWidget(b);
         auto write = [key, a, b, unit, values] { values()[key] = json::array({a->value() / unit, b->value() / unit}); };
@@ -378,7 +363,7 @@ QWidget* editor(const Field& f, std::vector<std::function<void()>>& shows)
     case Kind::Length:
     case Kind::Float:
     {
-        QDoubleSpinBox* s = spin(f.fieldMin * unit, f.fieldMax * unit, 3);
+        QDoubleSpinBox* s = panelkit::valueField(f.fieldMin * unit, f.fieldMax * unit, 3, suffix, nullptr);
         QObject::connect(s, &QDoubleSpinBox::valueChanged, s, [key, unit, values](double v) { values()[key] = v / unit; });
         shows.push_back([key, s, unit, values] {
             const QSignalBlocker b(s);
@@ -388,13 +373,11 @@ QWidget* editor(const Field& f, std::vector<std::function<void()>>& shows)
     }
     case Kind::Int:
     {
-        auto* s = new QSpinBox;
-        s->setRange(int(f.fieldMin), int(f.fieldMax));
-        s->setKeyboardTracking(false);
-        QObject::connect(s, &QSpinBox::valueChanged, s, [key, values](int v) { values()[key] = int64_t(v); });
+        QDoubleSpinBox* s = panelkit::valueField(f.fieldMin, f.fieldMax, 0, {}, nullptr);
+        QObject::connect(s, &QDoubleSpinBox::valueChanged, s, [key, values](double v) { values()[key] = int64_t(std::llround(v)); });
         shows.push_back([key, s, values] {
             const QSignalBlocker b(s);
-            s->setValue(int(values()[key].get<int64_t>()));
+            s->setValue(double(values()[key].get<int64_t>()));
         });
         return s;
     }
@@ -410,28 +393,16 @@ QWidget* editor(const Field& f, std::vector<std::function<void()>>& shows)
     }
     case Kind::Slider:
     {
-        auto* w = new QWidget;
-        auto* h = new QHBoxLayout(w);
-        h->setContentsMargins(0, 0, 0, 0);
-        QDoubleSpinBox* s = spin(f.fieldMin, f.fieldMax, 2);
-        auto* slider = new QSlider(Qt::Horizontal);
-        slider->setRange(0, 1000);
-        h->addWidget(s);
-        h->addWidget(slider, 1);
-        const double lo = f.sliderMin, hi = f.sliderMax;
-        QObject::connect(slider, &QSlider::valueChanged, w, [s, lo, hi](int v) { s->setValue(lo + (hi - lo) * v / 1000.0); });
-        QObject::connect(s, &QDoubleSpinBox::valueChanged, w, [key, slider, lo, hi, values](double v) {
-            values()[key] = v;
-            const QSignalBlocker b(slider);
-            slider->setValue(int(std::lround(std::clamp((v - lo) / (hi - lo), 0.0, 1.0) * 1000.0)));
+        auto* s = new QDoubleSpinBox;
+        s->setRange(f.fieldMin, f.fieldMax);
+        s->setDecimals(2);
+        s->setSingleStep((f.sliderMax - f.sliderMin) / 100.0);
+        QObject::connect(s, &QDoubleSpinBox::valueChanged, s, [key, values](double v) { values()[key] = v; });
+        shows.push_back([key, s, values] {
+            const QSignalBlocker b(s);
+            s->setValue(values()[key].get<double>());
         });
-        shows.push_back([key, s, slider, lo, hi, values] {
-            const QSignalBlocker b(s), bs(slider);
-            const double v = values()[key].get<double>();
-            s->setValue(v);
-            slider->setValue(int(std::lround(std::clamp((v - lo) / (hi - lo), 0.0, 1.0) * 1000.0)));
-        });
-        return w;
+        return s;
     }
     case Kind::String:
     case Kind::Folder:
@@ -447,11 +418,14 @@ QWidget* editor(const Field& f, std::vector<std::function<void()>>& shows)
         auto* w = new QWidget;
         auto* h = new QHBoxLayout(w);
         h->setContentsMargins(0, 0, 0, 0);
+        h->setSpacing(2);
         h->addWidget(line, 1);
-        auto* browse = new QPushButton("...");
-        browse->setToolTip("Browse for the export folder.");
+        auto* browse = new QToolButton(w);
+        browse->setText("Browse");
+        browse->setToolTip("Browse: pick the export folder.");
+        panelkit::setRole(browse, "push");
         h->addWidget(browse);
-        QObject::connect(browse, &QPushButton::clicked, w, [key, line, values] {
+        QObject::connect(browse, &QToolButton::clicked, w, [key, line, values] {
             const QString folder = ui::fileDialog::getExistingDirectory(nullptr, "Export Folder", line->text());
             if (folder.isEmpty())
                 return;
@@ -464,11 +438,11 @@ QWidget* editor(const Field& f, std::vector<std::function<void()>>& shows)
     {
         auto* c = new QComboBox;
         for (const std::string& o : f.options)
-            c->addItem(QString::fromStdString(o));
-        QObject::connect(c, &QComboBox::currentTextChanged, c, [key, values](const QString& t) { values()[key] = t.toStdString(); });
+            c->addItem(treeChoiceName(o), QString::fromStdString(o));
+        QObject::connect(c, &QComboBox::currentIndexChanged, c, [key, c, values](int) { values()[key] = c->currentData().toString().toStdString(); });
         shows.push_back([key, c, values] {
             const QSignalBlocker b(c);
-            c->setCurrentText(QString::fromStdString(values()[key].get<std::string>()));
+            c->setCurrentIndex(std::max(0, c->findData(QString::fromStdString(values()[key].get<std::string>()))));
         });
         return c;
     }
@@ -483,8 +457,6 @@ void addFields(QFormLayout* form, const std::string& sectionId, std::vector<std:
         {
             QWidget* e = editor(f, shows);
             const QString label = QString::fromStdString(f.label);
-            if (f.kind == Kind::Length || f.kind == Kind::LengthRange)
-                e->setToolTip("In cm.");
             form->addRow(label, e);
         }
 }
@@ -495,13 +467,17 @@ QWidget* meshField(std::string State::*member, std::vector<std::function<void()>
     auto* w = new QWidget;
     auto* h = new QHBoxLayout(w);
     h->setContentsMargins(0, 0, 0, 0);
+    h->setSpacing(2);
     auto* line = new QLineEdit;
-    auto* set = new QPushButton("Set");
-    set->setToolTip("Fill from the selection.");
+    line->setPlaceholderText("None");
+    auto* set = new QToolButton(w);
+    set->setText("Set");
+    set->setToolTip("Set: fill from the selection.");
+    panelkit::setRole(set, "push");
     h->addWidget(line, 1);
     h->addWidget(set);
     QObject::connect(line, &QLineEdit::editingFinished, line, [member, line] { state().*member = line->text().trimmed().toStdString(); });
-    QObject::connect(set, &QPushButton::clicked, w, [member, line] {
+    QObject::connect(set, &QToolButton::clicked, w, [member, line] {
         scene::Graph& g = scene::Graph::current();
         std::string names;
         for (scene::NodeId id : g.selection())
@@ -529,26 +505,20 @@ QWidget* makePanel(QWidget* parent)
     scroll->setFrameShape(QFrame::NoFrame);
     auto* body = new QWidget;
     auto* v = new QVBoxLayout(body);
-    v->setSpacing(2);
+    v->setContentsMargins(12, 8, 12, 8);
+    v->setSpacing(4);
     auto shows = std::make_shared<std::vector<std::function<void()>>>();
 
     QFormLayout* form = nullptr;
-    section(v, "Preset", false, form);
+    QWidget* presetBody = treeSection(v, body, "Preset", false, form);
     auto* presetMenu = new QComboBox;
+    presetMenu->setToolTip("Preset: settings to start from. Presets assume a leaf cluster mesh.");
     form->addRow("Preset", presetMenu);
-    auto* presetButtons = new QWidget;
-    auto* pb = new QHBoxLayout(presetButtons);
-    pb->setContentsMargins(0, 0, 0, 0);
-    pb->addWidget(button("treeGenerator.applyPreset", presetButtons));
-    pb->addWidget(button("treeGenerator.savePreset", presetButtons));
-    pb->addWidget(button("treeGenerator.deletePreset", presetButtons));
-    form->addRow(presetButtons);
-    auto* selectionButtons = new QWidget;
-    auto* sb = new QHBoxLayout(selectionButtons);
-    sb->setContentsMargins(0, 0, 0, 0);
-    for (const char* id : {"treeGenerator.randomizeSeed", "treeGenerator.loadFromSelection", "treeGenerator.stampSelection", "treeGenerator.rebuild"})
-        sb->addWidget(button(id, selectionButtons));
-    form->addRow(selectionButtons);
+    form->addRow("", panelkit::grid({button("treeGenerator.applyPreset", presetBody, "Reapply"), button("treeGenerator.savePreset", presetBody, "Save As"),
+                                     button("treeGenerator.randomizeSeed", presetBody, "New Seeds"),
+                                     button("treeGenerator.loadFromSelection", presetBody, "Load Selection")},
+                                    2, presetBody));
+    form->addRow("", panelkit::overflow({"treeGenerator.stampSelection", "treeGenerator.rebuild", "treeGenerator.deletePreset"}, presetBody));
     auto fillPresets = [presetMenu] {
         const QSignalBlocker b(presetMenu);
         presetMenu->clear();
@@ -561,50 +531,44 @@ QWidget* makePanel(QWidget* parent)
         state().preset = t.toStdString();
         applyPreset();
     });
+    addFields(form, "global", *shows);
 
-    auto* globals = new QWidget;
-    auto* globalForm = new QFormLayout(globals);
-    globalForm->setContentsMargins(8, 2, 2, 2);
-    addFields(globalForm, "global", *shows);
-    v->addWidget(globals);
-    auto* note = new QLabel("Sizes are in cm. Presets assume a leaf cluster mesh.");
-    note->setWordWrap(true);
-    v->addWidget(note);
-
-    section(v, "Trunk And Branches", false, form);
+    QWidget* section = treeSection(v, body, "Trunk and Branches", false, form);
     addFields(form, "trunk", *shows);
-    form->addRow(button("treeGenerator.growTrunk", nullptr));
+    form->addRow("", button("treeGenerator.growTrunk", section));
 
-    section(v, "Canopy Blobs", false, form);
+    section = treeSection(v, body, "Canopy Blobs", false, form);
     addFields(form, "blob", *shows);
-    form->addRow(button("treeGenerator.canopyBlobs", nullptr));
+    form->addRow("", button("treeGenerator.canopyBlobs", section));
 
-    section(v, "Leaves", false, form);
-    form->addRow("Leaf Mesh(es), Hi First", meshField(&State::leaf, *shows));
-    form->addRow("Canopy Mesh(es)", meshField(&State::canopy, *shows));
+    section = treeSection(v, body, "Leaves", false, form);
+    form->addRow("Leaf Meshes", meshField(&State::leaf, *shows));
+    form->itemAt(form->rowCount() - 1, QFormLayout::FieldRole)->widget()->setToolTip("Leaf Meshes: the leaf mesh or meshes, high poly first");
+    form->addRow("Canopy Meshes", meshField(&State::canopy, *shows));
     addFields(form, "leaf", *shows);
-    form->addRow(button("treeGenerator.scatterLeaves", nullptr));
+    form->addRow("", button("treeGenerator.scatterLeaves", section));
 
-    section(v, "Leaf Plane", true, form);
+    section = treeSection(v, body, "Leaf Plane", true, form);
     addFields(form, "plane", *shows);
-    form->addRow(button("treeGenerator.leafPlane", nullptr));
+    form->addRow("", button("treeGenerator.leafPlane", section));
 
-    section(v, "Export", true, form);
+    section = treeSection(v, body, "Export", true, form);
     addFields(form, "export", *shows);
-    for (const char* id : {"treeGenerator.export", "treeGenerator.exportLeaf", "treeGenerator.measureBake", "treeGenerator.opacityMap", "treeGenerator.splitMasks"})
-        form->addRow(button(id, nullptr));
+    form->addRow("", button("treeGenerator.export", section, "Export FBX Pair"));
+    form->addRow("", panelkit::overflow({"treeGenerator.exportLeaf", "treeGenerator.measureBake", "treeGenerator.opacityMap", "treeGenerator.splitMasks"},
+                                        section));
     v->addStretch(1);
     scroll->setWidget(body);
     outerLayout->addWidget(scroll, 1);
 
     auto* footer = new QVBoxLayout;
-    footer->setContentsMargins(6, 4, 6, 6);
-    auto* statusLine = new QLabel("Ready.");
+    footer->setContentsMargins(12, 4, 12, 8);
+    footer->setSpacing(4);
+    auto* statusLine = new QLabel;
     statusLine->setWordWrap(true);
+    statusLine->setEnabled(false);
     footer->addWidget(statusLine);
-    QPushButton* build = button("treeGenerator.build", outer);
-    build->setMinimumHeight(32);
-    footer->addWidget(build);
+    footer->addWidget(button("treeGenerator.build", outer, "Build Whole Tree"));
     outerLayout->addLayout(footer);
 
     QPointer<QLabel> statusGuard(statusLine);

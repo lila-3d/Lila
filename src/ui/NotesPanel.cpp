@@ -139,7 +139,7 @@ NotesPanel::NotesPanel(QWidget* parent) : QWidget(parent)
 
     auto* bar = new QHBoxLayout;
     bar->setContentsMargins(0, 0, 0, 0);
-    bar->setSpacing(1);
+    bar->setSpacing(2);
     mPicker = new QComboBox(this);
     mPicker->setEditable(true);
     mPicker->setInsertPolicy(QComboBox::NoInsert);
@@ -153,8 +153,10 @@ NotesPanel::NotesPanel(QWidget* parent) : QWidget(parent)
         bar->addWidget(b);
         return b;
     };
+    bar->addSpacing(4);
     add("notes", "New note", [this] { addPage("note"); });
     add("checklist", "New todo list", [this] { addPage("todo"); });
+    bar->addSpacing(10);
     mClearDone = add("clear-all", "Remove the ticked items", [this] { clearDone(); });
     add("trash", "Delete this note or list", [this] { deleteCurrent(); });
     v->addLayout(bar);

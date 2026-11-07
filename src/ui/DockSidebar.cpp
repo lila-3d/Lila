@@ -19,6 +19,7 @@
 #include <QStyle>
 #include <QPointer>
 #include <QStyleOptionToolButton>
+#include <QMenu>
 #include <QTabBar>
 #include <QTimer>
 #include <QToolBar>
@@ -49,42 +50,30 @@ QToolButton* titleButton(const QString& iconName, const QString& tip, QWidget* p
     return b;
 }
 
-/** A tab on a sidebar strip; draws its label rotated on the left and right strips. */
+/**
+ * A tab on a sidebar strip. On the left and right strips it is the panel's icon, named by its tooltip, so no label is
+ * ever drawn rotated; on the top and bottom strips it is the panel's title.
+ */
 class SideTab : public QToolButton
 {
 public:
-    SideTab(const QString& text, Qt::Orientation orientation, QWidget* parent) : QToolButton(parent), mOrientation(orientation)
+    SideTab(const QString& text, const QIcon& panelIcon, Qt::Orientation orientation, QWidget* parent)
+        : QToolButton(parent), mOrientation(orientation)
     {
-        setText(text);
         setAutoRaise(true);
         setCheckable(true);
         setFocusPolicy(Qt::NoFocus);
         setCursor(Qt::PointingHandCursor);
-    }
-
-    QSize sizeHint() const override
-    {
-        QSize s = fontMetrics().size(Qt::TextSingleLine, text()) + QSize(16, 8);
-        return mOrientation == Qt::Vertical ? s.transposed() : s;
-    }
-
-protected:
-    void paintEvent(QPaintEvent*) override
-    {
-        QPainter p(this);
-        QStyleOptionToolButton opt;
-        initStyleOption(&opt);
-        opt.text.clear();
-        style()->drawComplexControl(QStyle::CC_ToolButton, &opt, &p, this);
-        p.setPen(palette().color(QPalette::ButtonText));
-        if (mOrientation == Qt::Vertical)
+        if (orientation == Qt::Vertical)
         {
-            p.translate(0, height());
-            p.rotate(-90);
-            p.drawText(QRect(0, 0, height(), width()), Qt::AlignCenter, text());
+            setIcon(panelIcon.isNull() ? ui::icon("layout-sidebar") : panelIcon);
+            setIconSize(QSize(18, 18));
+            setToolButtonStyle(Qt::ToolButtonIconOnly);
+            setFixedSize(30, 30);
+            setAccessibleName(text);
         }
         else
-            p.drawText(rect(), Qt::AlignCenter, text());
+            setText(text);
     }
 
 private:
@@ -541,27 +530,44 @@ int DockTitleBar::buttonsLeft() const
     return left;
 }
 
+void DockTitleBar::refreshTabbed()
+{
+    bool tabbed = false;
+    if (auto* window = qobject_cast<QMainWindow*>(mDock->parentWidget()); window && !mDock->isFloating())
+        for (QDockWidget* other : window->tabifiedDockWidgets(mDock))
+            tabbed = tabbed || !other->isHidden();
+    if (tabbed == mTabbed)
+        return;
+    mTabbed = tabbed;
+    for (int i = 0; i < mButtons->count(); ++i)
+        if (QWidget* w = mButtons->itemAt(i)->widget())
+            w->setVisible(!tabbed && (w != mHelp || mHelp));
+    updateGeometry();
+    update();
+}
+
 QSize DockTitleBar::sizeHint() const
 {
-    return {80, kTitleHeight};
+    return mTabbed ? QSize(0, 0) : QSize(80, kTitleHeight);
 }
 
 QSize DockTitleBar::minimumSizeHint() const
 {
-    return {60, kTitleHeight};
+    return mTabbed ? QSize(0, 0) : QSize(60, kTitleHeight);
 }
 
 void DockTitleBar::paintEvent(QPaintEvent*)
 {
+    if (mTabbed)
+        return;
     QPainter p(this);
-    p.fillRect(rect(), themeShade(58));
-    // A hairline under the header, so it reads as the panel's top edge rather than a row of its content.
-    p.fillRect(QRect(0, height() - 1, width(), 1), themeColor("separator"));
+    // The panel's own colour: a header is its text, not a filled bar.
+    p.fillRect(rect(), themeColor("window"));
     QFont title = font();
     title.setWeight(QFont::DemiBold);
     p.setFont(title);
-    p.setPen(themeColor("text"));
-    QRect text = rect().adjusted(8, 0, 0, -1);
+    p.setPen(themeColor("brightText"));
+    QRect text = rect().adjusted(12, 0, 0, -1);
     text.setRight(buttonsLeft() - 4);
     p.drawText(text, Qt::AlignVCenter | Qt::AlignLeft, p.fontMetrics().elidedText(mDock->windowTitle(), Qt::ElideRight, text.width()));
 }
@@ -644,12 +650,49 @@ void DockSidebars::restoreSize(QDockWidget* dock)
     Q_EMIT changed();
 }
 
+void DockSidebars::hideStaleTabBars()
+{
+    // Qt can leave the tab bar of a regrouped dock area shown: over the central widget, or on top of the live bar.
+    QWidget* central = mWindow->centralWidget();
+    for (QTabBar* bar : mWindow->findChildren<QTabBar*>(Qt::FindDirectChildrenOnly))
+    {
+        if (!bar->isVisible())
+            continue;
+        // A live bar sits right on top of the shown dock of its group (tabs are North everywhere).
+        bool live = false;
+        const QRect g = bar->geometry();
+        for (int i = 0; i < bar->count() && !live; ++i)
+            if (QDockWidget* d = dockForTab(bar, i); d && d->isVisible() && !d->isFloating())
+            {
+                const QRect dg = d->geometry();
+                live = std::abs(dg.top() - g.bottom()) <= 4 && dg.left() < g.right() && g.left() < dg.right();
+            }
+        if (!live || (central && central->geometry().intersects(g)))
+            bar->hide();
+    }
+}
+
 bool DockSidebars::eventFilter(QObject* obj, QEvent* e)
 {
     if (obj == mWindow)
     {
         if (e->type() == QEvent::ChildPolished)
             hookTabBars();
+        if (e->type() == QEvent::LayoutRequest || e->type() == QEvent::ChildPolished)
+        {
+            for (QDockWidget* d : mWindow->findChildren<QDockWidget*>(Qt::FindDirectChildrenOnly))
+                if (auto* title = qobject_cast<DockTitleBar*>(d->titleBarWidget()))
+                    title->refreshTabbed();
+            // After the layout has run, so geometries are the ones the bars will have.
+            if (!mStaleBarsQueued)
+            {
+                mStaleBarsQueued = true;
+                QTimer::singleShot(0, this, [this] {
+                    mStaleBarsQueued = false;
+                    hideStaleTabBars();
+                });
+            }
+        }
         else if (e->type() == QEvent::MouseButtonPress && static_cast<QMouseEvent*>(e)->button() == Qt::LeftButton)
             beginEdgeDrag(static_cast<QMouseEvent*>(e)->position().toPoint());
         else if (e->type() == QEvent::MouseMove && !mEdgeDrags.empty())
@@ -676,6 +719,28 @@ bool DockSidebars::eventFilter(QObject* obj, QEvent* e)
     if (auto* bar = qobject_cast<QTabBar*>(obj))
     {
         int index = bar->tabAt(mouse->position().toPoint());
+        if (mouse->button() == Qt::RightButton)
+        {
+            if (e->type() == QEvent::MouseButtonRelease)
+                if (QPointer<QDockWidget> d = dockForTab(bar, index))
+                {
+                    QMenu menu;
+                    const std::string page = d->property(kDocsPage).toString().toStdString();
+                    if (!page.empty())
+                        menu.addAction(ui::icon("help"), "Docs", [page] { docs::open(page); });
+                    menu.addAction(ui::icon("minus"), "Collapse to the Side", this, [this, d] {
+                        if (d)
+                            collapse(d);
+                    });
+                    menu.addAction(ui::icon("picture-in-picture"), "Float", d, [d] { d->setFloating(true); });
+                    menu.addAction(ui::icon("x"), "Close", d, [this, d] {
+                        if (d)
+                            close(d);
+                    });
+                    menu.exec(mouse->globalPosition().toPoint());
+                }
+            return index >= 0;
+        }
         if (mouse->button() == Qt::MiddleButton)
         {
             if (e->type() == QEvent::MouseButtonRelease)
@@ -1055,7 +1120,8 @@ void DockSidebars::collapse(QDockWidget* dock)
     else
     {
         bar->setOrientation(orientation);
-        auto* tab = new SideTab(dock->windowTitle(), orientation, bar);
+        const QString iconName = dock->property(kPanelIconProperty).toString();
+        auto* tab = new SideTab(dock->windowTitle(), iconName.isEmpty() ? dock->windowIcon() : ui::icon(iconName), orientation, bar);
         tab->setToolTip("Expand " + dock->windowTitle());
         tab->installEventFilter(this);
         QAction* action = bar->addWidget(tab);

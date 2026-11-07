@@ -2,6 +2,10 @@
 
 #include "ops/Command.h"
 #include "core/Log.h"
+#include "ui/Controls.h"
+#include "ui/Icons.h"
+#include "ui/Theme.h"
+#include "ui/UiCommon.h"
 #include "vcs/SourceControl.h"
 
 #include <QDialog>
@@ -10,7 +14,7 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QPlainTextEdit>
-#include <QPushButton>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -24,37 +28,57 @@ SourceControlPanel::SourceControlPanel(QWidget* parent) : QWidget(parent)
     v->setContentsMargins(4, 4, 4, 4);
     v->setSpacing(4);
     mProvider = new QLabel(this);
-    mProvider->setStyleSheet("color: #9a9a9a;");
-    v->addWidget(mProvider);
+    QPalette dim = mProvider->palette();
+    dim.setColor(QPalette::WindowText, themeColor("dimText"));
+    mProvider->setPalette(dim);
 
     auto* buttons = new QHBoxLayout;
-    auto button = [&](const char* label, std::function<void()> fn) {
-        auto* b = new QPushButton(label, this);
-        connect(b, &QPushButton::clicked, this, fn);
+    buttons->setSpacing(2);
+    auto button = [&](const char* label, const QString& tip, std::function<void()> fn) {
+        auto* b = new QToolButton(this);
+        b->setText(label);
+        b->setToolTip(tip);
+        controls::setRole(b, "push");
+        connect(b, &QToolButton::clicked, this, fn);
         buttons->addWidget(b);
+        return b;
     };
-    button("Refresh", [this] { refresh(); });
-    button("Check Out", [this] {
+    QToolButton* checkout = button("Check Out", "<b>Check Out</b><br>Open the selected files for edit.", [this] {
         auto files = selectedFiles();
         if (files.empty())
             return;
         run("scCheckout", {{"args", files}});
     });
-    button("Revert", [this] {
+    QToolButton* revert = button("Revert", "<b>Revert</b><br>Discard changes to the selected files.", [this] {
         auto files = selectedFiles();
         if (!files.empty())
             run("scRevert", {{"args", files}});
     });
-    button("Submit...", [this] { submit(); });
-    button("Get Latest", [this] { run("scSync", json::object()); });
+    buttons->addSpacing(10);
+    button("Submit...", "<b>Submit</b><br>Submit the selected change, or the selected files in it.", [this] { submit(); });
+    button("Get Latest", "<b>Get Latest</b><br>Sync the workspace to the latest revision.", [this] { run("scSync", json::object()); });
     buttons->addStretch(1);
+    auto* reload = new QToolButton(this);
+    reload->setIcon(icon("refresh"));
+    reload->setToolTip("<b>Refresh</b><br>Read the pending changes again.");
+    connect(reload, &QToolButton::clicked, this, [this] { refresh(); });
+    buttons->addWidget(reload);
     v->addLayout(buttons);
+    v->addWidget(mProvider);
 
     mTree = new QTreeWidget(this);
     mTree->setHeaderLabels({"Change / File", "Description"});
     mTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     mTree->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    setEmptyHint(mTree, "No pending changes. Click Check Out on a file to start one.");
     v->addWidget(mTree, 1);
+    auto syncButtons = [this, checkout, revert] {
+        const bool any = !selectedFiles().empty();
+        checkout->setEnabled(any);
+        revert->setEnabled(any);
+    };
+    connect(mTree, &QTreeWidget::itemSelectionChanged, this, syncButtons);
+    syncButtons();
 }
 
 void SourceControlPanel::run(const char* command, const json& call)
@@ -76,7 +100,8 @@ void SourceControlPanel::refresh()
     try
     {
         json info = ops::execute("scProvider", json::object());
-        mProvider->setText(QString::fromStdString("Provider: " + info.value("provider", std::string("none"))));
+        const std::string provider = info.value("provider", std::string("none"));
+        mProvider->setText("Provider: " + (provider == "none" ? QString("None") : niceName(provider)));
         json lists = ops::execute("scChangelists", json::object());
         for (const json& cl : lists.is_array() ? lists : json::array())
         {

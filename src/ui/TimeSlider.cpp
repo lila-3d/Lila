@@ -10,15 +10,18 @@
 #include "ui/Actions.h"
 #include "ui/Animation.h"
 #include "ui/AudioUi.h"
+#include "ui/Controls.h"
 #include "ui/Deletion.h"
 #include "ui/Ghosting.h"
 #include "ui/Icons.h"
+#include "ui/SpinScrub.h"
 #include "ui/UiCommands.h"
 #include "ui/UiCommon.h"
 #include "ui/ViewportDisplay.h"
 
 #include <QComboBox>
 #include <QHBoxLayout>
+#include <QLabel>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
@@ -93,6 +96,20 @@ QIcon glyphIcon(TransportGlyph g)
     return QIcon(pm);
 }
 
+QLabel* timeDimLabel(const QString& text, QWidget* parent)
+{
+    auto* l = new QLabel(text, parent);
+    QPalette pal = l->palette();
+    pal.setColor(QPalette::WindowText, themeColor("dimText"));
+    l->setPalette(pal);
+    return l;
+}
+
+QString actionTip(const char* id)
+{
+    return QString::fromStdString(actions::tooltip(id));
+}
+
 QToolButton* transportButton(QWidget* parent, const QString& tip)
 {
     auto* b = new QToolButton(parent);
@@ -109,7 +126,7 @@ QSpinBox* frameField(QWidget* parent, const QString& tip)
     auto* s = new QSpinBox(parent);
     s->setRange(-1000000, 1000000);
     s->setButtonSymbols(QAbstractSpinBox::NoButtons);
-    s->setAlignment(Qt::AlignCenter);
+    s->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     s->setFixedWidth(52);
     s->setToolTip(tip);
     s->setKeyboardTracking(false);
@@ -436,63 +453,84 @@ TimeSlider::TimeSlider(QWidget* parent) : QWidget(parent)
     top->setSpacing(2);
     mRuler = new TimeRuler(this);
     top->addWidget(mRuler, 1);
-    mFrame = frameField(this, "Current frame");
+    top->addSpacing(4);
+    top->addWidget(timeDimLabel("Frame", this));
+    mFrame = frameField(this, "Current Frame");
     top->addWidget(mFrame);
-    auto addButton = [&](TransportGlyph g, const QString& tip, const char* action) {
-        QToolButton* b = transportButton(this, tip);
-        b->setIcon(glyphIcon(g));
-        connect(b, &QToolButton::clicked, this, [action] { actions::run(json(action)); });
-        top->addWidget(b);
+    top->addSpacing(6);
+    // The playback buttons as one strip, so they read as a single control.
+    auto* transport = new QWidget(this);
+    transport->setAttribute(Qt::WA_StyledBackground);
+    controls::setRole(transport, "segmented");
+    auto* strip = new QHBoxLayout(transport);
+    strip->setContentsMargins(2, 2, 2, 2);
+    strip->setSpacing(0);
+    auto addTransport = [&](QToolButton* b) {
+        b->setParent(transport);
+        strip->addWidget(b);
         return b;
     };
-    addButton(TransportGlyph::ToStart, "Go to start", "anim.firstFrame");
-    addButton(TransportGlyph::PrevKey, "Previous key (,)", "anim.prevKey");
-    addButton(TransportGlyph::StepBack, "Step back one frame (Alt+,)", "anim.prevFrame");
-    mPlayBack = transportButton(this, "Play backwards");
-    top->addWidget(mPlayBack);
+    auto addButton = [&](TransportGlyph g, const char* action) {
+        QToolButton* b = addTransport(transportButton(this, actionTip(action)));
+        b->setIcon(glyphIcon(g));
+        connect(b, &QToolButton::clicked, this, [action] { actions::run(json(action)); });
+        return b;
+    };
+    addButton(TransportGlyph::ToStart, "anim.firstFrame");
+    addButton(TransportGlyph::PrevKey, "anim.prevKey");
+    addButton(TransportGlyph::StepBack, "anim.prevFrame");
+    mPlayBack = addTransport(transportButton(this, actionTip("anim.playBackward") + "\nClick again to stop"));
     connect(mPlayBack, &QToolButton::clicked, this, [] {
         if (anim::playDirection() < 0)
             actions::run(json("anim.stop"));
         else
             actions::run(json("anim.playBackward"));
     });
-    mPlay = transportButton(this, "Play forwards (Alt+V)");
-    top->addWidget(mPlay);
+    mPlay = addTransport(transportButton(this, actionTip("anim.play") + "\nClick again to stop"));
     connect(mPlay, &QToolButton::clicked, this, [] {
         if (anim::playDirection() > 0)
             actions::run(json("anim.stop"));
         else
             runUi("play");
     });
-    addButton(TransportGlyph::StepForward, "Step forward one frame (Alt+.)", "anim.nextFrame");
-    addButton(TransportGlyph::NextKey, "Next key (.)", "anim.nextKey");
-    addButton(TransportGlyph::ToEnd, "Go to end", "anim.lastFrame");
+    addButton(TransportGlyph::StepForward, "anim.nextFrame");
+    addButton(TransportGlyph::NextKey, "anim.nextKey");
+    addButton(TransportGlyph::ToEnd, "anim.lastFrame");
+    top->addWidget(transport);
     outer->addLayout(top);
 
     auto* bottom = new QHBoxLayout();
     bottom->setSpacing(2);
-    mAnimStart = frameField(this, "Animation start");
-    mMin = frameField(this, "Playback start");
+    mAnimStart = frameField(this, "Animation Start\nThe first frame of the scene's animation");
+    mMin = frameField(this, "Playback Start\nThe first frame playback and the ruler show");
     mRange = new RangeBar(this);
-    mMax = frameField(this, "Playback end");
-    mAnimEnd = frameField(this, "Animation end");
+    mRange->setToolTip("Playback Range\nDrag the bar to slide it, its ends to resize it");
+    mMax = frameField(this, "Playback End\nThe last frame playback and the ruler show");
+    mAnimEnd = frameField(this, "Animation End\nThe last frame of the scene's animation");
+    bottom->addWidget(timeDimLabel("Start", this));
     bottom->addWidget(mAnimStart);
+    bottom->addWidget(timeDimLabel("From", this));
     bottom->addWidget(mMin);
     bottom->addWidget(mRange, 1);
+    bottom->addWidget(timeDimLabel("To", this));
     bottom->addWidget(mMax);
+    bottom->addWidget(timeDimLabel("End", this));
     bottom->addWidget(mAnimEnd);
+    bottom->addSpacing(6);
 
     mFps = new QComboBox(this);
     for (double fps : {15.0, 24.0, 25.0, 30.0, 48.0, 50.0, 60.0, 120.0})
         mFps->addItem(QString("%1 fps").arg(fps), fps);
-    mFps->setToolTip("Frames per second");
+    mFps->setToolTip("Frame Rate");
+    setComboDefault(mFps, mFps->findData(anim::Playback{}.fps));
     mFps->setFocusPolicy(Qt::NoFocus);
     bottom->addWidget(mFps);
-    mLoop = transportButton(this, "Loop playback");
+    bottom->addSpacing(6);
+    mLoop = transportButton(this, "Loop Playback\nPlayback starts over at the end of the range");
     mLoop->setIcon(icon("repeat"));
     mLoop->setCheckable(true);
     bottom->addWidget(mLoop);
-    mAutoKey = transportButton(this, "Auto Key: key animated channels whenever they change");
+    mAutoKey = transportButton(this, actionTip("anim.autoKeyToggle"));
     mAutoKey->setIcon(icon("key"));
     mAutoKey->setCheckable(true);
     bottom->addWidget(mAutoKey);
@@ -534,7 +572,7 @@ TimeSlider::TimeSlider(QWidget* parent) : QWidget(parent)
         bottom->addWidget(ghost);
     }
     {
-        QToolButton* cache = transportButton(this, "Cached Playback: keep evaluated frames in memory so playback replays them\n"
+        QToolButton* cache = transportButton(this, "Cached Playback\nKeep evaluated frames in memory so playback replays them\n"
                                               "Right-click to fill or clear the cache");
         cache->setIcon(icon("database"));
         cache->setCheckable(true);
@@ -567,9 +605,6 @@ TimeSlider::TimeSlider(QWidget* parent) : QWidget(parent)
         bottom->addWidget(cache);
     }
     outer->addLayout(bottom);
-
-    // Checked toggles read as lit, which grayscale needs to be unmistakable.
-    setStyleSheet("QToolButton:checked { background: #686868; border: 1px solid #b4b4b4; border-radius: 2px; }");
 
     connect(mFrame, &QSpinBox::valueChanged, this, [](int f) {
         ops::execute("currentTime", {{"args", {anim::secondsOf(f)}}});

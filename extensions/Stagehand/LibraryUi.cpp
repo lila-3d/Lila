@@ -4,9 +4,12 @@
 #include "Library.h"
 #include "Stagehand.h"
 
+#include "PanelKit.h"
+
 #include <lila/Actions.h>
 #include <lila/Command.h>
 #include <lila/Extension.h>
+#include <lila/Icons.h>
 #include <lila/LevelToolkit.h>
 #include <lila/Log.h>
 #include <lila/Menus.h>
@@ -28,7 +31,7 @@
 #include <QMenu>
 #include <QMimeData>
 #include <QPixmap>
-#include <QPushButton>
+#include <QToolButton>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -85,14 +88,22 @@ public:
     explicit LibraryPanel(QWidget* parent) : QWidget(parent)
     {
         auto* v = new QVBoxLayout(this);
-        v->setContentsMargins(4, 4, 4, 4);
+        v->setContentsMargins(12, 8, 12, 8);
+        v->setSpacing(4);
         auto* top = new QHBoxLayout();
+        top->setSpacing(2);
         mSearch = new QLineEdit(this);
         mSearch->setPlaceholderText("Search props");
         mSearch->setClearButtonEnabled(true);
         mCollection = new QComboBox(this);
+        mCollection->setToolTip("Collection: show one collection, or all");
+        auto* reload = new QToolButton(this);
+        reload->setIcon(icon("refresh"));
+        reload->setAutoRaise(true);
+        reload->setToolTip("Reload: read the library folders again");
         top->addWidget(mSearch, 1);
         top->addWidget(mCollection);
+        top->addWidget(reload);
         v->addLayout(top);
 
         mList = new AssetList(this);
@@ -107,23 +118,25 @@ public:
         mList->setWordWrap(true);
         v->addWidget(mList, 1);
 
-        auto* bottom = new QHBoxLayout();
-        auto* add = new QPushButton("Add Selection", this);
-        auto* reload = new QPushButton("Reload", this);
         mStatus = new QLabel(this);
-        bottom->addWidget(add);
-        bottom->addWidget(reload);
-        bottom->addWidget(mStatus, 1);
-        v->addLayout(bottom);
+        mStatus->setWordWrap(true);
+        mStatus->setEnabled(false);
+        v->addWidget(mStatus);
+        auto* add = new QToolButton(this);
+        add->setText("Add Selection");
+        add->setToolTip("Add Selection: add the selected objects to the library as a prop");
+        add->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        panelkit::setRole(add, "push");
+        v->addWidget(add);
 
         QObject::connect(mSearch, &QLineEdit::textChanged, this, [this] { fill(); });
         QObject::connect(mCollection, &QComboBox::currentIndexChanged, this, [this] { fill(); });
-        QObject::connect(reload, &QPushButton::clicked, this, [this] {
+        QObject::connect(reload, &QToolButton::clicked, this, [this] {
             library::reload();
             fillCollections();
             fill();
         });
-        QObject::connect(add, &QPushButton::clicked, this, [this] { addSelection(); });
+        QObject::connect(add, &QToolButton::clicked, this, [this] { addSelection(); });
         QObject::connect(mList, &QListWidget::itemDoubleClicked, this, [](QListWidgetItem* it) { placeOnSelection(it->data(kIdRole).toString().toStdString()); });
         QObject::connect(mList, &QWidget::customContextMenuRequested, this, [this](QPoint pos) { contextMenu(pos); });
         fillCollections();
@@ -183,7 +196,13 @@ private:
                 it->setIcon(QIcon(QPixmap(qs(a.thumbnail.generic_string()))));
         }
         const size_t errors = library::errors().size();
-        mStatus->setText(QString("%1 props%2").arg(found.size()).arg(errors ? QString(", %1 failed to load").arg(errors) : QString()));
+        const QString failed = errors ? QString(", %1 failed to load").arg(errors) : QString();
+        if (!found.empty())
+            mStatus->setText(QString("%1 props%2").arg(found.size()).arg(failed));
+        else if (library::all().empty())
+            mStatus->setText("No props. Select objects and click Add Selection." + failed);
+        else
+            mStatus->setText("No props match." + failed);
     }
 
     void addSelection()
@@ -230,7 +249,7 @@ private:
         });
         m.addAction("Replace Selection, Fit", [id] { runUi("replaceWith", {{"asset", id}, {"fit", true}}); });
         m.addSeparator();
-        m.addAction("Copy Id", [id] { QGuiApplication::clipboard()->setText(qs(id)); });
+        m.addAction("Copy ID", [id] { QGuiApplication::clipboard()->setText(qs(id)); });
         m.addAction("Remove from Library", [this, id] {
             runUi("libraryRemove", {{"args", {id}}});
             fill();

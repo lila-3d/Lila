@@ -9,6 +9,7 @@
 
 class QLabel;
 class QListWidget;
+class QDoubleSpinBox;
 class QTimer;
 class QToolButton;
 class QVBoxLayout;
@@ -18,9 +19,14 @@ namespace lila::ui
 /** Dock object name for the Topology Toolkit. */
 inline constexpr const char* kTopologyToolkitDock = "topologyToolkit";
 
+namespace controls
+{
+class Segmented;
+}
+
 /**
- * The Topology Toolkit: the retopo session (reference, retopo mesh, symmetry), the topology tools, their settings, the
- * active construct's settings, the list of live constructs, guides, auto retopo and the quality numbers.
+ * The Topology Toolkit: the retopo session (reference, retopo mesh, symmetry), the topology tools as tiles, their settings,
+ * the active construct's settings, the list of live constructs and guides, auto retopo and the quality numbers.
  */
 class LILA_UI_API TopologyToolkit : public QWidget
 {
@@ -34,11 +40,20 @@ protected:
     void showEvent(QShowEvent* e) override;
 
 private:
-    QToolButton* actionButton(const std::string& id, const QString& iconName, const QString& text, QWidget* parent);
+    /** A tile for a registered action, or null when it isn't one. */
+    QToolButton* tile(const std::string& id, const char* iconName, const QString& label, QWidget* parent);
+    /** A labelled push button for a registered action, or null when it isn't one. */
+    QToolButton* push(const std::string& id, const QString& label, QWidget* parent);
+    QToolButton* track(QToolButton* b, const std::string& id);
+    /** A settings row's field: a slider when the range is a real bound, a plain value field otherwise. */
+    QDoubleSpinBox* prefField(const char* key, double def, double lo, double hi, int decimals, const QString& unit, bool slider, const char* tip,
+                              QWidget* parent);
     void refreshState();
     void rebuildConstructPanel();
 
-    QLabel* mSession = nullptr;
+    QLabel* mReference = nullptr;
+    QLabel* mRetopo = nullptr;
+    controls::Segmented* mSymmetry = nullptr;
     QLabel* mStats = nullptr;
     QLabel* mActiveLabel = nullptr;
     QWidget* mConstructPanel = nullptr;

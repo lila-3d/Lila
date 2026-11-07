@@ -17,7 +17,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
-#include <QPushButton>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -189,6 +189,17 @@ std::string infoText(NodeId id)
     }
 }
 
+/** A labelled button in the app sheet's push style. */
+QToolButton* overlapPush(QWidget* parent, const QString& label, const QString& tip)
+{
+    auto* b = new QToolButton(parent);
+    b->setText(label);
+    b->setToolTip(tip);
+    b->setProperty("role", "push");
+    b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    return b;
+}
+
 /** Simulate / Record / Clear buttons and a status line for one Overlap node. */
 QWidget* controls(NodeId id, QWidget* parent = nullptr)
 {
@@ -196,27 +207,28 @@ QWidget* controls(NodeId id, QWidget* parent = nullptr)
     auto* v = new QVBoxLayout(w);
     v->setContentsMargins(0, 0, 0, 0);
     auto* row = new QHBoxLayout;
+    row->setSpacing(2);
     auto* status = new QLabel(w);
     status->setWordWrap(true);
+    status->setForegroundRole(QPalette::PlaceholderText);
     auto name = [id] {
         Node* n = Graph::current().node(id);
         return n ? n->path() : std::string();
     };
     auto refresh = [status, id] { status->setText(QString::fromStdString(infoText(id))); };
     auto button = [&](const char* label, const char* tip, std::function<void()> fn) {
-        auto* b = new QPushButton(label, w);
-        b->setToolTip(tip);
-        QObject::connect(b, &QPushButton::clicked, w, [fn = std::move(fn), refresh] {
+        QToolButton* b = overlapPush(w, label, tip);
+        QObject::connect(b, &QToolButton::clicked, w, [fn = std::move(fn), refresh] {
             fn();
             refresh();
         });
         row->addWidget(b);
     };
-    button("Simulate", "Simulate to the end of the playback range (or the loop).", [name] {
+    button("Simulate", "Simulate\nSimulate to the end of the playback range (or the loop)", [name] {
         runCommand("simulate", {{"args", {name()}}, {"frame", sim::frameOf(lila::scene::Graph::current().time())}});
     });
-    button("Record", "Bake to a new additive animation layer.", [name] { runCommand("recordSimulation", {{"args", {name()}}}); });
-    button("Clear Cache", "Throw the cache away; the next frame simulates from the start.", [name] { runCommand("clearSimCache", {{"args", {name()}}}); });
+    button("Record", "Record\nBake to a new additive animation layer", [name] { runCommand("recordSimulation", {{"args", {name()}}}); });
+    button("Clear Cache", "Clear Cache\nThrow the cache away; the next frame simulates from the start", [name] { runCommand("clearSimCache", {{"args", {name()}}}); });
     v->addLayout(row);
     v->addWidget(status);
     refresh();
@@ -229,22 +241,28 @@ QWidget* makePanel(QWidget* parent)
     auto* w = new QWidget(parent);
     auto* v = new QVBoxLayout(w);
     auto* setup = new QHBoxLayout;
-    auto add = [&](const char* label, const char* tip, const char* command) {
-        auto* b = new QPushButton(label, w);
-        b->setToolTip(tip);
-        QObject::connect(b, &QPushButton::clicked, w, [command] { runCommand(command); });
+    setup->setSpacing(2);
+    auto add = [&](const QString& label, const char* action) {
+        QToolButton* b = overlapPush(w, label, QString::fromStdString(actions::tooltip(action)));
+        const std::string id = action;
+        QObject::connect(b, &QToolButton::clicked, w, [id] { actions::run(json(id)); });
+        optionBox::withOptionBox(b, id, w);
         setup->addWidget(b);
     };
-    add("Add Chains", "Overlap chains from the selected joints down to the ends of their branches.", "createOverlap");
-    add("Add Collider", "A collider sphere parented to the selected node.", "createOverlapCollider");
-    add("Joint Settings", "Per-joint settings (pin, delay) for the selected joints.", "addOverlapJoint");
+    add("Add Chains", "overlap.create");
+    add("Add Collider", "overlap.addCollider");
+    add("Joint Settings", "overlap.addJoint");
     v->addLayout(setup);
     auto* list = new QListWidget(w);
     v->addWidget(list, 1);
+    auto* empty = new QLabel("No Overlap chains. Select the root joints and click Add Chains.", w);
+    empty->setWordWrap(true);
+    empty->setForegroundRole(QPalette::PlaceholderText);
+    v->addWidget(empty);
     auto* holder = new QVBoxLayout;
     v->addLayout(holder);
 
-    auto fill = [list] {
+    auto fill = [list, empty] {
         Graph& g = Graph::current();
         const QString current = list->currentItem() ? list->currentItem()->text() : QString();
         list->clear();
@@ -254,6 +272,8 @@ QWidget* makePanel(QWidget* parent)
         for (int i = 0; i < list->count(); ++i)
             if (list->item(i)->text() == current)
                 list->setCurrentRow(i);
+        list->setVisible(list->count() > 0);
+        empty->setVisible(list->count() == 0);
     };
     ui::deletion::claim(list, [list] {
         if (QListWidgetItem* it = list->currentItem())

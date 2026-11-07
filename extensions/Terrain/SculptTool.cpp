@@ -8,6 +8,8 @@
 #include "Brushes.h"
 #include "Terrain.h"
 
+#include "PanelKit.h"
+
 #include <lila/Actions.h>
 #include <lila/Brush.h>
 #include <lila/BrushUi.h>
@@ -38,7 +40,6 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPointer>
-#include <QSpinBox>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -206,74 +207,131 @@ bool& regionArmed()
     return armed;
 }
 
+/** "peak" -> "Peak": a stored name as the palette shows it. */
+QString terrainDisplayName(std::string_view name)
+{
+    QString s = QString::fromUtf8(name.data(), qsizetype(name.size()));
+    if (!s.isEmpty())
+        s[0] = s[0].toUpper();
+    return s;
+}
+
+/** Mirror values in segment order; a segment's id is its index. */
+constexpr std::array<const char*, 4> kMirrors = {"off", "x", "z", "xz"};
+
 class Palette final : public QWidget
 {
 public:
     explicit Palette(QWidget* parent) : QWidget(parent)
     {
+        constexpr const char* kSections = "terrainSculptPalette";
         auto* v = new QVBoxLayout(this);
-        v->setContentsMargins(8, 8, 8, 8);
-        v->setSpacing(8);
+        v->setContentsMargins(12, 8, 12, 8);
+        v->setSpacing(4);
 
-        auto* grid = new QGridLayout;
-        grid->setSpacing(2);
+        std::vector<QWidget*> tiles;
         for (size_t i = 0; i < kBrushes.size(); ++i)
         {
             const BrushButton& def = kBrushes[i];
             auto* b = new QToolButton;
             b->setIcon(icon(def.icon));
-            b->setIconSize(QSize(22, 22));
-            b->setFixedSize(36, 36);
+            b->setIconSize(QSize(24, 24));
+            b->setText(def.label);
+            b->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+            b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
             b->setCheckable(true);
-            b->setAutoRaise(true);
+            b->setFocusPolicy(Qt::NoFocus);
+            panelkit::setRole(b, "tile");
             b->setToolTip(QString("%1: %2").arg(def.label, def.tip));
             connect(b, &QToolButton::clicked, this, [op = def.op] {
                 settings().op = op;
                 save();
             });
-            grid->addWidget(b, int(i / 4), int(i % 4));
+            tiles.push_back(b);
             mButtons[i] = b;
         }
-        v->addLayout(grid);
-        mName = new QLabel;
-        mName->setAlignment(Qt::AlignHCenter);
-        v->addWidget(mName);
+        v->addWidget(panelkit::section("Brushes", panelkit::grid(tiles, 4, this), this, kSections));
 
-        auto* form = new QFormLayout;
-        auto spin = [&](const char* label, double lo, double hi, int decimals, const char* suffix, const char* tip, auto&& apply) {
-            auto* s = new QDoubleSpinBox;
-            s->setRange(lo, hi);
-            s->setDecimals(decimals);
-            s->setSuffix(suffix);
-            s->setToolTip(tip);
-            s->setKeyboardTracking(false);
+        auto makeForm = [](QWidget* w) {
+            auto* f = new QFormLayout(w);
+            f->setContentsMargins(0, 0, 0, 0);
+            f->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            f->setVerticalSpacing(4);
+            return f;
+        };
+        auto connectSpin = [this](QDoubleSpinBox* s, const char* label, const char* tip, auto&& apply) {
+            s->setToolTip(QString("%1: %2").arg(label, tip));
             connect(s, &QDoubleSpinBox::valueChanged, this, [apply](double value) {
                 apply(value);
                 save();
             });
-            form->addRow(label, s);
-            return s;
         };
-        mRadius = spin("Radius", 10.0, 1e7, 0, " cm", "Brush radius  (B+drag, [ ])", [](double v) { settings().stroke.worldRadius = v; });
-        mStrength = spin("Strength", 0.0, 1.0, 2, "", "How much one stroke does  (M+drag)", [](double v) { settings().stroke.strength = v; });
-        mHeight = spin("Height", 1.0, 1e6, 0, " cm", "Raise, lower, noise and stamp: change at full strength", [](double v) { settings().height = v; });
-        mStep = spin("Step", 1.0, 1e6, 0, " cm", "Terrace step height", [](double v) { settings().step = v; });
-        mSharpness = spin("Sharpness", 0.0, 1.0, 2, "", "Terrace: soft to sheer risers", [](double v) { settings().sharpness = v; });
-        mAngle = spin("Angle", -360.0, 360.0, 0, "\xc2\xb0", "Stamp turn", [](double v) { settings().angle = v; });
 
-        mStamp = new QComboBox;
-        for (const std::string& s : stampNames())
-            mStamp->addItem(QString::fromStdString(s));
-        mStamp->setToolTip("Library stamp");
-        connect(mStamp, &QComboBox::currentTextChanged, this, [](const QString& t) {
-            settings().stamp = t.toStdString();
+        auto* brushBox = new QWidget(this);
+        auto* brushForm = makeForm(brushBox);
+        mRadius = panelkit::valueField(10.0, 1e7, 0, "cm", brushBox);
+        connectSpin(mRadius, "Radius", "brush radius  (B+drag, [ ])", [](double v) { settings().stroke.worldRadius = v; });
+        brushForm->addRow("Radius", mRadius);
+        mStrength = panelkit::valueField(0, 1, 0, {}, brushBox);
+        mStrength->setRange(0.0, 1.0);
+        mStrength->setDecimals(2);
+        mStrength->setSingleStep(0.05);
+        connectSpin(mStrength, "Strength", "how much one stroke does  (M+drag)", [](double v) { settings().stroke.strength = v; });
+        brushForm->addRow("Strength", mStrength);
+        mFalloff = new QComboBox(brushBox);
+        for (int i = 0; i < int(brush::Shape::Count); ++i)
+        {
+            const std::string_view name = brush::shapeName(brush::Shape(i));
+            mFalloff->addItem(terrainDisplayName(name), QString::fromUtf8(name.data(), qsizetype(name.size())));
+        }
+        mFalloff->setToolTip("Falloff: how the brush fades toward its edge");
+        connect(mFalloff, &QComboBox::currentIndexChanged, this, [this](int) {
+            settings().stroke.falloff = mFalloff->currentData().toString().toStdString();
             save();
         });
-        form->addRow("Stamp", mStamp);
+        brushForm->addRow("Falloff", mFalloff);
+        mMirror = panelkit::segmented(brushBox);
+        mMirror.add("Off", "No mirroring", 0);
+        mMirror.add("X", "Mirror strokes across the terrain's centre in X", 1);
+        mMirror.add("Z", "Mirror strokes across the terrain's centre in Z", 2);
+        mMirror.add("XZ", "Mirror strokes into all four quarters", 3);
+        connect(mMirror.group, &QButtonGroup::idClicked, this, [](int id) {
+            settings().mirror = kMirrors[size_t(std::clamp(id, 0, int(kMirrors.size()) - 1))];
+            save();
+        });
+        brushForm->addRow("Mirror", mMirror.widget);
+        v->addWidget(panelkit::section("Brush", brushBox, this, kSections));
 
-        mMask = new QComboBox;
+        // Only the current brush's own settings show.
+        mSettingsBox = new QWidget(this);
+        mSettingsForm = makeForm(mSettingsBox);
+        mHeight = panelkit::valueField(1.0, 1e6, 0, "cm", mSettingsBox);
+        connectSpin(mHeight, "Height", "raise, lower, noise and stamp: change at full strength", [](double v) { settings().height = v; });
+        mSettingsForm->addRow("Height", mHeight);
+        mStep = panelkit::valueField(1.0, 1e6, 0, "cm", mSettingsBox);
+        connectSpin(mStep, "Step", "terrace step height", [](double v) { settings().step = v; });
+        mSettingsForm->addRow("Step", mStep);
+        mSharpness = panelkit::valueField(0, 1, 0, {}, mSettingsBox);
+        mSharpness->setRange(0.0, 1.0);
+        mSharpness->setDecimals(2);
+        mSharpness->setSingleStep(0.05);
+        connectSpin(mSharpness, "Sharpness", "terrace: soft to sheer risers", [](double v) { settings().sharpness = v; });
+        mSettingsForm->addRow("Sharpness", mSharpness);
+        mStamp = new QComboBox(mSettingsBox);
+        for (const std::string& s : stampNames())
+            mStamp->addItem(terrainDisplayName(s), QString::fromStdString(s));
+        mStamp->setToolTip("Stamp: the library shape to lay");
+        connect(mStamp, &QComboBox::currentIndexChanged, this, [this](int) {
+            settings().stamp = mStamp->currentData().toString().toStdString();
+            save();
+        });
+        mSettingsForm->addRow("Stamp", mStamp);
+        mAngle = panelkit::valueField(-360.0, 360.0, 0, "\xc2\xb0", mSettingsBox);
+        connectSpin(mAngle, "Angle", "stamp turn", [](double v) { settings().angle = v; });
+        mSettingsForm->addRow("Angle", mAngle);
+        mMask = new QComboBox(mSettingsBox);
         mMask->setEditable(true);
-        mMask->setToolTip("Mask to paint; type a new name to make one");
+        mMask->setToolTip("Mask: the mask to paint; type a new name to make one");
         connect(mMask, &QComboBox::currentTextChanged, this, [](const QString& t) {
             if (!t.isEmpty())
             {
@@ -281,64 +339,50 @@ public:
                 save();
             }
         });
-        form->addRow("Mask", mMask);
-
-        mIterations = new QSpinBox;
+        mSettingsForm->addRow("Mask", mMask);
+        mIterations = panelkit::valueField(0, 1, 0, {}, mSettingsBox);
         mIterations->setRange(1, 200);
-        mIterations->setToolTip("Erode and relax steps");
-        mIterations->setKeyboardTracking(false);
-        connect(mIterations, &QSpinBox::valueChanged, this, [](int value) {
-            settings().iterations = value;
+        mIterations->setDecimals(0);
+        connectSpin(mIterations, "Steps", "erode and relax steps", [](double v) { settings().iterations = int(std::lround(v)); });
+        mSettingsForm->addRow("Steps", mIterations);
+        mPlane = new QCheckBox("Plane", mSettingsBox);
+        mPlane->setToolTip("Plane: flatten to the plane under the stroke instead of one height");
+        connect(mPlane, &QCheckBox::clicked, this, [](bool on) {
+            settings().plane = on;
             save();
         });
-        form->addRow("Steps", mIterations);
+        mSettingsForm->addRow("", mPlane);
+        mSettingsSection = panelkit::section("Settings", mSettingsBox, this, kSections);
+        v->addWidget(mSettingsSection);
 
-        mFalloff = new QComboBox;
-        for (int i = 0; i < int(brush::Shape::Count); ++i)
-            mFalloff->addItem(QString::fromUtf8(brush::shapeName(brush::Shape(i)).data(), qsizetype(brush::shapeName(brush::Shape(i)).size())));
-        mFalloff->setToolTip("Brush falloff");
-        connect(mFalloff, &QComboBox::currentTextChanged, this, [](const QString& t) {
-            settings().stroke.falloff = t.toStdString();
-            save();
-        });
-        form->addRow("Falloff", mFalloff);
-
-        mMirror = new QComboBox;
-        mMirror->addItems({"off", "x", "z", "xz"});
-        mMirror->setToolTip("Mirror strokes across the terrain's centre");
-        connect(mMirror, &QComboBox::currentTextChanged, this, [](const QString& t) {
-            settings().mirror = t.toStdString();
-            save();
-        });
-        form->addRow("Mirror", mMirror);
-        v->addLayout(form);
-
+        auto* optionsBox = new QWidget(this);
+        auto* options = new QVBoxLayout(optionsBox);
+        options->setContentsMargins(0, 0, 0, 0);
+        options->setSpacing(4);
         auto check = [&](const char* label, const char* tip, auto&& apply) {
-            auto* c = new QCheckBox(label);
-            c->setToolTip(tip);
+            auto* c = new QCheckBox(label, optionsBox);
+            c->setToolTip(QString("%1: %2").arg(label, tip));
             connect(c, &QCheckBox::clicked, this, [apply](bool on) {
                 apply(on);
                 save();
             });
-            v->addWidget(c);
+            options->addWidget(c);
             return c;
         };
-        mPlane = check("Plane", "Flatten to the plane under the stroke instead of one height", [](bool on) { settings().plane = on; });
-        mAfter = check("After erosion", "Strokes stay as drawn; off, erosion shapes them", [](bool on) { settings().afterErosion = on; });
-        mKeys = check("Show keys", "List the tool's keys in the corner of the view", [](bool on) { settings().showKeys = on; });
-
-        mRegion = new QToolButton;
-        mRegion->setIcon(icon("brush"));
+        mAfter = check("After Erosion", "strokes stay as drawn; off, erosion shapes them", [](bool on) { settings().afterErosion = on; });
+        mKeys = check("Show Keys", "list the tool's keys in the corner of the view", [](bool on) { settings().showKeys = on; });
+        mRegion = new QToolButton(optionsBox);
         mRegion->setText("Sculpt Region");
-        mRegion->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         mRegion->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         mRegion->setCheckable(true);
-        mRegion->setToolTip("Click the terrain to sculpt a patch twice the brush wide with the mesh sculpt brushes; Exit Sculpt bakes it back");
+        mRegion->setToolTip("Sculpt Region: click the terrain to sculpt a patch twice the brush wide with the mesh sculpt brushes; Exit Sculpt bakes it back");
+        panelkit::setRole(mRegion, "push");
         connect(mRegion, &QToolButton::clicked, this, [](bool on) {
             regionArmed() = on;
             viewportTools::requestRedraw();
         });
-        v->addWidget(mRegion);
+        options->addWidget(mRegion);
+        v->addWidget(panelkit::section("Options", optionsBox, this, kSections));
         v->addStretch();
         sync();
     }
@@ -348,25 +392,29 @@ public:
         const Settings& s = settings();
         for (size_t i = 0; i < kBrushes.size(); ++i)
             mButtons[i]->setChecked(kBrushes[i].op == s.op);
-        mName->setText(buttonOf(s.op).label);
-        for (auto [box, value] : {std::pair{mRadius, s.stroke.worldRadius}, std::pair{mStrength, s.stroke.strength}, std::pair{mHeight, s.height},
-                                  std::pair{mStep, s.step}, std::pair{mSharpness, s.sharpness}, std::pair{mAngle, s.angle}})
+        for (auto [box, value] : {std::pair<QDoubleSpinBox*, double>{mRadius, s.stroke.worldRadius}, std::pair<QDoubleSpinBox*, double>{mStrength, s.stroke.strength},
+                                  std::pair<QDoubleSpinBox*, double>{mHeight, s.height}, std::pair<QDoubleSpinBox*, double>{mStep, s.step},
+                                  std::pair<QDoubleSpinBox*, double>{mSharpness, s.sharpness}, std::pair<QDoubleSpinBox*, double>{mAngle, s.angle},
+                                  std::pair<QDoubleSpinBox*, double>{mIterations, double(s.iterations)}})
         {
             const QSignalBlocker block(box);
             box->setValue(value);
         }
-        mHeight->setEnabled(inCm(s.op));
-        mStep->setEnabled(s.op == SculptOp::Terrace);
-        mSharpness->setEnabled(s.op == SculptOp::Terrace);
-        mAngle->setEnabled(s.op == SculptOp::Stamp);
-        mStamp->setEnabled(s.op == SculptOp::Stamp);
-        mMask->setEnabled(s.op == SculptOp::Mask);
-        mIterations->setEnabled(s.op == SculptOp::Erode || s.op == SculptOp::Relax);
-        mPlane->setEnabled(s.op == SculptOp::Flatten);
+        const bool terrace = s.op == SculptOp::Terrace, stamp = s.op == SculptOp::Stamp;
+        const std::pair<QWidget*, bool> rows[] = {{mHeight, inCm(s.op)}, {mStep, terrace}, {mSharpness, terrace}, {mStamp, stamp}, {mAngle, stamp},
+                                                  {mMask, s.op == SculptOp::Mask}, {mIterations, s.op == SculptOp::Erode || s.op == SculptOp::Relax},
+                                                  {mPlane, s.op == SculptOp::Flatten}};
+        bool any = false;
+        for (auto [field, shown] : rows)
+        {
+            mSettingsForm->setRowVisible(field, shown);
+            any = any || shown;
+        }
+        mSettingsSection->setVisible(any);
         mAfter->setEnabled(s.op != SculptOp::Uplift);
         {
-            const QSignalBlocker b1(mStamp), b2(mMask), b3(mFalloff), b4(mMirror), b5(mIterations);
-            mStamp->setCurrentText(QString::fromStdString(s.stamp));
+            const QSignalBlocker b1(mStamp), b2(mMask), b3(mFalloff), b4(mMirror.group);
+            mStamp->setCurrentIndex(std::max(0, mStamp->findData(QString::fromStdString(s.stamp))));
             mMask->clear();
             if (auto t = selectedTerrain())
                 for (const auto& [name, values] : t->h->masks)
@@ -374,9 +422,9 @@ public:
             if (mMask->findText(QString::fromStdString(s.mask)) < 0)
                 mMask->addItem(QString::fromStdString(s.mask));
             mMask->setCurrentText(QString::fromStdString(s.mask));
-            mFalloff->setCurrentText(QString::fromStdString(s.stroke.falloff));
-            mMirror->setCurrentText(QString::fromStdString(s.mirror));
-            mIterations->setValue(s.iterations);
+            mFalloff->setCurrentIndex(std::max(0, mFalloff->findData(QString::fromStdString(s.stroke.falloff))));
+            auto mirror = std::ranges::find_if(kMirrors, [&](const char* m) { return s.mirror == m; });
+            mMirror.setCurrent(mirror == kMirrors.end() ? 0 : int(mirror - kMirrors.begin()));
         }
         mPlane->setChecked(s.plane);
         mAfter->setChecked(s.afterErosion || s.op == SculptOp::Uplift);
@@ -386,10 +434,12 @@ public:
 
 private:
     std::array<QToolButton*, kBrushes.size()> mButtons{};
-    QLabel* mName = nullptr;
-    QDoubleSpinBox *mRadius = nullptr, *mStrength = nullptr, *mHeight = nullptr, *mStep = nullptr, *mSharpness = nullptr, *mAngle = nullptr;
-    QComboBox *mStamp = nullptr, *mMask = nullptr, *mFalloff = nullptr, *mMirror = nullptr;
-    QSpinBox* mIterations = nullptr;
+    QDoubleSpinBox *mRadius = nullptr, *mHeight = nullptr, *mStep = nullptr, *mAngle = nullptr;
+    QDoubleSpinBox *mStrength = nullptr, *mSharpness = nullptr, *mIterations = nullptr;
+    QComboBox *mStamp = nullptr, *mMask = nullptr, *mFalloff = nullptr;
+    panelkit::Segmented mMirror;
+    QWidget *mSettingsBox = nullptr, *mSettingsSection = nullptr;
+    QFormLayout* mSettingsForm = nullptr;
     QCheckBox *mPlane = nullptr, *mAfter = nullptr, *mKeys = nullptr;
     QToolButton* mRegion = nullptr;
 };

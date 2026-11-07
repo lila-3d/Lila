@@ -4,6 +4,8 @@
 #include "GroundTiles.h"
 #include "lila/FileDialog.h"
 
+#include "PanelKit.h"
+
 #include <lila/Command.h>
 #include <lila/Events.h>
 #include <lila/Graph.h>
@@ -25,10 +27,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPointer>
-#include <QPushButton>
 #include <QScrollArea>
-#include <QSlider>
-#include <QSpinBox>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -47,7 +46,6 @@ namespace groundtiles
 namespace
 {
 constexpr const char* kPanelId = "groundTiles";
-constexpr int kSliderSteps = 1000;
 
 QString qs(const std::string& s) { return QString::fromStdString(s); }
 
@@ -77,52 +75,50 @@ struct Section
 Section makeSection(QWidget* parent, const QString& title, bool collapsed)
 {
     Section s;
-    s.root = new QWidget(parent);
-    auto* v = new QVBoxLayout(s.root);
-    v->setContentsMargins(0, 0, 0, 0);
-    v->setSpacing(2);
-    auto* header = new QToolButton(s.root);
-    header->setText(title);
-    header->setCheckable(true);
-    header->setChecked(!collapsed);
-    header->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    header->setArrowType(collapsed ? Qt::RightArrow : Qt::DownArrow);
-    header->setAutoRaise(true);
-    header->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    QFont f = header->font();
-    f.setBold(true);
-    header->setFont(f);
-    s.body = new QWidget(s.root);
+    s.body = new QWidget;
     s.layout = new QVBoxLayout(s.body);
-    s.layout->setContentsMargins(8, 2, 4, 4);
-    s.layout->setSpacing(2);
-    s.body->setVisible(!collapsed);
-    QObject::connect(header, &QToolButton::toggled, s.body, [header, body = s.body](bool open) {
-        body->setVisible(open);
-        header->setArrowType(open ? Qt::DownArrow : Qt::RightArrow);
-    });
-    v->addWidget(header);
-    v->addWidget(s.body);
+    s.layout->setContentsMargins(0, 0, 0, 0);
+    s.layout->setSpacing(4);
+    s.root = panelkit::section(title, s.body, parent, kPanelId, !collapsed);
     return s;
+}
+
+/** A labelled button on the raised fill, for a step that is not an action. */
+QToolButton* tilePush(QWidget* parent, const QString& label, const QString& tip)
+{
+    auto* b = new QToolButton(parent);
+    b->setText(label);
+    b->setToolTip(tip);
+    b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    panelkit::setRole(b, "push");
+    return b;
+}
+
+/** A small dim line: readouts and empty states. */
+QLabel* dimLine(const QString& text, QWidget* parent)
+{
+    auto* l = new QLabel(text, parent);
+    l->setWordWrap(true);
+    l->setEnabled(false);
+    return l;
 }
 
 QString swatchStyle(const glm::dvec3& c)
 {
     // The ID colour is data, so the swatch shows it as is.
-    return QString("QToolButton { background-color: rgb(%1, %2, %3); border: 1px solid palette(mid); }")
+    return QString("QToolButton { background-color: rgb(%1, %2, %3); border: none; border-radius: 3px; }")
         .arg(int(std::lround(std::clamp(c.r, 0.0, 1.0) * 255.0)))
         .arg(int(std::lround(std::clamp(c.g, 0.0, 1.0) * 255.0)))
         .arg(int(std::lround(std::clamp(c.b, 0.0, 1.0) * 255.0)));
 }
 
-/** One setting's editor: a field, plus a slider for numbers, kept in step. */
+/** One setting's editor: a slider field for numbers (integer ones show no decimals), a check box or a choice. */
 struct Control
 {
     const Param* param = nullptr;
     QWidget* row = nullptr;
     QDoubleSpinBox* real = nullptr;
-    QSpinBox* integer = nullptr;
-    QSlider* slider = nullptr;
+    QDoubleSpinBox* integer = nullptr;
     QCheckBox* check = nullptr;
     QComboBox* combo = nullptr;
 };
@@ -213,7 +209,7 @@ public:
             target = chosen.toStdString();
         }
         std::string error;
-        const json path = run("groundTileBakeIdMap", {{"args", {s["group"]}}, {"path", target}, {"resolution", mControls["bakeResolution"].integer->value()}}, true, &error);
+        const json path = run("groundTileBakeIdMap", {{"args", {s["group"]}}, {"path", target}, {"resolution", int(std::lround(mControls["bakeResolution"].integer->value()))}}, true, &error);
         status(path.is_string() ? "Baked ID map to " + path.get<std::string>() + "." : error);
     }
 
@@ -320,11 +316,13 @@ private:
     void build()
     {
         auto* v = new QVBoxLayout(this);
-        v->setContentsMargins(4, 4, 4, 4);
+        v->setContentsMargins(12, 8, 12, 8);
+        v->setSpacing(4);
 
         auto* bar = new QHBoxLayout;
+        bar->setSpacing(2);
         mPresetMenu = new QComboBox(this);
-        mPresetMenu->setToolTip("Preset");
+        mPresetMenu->setToolTip("Preset: the settings to start from. A * marks a built-in preset you changed.");
         bar->addWidget(mPresetMenu, 1);
         auto tool = [&](const char* iconName, const char* tip, std::function<void()> fn) {
             auto* b = new QToolButton(this);
@@ -335,33 +333,37 @@ private:
             bar->addWidget(b);
             return b;
         };
-        tool("device-floppy", "Save Current Settings As Preset", [this] { savePreset(); });
-        tool("trash", "Delete Preset", [this] { deletePreset(); });
-        tool("star", "Set Default Preset", [this] {
+        tool("device-floppy", "Save Preset: save the current settings as a preset", [this] { savePreset(); });
+        tool("arrow-back-up", "Reset to Preset: put every setting back to the preset's", [this] {
+            applyValues(presetSettings(mPreset, mPrefs["Presets"]));
+            status("Reset to '" + mPreset + "'.");
+        });
+        tool("download", "Load Settings: load the selected generated group's settings", [this] { loadFromSelection(); });
+        QToolButton* moreButton = tool("dots", "More preset commands", [] {});
+        auto* moreMenu = new QMenu(moreButton);
+        moreMenu->addAction(icon("star"), "Set Default Preset", this, [this] {
             run("groundTileSetDefaultPreset", {{"args", {mPreset}}}, false);
             mPrefs = loadPrefs();
             status("Default preset set to " + mPreset + ".");
         });
-        tool("arrow-back-up", "Reset To Preset", [this] {
-            applyValues(presetSettings(mPreset, mPrefs["Presets"]));
-            status("Reset to '" + mPreset + "'.");
-        });
-        tool("download", "Load Settings From Selected Group", [this] { loadFromSelection(); });
-        QToolButton* settingsButton = tool("settings", "Settings", [] {});
-        auto* settingsMenu = new QMenu(settingsButton);
-        QAction* autoLoad = settingsMenu->addAction("Load Settings From Selected Group");
+        moreMenu->addAction(icon("trash"), "Delete Preset", this, [this] { deletePreset(); });
+        moreMenu->addSeparator();
+        QAction* autoLoad = moreMenu->addAction("Load Settings on Selection");
         autoLoad->setCheckable(true);
         autoLoad->setChecked(mPrefs["Window"].value("autoLoadSelection", true));
+        autoLoad->setToolTip("Selecting a generated group loads its settings into the panel");
         connect(autoLoad, &QAction::toggled, this, [this](bool on) {
             mPrefs["Window"]["autoLoadSelection"] = on;
             savePrefs(mPrefs);
         });
-        settingsButton->setMenu(settingsMenu);
-        settingsButton->setPopupMode(QToolButton::InstantPopup);
-        tool("info-circle", "About", [this] {
+        moreMenu->addSeparator();
+        moreMenu->addAction(icon("info-circle"), "About Ground Tiles", this, [this] {
             QMessageBox::about(this, "Ground Tiles",
                                QString("Ground Tiles v%1\nScatters seamlessly tiling ground for baking to tiling textures.\nCreated by: Jared Taylor").arg(kVersion));
         });
+        moreMenu->setToolTipsVisible(true);
+        moreButton->setMenu(moreMenu);
+        moreButton->setPopupMode(QToolButton::InstantPopup);
         v->addLayout(bar);
         connect(mPresetMenu, &QComboBox::activated, this, [this](int i) { changePreset(mPresetMenu->itemData(i).toString().toStdString()); });
 
@@ -381,59 +383,27 @@ private:
         buildExport(body);
         mBody->addStretch(1);
 
-        mStatus = new QLabel("Ready.", this);
-        mStatus->setWordWrap(true);
+        mStatus = dimLine({}, this);
         v->addWidget(mStatus);
-        auto* row = new QHBoxLayout;
-        auto button = [&](QBoxLayout* into, const char* label, const char* tip, std::function<void()> fn, int stretch) {
-            auto* b = new QPushButton(label, this);
-            b->setToolTip(tip);
-            connect(b, &QPushButton::clicked, this, std::move(fn));
-            into->addWidget(b, stretch);
-            return b;
-        };
-        button(row, "Generate", "Scatter a new tiling ground tile group using the current settings.", [this] { generate(); }, 1)->setMinimumHeight(30);
-        button(row, "Regenerate", "Delete the selected generated group and rebuild it with the current settings.", [this] { regenerate(); }, 0)->setMinimumHeight(30);
-        button(row, "Delete", "Delete the selected generated group.", [this] { deleteSelected(); }, 0)->setMinimumHeight(30);
-        v->addLayout(row);
-        auto* bakeRow = new QHBoxLayout;
-        button(bakeRow, "Create Bake Plane",
-               "Make a plane matching the tile size, with 0-1 UVs, to bake the tile onto. Parented into the selected generated group when there is one.",
-               [this] { createBakePlane(); }, 1);
-        button(bakeRow, "Bake ID Map", "Bake the Object ID colours of the selected generated group down onto its bake plane, as a flat ID map.",
-               [this] { bakeIdMap(); }, 0);
-        v->addLayout(bakeRow);
+        v->addWidget(panelkit::grid({panelkit::push("groundTiles.generate", this, "Generate"), panelkit::push("groundTiles.regenerate", this, "Regenerate"),
+                                     panelkit::push("groundTiles.bakePlane", this, "Bake Plane"), panelkit::push("groundTiles.bakeIdMap", this, "Bake ID Map")},
+                                    2, this));
+        v->addWidget(panelkit::overflow({"groundTiles.delete"}, this));
         updatePresetMenu();
     }
 
     void buildSources(QWidget* body)
     {
         Section s = makeSection(body, "Source Meshes", false);
-        for (const char* line : {"Pivot at the base. Longest axis is the length, thinnest is the bend direction.",
-                                 "Right click a source to override what was detected.",
-                                 "Weight, Object ID, up axis offset. Sources sharing an ID bake as one colour."})
-        {
-            auto* l = new QLabel(line, s.body);
-            l->setWordWrap(true);
-            QFont f = l->font();
-            f.setItalic(true);
-            l->setFont(f);
-            s.layout->addWidget(l);
-        }
-        auto* row = new QHBoxLayout;
-        auto* add = new QPushButton("Add Selected", s.body);
-        add->setToolTip("Add every selected polygon mesh as a scatter source.");
-        auto* clear = new QPushButton("Remove All", s.body);
-        clear->setToolTip("Clear the source list.");
-        connect(add, &QPushButton::clicked, this, [this] { addSelectedSources(); });
-        connect(clear, &QPushButton::clicked, this, [this] {
+        QToolButton* add = panelkit::push("groundTiles.addSources", s.body, "Add Selected");
+        add->setToolTip("Add Selected: add every selected polygon mesh as a scatter source. Pivot at the base; the longest axis is the length, "
+                        "the thinnest the bend direction. Right-click a source to override what was detected.");
+        QToolButton* clear = tilePush(s.body, "Remove All", "Remove All: clear the source list.");
+        connect(clear, &QToolButton::clicked, this, [this] {
             mSources.clear();
             rebuildSources();
         });
-        row->addStretch(1);
-        row->addWidget(add);
-        row->addWidget(clear);
-        s.layout->addLayout(row);
+        s.layout->addWidget(panelkit::grid({add, clear}, 2, s.body));
         mSourceHolder = new QWidget(s.body);
         mSourceRows = new QVBoxLayout(mSourceHolder);
         mSourceRows->setContentsMargins(0, 0, 0, 0);
@@ -453,10 +423,29 @@ private:
         }
         if (mSources.empty())
         {
-            auto* l = new QLabel("No sources. Select your meshes and click Add Selected.", mSourceHolder);
-            l->setAlignment(Qt::AlignCenter);
-            mSourceRows->addWidget(l);
+            mSourceRows->addWidget(dimLine("No sources. Select meshes and click Add Selected.", mSourceHolder));
             return;
+        }
+        {
+            // Column names for the fields in each source row.
+            auto* head = new QWidget(mSourceHolder);
+            auto* h = new QHBoxLayout(head);
+            h->setContentsMargins(0, 0, 0, 0);
+            h->setSpacing(3);
+            auto column = [&](const char* text, int width, int stretch) {
+                QLabel* l = dimLine(text, head);
+                l->setWordWrap(false);
+                l->setAlignment((width ? Qt::AlignRight : Qt::AlignLeft) | Qt::AlignVCenter);
+                if (width)
+                    l->setFixedWidth(width);
+                h->addWidget(l, stretch);
+            };
+            column("Source", 0, 1);
+            column("Weight", 70, 0);
+            column("ID", 44, 0);
+            column("Offset", 60, 0);
+            h->addSpacing(22 + 3 + 22 + 3);
+            mSourceRows->addWidget(head);
         }
         for (size_t i = 0; i < mSources.size(); ++i)
         {
@@ -483,33 +472,28 @@ private:
             connect(label, &QLabel::customContextMenuRequested, this, [this, i, label](const QPoint& at) { sourceMenu(i, label->mapToGlobal(at)); });
             h->addWidget(label, 1);
 
-            auto* weight = new QDoubleSpinBox(w);
-            weight->setRange(0.0, 1e6);
-            weight->setDecimals(4);
+            QDoubleSpinBox* weight = panelkit::valueField(0.0, 1e6, 4, {}, w);
             weight->setSingleStep(0.01);
             weight->setValue(src.value("weight", 1.0));
-            weight->setToolTip("Relative chance this source is picked, against the other weights.");
+            weight->setToolTip("Weight: relative chance this source is picked, against the other weights.");
             weight->setFixedWidth(70);
             connect(weight, &QDoubleSpinBox::valueChanged, this, [this, i](double v) { mSources[i]["weight"] = std::max(0.0, v); });
             h->addWidget(weight);
 
-            auto* id = new QSpinBox(w);
-            id->setRange(0, 9999);
-            id->setValue(int(src.value("objectId", 0)));
-            id->setToolTip("Object ID. Sources sharing an ID are one material and one colour in the baked ID map, so related meshes can be masked together.");
+            QDoubleSpinBox* id = panelkit::valueField(0, 9999, 0, {}, w);
+            id->setValue(double(src.value("objectId", 0)));
+            id->setToolTip("ID: the Object ID. Sources sharing an ID are one material and one colour in the baked ID map, so related meshes can be masked together.");
             id->setFixedWidth(44);
-            connect(id, &QSpinBox::editingFinished, this, [this, i, id] {
-                mSources[i]["objectId"] = std::max(0, id->value());
+            connect(id, &QDoubleSpinBox::editingFinished, this, [this, i, id] {
+                mSources[i]["objectId"] = std::max(0, int(std::lround(id->value())));
                 QTimer::singleShot(0, this, [this] { rebuildSources(); });
             });
             h->addWidget(id);
 
-            auto* offset = new QDoubleSpinBox(w);
-            offset->setRange(-1e5, 1e5);
-            offset->setDecimals(2);
+            QDoubleSpinBox* offset = panelkit::valueField(-1e5, 1e5, 2, {}, w);
             offset->setSingleStep(0.1);
             offset->setValue(src.value("heightOffset", 0.0));
-            offset->setToolTip("Offset along the up axis for this source only, on top of its height layer. Lift a source clear of the others so nothing scatters over it.");
+            offset->setToolTip("Offset: offset along the up axis for this source only, on top of its height layer. Lift a source clear of the others so nothing scatters over it.");
             offset->setFixedWidth(60);
             connect(offset, &QDoubleSpinBox::valueChanged, this, [this, i](double v) { mSources[i]["heightOffset"] = v; });
             h->addWidget(offset);
@@ -517,14 +501,15 @@ private:
             auto* swatch = new QToolButton(w);
             swatch->setFixedSize(22, 18);
             swatch->setStyleSheet(swatchStyle(idColour(src.value("objectId", 0), mPrefs["Palette"])));
-            swatch->setToolTip("Colour this Object ID bakes as. Click to change it.");
+            swatch->setProperty("lilaRawColors", true);
+            swatch->setToolTip("ID Colour: the colour this Object ID bakes as. Click to change it.");
             connect(swatch, &QToolButton::clicked, this, [this, i] { editIdColour(mSources[i].value("objectId", 0)); });
             h->addWidget(swatch);
 
             auto* remove = new QToolButton(w);
             remove->setIcon(icon("x"));
             remove->setAutoRaise(true);
-            remove->setToolTip("Remove this source.");
+            remove->setToolTip("Remove: take this source off the list.");
             connect(remove, &QToolButton::clicked, this, [this, i] {
                 mSources.erase(mSources.begin() + std::ptrdiff_t(i));
                 QTimer::singleShot(0, this, [this] { rebuildSources(); });
@@ -562,9 +547,10 @@ private:
     {
         Section s = makeSection(body, qs(label), id == "output");
         auto* grid = new QGridLayout;
-        grid->setHorizontalSpacing(6);
-        grid->setVerticalSpacing(1);
-        grid->setColumnStretch(2, 1);
+        grid->setContentsMargins(0, 0, 0, 0);
+        grid->setHorizontalSpacing(8);
+        grid->setVerticalSpacing(4);
+        grid->setColumnStretch(1, 1);
         int row = 0;
         for (const Param& p : parameters())
         {
@@ -581,8 +567,9 @@ private:
             h->addWidget(new QLabel("Ground Colour", w));
             mGroundSwatch = new QToolButton(w);
             mGroundSwatch->setFixedSize(22, 18);
-            mGroundSwatch->setToolTip("Colour the ground plane's Object ID bakes as. Click to change it.");
-            connect(mGroundSwatch, &QToolButton::clicked, this, [this] { editIdColour(mControls["groundId"].integer->value()); });
+            mGroundSwatch->setProperty("lilaRawColors", true);
+            mGroundSwatch->setToolTip("Ground Colour: the colour the ground plane's Object ID bakes as. Click to change it.");
+            connect(mGroundSwatch, &QToolButton::clicked, this, [this] { editIdColour(std::lround(mControls["groundId"].integer->value())); });
             h->addWidget(mGroundSwatch);
             h->addStretch(1);
             mGroundRow = w;
@@ -590,24 +577,13 @@ private:
         }
         if (id == "distribution")
         {
-            mClusterReadout = new QLabel(s.body);
-            mClusterReadout->setAlignment(Qt::AlignCenter);
-            mClusterReadout->setWordWrap(true);
+            mClusterReadout = dimLine({}, s.body);
             mClusterReadout->setToolTip("Cluster discs that add up to more than the tile area cover it evenly, which reads as uniform scatter rather than clumps.");
-            QFont f = mClusterReadout->font();
-            f.setItalic(true);
-            mClusterReadout->setFont(f);
             s.layout->addWidget(mClusterReadout);
         }
         if (id == "tile")
         {
-            auto* seed = new QPushButton("Randomize Seed", s.body);
-            seed->setToolTip("Pick a new random seed.");
-            connect(seed, &QPushButton::clicked, this, [this] { randomizeSeed(); });
-            auto* h = new QHBoxLayout;
-            h->addStretch(1);
-            h->addWidget(seed);
-            s.layout->addLayout(h);
+            s.layout->addWidget(panelkit::push("groundTiles.randomizeSeed", s.body, "Randomize Seed"));
         }
         mBody->addWidget(s.root);
     }
@@ -626,37 +602,21 @@ private:
         const std::string name = p.name;
         if (p.type == "float" || p.type == "int")
         {
-            c.slider = new QSlider(Qt::Horizontal, parent);
-            c.slider->setRange(0, kSliderSteps);
-            c.slider->setToolTip(tip);
-            if (p.type == "float")
-            {
-                c.real = new QDoubleSpinBox(parent);
-                c.real->setDecimals(3);
-                c.real->setRange(p.min, p.max);
-                c.real->setSingleStep(std::max((p.max - p.min) / 200.0, 0.001));
-                c.real->setToolTip(tip);
-                c.real->setFixedWidth(76);
-                grid->addWidget(c.real, row, 1);
-                connect(c.real, &QDoubleSpinBox::valueChanged, this, [this, name](double) { syncSlider(name); });
-            }
-            else
-            {
-                c.integer = new QSpinBox(parent);
-                c.integer->setRange(int(p.min), int(p.max));
-                c.integer->setToolTip(tip);
-                c.integer->setFixedWidth(76);
-                grid->addWidget(c.integer, row, 1);
-                connect(c.integer, &QSpinBox::valueChanged, this, [this, name](int) { syncSlider(name); });
-            }
-            grid->addWidget(c.slider, row, 2);
-            connect(c.slider, &QSlider::valueChanged, this, [this, name](int) { syncField(name); });
+            auto* field = panelkit::valueField(0, 1, 0, {}, parent);
+            const bool real = p.type == "float";
+            field->setDecimals(real ? 3 : 0);
+            field->setRange(p.min, p.max);
+            field->setSingleStep(real ? std::max((p.max - p.min) / 200.0, 0.001) : 1.0);
+            field->setToolTip(tip);
+            grid->addWidget(field, row, 1);
+            (real ? c.real : c.integer) = field;
+            connect(field, &QDoubleSpinBox::valueChanged, this, [this, name](double) { afterNumber(name); });
         }
         else if (p.type == "bool")
         {
             c.check = new QCheckBox(parent);
             c.check->setToolTip(tip);
-            grid->addWidget(c.check, row, 1, 1, 2);
+            grid->addWidget(c.check, row, 1);
             connect(c.check, &QCheckBox::toggled, this, [this](bool) { onDriverChanged(); });
         }
         else
@@ -665,7 +625,7 @@ private:
             c.combo->setToolTip(tip);
             for (const std::string& o : p.options)
                 c.combo->addItem(qs(o));
-            grid->addWidget(c.combo, row, 1, 1, 2);
+            grid->addWidget(c.combo, row, 1);
             connect(c.combo, &QComboBox::currentIndexChanged, this, [this](int) { onDriverChanged(); });
         }
         return c;
@@ -675,6 +635,9 @@ private:
     {
         Section s = makeSection(body, "Export", true);
         auto* grid = new QGridLayout;
+        grid->setContentsMargins(0, 0, 0, 0);
+        grid->setHorizontalSpacing(8);
+        grid->setVerticalSpacing(4);
         grid->setColumnStretch(1, 1);
         auto field = [&](int row, const char* label, const std::string& value, const char* tip) {
             auto* l = new QLabel(label, s.body);
@@ -689,7 +652,8 @@ private:
         mExportPath = field(0, "Export Path", exp.value("path", ""), "Folder the FBX pair is written to.");
         auto* browse = new QToolButton(s.body);
         browse->setIcon(icon("folder-open"));
-        browse->setToolTip("Browse for the export folder.");
+        browse->setAutoRaise(true);
+        browse->setToolTip("Browse: pick the export folder.");
         grid->addWidget(browse, 0, 2);
         mExportName = field(1, "File Name", exp.value("name", ""), "Written as <name>_Hi.fbx and <name>_Lo.fbx.");
         mExportMaterial = field(2, "Bake Plane Material", exp.value("material", ""),
@@ -705,24 +669,10 @@ private:
         connect(mExportPath, &QLineEdit::editingFinished, this, [this] { setExportPref("path", mExportPath->text().trimmed().toStdString()); });
         connect(mExportName, &QLineEdit::editingFinished, this, [this] { setExportPref("name", mExportName->text().trimmed().toStdString()); });
         connect(mExportMaterial, &QLineEdit::editingFinished, this, [this] { setExportPref("material", mExportMaterial->text().trimmed().toStdString()); });
-        mExportReadout = new QLabel(s.body);
-        QFont f = mExportReadout->font();
-        f.setItalic(true);
-        mExportReadout->setFont(f);
+        mExportReadout = dimLine({}, s.body);
         s.layout->addWidget(mExportReadout);
-        auto button = [&](const char* label, const char* tip, std::function<void()> fn) {
-            auto* b = new QPushButton(label, s.body);
-            b->setToolTip(tip);
-            connect(b, &QPushButton::clicked, this, std::move(fn));
-            s.layout->addWidget(b);
-        };
-        button("Export FBX Pair", "Write the selected generated group as <name>_Hi.fbx, and its bake plane as <name>_Lo.fbx.", [this] { exportBakes(); });
-        button("Measure Height Range",
-               "Sample the top surface over the tile and report where it actually sits. The bounding box max is one outlying tip, so it is the wrong number to scale a height bake by.",
-               [this] { measureHeight(); });
-        button("Split Vertex Colour Masks",
-               "Split the baked vertex colour map in the export path into three greyscale masks, R root to tip, G per instance, B height layer. Painter greys an RGB image before any effect sees it, so the channels have to be split here.",
-               [this] { splitMasks(); });
+        s.layout->addWidget(panelkit::push("groundTiles.export", s.body, "Export FBX Pair"));
+        s.layout->addWidget(panelkit::overflow({"groundTiles.measureHeight", "groundTiles.splitMasks"}, s.body));
         mBody->addWidget(s.root);
     }
 
@@ -733,7 +683,7 @@ private:
         if (c.real)
             return c.real->value();
         if (c.integer)
-            return int64_t(c.integer->value());
+            return int64_t(std::llround(c.integer->value()));
         if (c.check)
             return c.check->isChecked();
         return c.combo->currentText().toStdString();
@@ -756,39 +706,11 @@ private:
         if (c.real)
             c.real->setValue(value.is_number() ? value.get<double>() : 0.0);
         else if (c.integer)
-            c.integer->setValue(value.is_number() ? int(value.get<double>()) : 0);
+            c.integer->setValue(value.is_number() ? double(int(value.get<double>())) : 0.0);
         else if (c.check)
             c.check->setChecked(value.is_boolean() && value.get<bool>());
         else if (c.combo)
             c.combo->setCurrentText(qs(value.is_string() ? value.get<std::string>() : ""));
-    }
-
-    void syncSlider(const std::string& name)
-    {
-        Control& c = mControls[name];
-        if (!c.slider || mSyncing)
-            return;
-        mSyncing = true;
-        const double v = c.real ? c.real->value() : double(c.integer->value());
-        const double span = c.param->max - c.param->min;
-        c.slider->setValue(span > 0.0 ? int(std::lround((v - c.param->min) / span * kSliderSteps)) : 0);
-        mSyncing = false;
-        afterNumber(name);
-    }
-
-    void syncField(const std::string& name)
-    {
-        Control& c = mControls[name];
-        if (mSyncing)
-            return;
-        mSyncing = true;
-        const double v = c.param->min + (c.param->max - c.param->min) * double(c.slider->value()) / kSliderSteps;
-        if (c.real)
-            c.real->setValue(v);
-        else
-            c.integer->setValue(int(std::lround(v)));
-        mSyncing = false;
-        afterNumber(name);
     }
 
     void afterNumber(const std::string& name)
@@ -823,7 +745,7 @@ private:
         for (auto& [name, c] : mControls)
         {
             const bool show = groundtiles::isVisible(*c.param, values);
-            for (QWidget* w : {static_cast<QWidget*>(c.row), static_cast<QWidget*>(c.real), static_cast<QWidget*>(c.integer), static_cast<QWidget*>(c.slider),
+            for (QWidget* w : {static_cast<QWidget*>(c.row), static_cast<QWidget*>(c.real), static_cast<QWidget*>(c.integer),
                                static_cast<QWidget*>(c.check), static_cast<QWidget*>(c.combo)})
                 if (w)
                     w->setVisible(show);
@@ -847,7 +769,7 @@ private:
     void refreshGroundSwatch()
     {
         if (mGroundSwatch && mControls.count("groundId"))
-            mGroundSwatch->setStyleSheet(swatchStyle(idColour(mControls["groundId"].integer->value(), mPrefs["Palette"])));
+            mGroundSwatch->setStyleSheet(swatchStyle(idColour(std::lround(mControls["groundId"].integer->value()), mPrefs["Palette"])));
     }
 
     void editIdColour(int64_t id)
@@ -1080,7 +1002,6 @@ private:
     QLabel* mExportReadout = nullptr;
     QLabel* mStatus = nullptr;
     bool mLoading = false;
-    bool mSyncing = false;
     events::SubscriptionId mSelectionSub = 0;
 };
 

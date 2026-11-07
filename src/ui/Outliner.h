@@ -24,6 +24,7 @@ inline constexpr const char* kNodeNamesMime = "application/x-lila-node-names";
 
 /**
  * Maya's outliner: the DAG hierarchy with a type icon per row, referenced rows badged and italic, hidden rows dimmed.
+ * Each row ends in its issue badge and count and a visibility eye; clicking the eye toggles the object's visibility.
  * LMB drag selects a range of rows; MMB drag moves rows onto another to parent them, or between rows to place them
  * there; dropped on a viewport, a camera row makes that view look through it. Right-click for the common object actions, F with the cursor over it to reveal the selection. Rows start
  * collapsed and keep their open state across rebuilds; ancestors of the selection are shaded.
@@ -55,6 +56,7 @@ protected:
     void mousePressEvent(QMouseEvent* e) override;
     void mouseMoveEvent(QMouseEvent* e) override;
     void mouseReleaseEvent(QMouseEvent* e) override;
+    void mouseDoubleClickEvent(QMouseEvent* e) override;
     /** The rename key pressed again while a name is being edited cancels the edit. */
     void keyPressEvent(QKeyEvent* e) override;
 
@@ -80,6 +82,8 @@ private:
     /** The outliner::RowSource groups after the sets. */
     void addSourceRows();
     void startMove();
+    /** Whether pos is on a row's visibility eye; with toggle, flips that object's visibility. */
+    bool eyeAt(const QPoint& pos, bool toggle);
     /** Shades the rows of the selection's unselected ancestors. */
     void shadeAncestors();
     /** Hides the rows the filter leaves out and opens the ones leading to a match. */
@@ -115,7 +119,9 @@ private:
 LILA_UI_API void revealSelectionInOutliners();
 
 /**
- * The outliner panel: an icon row (iconBars::kOutliner) on top, then Maya's hidden second outliner sits under the first, collapsed to a grab handle at the bottom.
+ * The outliner panel: a filter row (filter field, filter options, + for new groups and sets, ... for the rarer actions
+ * including every iconBars::kOutliner item), then Maya's hidden second outliner under the first, collapsed to a grab
+ * handle at the bottom.
  * Drag the handle up to open it; each pane scrolls, expands and filters on its own. The split is remembered. Each pane
  * has a filter box on top (see outliner::Filter for the syntax).
  */

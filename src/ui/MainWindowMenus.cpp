@@ -1,4 +1,6 @@
 #include "ui/MainWindowDetail.h"
+#include "ui/MenuContext.h"
+#include "ui/TopBar.h"
 #include "ui/Credits.h"
 #include "ui/CreditsDialog.h"
 #include "ui/DocsUi.h"
@@ -41,8 +43,8 @@ void MainWindow::buildMenus()
                    std::vector<std::string> sets = {}) {
         addMenu({.id = id, .title = title, .area = area, .setup = std::move(setup), .docs = docs, .sets = std::move(sets)});
     };
-    // Menu sets: menus without one are always on the menu bar.
-    const std::vector<std::string> modeling{"Modeling"}, modelingLevel{"Modeling", "Level"}, rigAnim{"Rigging", "Animation"};
+    // Menu sets (see MenuContext.h): menus without one are always on the menu bar.
+    const std::vector<std::string> rigAnim{"Rig", "Animate"};
 
     menu("File", "File");
     menus::addActions("File", {"#Scene", "file.new", "file.open", "file.reload"});
@@ -139,10 +141,10 @@ void MainWindow::buildMenus()
     menus::addActions("Select", {"#Mode", "select.objectMode", "select.vertexMode", "select.edgeMode", "select.faceMode", "#Components", "select.allComponents",
                           "select.grow", "select.loop", "select.ring", "select.symmetrize", "select.toggleSymmetric", "#Hierarchy", "select.hierarchy", "select.pickWalkUp", "select.pickWalkDown",
                           "select.pickWalkLeft", "select.pickWalkRight", "#Convert", "select.toVertices", "select.toEdges", "select.toFaces",
-                          "select.containedFaces", "#Tools", "select.paintTool", "select.toggleLasso", "select.toggleCameraBased", "select.toggleBackfaceCulling",
+                          "select.containedFaces", "#Tools", "softSelect.toggle", "select.paintTool", "select.toggleLasso", "select.toggleCameraBased", "select.toggleBackfaceCulling",
                           "select.edgesByCenter", "select.facesByCenter"});
 
-    menu("Mesh", "Mesh", Area::MenuBar, {}, "", modelingLevel);
+    menu("Mesh", "Mesh", Area::MenuBar, {}, "", {"Model", "Sculpt", "Level"});
     menus::addActions("Mesh", {"#Combine", "mesh.combine", "mesh.smartJoin", "mesh.separate", "mesh.splitMeshTool", "mesh.extract", "mesh.duplicateFaces", "mesh.boundingMesh", "mesh.multiBoxBounds",
                                "#Mirror", "mesh.mirror", "#Booleans", "mesh.booleanUnion", "mesh.booleanDifference", "mesh.booleanIntersection"});
     addSubmenu("Mesh", "Clay");
@@ -156,19 +158,19 @@ void MainWindow::buildMenus()
                                "mesh.transferAttributes"});
     menus::addActions("Mesh", {"#Cleanup", "mesh.repair", "mesh.selectIssues", "#Nodes", "window.nodeEditor"});
 
-    menu("Topology", "Topology", Area::MenuBar, syncChecks, "topology", modeling);
+    menu("Topology", "Topology", Area::MenuBar, syncChecks, "topology", {"Model", "Sculpt"});
     menus::addActions("Topology", {"#Session", "retopo.setReference", "window.topologyToolkit", "#Draw", "retopo.draw", "topo.pencil", "topo.patch",
                                    "topo.strip", "topo.stroke", "topo.cylinder", "#Shape", "topo.handles", "topo.relax", "topo.settle", "mesh.relax",
                                    "#Auto Retopo", "topo.region", "topo.runRegion", "mesh.quadRemesh", "retopo.poles", "mesh.voxelRemesh",
                                    "#Constructs", "topo.freezeAll", "#Display", "topo.qualityOverlay"});
 
-    menu("Model", "Model", Area::MenuBar, {}, "", modeling);
+    menu("Model", "Model", Area::MenuBar, {}, "", {"Model"});
     menus::addActions("Model", {"#Components", "mesh.extrude", "mesh.inset", "mesh.insetRegion", "mesh.bevel", "mesh.insertLoop", "mesh.splitRings", "mesh.offsetLoop", "mesh.knife", "mesh.bridge",
                                 "mesh.fillHole", "mesh.gridFill", "mesh.poke", "#Merge", "mesh.merge", "mesh.mergeCenter", "mesh.targetWeld", "mesh.collapse", "#Edges", "mesh.dissolve",
                                 "mesh.spin", "#Shape", "mesh.editEdgeFlow", "mesh.straighten", "mesh.circularize", "mesh.spherize", "mesh.flatten", "mesh.conformShape",
                                 "mesh.conformToObject"});
 
-    menu("Curves", "Curves", Area::MenuBar, {}, "curves", modelingLevel);
+    menu("Curves", "Curves", Area::MenuBar, {}, "curves", {"Model", "Level", "Groom"});
     menus::addActions("Curves", {"window.curveToolkit", "#Create", "curve.ezCurve", "curve.bezierPen", "curve.cvTool", "curve.epTool", "curve.pencil", "curve.catmullRom", "curve.kappa",
                                  "curve.circle", "curve.fromEdges", "curve.sketchTool", "#Surfaces", "curve.extrude", "curve.revolve", "curve.loft",
                                  "curve.patchFill", "curve.network", "curve.borderBlend", "#Pipes, Cables, Stitches and Straps", "curve.pipeTool", "curve.pipe",
@@ -203,25 +205,25 @@ void MainWindow::buildMenus()
     menus::addActions("Curves", {"#Handles", "curve.handleAuto", "curve.handleVector", "curve.handleAligned", "curve.handleFree", "#Convert",
                                  "curve.toBezier", "curve.toNurbs", "curve.toPoly", "#Display", "curve.toggleComb", "#Unreal", "curve.sendToUnreal"});
 
-    menu("Surface", "Surface", Area::MenuBar, syncChecks, "", modeling);
+    menu("Surface", "Surface", Area::MenuBar, syncChecks, "", {"Model", "Texture"});
     menus::addActions("Surface", {"#Normals", "mesh.softenEdges", "mesh.hardenEdges", "mesh.setNormalAngle", "mesh.flip", "mesh.conform",
                                   "mesh.softFoliageNormals", "#Vertex Colors", "vcolor.paint", "vcolor.createSet", "vcolor.fill", "vcolor.gradient",
                                   "vcolor.invert", "vcolor.levels", "vcolor.blur", "#Bake to Vertex Colors", "vcolor.bakeAO", "vcolor.bakeCavity",
                                   "vcolor.bakeCurvature", "vcolor.bakeHeight", "#Display", "viewport.vertexColors.off", "viewport.vertexColors.shaded",
                                   "viewport.vertexColors.unlit", "viewport.toggleBackfaceCulling"});
 
-    menu("Sculpt", "Sculpt", Area::MenuBar, {}, "", modeling);
+    menu("Sculpt", "Sculpt", Area::MenuBar, {}, "", {"Sculpt"});
     menus::addActions("Sculpt", {"#Sculpt", "sculpt.tool", "sculpt.enter", "sculpt.previewLowPoly", "sculpt.toggleSeeThrough","sculpt.duplicateLowPoly", "sculpt.exit", "sculpt.cancel", "window.sculpt", "#Levels",
                                  "sculpt.levelUp", "sculpt.levelDown", "sculpt.addLevel", "sculpt.deleteHigher", "#Shape",
                                  "mesh.relaxKeepForm", "mesh.reproject", "mesh.transferShape"});
 
     // The modifier kinds fill in above these rows each time it opens.
-    menu("Modifiers", "Modifiers", Area::MenuBar, [](QMenu* m) { fillAddModifierMenu(m, false); }, "", modelingLevel);
+    menu("Modifiers", "Modifiers", Area::MenuBar, [](QMenu* m) { fillAddModifierMenu(m, false); }, "", {"Model", "Level"});
     menus::addActions("Modifiers", {"#Stack", "window.modifierStack", "modifier.applyAll", "mesh.bakeModifierStack", "#Auto Bevel",
                                     "select.foldEdges", "bevel.editEdges", "bevel.applyEdges", "bevel.cancelEdges", "bevel.measureThin",
                                     "bevel.clearOverrides", "bevel.showEdges"});
 
-    menu("UV", "UV", Area::MenuBar, {}, "", modeling);
+    menu("UV", "UV", Area::MenuBar, {}, "", {"UV", "Texture"});
     menus::addActions("UV", {"window.uvEditor", "uv.auto", "uv.autoSeams", "uv.unwrap", "uv.projectPlanar", "uv.projectBox", "uv.projectCylindrical",
                       "uv.projectSpherical", "uv.cut", "uv.sew", "uv.straighten", "uv.orient", "uv.rotateLeft", "uv.rotateRight", "uv.flipX", "uv.flipY", "uv.pack", "uv.lightmap", "uv.delete", "uv.seamView", "", "uv.autoSeams2",
                       "uv.bff", "uv.bffDisk", "uv.bffRectangle", "uv.bffCones", "uv.unwrapSymmetric", "uv.unwrapSymmetricStack"});
@@ -337,9 +339,9 @@ void MainWindow::buildMenus()
                                  "viewport.view.back", "viewport.view.bottom"});
     menus::addActions("Display", {"viewport.frameSelected", "viewport.frameAll", "viewport.frameUnderCursor", "viewport.cameraUndo", "viewport.cameraRedo", "#Overlays",
                            "viewport.toggleGrid", "viewport.toggleResolutionGate", "viewport.toggleFilmGate", "viewport.cameraSettings",
-                           "window.renderSettings", "#View", "viewport.toggleToolbar", "viewport.toggleBottomBar", "window.toggleToolBox", "viewport.resetExposure"});
+                           "window.renderSettings", "#View", "viewport.toggleToolbar", "window.toggleToolBox", "viewport.resetExposure"});
 
-    menu("Animation", "Animation", Area::MenuBar, {}, "", rigAnim);
+    menu("Animation", "Animation", Area::MenuBar, {}, "", {"Animate", "Rig", "Effects"});
     menus::addActions("Animation", {"#Keys", "anim.setKey", "anim.setKeyTranslate", "anim.setKeyRotate", "anim.setKeyScale", "anim.autoKeyToggle", "#Playback",
                              "anim.play", "anim.playBackward", "anim.stop", "anim.firstFrame", "anim.lastFrame", "anim.nextFrame",
                              "anim.prevFrame", "anim.nextKey", "anim.prevKey", "#Editors", "window.graphEditor", "window.timeSlider"});
@@ -349,13 +351,10 @@ void MainWindow::buildMenus()
     menus::addActions("Animation", {"#Offsets", "anim.createOffset", "anim.bakeOffset", "anim.deleteOffset", "window.offsets"});
     menus::addActions("Animation", {"#Retarget", "anim.retarget", "anim.characterize", "window.retargeter"});
 
-    menu("Render", "Render", Area::MenuBar, syncChecks);
+    menu("Render", "Render", Area::MenuBar, syncChecks, "", {"Texture", "Level", "Animate", "Effects"});
     menus::addActions("Render", {"#Render", "render.frame", "render.sequence", "render.turntable", "window.renderOutput", "window.renderSettings", "#Look",
                                  "render.postProcess", "render.lightRig.threePoint", "render.lightRig.rim", "render.lightRig.product", "viewport.toggleRtShadows", "viewport.togglePostEffects", "viewport.toggleTAA", "#Framing", "viewport.toggleResolutionGate",
                                  "viewport.toggleSafeFrames", "viewport.toggleThirds"});
-
-    menu("Toolkits", "Toolkits", Area::MenuBar, syncChecks);
-    menus::addActions("Toolkits", {"window.modelingToolkit", "window.topologyToolkit", "window.curveToolkit", "window.uvToolkit", "window.levelToolkit"});
 
     menu("Windows", "Windows", Area::MenuBar, syncChecks);
     addSubmenu("Windows", "Editors", [this](QMenu* m) {
@@ -364,9 +363,12 @@ void MainWindow::buildMenus()
         fillEditorsMenu(m);
     });
     addItem({.id = "Windows/layouts", .menu = "Windows", .kind = Kind::Custom, .setup = [this](QMenu* m) { m->addMenu(mLayouts->menu()); }});
-    menus::addActions("Windows", {"window.resetLayout", "window.expandPanels", "window.toggleMaximizePanel", "#Show", "window.toggleToolBox",
+    menus::addActions("Windows", {"window.resetLayout", "window.expandPanels", "window.toggleMaximizePanel", "#Menu Set", "menuSet.follow", "menuSet.model",
+                                  "menuSet.uv", "menuSet.sculpt", "menuSet.texture", "menuSet.rig", "menuSet.animate", "menuSet.level", "#Tools",
+                                  "window.modelingToolkit", "window.topologyToolkit", "window.curveToolkit", "window.uvToolkit", "window.levelToolkit",
+                                  "#Show", "window.toggleToolBox",
                            "window.toggleChannelBox", "window.toggleUvEditor", "window.commandPalette", "view.presenter", "reference.addImages", "reference.clickable", "#Customize",
-                           "window.markingMenuEditor", "window.userMenuEditor", "window.extensionManager"});
+                           "viewport.customizeHeader", "window.markingMenuEditor", "window.userMenuEditor", "window.extensionManager"});
 
     menu("Help", "Help");
     menus::addActions("Help", {"#Learn", "help.docs"});
@@ -398,15 +400,10 @@ void MainWindow::buildMenus()
     });
     mMenus->rebuild();
 
-    mMenuSet = menuSets::forShelf(shelves::current());
-    if (mMenuSet.empty())
-        mMenuSet = menuSets::kDefault;
-    shelves::onCurrentChanged([this](const std::string& shelf) {
-        if (std::string set = menuSets::forShelf(shelf); !set.empty() && set != mMenuSet)
-        {
-            mMenuSet = set;
-            applyMenuSet();
-        }
+    menuContext::install(this);
+    menuContext::onChanged([this] {
+        applyMenuSet();
+        raiseToolsFor(menuContext::current());
     });
     PrefStore::get().onChanged([this](const std::string& file) {
         if (file == "general")
@@ -415,27 +412,46 @@ void MainWindow::buildMenus()
     applyMenuSet();
 }
 
+void MainWindow::raiseToolsFor(const std::string& set)
+{
+    // The tools column follows the work too: its tab for the set comes forward when that panel is open.
+    static const std::map<std::string, const char*> kTools = {{"Model", kModelingToolkitDock}, {"Level", kLevelToolkitDock}, {"Texture", "textureSets"}};
+    auto it = kTools.find(set);
+    if (it == kTools.end())
+        return;
+    QDockWidget* d = findChild<QDockWidget*>(it->second);
+    if (!d || d->isHidden() || d->isFloating() || dockShowing(d))
+        return;
+    // A tab of the same set already in front (Topology for Model) stays.
+    for (QDockWidget* t : tabifiedDockWidgets(d))
+        if (dockShowing(t) && menuContext::setForDock(t->objectName().toStdString()) == set)
+            return;
+    d->raise();
+}
+
 void MainWindow::applyMenuSet()
 {
     // The menu bar's rows are the area's menus in registry order.
     std::vector<const menus::Menu*> defs = menus::menusIn(menus::Area::MenuBar);
     const QList<QAction*> rows = menuBar()->actions();
     for (qsizetype i = 0; i < rows.size() && i < qsizetype(defs.size()); ++i)
-        menuSets::setHiddenBySet(rows[i], !menuSets::shows(*defs[size_t(i)], mMenuSet));
+        menuSets::setHiddenBySet(rows[i], !menuSets::shows(*defs[size_t(i)], menuContext::current()));
+    if (mTopBar)
+        mTopBar->relayout();
 }
 
 void MainWindow::fillEditorsMenu(QMenu* menu)
 {
     // Panels by what they are for; a panel not named here (most extension panels) goes under Other.
     static const std::vector<std::pair<const char*, std::vector<const char*>>> kGroups = {
-        {"Scene", {"Outliner", "Attribute Editor", "Channel Box", "Display Layers", "Quick Select Sets", "Rename", "Reference Editor",
+        {"Scene", {"Outliner", "Attributes", "Channels", "Layers", "Quick Select Sets", "Rename", "Reference Editor",
                    "Source Control", "Undo History", "Notes", "Shelf", "Docs", "Relationships"}},
-        {"Modeling", {"Modeling Toolkit", "Topology Toolkit", "Modifier Stack", "Node Editor", "Morph Targets", "Driven Channels", "Component Spreadsheet",
+        {"Modeling", {"Modeling", "Topology", "Curves", "Modifiers", "Node Editor", "Morph Targets", "Driven Channels", "Component Spreadsheet",
                       "Foliage Blades", "Tree Generator", "Ground Tiles", "Effects"}},
         {"UVs and Texturing", {"UV Editor", "Material Editor", "Material Browser", "Texture Set", "Texture Graph", "Texture", "2D View", "Baker"}},
         {"Animation and Rigging", {"Graph Editor", "Time Slider", "Anim Layers", "Pose Library", "Control Picker", "Offsets", "Rig Templates",
                                    "Puppeteer", "Anim Bank", "Stacker", "Mixer", "Cycle Maker", "Overlap", "Physics Animation"}},
-        {"Level", {"Level Toolkit", "Dress", "Prop Library"}},
+        {"Level", {"Level", "Dress", "Prop Library"}},
         {"Scripting", {"Script Editor", "Script Output", "API Reference", "Terminal", "Batch Script Execution"}},
     };
     menu->clear();
@@ -531,19 +547,33 @@ void MainWindow::buildStatusBar()
     installSpinScrub(this);
     installWheelGuard(this);
 
-    mWorkspaceLabel = new QLabel(this);
-    mWorkspaceLabel->setTextFormat(Qt::RichText);
-    mWorkspaceLabel->setContentsMargins(0, 0, 10, 0);
-    // The layouts corner is installed later, so the label joins it once the window is built.
-    QTimer::singleShot(0, this, [this] { placeWorkspaceLabel(); });
+    mWorkspaceLabel = new QToolButton(this);
+    mWorkspaceLabel->setObjectName("topFolder");
+    mWorkspaceLabel->setIcon(icon("folder"));
+    mWorkspaceLabel->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    mWorkspaceLabel->setFocusPolicy(Qt::NoFocus);
+    auto* folderMenu = new QMenu(mWorkspaceLabel);
+    connect(folderMenu, &QMenu::aboutToShow, this, [this, folderMenu] {
+        folderMenu->clear();
+        folderMenu->addAction(icon("folder-open"), "Open Folder...", this, [this] { openFolder(); });
+        if (mRecentMenu)
+            folderMenu->addMenu(mRecentMenu);
+    });
+    mWorkspaceLabel->setMenu(folderMenu);
+    // With no folder open a click opens one; with one open it offers another or a recent one.
+    connect(mWorkspaceLabel, &QToolButton::clicked, this, [this] {
+        if (!Workspace::get().isOpen())
+            openFolder();
+        else
+            mWorkspaceLabel->showMenu();
+    });
     refreshWorkspaceLabel();
+    mTopBar = new TopBar(menuBar(), mLayouts->tabs(), mWorkspaceLabel, modes::createSwitcher(this), this);
+    menuBar()->setCornerWidget(mTopBar, Qt::TopRightCorner);
 
     mSourceLabel = new QLabel(this);
     mSourceLabel->setStyleSheet("color: #9a9a9a;");
     statusBar()->addPermanentWidget(mSourceLabel);
-    statusBar()->addPermanentWidget(new QLabel(QString::fromStdString(render::Renderer::get().deviceName()), this));
-
-    statusBar()->addPermanentWidget(modes::createSwitcher(this));
 
     mMcpButton = new QToolButton(this);
     mMcpButton->setText("MCP");
@@ -571,18 +601,6 @@ void MainWindow::buildStatusBar()
     progressui::install(this);
 }
 
-void MainWindow::placeWorkspaceLabel()
-{
-    QWidget* corner = menuBar()->cornerWidget(Qt::TopRightCorner);
-    if (corner == mWorkspaceLabel || mWorkspaceLabel->parentWidget() == corner)
-        return;
-    if (auto* row = corner ? qobject_cast<QBoxLayout*>(corner->layout()) : nullptr)
-        row->insertWidget(0, mWorkspaceLabel);
-    else
-        menuBar()->setCornerWidget(mWorkspaceLabel, Qt::TopRightCorner);
-    mWorkspaceLabel->show();
-}
-
 void MainWindow::refreshWorkspaceLabel()
 {
     auto& ws = Workspace::get();
@@ -593,16 +611,15 @@ void MainWindow::refreshWorkspaceLabel()
         QString parent = root.has_parent_path() && root.parent_path() != root.root_path()
                              ? QString::fromStdWString(root.parent_path().filename().wstring()) + "\\"
                              : QString();
-        QString dim = palette().color(QPalette::Disabled, QPalette::WindowText).name();
-        mWorkspaceLabel->setText(QString("<span style=\"color:%1\">%2</span>%3").arg(dim, parent.toHtmlEscaped(), name.toHtmlEscaped()));
+        mWorkspaceLabel->setText(parent + name);
         QString full = QDir::toNativeSeparators(QString::fromStdWString(root.wstring()));
-        mWorkspaceLabel->setToolTip("Workspace: " + full);
+        mWorkspaceLabel->setToolTip("Project folder: " + full + "\nClick to open another or a recent one");
         mWorkspaceLabel->setStatusTip(full);
     }
     else
     {
-        mWorkspaceLabel->setText("No folder open");
-        mWorkspaceLabel->setToolTip("No workspace folder open. File > Open Folder sets one.");
+        mWorkspaceLabel->setText("Open Folder...");
+        mWorkspaceLabel->setToolTip("Set the project folder: scenes, references and layouts are found from it (File > Open Folder)");
         mWorkspaceLabel->setStatusTip(QString());
     }
     refreshTitle();

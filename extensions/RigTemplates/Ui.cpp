@@ -3,6 +3,7 @@
 #include "RigTemplates.h"
 
 #include <lila/Command.h>
+#include <lila/Icons.h>
 #include <lila/Log.h>
 #include <lila/Node.h>
 #include <lila/Rig.h>
@@ -12,10 +13,12 @@
 
 #include <QComboBox>
 #include <QGridLayout>
+#include <QGroupBox>
 #include <QLabel>
 #include <QListWidget>
+#include <QMenu>
 #include <QPointer>
-#include <QPushButton>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <cmath>
@@ -270,6 +273,19 @@ void withInstance(const char* cmd, const char* what)
     run(cmd, {{"args", {p.instance}}});
 }
 
+/** A labelled button running the action, styled by the app sheet's push role. */
+QToolButton* rigtPush(QWidget* parent, const char* action, const QString& label)
+{
+    auto* b = new QToolButton(parent);
+    b->setText(label);
+    b->setToolTip(QString::fromStdString(actions::tooltip(action)));
+    b->setProperty("role", "push");
+    b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    const std::string id = action;
+    QObject::connect(b, &QToolButton::clicked, b, [id] { actions::run(json(id)); });
+    return b;
+}
+
 QWidget* makePanel(QWidget* parent)
 {
     auto* w = new QWidget(parent);
@@ -277,9 +293,30 @@ QWidget* makePanel(QWidget* parent)
     auto* list = new QListWidget(w);
     auto* info = new QLabel(w);
     info->setWordWrap(true);
+    info->setForegroundRole(QPalette::PlaceholderText);
     info->setTextInteractionFlags(Qt::TextSelectableByMouse);
     v->addWidget(list, 1);
     v->addWidget(info);
+
+    auto grid = [w](QGroupBox* box, std::initializer_list<std::pair<const char*, const char*>> items) {
+        auto* g = new QGridLayout(box);
+        g->setContentsMargins(0, 4, 0, 0);
+        g->setSpacing(2);
+        int i = 0;
+        for (auto [action, label] : items)
+        {
+            g->addWidget(rigtPush(box, action, label), i / 2, i % 2);
+            ++i;
+        }
+        return g;
+    };
+    auto* markers = new QGroupBox("Markers", w);
+    grid(markers, {{"rigTemplates.place", "Place"}, {"rigTemplates.bind", "Bind to Meshes"}, {"rigTemplates.center", "Centre in Mesh"},
+                   {"rigTemplates.mirror", "Mirror Left to Right"}, {"rigTemplates.unbind", "Unbind"}});
+    v->addWidget(markers);
+
+    auto* skeleton = new QGroupBox("Skeleton", w);
+    QGridLayout* skeletonGrid = grid(skeleton, {{"rigTemplates.build", "Build Skeleton"}});
     auto* limbs = new QComboBox(w);
     const std::pair<const char*, const char*> modes[] = {{"Limbs as the Template Says", "template"}, {"Jointed Limbs", "none"}, {"Rubber Hose Limbs", "all"}};
     for (const auto& [label, mode] : modes)
@@ -288,31 +325,30 @@ QWidget* makePanel(QWidget* parent)
         if (gHose == mode)
             limbs->setCurrentIndex(limbs->count() - 1);
     }
-    limbs->setToolTip("How Build Skeleton makes the arms and legs: jointed elbows and knees, or rubber hoses.");
+    limbs->setToolTip("Limbs\nHow Build Skeleton makes the arms and legs: jointed elbows and knees, or rubber hoses");
     QObject::connect(limbs, &QComboBox::currentIndexChanged, w, [limbs](int) { gHose = limbs->currentData().toString().toStdString(); });
-    v->addWidget(limbs);
-    auto* grid = new QGridLayout();
-    struct Button
+    limbs->setParent(skeleton);
+    skeletonGrid->addWidget(limbs, 0, 1);
+    v->addWidget(skeleton);
+
+    auto* more = new QToolButton(w);
+    more->setText("3 more");
+    more->setToolTip("More template commands; each is also in Rig > Templates and Ctrl+T search");
+    more->setPopupMode(QToolButton::InstantPopup);
+    more->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    more->setIcon(icon("dots"));
+    more->setProperty("role", "overflow");
+    auto* moreMenu = new QMenu(more);
+    moreMenu->setToolTipsVisible(true);
+    for (const char* id : {"rigTemplates.orient", "rigTemplates.fromSkeleton", "rigTemplates.picker"})
     {
-        const char* label;
-        const char* action;
-    };
-    const Button buttons[] = {{"Place", "rigTemplates.place"},       {"Build Skeleton", "rigTemplates.build"},
-                              {"Bind to Meshes", "rigTemplates.bind"}, {"Unbind", "rigTemplates.unbind"},
-                              {"Centre Markers", "rigTemplates.center"}, {"Mirror Left to Right", "rigTemplates.mirror"},
-                              {"Orient Skeleton", "rigTemplates.orient"}, {"From Skeleton", "rigTemplates.fromSkeleton"},
-                              {"Make Picker", "rigTemplates.picker"}};
-    int i = 0;
-    for (const Button& b : buttons)
-    {
-        auto* btn = new QPushButton(b.label, w);
-        btn->setToolTip(QString::fromStdString(actions::tooltip(b.action)));
-        std::string id = b.action;
-        QObject::connect(btn, &QPushButton::clicked, w, [id] { actions::run(json(id)); });
-        grid->addWidget(btn, i / 2, i % 2);
-        ++i;
+        const std::string action = id;
+        QAction* a = moreMenu->addAction(QString::fromStdString(actions::find(action) ? actions::find(action)->label : action),
+                                         [action] { actions::run(json(action)); });
+        a->setToolTip(QString::fromStdString(actions::tooltip(action)));
     }
-    v->addLayout(grid);
+    more->setMenu(moreMenu);
+    v->addWidget(more, 0, Qt::AlignLeft);
 
     QPointer<QListWidget> guard(list);
     auto describe = [info](const std::string& id) {

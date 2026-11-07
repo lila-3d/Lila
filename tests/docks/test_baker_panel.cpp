@@ -424,7 +424,7 @@ TEST_CASE("baker panel: presets stick on group and High rows, typed params edit 
         pump();
 
         auto* offset = child<QDoubleSpinBox>(&panel, "bakerParam_offset");
-        auto* segments = child<QSpinBox>(&panel, "bakerParam_segments");
+        auto* segments = child<QDoubleSpinBox>(&panel, "bakerParam_segments");
         child<QDoubleSpinBox>(&panel, "bakerParam_minAngle");
         child<QComboBox>(&panel, "bakerParam_mode");
         CHECK_FALSE(panel.findChild<QWidget*>("bakerParam_enabled"));
@@ -477,7 +477,7 @@ TEST_CASE("baker panel: presets stick on group and High rows, typed params edit 
 
         stack->setCurrentRow(0);
         pump();
-        child<QSpinBox>(&panel, "bakerParam_levels")->setValue(4);
+        child<QDoubleSpinBox>(&panel, "bakerParam_levels")->setValue(4);
         pump();
         CHECK(highs()[0].modifiers[0]["params"]["levels"] == 4);
         CHECK(highs()[1].modifiers.empty());

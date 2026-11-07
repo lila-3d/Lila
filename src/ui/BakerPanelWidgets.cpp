@@ -1,5 +1,8 @@
 #include "ui/BakerPanelInternal.h"
+#include "ui/Controls.h"
 #include "ui/UiCommands.h"
+
+#include <QGridLayout>
 
 namespace lila::ui
 {
@@ -165,9 +168,54 @@ void selectIssueComponents(QTreeWidgetItem* it)
     runUi("selectComponents", call);
 }
 
+/** A labelled button on the raised fill, for the Baker's weekly actions. */
+QToolButton* bakerPush(QWidget* parent, const QString& text, const QString& tip, bool checkable = false)
+{
+    auto* b = new QToolButton(parent);
+    b->setText(text);
+    b->setToolTip(tip);
+    b->setAccessibleName(text);
+    b->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    b->setCheckable(checkable);
+    b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    controls::setRole(b, "push");
+    return b;
+}
+
+/** Label/field rows with the labels right-aligned in one column. */
+QFormLayout* bakerForm(QWidget* parent = nullptr)
+{
+    auto* f = new QFormLayout(parent);
+    f->setContentsMargins(0, 0, 0, 0);
+    f->setHorizontalSpacing(6);
+    f->setVerticalSpacing(4);
+    f->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    f->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    f->setRowWrapPolicy(QFormLayout::DontWrapRows);
+    return f;
+}
+
+/** A dim one-line sub-header inside a tab. */
+QLabel* bakerSubHeader(QWidget* parent, const QString& text)
+{
+    auto* l = new QLabel(text, parent);
+    QFont f = l->font();
+    f.setWeight(QFont::DemiBold);
+    l->setFont(f);
+    l->setContentsMargins(0, 6, 0, 0);
+    return l;
+}
+
+void bakerNumberStyle(QAbstractSpinBox* s)
+{
+    s->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    s->setButtonSymbols(QAbstractSpinBox::NoButtons);
+}
+
 QDoubleSpinBox* distanceSpin(QWidget* parent, const QString& tip)
 {
     auto* s = new QDoubleSpinBox(parent);
+    bakerNumberStyle(s);
     s->setRange(0.0, 1e6);
     s->setDecimals(3);
     s->setSingleStep(0.1);
@@ -189,6 +237,8 @@ QWidget* BakerPanel::buildToolbar()
 
     auto* top = new QHBoxLayout;
     top->setSpacing(2);
+    auto* topForm = bakerForm();
+    topForm->addRow("Project", top);
     mProjects = new QComboBox(w);
     mProjects->setObjectName("bakerProjects");
     mProjects->setToolTip("The bake project shown: output settings, maps and groups");
@@ -199,7 +249,7 @@ QWidget* BakerPanel::buildToolbar()
             setProject(ss(mProjects->currentData().toString()));
     });
     top->addWidget(mProjects, 1);
-    mProjectMenu = toolButton(w, "dots", "New, rename or delete a bake project");
+    mProjectMenu = toolButton(w, "dots", "Project: new, rename, delete, presets, output folder");
     mProjectMenu->setPopupMode(QToolButton::InstantPopup);
     auto* pm = new QMenu(mProjectMenu);
     pm->addAction(icon("plus"), "New Project", this, [this] {
@@ -271,36 +321,46 @@ QWidget* BakerPanel::buildToolbar()
         }
         updateButtons();
     });
-    top->addWidget(mTargets, 1);
-    v->addLayout(top);
+    mTargets->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    mTargets->setMinimumContentsLength(10);
+    topForm->addRow("Target", mTargets);
+    v->addLayout(topForm);
 
     mPresetRow = new QWidget(w);
     mPresetRow->setObjectName("bakerPresetRow");
-    auto* pr = new QHBoxLayout(mPresetRow);
-    pr->setContentsMargins(0, 0, 0, 0);
+    auto* prv = new QVBoxLayout(mPresetRow);
+    prv->setContentsMargins(0, 0, 0, 0);
+    prv->setSpacing(2);
+    auto* pr = new QHBoxLayout;
     pr->setSpacing(2);
     mPresetName = new QLineEdit(mPresetRow);
     mPresetName->setObjectName("bakerPresetName");
     mPresetName->setPlaceholderText("Preset name");
     mPresetName->setToolTip("Saves the output, maps, backend and group defaults (no meshes) as a target you can pick in any scene");
     connect(mPresetName, &QLineEdit::returnPressed, this, &BakerPanel::savePreset);
-    pr->addWidget(mPresetName, 1);
+    prv->addWidget(mPresetName);
     mPresetScope = new QComboBox(mPresetRow);
     mPresetScope->setObjectName("bakerPresetScope");
     mPresetScope->addItem("User", "user");
     mPresetScope->addItem("Workspace", "workspace");
+    setComboDefault(mPresetScope, 0);
     mPresetScope->setToolTip("User: every project on this machine. Workspace: this workspace's .lila/bake/targets, shared with it");
     pr->addWidget(mPresetScope);
     mPresetReplace = new QCheckBox("Replace", mPresetRow);
     mPresetReplace->setToolTip("Overwrite a preset of the same name");
+    setCheckDefault(mPresetReplace, false);
     pr->addWidget(mPresetReplace);
-    QToolButton* savePresetButton = toolButton(mPresetRow, "check", "Save the preset");
+    pr->addStretch(1);
+    QToolButton* savePresetButton = bakerPush(mPresetRow, "Save", "Save: save the preset");
     savePresetButton->setObjectName("bakerPresetSave");
+    savePresetButton->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
     connect(savePresetButton, &QToolButton::clicked, this, &BakerPanel::savePreset);
     pr->addWidget(savePresetButton);
-    QToolButton* cancelPreset = toolButton(mPresetRow, "x", "Close without saving");
+    QToolButton* cancelPreset = bakerPush(mPresetRow, "Cancel", "Cancel: close without saving");
+    cancelPreset->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
     connect(cancelPreset, &QToolButton::clicked, mPresetRow, &QWidget::hide);
     pr->addWidget(cancelPreset);
+    prv->addLayout(pr);
     mPresetRow->hide();
     v->addWidget(mPresetRow);
 
@@ -309,13 +369,14 @@ QWidget* BakerPanel::buildToolbar()
     mBakeTarget->setIcon(icon("target"));
     mBakeTarget->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     mBakeTarget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    mBakeTarget->setMinimumHeight(28);
+    mBakeTarget->setMinimumHeight(32);
     QFont bold = mBakeTarget->font();
-    bold.setBold(true);
+    bold.setWeight(QFont::DemiBold);
     mBakeTarget->setFont(bold);
     mBakeTarget->setPopupMode(QToolButton::MenuButtonPopup);
-    mBakeTarget->setToolTip("One click: apply the target's maps and naming, auto-group by _low/_high names when there are no groups, "
-                            "and bake everything it needs");
+    controls::setRole(mBakeTarget, "push");
+    mBakeTarget->setToolTip("Bake for Target: apply the target's maps and naming, auto-group by _low/_high names when there are no "
+                            "groups, and bake everything it needs");
     connect(mBakeTarget, &QToolButton::clicked, this, [this] { bakeForTarget(false); });
     auto* tm = new QMenu(mBakeTarget);
     QAction* optional = tm->addAction("Include Optional Maps");
@@ -327,12 +388,12 @@ QWidget* BakerPanel::buildToolbar()
     v->addWidget(mBakeTarget);
 
     auto* row = new QHBoxLayout;
-    row->setSpacing(1);
-    mBake = toolButton(w, "player-play", "Bake every group of the project", "Bake");
+    row->setSpacing(2);
+    mBake = bakerPush(w, "Bake All", "Bake All: bake every group of the project");
     mBake->setObjectName("bakerBake");
     connect(mBake, &QToolButton::clicked, this, [this] { bake({}); });
     row->addWidget(mBake);
-    mBakeSelected = toolButton(w, "player-play", "Bake the groups selected here, or the groups holding the selected meshes", "Selected");
+    mBakeSelected = bakerPush(w, "Bake Selected", "Bake Selected: the groups selected here, or the groups holding the selected meshes");
     connect(mBakeSelected, &QToolButton::clicked, this, [this] {
         std::vector<std::string> groups = selectedGroups();
         if (groups.empty())
@@ -345,19 +406,22 @@ QWidget* BakerPanel::buildToolbar()
         bake(groups);
     });
     row->addWidget(mBakeSelected);
-    mCancel = toolButton(w, "player-stop", "Cancel the running bake");
+    mCancel = bakerPush(w, "Cancel", "Cancel: stop the running bake");
     connect(mCancel, &QToolButton::clicked, this, [] { cancelBakes(); });
     row->addWidget(mCancel);
+    v->addLayout(row);
+    auto* status = new QHBoxLayout;
+    status->setSpacing(4);
     mProgress = new QProgressBar(w);
     mProgress->setObjectName("bakerProgress");
     mProgress->setRange(0, 1000);
     mProgress->setTextVisible(false);
     mProgress->setMaximumHeight(10);
-    row->addWidget(mProgress, 1);
-    mLintButton = toolButton(w, "alert-triangle", "Check the project for problems (bakeLint)");
+    status->addWidget(mProgress, 1);
+    mLintButton = toolButton(w, "alert-triangle", "Check the project for problems (bakeLint)", "Check");
     mLintButton->setObjectName("bakerLint");
     connect(mLintButton, &QToolButton::clicked, this, [this] { runLint(true); });
-    row->addWidget(mLintButton);
+    status->addWidget(mLintButton);
     mBackend = new QToolButton(w);
     mBackend->setObjectName("bakerBackend");
     mBackend->setPopupMode(QToolButton::InstantPopup);
@@ -383,8 +447,8 @@ QWidget* BakerPanel::buildToolbar()
         }
     });
     mBackend->setMenu(bm);
-    row->addWidget(mBackend);
-    v->addLayout(row);
+    status->addWidget(mBackend);
+    v->addLayout(status);
     return w;
 }
 
@@ -395,16 +459,18 @@ QWidget* BakerPanel::buildGroups()
     v->setContentsMargins(0, 0, 0, 0);
     v->setSpacing(1);
 
+    auto* daily = new QHBoxLayout;
+    daily->setSpacing(2);
     auto* bar = new QHBoxLayout;
-    bar->setSpacing(1);
-    QToolButton* add = toolButton(w, "plus", "New group: the selected meshes and the meshes under them become its lows. Shift+click uses only the selected meshes.");
+    bar->setSpacing(2);
+    QToolButton* add = bakerPush(w, "New Group", "New Group: the selected meshes and the meshes under them become its lows. Shift+click uses only the selected meshes.");
     connect(add, &QToolButton::clicked, this, [this] {
         json call = json::object();
         if (const std::vector<std::string> m = selectedMeshes(); !m.empty())
             call["lows"] = m;
         run("bakeGroup", call);
     });
-    bar->addWidget(add);
+    bar->insertWidget(0, add);
     // No current group: bakeGroup without a name creates one.
     auto addSelected = [this](const char* flag) {
         const std::vector<std::string> meshes = selectedMeshes();
@@ -415,36 +481,34 @@ QWidget* BakerPanel::buildGroups()
             call["args"] = {g};
         run("bakeGroup", call);
     };
-    QToolButton* low = toolButton(w, "arrow-down",
-                                  "Add the selected meshes and the meshes under them to the current group (a new one if none) as "
-                                  "lows. Shift+click adds only the selected meshes.",
-                                  "Low");
+    QToolButton* low = bakerPush(w, "Add Low",
+                                 "Add Low: the selected meshes and the meshes under them join the current group (a new one if none) "
+                                 "as lows. Shift+click adds only the selected meshes.");
     connect(low, &QToolButton::clicked, this, [addSelected] { addSelected("addLow"); });
-    bar->addWidget(low);
-    QToolButton* high = toolButton(w, "arrow-up",
-                                   "Add the selected meshes and the meshes under them to the current group (a new one if none) as "
-                                   "highs. Shift+click adds only the selected meshes.",
-                                   "High");
+    daily->addWidget(low);
+    QToolButton* high = bakerPush(w, "Add High",
+                                  "Add High: the selected meshes and the meshes under them join the current group (a new one if none) "
+                                  "as highs. Shift+click adds only the selected meshes.");
     connect(high, &QToolButton::clicked, this, [addSelected] { addSelected("addHigh"); });
-    bar->addWidget(high);
-    QToolButton* autoGroup = toolButton(w, "wand", "Auto-group by name: _low/_high, _lo/_hi, _LP/_HP (the selection, else every mesh)", "Auto");
+    daily->addWidget(high);
+    QToolButton* autoGroup = bakerPush(w, "Auto Group", "Auto Group: by name, _low/_high, _lo/_hi, _LP/_HP (the selection, else every mesh)");
     autoGroup->setObjectName("bakerAutoGroup");
     connect(autoGroup, &QToolButton::clicked, this, [this] { run("autoGroupBake", json::object()); });
-    bar->addWidget(autoGroup);
-    QToolButton* perMesh = toolButton(w, "layers-intersect", "One group per selected mesh, each baking onto itself", "Per Mesh");
+    daily->addWidget(autoGroup);
+    v->addLayout(daily);
+    QToolButton* perMesh = bakerPush(w, "Per Mesh", "Per Mesh: one group per selected mesh, each baking onto itself");
     connect(perMesh, &QToolButton::clicked, this, [] { groupPerMesh(); });
     bar->addWidget(perMesh);
-    mArrange = toolButton(w, "layout-columns", "Arrange: draw the groups side by side to inspect them; the meshes don't move and bakes run where they are", "Arrange");
+    mArrange = bakerPush(w, "Arrange", "Arrange: draw the groups side by side to inspect them; the meshes don't move and bakes run where they are", true);
     mArrange->setObjectName("bakerArrange");
-    mArrange->setCheckable(true);
     connect(mArrange, &QToolButton::clicked, this, [this] {
         run("bakeArrange", {{"on", mArrange->isChecked()}});
         updateButtons();
     });
     bar->addWidget(mArrange);
-    bar->addStretch(1);
+    bar->addSpacing(4);
     bar->addWidget(docs::helpButton("baking", w));
-    QToolButton* remove = toolButton(w, "trash", "Remove the selected rows: groups, or meshes from their group");
+    QToolButton* remove = toolButton(w, "trash", "Remove: the selected rows, groups or meshes from their group (Delete)");
     remove->setObjectName("bakerRemoveRows");
     connect(remove, &QToolButton::clicked, this, &BakerPanel::removeSelectedRows);
     bar->addWidget(remove);
@@ -502,10 +566,12 @@ QWidget* BakerPanel::buildGroupDetails()
     auto* v = new QVBoxLayout(mDetails);
     v->setContentsMargins(4, 4, 4, 4);
     v->setSpacing(4);
+    mDetailsEmpty = new QLabel("No group selected. Pick one in the list above, or add one with Add Low.", mDetails);
+    mDetailsEmpty->setWordWrap(true);
+    mDetailsEmpty->setForegroundRole(QPalette::PlaceholderText);
+    v->addWidget(mDetailsEmpty);
 
-    auto* form = new QFormLayout;
-    form->setContentsMargins(0, 0, 0, 0);
-    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    QFormLayout* form = bakerForm();
     auto edit = [this](const char* flag, double value) {
         const std::string g = currentGroup();
         if (mUpdating || g.empty())
@@ -525,28 +591,28 @@ QWidget* BakerPanel::buildGroupDetails()
     connect(mRear, &QDoubleSpinBox::valueChanged, this, [edit](double x) { edit("rear", x); });
     form->addRow("Rear", mRear);
     mCageOffset = new QDoubleSpinBox(mDetails);
+    bakerNumberStyle(mCageOffset);
     mCageOffset->setRange(0.0, 100.0);
     mCageOffset->setDecimals(3);
     mCageOffset->setSingleStep(0.05);
-    mCageOffset->setPrefix("x ");
+    mCageOffset->setSuffix(QString(" %1").arg(QChar(0x00D7)));
     mCageOffset->setKeyboardTracking(false);
-    mCageOffset->setToolTip("Scales the auto cage's push; a painted bakeOffset point attribute scales it per point");
+    mCageOffset->setToolTip("Cage Offset: scales the auto cage's push; a painted bakeOffset point attribute scales it per point");
     setSpinDefault(mCageOffset, 1.0);
     connect(mCageOffset, &QDoubleSpinBox::valueChanged, this, [edit](double x) { edit("cageOffset", x); });
     form->addRow("Cage Offset", mCageOffset);
 
     mCageRow = new QWidget(mDetails);
-    auto* cageRow = new QHBoxLayout(mCageRow);
+    auto* cageRow = new QGridLayout(mCageRow);
     cageRow->setContentsMargins(0, 0, 0, 0);
     cageRow->setSpacing(2);
-    mShowCage = toolButton(mCageRow, "box-model", "Show the group's cage in the viewport: a translucent shell where rays start", "Show");
+    mShowCage = bakerPush(mCageRow, "Show Cage", "Show Cage: the group's cage in the viewport, a translucent shell where rays start", true);
     mShowCage->setObjectName("bakerShowCage");
-    mShowCage->setCheckable(true);
     connect(mShowCage, &QToolButton::clicked, this, [this](bool on) {
         if (scene::Node* n = findNode(currentGroup()); n && bake::isGroup(*n))
             bakeCage::setShown(n->id(), on);
     });
-    QToolButton* paint = toolButton(mCageRow, "brush", "Paint the cage's offsets on the low, in the viewport or the UV editor", "Paint");
+    QToolButton* paint = bakerPush(mCageRow, "Paint", "Paint: the cage's offsets on the low, in the viewport or the UV editor");
     connect(paint, &QToolButton::clicked, this, [this] {
         scene::Node* n = findNode(currentGroup());
         if (!n || !bake::isGroup(*n) || bake::groupSettings(*n).lows.empty())
@@ -554,7 +620,7 @@ QWidget* BakerPanel::buildGroupDetails()
         runUi("select", {{"args", {bake::groupSettings(*n).lows.front()}}});
         actions::run(json("bake.paintCage"));
     });
-    QToolButton* estimate = toolButton(mCageRow, "wand", "Estimate the cage: paint the offsets a near-zero-miss bake needs and set the distances", "Estimate");
+    QToolButton* estimate = bakerPush(mCageRow, "Estimate", "Estimate: paint the offsets a near-zero-miss bake needs and set the distances");
     estimate->setObjectName("bakerEstimateCage");
     connect(estimate, &QToolButton::clicked, this, [this] {
         const std::string g = currentGroup();
@@ -566,7 +632,7 @@ QWidget* BakerPanel::buildGroupDetails()
                                      .arg(r["before"].value("missRate", 0.0) * 100.0, 0, 'f', 2)
                                      .arg(r["after"].value("missRate", 0.0) * 100.0, 0, 'f', 2));
     });
-    QToolButton* resetPaint = toolButton(mCageRow, "eraser", "Reset the painted cage offsets and skew on the group's lows", "Reset");
+    QToolButton* resetPaint = bakerPush(mCageRow, "Reset Paint", "Reset Paint: clear the painted cage offsets and skew on the group's lows");
     resetPaint->setObjectName("bakerResetCagePaint");
     connect(resetPaint, &QToolButton::clicked, this, [this] {
         scene::Node* n = findNode(currentGroup());
@@ -578,32 +644,35 @@ QWidget* BakerPanel::buildGroupDetails()
             runUi("bakePaint", {{"args", lows}, {"attr", attr}, {"reset", true}});
         mCageStatus->clear();
     });
-    mLivePreview = toolButton(mCageRow, "live-view", "Live preview: rebake a low resolution preview on the lows as the cage changes; nothing is written", "Live");
+    mLivePreview = bakerPush(mCageRow, "Live Preview",
+                             "Live Preview: rebake a low resolution preview on the lows as the cage changes; nothing is written", true);
     mLivePreview->setObjectName("bakerLivePreview");
-    mLivePreview->setCheckable(true);
     connect(mLivePreview, &QToolButton::clicked, this, [](bool on) { bakeCage::setLivePreview(on); });
     bakeCage::onChanged(this, [this] { scheduleRefresh(); });
-    cageRow->addWidget(mShowCage);
-    cageRow->addWidget(paint);
-    cageRow->addWidget(estimate);
-    cageRow->addWidget(resetPaint);
-    cageRow->addWidget(mLivePreview);
-    cageRow->addStretch(1);
-    form->addRow("Cage", mCageRow);
-    mCageStatus = new QLabel(mDetails);
-    mCageStatus->setWordWrap(true);
-    form->addRow(QString(), mCageStatus);
+    cageRow->addWidget(mShowCage, 0, 0);
+    cageRow->addWidget(mLivePreview, 0, 1);
+    cageRow->addWidget(estimate, 1, 0);
+    cageRow->addWidget(paint, 1, 1);
+    cageRow->addWidget(resetPaint, 2, 0);
     mAoScope = new QComboBox(mDetails);
     mAoScope->addItem("Group", "group");
     mAoScope->addItem("Self", "self");
     mAoScope->addItem("All Groups", "all");
     setComboDefault(mAoScope, mAoScope->findData(qs(bake::GroupSettings{}.aoScope)));
-    mAoScope->setToolTip("Which highs occlude AO rays: this group's (so overlapping groups never shadow each other), only the hit high, or every group's");
+    mAoScope->setToolTip("AO Occluders: which highs occlude AO rays. Group: this group's, so overlapping groups never shadow each other. "
+                         "Self: only the hit high. All Groups: every group's");
     connect(mAoScope, &QComboBox::currentIndexChanged, this, [this](int) {
         if (!mUpdating && !currentGroup().empty())
             run("bakeGroup", {{"args", {currentGroup()}}, {"aoScope", ss(mAoScope->currentData().toString())}}, false);
     });
     form->addRow("AO Occluders", mAoScope);
+
+    v->addLayout(form);
+    v->addWidget(bakerSubHeader(mDetails, "Cage"));
+    v->addWidget(mCageRow);
+    mCageStatus = new QLabel(mDetails);
+    mCageStatus->setWordWrap(true);
+    v->addWidget(mCageStatus);
 
     auto* unlinkBox = new QWidget(mDetails);
     auto* uv = new QVBoxLayout(unlinkBox);
@@ -642,20 +711,18 @@ QWidget* BakerPanel::buildGroupDetails()
     uv->addWidget(mUnlinks);
     auto* ub = new QHBoxLayout;
     ub->setSpacing(1);
-    QToolButton* unlinkAdd = toolButton(unlinkBox, "link-off",
-                                        "The selected meshes stop occluding the current Low row, or every low when a group row is "
-                                        "current. Shift+click: they also stop projecting onto it.",
-                                        "Unlink Selected");
+    QToolButton* unlinkAdd = bakerPush(unlinkBox, "Unlink Selected",
+                                       "Unlink Selected: the selected meshes stop occluding the current Low row, or every low when a "
+                                       "group row is current. Shift+click: they also stop projecting onto it.");
     connect(unlinkAdd, &QToolButton::clicked, this, [this] {
         QTreeWidgetItem* it = mGroups->currentItem();
         const std::string low = it && it->data(0, kKindRole).toInt() == kLowItem ? ss(it->data(0, kNodeRole).toString()) : std::string();
         unlinkSelected(currentGroup(), low, QApplication::keyboardModifiers() & Qt::ShiftModifier);
     });
     ub->addWidget(unlinkAdd);
-    QToolButton* unlinkRemove = toolButton(unlinkBox, "trash", "Remove the selected meshes, or every mesh of a selected low row");
+    QToolButton* unlinkRemove = toolButton(unlinkBox, "trash", "Remove: the selected meshes, or every mesh of a selected low row");
     connect(unlinkRemove, &QToolButton::clicked, this, [this] { removeSelectedUnlinks(); });
     ub->addWidget(unlinkRemove);
-    ub->addStretch(1);
     uv->addLayout(ub);
     mUnlinks->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(mUnlinks, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint& at) {
@@ -671,7 +738,6 @@ QWidget* BakerPanel::buildGroupDetails()
         menu.addAction(icon("trash"), "Remove", this, [this] { removeSelectedUnlinks(); });
         menu.exec(mUnlinks->viewport()->mapToGlobal(at));
     });
-    form->addRow("Unlinked", unlinkBox);
     mBackfaces = new QCheckBox("Ignore backfaces", mDetails);
     setCheckDefault(mBackfaces, bake::GroupSettings{}.ignoreBackfaces);
     mBackfaces->setToolTip("Rays only hit high faces facing them");
@@ -688,7 +754,8 @@ QWidget* BakerPanel::buildGroupDetails()
             run("bakeGroup", {{"args", {currentGroup()}}, {"self", on}}, false);
     });
     form->addRow(QString(), mSelf);
-    v->addLayout(form);
+    v->addWidget(bakerSubHeader(mDetails, "Unlinked"));
+    v->addWidget(unlinkBox);
 
     mStackBox = new QWidget(mDetails);
     auto* sv = new QVBoxLayout(mStackBox);
@@ -696,6 +763,11 @@ QWidget* BakerPanel::buildGroupDetails()
     sv->setSpacing(2);
     mStackTitle = new QLabel(mStackBox);
     mStackTitle->setWordWrap(true);
+    {
+        QFont f = mStackTitle->font();
+        f.setWeight(QFont::DemiBold);
+        mStackTitle->setFont(f);
+    }
     sv->addWidget(mStackTitle);
     auto* pr = new QHBoxLayout;
     pr->addWidget(new QLabel("Preset", mStackBox));
@@ -782,10 +854,8 @@ QWidget* BakerPanel::buildGroupDetails()
     sv->addWidget(mStackButtons);
     mParams = new QWidget(mStackBox);
     mParams->setObjectName("bakerStackParams");
-    mParamForm = new QFormLayout(mParams);
+    mParamForm = bakerForm(mParams);
     mParamForm->setContentsMargins(0, 2, 0, 0);
-    mParamForm->setSpacing(3);
-    mParamForm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     sv->addWidget(mParams);
     v->addWidget(mStackBox);
     v->addStretch(1);
@@ -804,7 +874,8 @@ QWidget* BakerPanel::buildMaps()
     v->setSpacing(2);
     auto* bar = new QHBoxLayout;
     bar->setSpacing(1);
-    mAddMap = toolButton(w, "plus", "Add a map to the project", "Add Map");
+    mAddMap = bakerPush(w, "Add Map", "Add Map: add a map to the project");
+    mAddMap->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
     mAddMap->setPopupMode(QToolButton::InstantPopup);
     auto* am = new QMenu(mAddMap);
     connect(am, &QMenu::aboutToShow, this, [this, am] {
@@ -823,7 +894,7 @@ QWidget* BakerPanel::buildMaps()
     mAddMap->setMenu(am);
     bar->addWidget(mAddMap);
     bar->addStretch(1);
-    QToolButton* remove = toolButton(w, "trash", "Remove the selected map from the project");
+    QToolButton* remove = toolButton(w, "trash", "Remove: the selected maps from the project (Delete)");
     connect(remove, &QToolButton::clicked, this, [this] { removeSelectedMaps(); });
     bar->addWidget(remove);
     v->addLayout(bar);
@@ -850,9 +921,8 @@ QWidget* BakerPanel::buildMaps()
     v->addWidget(mMaps, 1);
 
     mMapSettings = new QWidget(w);
-    mMapForm = new QFormLayout(mMapSettings);
+    mMapForm = bakerForm(mMapSettings);
     mMapForm->setContentsMargins(0, 2, 0, 0);
-    mMapForm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     v->addWidget(mMapSettings);
     return w;
 }
@@ -860,9 +930,8 @@ QWidget* BakerPanel::buildMaps()
 QWidget* BakerPanel::buildOutput()
 {
     auto* w = new QWidget(this);
-    auto* form = new QFormLayout(w);
+    QFormLayout* form = bakerForm(w);
     form->setContentsMargins(4, 4, 4, 4);
-    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
 
     auto set = [this](const char* flag, json value) {
         if (mUpdating)
@@ -883,7 +952,7 @@ QWidget* BakerPanel::buildOutput()
             set("folder", ss(mFolder->text()));
     });
     folderRow->addWidget(mFolder, 1);
-    QToolButton* browse = toolButton(w, "folder-open", "Pick the output folder");
+    QToolButton* browse = toolButton(w, "folder-open", "Browse: pick the output folder");
     connect(browse, &QToolButton::clicked, this, [this, set] {
         const QString start = qs(bake::resolveFolder(ss(mFolder->text())).generic_string());
         const QString dir = ui::fileDialog::getExistingDirectory(this, "Bake Output Folder", start);
@@ -891,7 +960,7 @@ QWidget* BakerPanel::buildOutput()
             set("folder", ss(dir));
     });
     folderRow->addWidget(browse);
-    QToolButton* open = toolButton(w, "folder", "Open the output folder");
+    QToolButton* open = toolButton(w, "folder", "Open Folder: show the output folder");
     connect(open, &QToolButton::clicked, this, [this] {
         openFolder(qs(bake::resolveFolder(ss(mFolder->text())).generic_string()));
     });
@@ -915,7 +984,7 @@ QWidget* BakerPanel::buildOutput()
             set("name", ss(mName->text()));
     });
     nameRow->addWidget(mName, 1);
-    QToolButton* tokens = toolButton(w, "braces", "Insert a token");
+    QToolButton* tokens = toolButton(w, "braces", "Tokens: insert a name token");
     tokens->setPopupMode(QToolButton::InstantPopup);
     auto* tokMenu = new QMenu(tokens);
     for (const std::string& t : bake::nameTokens())
@@ -959,12 +1028,13 @@ QWidget* BakerPanel::buildOutput()
             refreshOutput();
     });
     setRow->addWidget(mTextureSet, 1);
-    mTextureSetReset = toolButton(w, "arrow-back-up", "Use the project's settings for this texture set again");
+    mTextureSetReset = toolButton(w, "arrow-back-up", "Reset: use the project's settings for this texture set again");
     connect(mTextureSetReset, &QToolButton::clicked, this, [this] {
         if (const std::string ts = ss(mTextureSet->currentData().toString()); !ts.empty())
             run("setBakeOutput", {{"material", ts}, {"clear", true}});
     });
     setRow->addWidget(mTextureSetReset);
+    form->addRow(bakerSubHeader(w, "Format"));
     form->addRow("Texture Set", setRow);
 
     mFormat = new QComboBox(w);
@@ -981,9 +1051,9 @@ QWidget* BakerPanel::buildOutput()
     });
     form->addRow("Format", mFormat);
     mBits = new QComboBox(w);
-    mBits->addItem("8 bit", 8);
-    mBits->addItem("16 bit", 16);
-    mBits->addItem("32 bit float", 32);
+    mBits->addItem("8-bit", 8);
+    mBits->addItem("16-bit", 16);
+    mBits->addItem("32-bit Float", 32);
     setComboDefault(mBits, mBits->findData(defaults.bits));
     mBits->setToolTip("PNG and PSD take 8 or 16, TIFF 8, 16 or 32 float, EXR 16 (half) or 32 float; TGA is always 8");
     connect(mBits, &QComboBox::currentIndexChanged, this, [this, set](int) { set("bits", mBits->currentData().toInt()); });
@@ -1000,17 +1070,18 @@ QWidget* BakerPanel::buildOutput()
     form->addRow("Resolution", mResolution);
     mSupersampling = new QComboBox(w);
     for (int s : {1, 4, 16, 64})
-        mSupersampling->addItem(s == 1 ? QString("1 (off)") : QString("%1 (%2 x %2)").arg(s).arg(int(std::sqrt(s))), s);
-    mSupersampling->setToolTip("Samples per texel");
+        mSupersampling->addItem(s == 1 ? QString("Off") : QString("%1 (%2 %3 %2)").arg(s).arg(int(std::sqrt(s))).arg(QChar(0x00D7)), s);
+    mSupersampling->setToolTip("Supersampling: samples per texel");
     setComboDefault(mSupersampling, mSupersampling->findData(defaults.supersampling));
     connect(mSupersampling, &QComboBox::currentIndexChanged, this, [this, set](int) { set("supersampling", mSupersampling->currentData().toInt()); });
     form->addRow("Supersampling", mSupersampling);
     mPadding = new QSpinBox(w);
+    bakerNumberStyle(mPadding);
     mPadding->setRange(-1, 1024);
     mPadding->setSuffix(" px");
     mPadding->setSpecialValueText("Fill");
     mPadding->setKeyboardTracking(false);
-    mPadding->setToolTip("Texels of dilation past island borders; Fill floods the whole texture");
+    mPadding->setToolTip("Padding: texels of dilation past island borders; Fill floods the whole texture");
     setSpinDefault(mPadding, defaults.padding);
     connect(mPadding, &QSpinBox::valueChanged, this, [set](int x) { set("padding", x); });
     form->addRow("Padding", mPadding);
@@ -1021,11 +1092,12 @@ QWidget* BakerPanel::buildOutput()
                 run("setBakeProject", {{flag, on}});
         };
     };
-    mAutoAssign = new QCheckBox("Assign to the lows' materials after baking", w);
+    mAutoAssign = new QCheckBox("Assign after baking", w);
     mAutoAssign->setObjectName("bakerAutoAssign");
-    mAutoAssign->setToolTip("Every bake wires its textures into the materials of the lows it was baked for (bakeAssign)");
+    mAutoAssign->setToolTip("Assign after baking: every bake wires its textures into the materials of the lows it was baked for (bakeAssign)");
     connect(mAutoAssign, &QCheckBox::toggled, this, pipeline("autoAssign"));
     setCheckDefault(mAutoAssign, bake::ProjectSettings{}.autoAssign);
+    form->addRow(bakerSubHeader(w, "After Baking"));
     form->addRow(QString(), mAutoAssign);
     mRebakeOnSave = new QCheckBox("Rebake on save", w);
     mRebakeOnSave->setObjectName("bakerRebakeOnSave");
@@ -1062,16 +1134,16 @@ QWidget* BakerPanel::buildResults()
     row->addWidget(mSummary, 1);
     auto* buttons = new QVBoxLayout;
     buttons->setSpacing(1);
-    mAssign = toolButton(mSummaryBox, "link", "Assign the maps to the lows' materials", "Assign");
+    mAssign = bakerPush(mSummaryBox, "Assign", "Assign: wire the maps into the lows' materials");
     mAssign->setObjectName("bakerAssign");
     connect(mAssign, &QToolButton::clicked, this, [this] { assignResult(); });
     buttons->addWidget(mAssign);
     row->addLayout(buttons);
-    auto* openOutput = toolButton(mSummaryBox, "folder", "Open the output folder", "Open");
+    auto* openOutput = bakerPush(mSummaryBox, "Open Folder", "Open Folder: show the output folder");
     openOutput->setObjectName("bakerOpenFolder");
     connect(openOutput, &QToolButton::clicked, this, [this] { openFolder(outputFolder()); });
     buttons->addWidget(openOutput);
-    auto* clear = toolButton(mSummaryBox, "x", "Clear the bake messages", "Clear");
+    auto* clear = bakerPush(mSummaryBox, "Clear", "Clear: the bake messages");
     clear->setObjectName("bakerClearSummary");
     connect(clear, &QToolButton::clicked, this, [this] {
         mSummary->clear();
@@ -1079,14 +1151,14 @@ QWidget* BakerPanel::buildResults()
     });
     buttons->addWidget(clear);
     buttons->addStretch(1);
-    // One column width, so the icons and labels line up.
+    // One column width, so the buttons line up.
     for (QToolButton* b : {mAssign, openOutput, clear})
         b->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     mThumbs = new ThumbList(split);
     mThumbs->setObjectName("bakerThumbs");
     mThumbs->setViewMode(QListView::IconMode);
-    mThumbs->setIconSize(QSize(128, 128));
-    mThumbs->setGridSize(QSize(144, 164));
+    mThumbs->setIconSize(QSize(120, 120));
+    mThumbs->setGridSize(QSize(136, 156));
     mThumbs->setResizeMode(QListView::Adjust);
     mThumbs->setMovement(QListView::Static);
     mThumbs->setWordWrap(true);

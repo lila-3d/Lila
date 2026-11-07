@@ -7,9 +7,12 @@
 #include "scene/Poses.h"
 #include "ui/Actions.h"
 #include "ui/AgentCapture.h"
+#include "ui/Controls.h"
 #include "ui/Deletion.h"
 #include "ui/Icons.h"
 #include "ui/Panels.h"
+#include "ui/SpinScrub.h"
+#include "ui/Theme.h"
 #include "ui/UiCommands.h"
 #include "ui/UiCommon.h"
 
@@ -51,12 +54,12 @@ public:
 
         auto* top = new QHBoxLayout;
         mCharacter = new QComboBox(this);
-        mCharacter->setToolTip("Character whose poses are shown; Selection follows the selected rig");
+        mCharacter->setToolTip("Character\nWhose poses are shown; Selection follows the selected rig");
         mCharacter->setSizeAdjustPolicy(QComboBox::AdjustToContents);
         top->addWidget(mCharacter);
         mTier = new QComboBox(this);
-        mTier->setToolTip("Library tier: scene file, workspace (.lila/poses), user prefs or rig template");
-        mTier->addItem("All tiers", QString());
+        mTier->setToolTip("Library Tier\nScene file, workspace (.lila/poses), user prefs or rig template");
+        mTier->addItem("All Tiers", QString());
         for (poses::Tier t : poses::kTiers)
             mTier->addItem(QString(poses::tierName(t)).replace(0, 1, QString(poses::tierName(t)).at(0).toUpper()), poses::tierName(t));
         top->addWidget(mTier);
@@ -80,53 +83,70 @@ public:
             if (QListWidgetItem* it = mList->currentItem(); it && it->isSelected())
                 deleteItem(it);
         });
+        setEmptyHint(mList, "No poses for this character. Pose the rig and click Save.");
         layout->addWidget(mList, 1);
 
         auto* blendRow = new QHBoxLayout;
         blendRow->addWidget(new QLabel("Blend", this));
-        mBlend = new QSlider(Qt::Horizontal, this);
-        mBlend->setRange(0, 100);
-        mBlend->setValue(100);
-        mBlend->setToolTip("How far applying moves from the current pose toward the stored one");
+        mBlend = new controls::SliderField(this);
+        mBlend->setRange(0.0, 100.0);
+        mBlend->setDecimals(0);
+        mBlend->setSuffix(" %");
+        mBlend->setValue(100.0);
+        setSpinDefault(mBlend, 100.0);
+        mBlend->setToolTip("Blend\nHow far applying moves from the current pose toward the stored one");
         blendRow->addWidget(mBlend, 1);
-        mBlendLabel = new QLabel("100%", this);
-        mBlendLabel->setMinimumWidth(36);
-        blendRow->addWidget(mBlendLabel);
         layout->addLayout(blendRow);
 
         auto* buttons = new QHBoxLayout;
-        auto* apply = new QPushButton(icon("player-play"), "Apply", this);
-        apply->setToolTip("Apply the selected pose (Ctrl: mirrored)");
-        auto* mirror = new QPushButton(icon("flip-vertical"), "Mirror", this);
-        mirror->setToolTip("Apply the selected pose mirrored, or mirror the current pose when none is selected");
+        buttons->setSpacing(2);
+        auto pushButton = [this](const QString& text, const QString& tip) {
+            auto* b = new QToolButton(this);
+            b->setText(text);
+            b->setToolTip(tip);
+            controls::setRole(b, "push");
+            return b;
+        };
+        QToolButton* apply = pushButton("Apply", "Apply Pose\nApply the selected pose (Ctrl: mirrored)");
+        QToolButton* mirror = pushButton("Mirror", "Apply Mirrored\nApply the selected pose mirrored, or mirror the current pose when none is selected");
         mSaveTier = new QComboBox(this);
-        mSaveTier->setToolTip("Where Save puts new poses");
+        mSaveTier->setToolTip("Save To\nThe tier Save puts new poses in");
         for (const char* t : {"scene", "workspace", "user"})
             mSaveTier->addItem(QString(t).replace(0, 1, QString(t).at(0).toUpper()), t);
-        auto* save = new QPushButton(icon("device-floppy"), "Save", this);
-        save->setToolTip("Save the selection's current pose under a new name");
+        setComboDefault(mSaveTier, 0);
+        QToolButton* save = pushButton("Save", "Save Pose\nSave the selection's current pose under a new name");
         buttons->addWidget(apply);
         buttons->addWidget(mirror);
+        buttons->addSpacing(10);
         buttons->addStretch(1);
+        buttons->addWidget(new QLabel("Save To", this));
         buttons->addWidget(mSaveTier);
         buttons->addWidget(save);
         layout->addLayout(buttons);
 
-        connect(mBlend, &QSlider::valueChanged, this, [this](int v) { mBlendLabel->setText(QString("%1%").arg(v)); });
         connect(mCharacter, &QComboBox::activated, this, [this] { refresh(); });
         connect(mTier, &QComboBox::activated, this, [this] { refresh(); });
+        // These refresh on activated, which a plain default reset would not emit.
+        for (QComboBox* c : {mCharacter, mTier})
+            onMiddleClickReset(
+                c,
+                [c] {
+                    c->setCurrentIndex(0);
+                    Q_EMIT c->activated(0);
+                },
+                c == mTier ? mTier->itemText(0) : QString("Selection"));
         connect(mSearch, &QLineEdit::textChanged, this, [this] { refresh(); });
         connect(mList, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
             applyItem(item, QApplication::keyboardModifiers().testFlag(Qt::ControlModifier));
         });
-        connect(apply, &QPushButton::clicked, this, [this] { applyItem(mList->currentItem(), QApplication::keyboardModifiers().testFlag(Qt::ControlModifier)); });
-        connect(mirror, &QPushButton::clicked, this, [this] {
+        connect(apply, &QToolButton::clicked, this, [this] { applyItem(mList->currentItem(), QApplication::keyboardModifiers().testFlag(Qt::ControlModifier)); });
+        connect(mirror, &QToolButton::clicked, this, [this] {
             if (QListWidgetItem* item = mList->currentItem())
                 applyItem(item, true);
             else
                 tryRunUi("mirrorPose", json::object());
         });
-        connect(save, &QPushButton::clicked, this, [this] { savePose(); });
+        connect(save, &QToolButton::clicked, this, [this] { savePose(); });
         connect(mList, &QListWidget::customContextMenuRequested, this, [this](const QPoint& at) { contextMenu(at); });
 
         mPoseListener = poses::addListener([this] { scheduleRefresh(); });
@@ -318,8 +338,7 @@ private:
     QComboBox* mSaveTier = nullptr;
     QLineEdit* mSearch = nullptr;
     QListWidget* mList = nullptr;
-    QSlider* mBlend = nullptr;
-    QLabel* mBlendLabel = nullptr;
+    controls::SliderField* mBlend = nullptr;
     int mPoseListener = 0;
     int mGraphListener = 0;
     bool mRefreshQueued = false;

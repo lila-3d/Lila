@@ -4,6 +4,8 @@
 #include "BladeExtrude.h"
 #include "Blades.h"
 
+#include "PanelKit.h"
+
 #include <lila/Command.h>
 #include <lila/Log.h>
 #include <lila/Prefs.h>
@@ -13,14 +15,11 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
-#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPointer>
-#include <QPushButton>
 #include <QScrollArea>
-#include <QSlider>
-#include <QSpinBox>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -242,13 +241,11 @@ void deleteDeformer()
         status("Deleted " + std::to_string(r.get<int>()) + " " + s.kind + " deformer(s).");
 }
 
-/** Spin box for a value at a JSON pointer in the stored values. */
+/** Value field for a value at a JSON pointer in the stored values. */
 QDoubleSpinBox* numberField(QWidget* parent, const std::string& pointer, double value, double low, double high, int decimals,
-                            const char* tip)
+                            const char* tip, const QString& unit = {})
 {
-    auto* box = new QDoubleSpinBox(parent);
-    box->setRange(low, high);
-    box->setDecimals(decimals);
+    QDoubleSpinBox* box = panelkit::valueField(low, high, decimals, unit, parent);
     box->setSingleStep(decimals > 1 ? 0.1 : 1.0);
     box->setValue(value);
     box->setToolTip(tip);
@@ -273,166 +270,180 @@ QCheckBox* checkField(QWidget* parent, const char* label, const std::string& poi
     return box;
 }
 
-/** -1..1 bias: a slider and a spin box kept together. */
-QWidget* biasField(QWidget* parent, const std::string& pointer, double value)
+/** -1..1 bias toward the top. */
+QDoubleSpinBox* biasField(QWidget* parent, const std::string& pointer, double value)
 {
-    auto* w = new QWidget(parent);
-    auto* row = new QHBoxLayout(w);
-    row->setContentsMargins(0, 0, 0, 0);
-    auto* slider = new QSlider(Qt::Horizontal, w);
-    slider->setRange(-100, 100);
-    slider->setValue(int(std::lround(value * 100.0)));
-    auto* box = numberField(w, pointer, value, -1.0, 1.0, 2,
-                            "1 pushes the high end of the range to the blades near the top, -1 to the ones near the bottom, 0 is pure random.");
+    auto* box = panelkit::valueField(0, 1, 0, {}, parent);
+    box->setRange(-1.0, 1.0);
+    box->setDecimals(2);
     box->setSingleStep(0.05);
-    QObject::connect(slider, &QSlider::valueChanged, box, [box](int x) { box->setValue(x / 100.0); });
-    QObject::connect(box, &QDoubleSpinBox::valueChanged, slider, [slider](double x) {
-        const QSignalBlocker block(slider);
-        slider->setValue(int(std::lround(x * 100.0)));
+    box->setValue(value);
+    box->setToolTip("Bias To Top: 1 pushes the high end of the range to the blades near the top, -1 to the ones near the bottom, 0 is pure random.");
+    QObject::connect(box, &QDoubleSpinBox::valueChanged, box, [pointer](double x) {
+        json v = load();
+        v[json::json_pointer(pointer)] = x;
+        save(v);
     });
-    w->setToolTip(box->toolTip());
-    row->addWidget(box);
-    row->addWidget(slider, 1);
-    return w;
+    return box;
 }
 
-QPushButton* button(QWidget* parent, const char* label, const char* tip, std::function<void()> fn)
+QFormLayout* bladesForm(QWidget* w)
 {
-    auto* b = new QPushButton(label, parent);
-    b->setToolTip(tip);
-    QObject::connect(b, &QPushButton::clicked, b, std::move(fn));
-    return b;
-}
-
-QLabel* note(QWidget* parent, const char* text)
-{
-    auto* l = new QLabel(text, parent);
-    l->setWordWrap(true);
-    QFont f = l->font();
-    f.setItalic(true);
-    l->setFont(f);
-    return l;
+    auto* f = new QFormLayout(w);
+    f->setContentsMargins(0, 0, 0, 0);
+    f->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    f->setVerticalSpacing(4);
+    return f;
 }
 
 /** The panel's content; rebuilt in place when the stored values change under it (Read Selection). */
 void fill(QWidget* body)
 {
+    constexpr const char* kSections = "foliageBlades";
     const json v = load();
     auto* layout = new QVBoxLayout(body);
+    layout->setContentsMargins(12, 8, 12, 8);
+    layout->setSpacing(4);
 
-    auto* common = new QGroupBox("Common", body);
-    auto* cf = new QFormLayout(common);
-    auto* up = new QComboBox(common);
-    for (const char* c : kUpChoices)
-        up->addItem(c);
-    up->setCurrentText(QString::fromStdString(v["up"].get<std::string>()));
-    up->setToolTip("Which axis counts as up when biasing toward the top. Auto follows the scene.");
-    QObject::connect(up, &QComboBox::currentTextChanged, up, [](const QString& t) {
+    auto* common = new QWidget(body);
+    auto* cf = bladesForm(common);
+    panelkit::Segmented up = panelkit::segmented(common);
+    for (int i = 0; i < int(std::size(kUpChoices)); ++i)
+        up.add(kUpChoices[i], i == 0 ? "Auto: up follows the scene" : QString("%1 is up").arg(kUpChoices[i]), i);
+    for (int i = 0; i < int(std::size(kUpChoices)); ++i)
+        if (v["up"].get<std::string>() == kUpChoices[i])
+            up.setCurrent(i);
+    up.widget->setToolTip("Up Axis: which axis counts as up when biasing toward the top. Auto follows the scene.");
+    QObject::connect(up.group, &QButtonGroup::idClicked, up.group, [](int id) {
         json x = load();
-        x["up"] = t.toStdString();
+        x["up"] = kUpChoices[std::clamp(id, 0, int(std::size(kUpChoices)) - 1)];
         save(x);
     });
-    cf->addRow("Up Axis", up);
+    cf->addRow("Up Axis", up.widget);
     auto* seedRow = new QWidget(common);
     auto* sr = new QHBoxLayout(seedRow);
     sr->setContentsMargins(0, 0, 0, 0);
-    auto* seed = new QSpinBox(seedRow);
-    seed->setRange(0, 999999);
-    seed->setValue(int(seedOf(v)));
-    seed->setToolTip("0 gives a different result every run. Any other number repeats.");
-    QObject::connect(seed, &QSpinBox::valueChanged, seed, [](int s) {
+    sr->setSpacing(2);
+    QDoubleSpinBox* seed = panelkit::valueField(0, 999999, 0, {}, seedRow);
+    seed->setValue(double(seedOf(v)));
+    seed->setToolTip("Seed: 0 gives a different result every run. Any other number repeats.");
+    QObject::connect(seed, &QDoubleSpinBox::valueChanged, seed, [](double s) {
         json x = load();
-        x["seed"] = s;
+        x["seed"] = int(std::lround(s));
         save(x);
     });
     sr->addWidget(seed, 1);
-    sr->addWidget(button(seedRow, "New", "Pick a new random seed.", [seed] {
+    auto* newSeed = new QToolButton(seedRow);
+    newSeed->setText("New");
+    newSeed->setToolTip("New Seed: pick a new random seed.");
+    panelkit::setRole(newSeed, "push");
+    QObject::connect(newSeed, &QToolButton::clicked, seed, [seed] {
         static std::mt19937 pick{std::random_device{}()};
         seed->setValue(std::uniform_int_distribution<int>(1, 999999)(pick));
-    }));
+    });
+    sr->addWidget(newSeed);
     cf->addRow("Seed", seedRow);
-    layout->addWidget(common);
+    layout->addWidget(panelkit::section("Common", common, body, kSections));
 
-    auto* ex = new QGroupBox("Extrude", body);
+    auto* ex = new QWidget(body);
     auto* ev = new QVBoxLayout(ex);
-    ev->addWidget(note(ex, "Grow blades from the selected faces, then vary them. Every blade keeps its own values."));
-    auto* nf = new QFormLayout;
+    ev->setContentsMargins(0, 0, 0, 0);
+    ev->setSpacing(4);
+    auto* nfBox = new QWidget(ex);
+    auto* nf = bladesForm(nfBox);
     const json& n = v["newExtrude"];
-    nf->addRow("Thickness", numberField(ex, "/newExtrude/thickness", num(n, "thickness", 1.0), -1e5, 1e5, 3,
-                                        "How far new blades grow along their face normal, cm."));
-    nf->addRow("Offset", numberField(ex, "/newExtrude/offset", num(n, "offset", 0.0), -1e5, 1e5, 3,
-                                     "How much new blades narrow as they grow, cm."));
-    auto* divisions = numberField(ex, "/newExtrude/divisions", num(n, "divisions", 1), 1, 64, 0, "Segments up each new blade.");
+    nf->addRow("Thickness", numberField(nfBox, "/newExtrude/thickness", num(n, "thickness", 1.0), -1e5, 1e5, 3,
+                                        "Thickness: how far new blades grow along their face normal.", "cm"));
+    nf->addRow("Offset", numberField(nfBox, "/newExtrude/offset", num(n, "offset", 0.0), -1e5, 1e5, 3,
+                                     "Offset: how much new blades narrow as they grow.", "cm"));
+    auto* divisions = panelkit::valueField(0, 1, 0, {}, nfBox);
+    divisions->setRange(1, 64);
+    divisions->setDecimals(0);
+    divisions->setValue(num(n, "divisions", 1));
+    divisions->setToolTip("Divisions: segments up each new blade.");
+    QObject::connect(divisions, &QDoubleSpinBox::valueChanged, divisions, [](double x) {
+        json s = load();
+        s["newExtrude"]["divisions"] = int(std::lround(x));
+        save(s);
+    });
     nf->addRow("Divisions", divisions);
-    ev->addLayout(nf);
-    ev->addWidget(checkField(ex, "Keep Faces Together", "/newExtrude/keepFacesTogether", n.value("keepFacesTogether", false),
-                             "Connected faces grow as one blade. Off, every face is its own blade."));
-    ev->addWidget(button(ex, "Extrude Blades", "Grow blades from the selected faces.", extrudeBlades));
+    nf->addRow("", checkField(nfBox, "Keep Faces Together", "/newExtrude/keepFacesTogether", n.value("keepFacesTogether", false),
+                              "Keep Faces Together: connected faces grow as one blade. Off, every face is its own blade."));
+    ev->addWidget(nfBox);
+    ev->addWidget(panelkit::push("foliageBlades.extrudeBlades", ex, "Extrude Blades"));
+    layout->addWidget(panelkit::section("Extrude", ex, body, kSections));
 
-    auto* grid = new QFormLayout;
+    auto* rand = new QWidget(body);
+    auto* rv = new QVBoxLayout(rand);
+    rv->setContentsMargins(0, 0, 0, 0);
+    rv->setSpacing(4);
+    auto* gridBox = new QWidget(rand);
+    auto* grid = bladesForm(gridBox);
     for (int f = 0; f < kFieldCount; ++f)
     {
-        auto* row = new QWidget(ex);
+        auto* row = new QWidget(gridBox);
         auto* h = new QHBoxLayout(row);
         h->setContentsMargins(0, 0, 0, 0);
+        h->setSpacing(2);
         const std::string base = std::string("/extrude/") + fieldName(f);
         const glm::dvec2 r = extrudeRange(v, f);
-        h->addWidget(checkField(row, "", base + "/enabled", extrudeEnabled(v, f), "Randomize this value."));
-        h->addWidget(numberField(row, base + "/low", r.x, -1e5, 1e5, 3, "Lowest value to pick."), 1);
-        h->addWidget(numberField(row, base + "/high", r.y, -1e5, 1e5, 3, "Highest value to pick."), 1);
+        QCheckBox* on = checkField(row, "", base + "/enabled", extrudeEnabled(v, f), "Randomize this value.");
+        QDoubleSpinBox* low = numberField(row, base + "/low", r.x, -1e5, 1e5, 3, "Low: lowest value to pick.");
+        QDoubleSpinBox* high = numberField(row, base + "/high", r.y, -1e5, 1e5, 3, "High: highest value to pick.");
+        low->setEnabled(on->isChecked());
+        high->setEnabled(on->isChecked());
+        QObject::connect(on, &QCheckBox::toggled, low, &QWidget::setEnabled);
+        QObject::connect(on, &QCheckBox::toggled, high, &QWidget::setEnabled);
+        h->addWidget(on);
+        h->addWidget(low, 1);
+        h->addWidget(high, 1);
         grid->addRow(fieldLabel(f), row);
     }
-    grid->addRow("Bias To Top", biasField(ex, "/extrudeBias", num(v, "extrudeBias", 0.0)));
-    ev->addLayout(grid);
-    auto* er = new QHBoxLayout;
-    er->addWidget(button(ex, "Randomize Extrude", "Randomize the blades of every selected mesh.", randomizeExtrude), 1);
-    er->addWidget(button(ex, "Read Selection", "Fill the ranges with give or take 30% of what the selected blades use now.", readExtrude));
-    er->addWidget(button(ex, "Reset", "Put the blades back to the values they were extruded with.", resetExtrude));
-    ev->addLayout(er);
-    auto* sel = new QHBoxLayout;
-    sel->addWidget(button(ex, "Select Extruded Faces",
-                          "Select the faces the blades grew from, which are their caps now. Worked out from the mesh each time.",
-                          [] { selectExtruded(false); }),
-                   1);
-    sel->addWidget(button(ex, "Select Stems", "Select every face a blade made, caps and walls, down to the ring it stands on.",
-                          [] { selectExtruded(true); }));
-    ev->addLayout(sel);
-    layout->addWidget(ex);
+    grid->addRow("Bias To Top", biasField(gridBox, "/extrudeBias", num(v, "extrudeBias", 0.0)));
+    rv->addWidget(gridBox);
+    rv->addWidget(panelkit::grid({panelkit::push("foliageBlades.randomizeExtrude", rand, "Randomize"),
+                                  panelkit::push("foliageBlades.readExtrude", rand, "Read Selection")},
+                                 2, rand));
+    rv->addWidget(panelkit::overflow({"foliageBlades.resetExtrude", "foliageBlades.selectExtruded", "foliageBlades.selectStems"}, rand));
+    layout->addWidget(panelkit::section("Randomize Extrude", rand, body, kSections));
 
-    auto* de = new QGroupBox("Deformers", body);
+    auto* de = new QWidget(body);
     auto* dv = new QVBoxLayout(de);
-    dv->addWidget(note(de, "Adds a deformer to the selected faces, one per blade."));
-    auto* df = new QFormLayout;
-    auto* type = new QComboBox(de);
+    dv->setContentsMargins(0, 0, 0, 0);
+    dv->setSpacing(4);
+    auto* dfBox = new QWidget(de);
+    auto* df = bladesForm(dfBox);
+    auto* type = new QComboBox(dfBox);
     for (const DeformerSpec& s : deformerSpecs())
         type->addItem(s.label);
     type->setCurrentText(QString::fromStdString(v["deformer"].get<std::string>()));
+    type->setToolTip("Type: the deformer each blade gets");
     df->addRow("Type", type);
     const glm::dvec2 amount = amountRange(v);
     const std::string kind = currentSpec(v).kind;
-    auto* amountRow = new QWidget(de);
+    auto* amountRow = new QWidget(dfBox);
     auto* ar = new QHBoxLayout(amountRow);
     ar->setContentsMargins(0, 0, 0, 0);
-    ar->addWidget(numberField(amountRow, "/amounts/" + kind + "/low", amount.x, -1e5, 1e5, 3, "Lowest value to pick."), 1);
-    ar->addWidget(numberField(amountRow, "/amounts/" + kind + "/high", amount.y, -1e5, 1e5, 3, "Highest value to pick."), 1);
+    ar->setSpacing(2);
+    ar->addWidget(numberField(amountRow, "/amounts/" + kind + "/low", amount.x, -1e5, 1e5, 3, "Low: lowest value to pick."), 1);
+    ar->addWidget(numberField(amountRow, "/amounts/" + kind + "/high", amount.y, -1e5, 1e5, 3, "High: highest value to pick."), 1);
     df->addRow(currentSpec(v).amount, amountRow);
-    df->addRow("Bias To Top", biasField(de, "/deformerBias", num(v, "deformerBias", 0.0)));
-    dv->addLayout(df);
-    dv->addWidget(checkField(de, "One Per Blade", "/deformerRegions", v.value("deformerRegions", true),
-                             "Give each blade its own deformer. Off puts one deformer on the whole selection."));
-    dv->addWidget(checkField(de, "From Base", "/deformerBase", v.value("deformerBase", true),
-                             "Anchor the handle at the bottom of each blade so it deforms root to tip. Off centres the handle."));
-    dv->addWidget(checkField(de, "Random Direction", "/deformerSpin", v.value("deformerSpin", true),
-                             "Spin each handle around the up axis, so blades lean different ways."));
-    auto* dr = new QHBoxLayout;
-    dr->addWidget(button(de, "Add Deformer", "Add the deformer to the selected faces and randomize it.", addDeformer), 1);
-    dr->addWidget(button(de, "Randomize", "Randomize the deformers of this type already on the selection.", randomizeDeformer));
-    dr->addWidget(button(de, "Delete", "Delete the deformers of this type on the selection.", deleteDeformer));
-    dv->addLayout(dr);
-    layout->addWidget(de);
+    df->addRow("Bias To Top", biasField(dfBox, "/deformerBias", num(v, "deformerBias", 0.0)));
+    df->addRow("", checkField(dfBox, "One Per Blade", "/deformerRegions", v.value("deformerRegions", true),
+                              "One Per Blade: give each blade its own deformer. Off puts one deformer on the whole selection."));
+    df->addRow("", checkField(dfBox, "From Base", "/deformerBase", v.value("deformerBase", true),
+                              "From Base: anchor the handle at the bottom of each blade so it deforms root to tip. Off centres the handle."));
+    df->addRow("", checkField(dfBox, "Random Direction", "/deformerSpin", v.value("deformerSpin", true),
+                              "Random Direction: spin each handle around the up axis, so blades lean different ways."));
+    dv->addWidget(dfBox);
+    dv->addWidget(panelkit::grid({panelkit::push("foliageBlades.addDeformer", de, "Add"), panelkit::push("foliageBlades.randomizeDeformer", de, "Randomize"),
+                                  panelkit::push("foliageBlades.deleteDeformer", de, "Delete")},
+                                 3, de));
+    layout->addWidget(panelkit::section("Deformers", de, body, kSections));
 
-    auto* statusLine = new QLabel("Ready.", body);
+    auto* statusLine = new QLabel(body);
     statusLine->setWordWrap(true);
+    statusLine->setEnabled(false);
     gStatus = statusLine;
     layout->addWidget(statusLine);
     layout->addStretch(1);

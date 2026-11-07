@@ -6,16 +6,15 @@
 #include "ui/Actions.h"
 #include "ui/DocsUi.h"
 #include "ui/AdjustLastOp.h"
-#include "ui/FixedRowLayout.h"
+#include "ui/Controls.h"
 #include "ui/Icons.h"
 #include "ui/OptionBox.h"
 #include "ui/Shelf.h"
+#include "ui/ToolkitLayout.h"
 
-#include <QApplication>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QScrollArea>
-#include <QScrollBar>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -28,39 +27,16 @@ namespace
 {
 constexpr const char* kLevelCollapsedPref = "/levelToolkit/collapsed";
 
-QWidget* levelSection(const QString& title, QWidget* content, QWidget* parent, const std::string& docsPage = {})
+/** The grid of a group's buttons, skipping null ones, with its overflow menu in the last cell. */
+QWidget* levelGroup(const std::vector<QToolButton*>& buttons, const std::vector<std::string>& more, int columns, QWidget* parent)
 {
-    auto* box = new QWidget(parent);
-    auto* v = new QVBoxLayout(box);
-    v->setContentsMargins(0, 0, 0, 0);
-    v->setSpacing(2);
-    auto* header = new QToolButton(box);
-    header->setText(title);
-    header->setCheckable(true);
-    header->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    header->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    header->setStyleSheet("QToolButton { text-align: left; font-weight: 600; padding: 3px; }");
-    std::string key = std::string(kLevelCollapsedPref) + "/" + title.toStdString();
-    bool open = !PrefStore::get().value<bool>("general", key, false);
-    header->setChecked(open);
-    header->setArrowType(open ? Qt::DownArrow : Qt::RightArrow);
-    content->setVisible(open);
-    QObject::connect(header, &QToolButton::toggled, content, [header, content, key](bool on) {
-        content->setVisible(on);
-        header->setArrowType(on ? Qt::DownArrow : Qt::RightArrow);
-        PrefStore::get().set("general", key, !on);
-    });
-    // The docs button sits inside the header bar, on its right; it takes its own clicks, so it doesn't fold the section.
-    if (!docsPage.empty())
-    {
-        auto* row = new QHBoxLayout(header);
-        row->setContentsMargins(0, 0, 3, 0);
-        row->addStretch(1);
-        row->addWidget(docs::helpButton(docsPage, header));
-    }
-    v->addWidget(header);
-    v->addWidget(content, 1);
-    return box;
+    std::vector<QWidget*> items;
+    for (QToolButton* b : buttons)
+        if (b)
+            items.push_back(b);
+    if (!more.empty())
+        items.push_back(controls::overflow(more, parent));
+    return controls::grid(items, columns, parent);
 }
 
 std::vector<const levelToolkit::Section*> sectionsInOrder()
@@ -138,12 +114,17 @@ LevelToolkit::LevelToolkit(QWidget* parent) : QWidget(parent)
     mBody = new QWidget(mScroll);
     new QVBoxLayout(mBody);
     mScroll->setWidget(mBody);
+    controls::fitScrollWidth(mScroll);
 
     // Extensions register sections and actions in bursts while they load and unload, so the rebuild waits for the burst.
     mRebuild = new QTimer(this);
     mRebuild->setSingleShot(true);
     mRebuild->setInterval(0);
     connect(mRebuild, &QTimer::timeout, this, [this] { rebuild(); });
+    mRefresh = new QTimer(this);
+    mRefresh->setSingleShot(true);
+    mRefresh->setInterval(30);
+    connect(mRefresh, &QTimer::timeout, this, [this] { refreshButtons(); });
     mSectionListener = levelToolkit::registry().addListener([this](RegistryChange, const std::string&, const std::string&) { mRebuild->start(); });
     mActionListener = actions::registry().addListener([this](RegistryChange, const std::string&, const std::string&) { mRebuild->start(); });
     rebuild();
@@ -158,7 +139,6 @@ LevelToolkit::~LevelToolkit()
 void LevelToolkit::rebuild()
 {
     mButtons.clear();
-    mGrids.clear();
     QLayout* root = mBody->layout();
     while (QLayoutItem* item = root->takeAt(0))
     {
@@ -166,7 +146,7 @@ void LevelToolkit::rebuild()
         delete item;
     }
     auto* v = static_cast<QVBoxLayout*>(root);
-    v->setContentsMargins(4, 4, 4, 4);
+    v->setContentsMargins(10, 4, 10, 8);
     v->setSpacing(4);
 
     int shown = 0;
@@ -174,24 +154,27 @@ void LevelToolkit::rebuild()
     {
         auto* box = new QWidget(mBody);
         auto* boxLayout = new QVBoxLayout(box);
-        boxLayout->setContentsMargins(0, 0, 0, 0);
-        boxLayout->setSpacing(2);
-        auto* rows = new QWidget(box);
-        auto* flow = new FixedRowLayout(4, 3);
-        flow->setContentsMargins(2, 0, 2, 2);
-        rows->setLayout(flow);
+        boxLayout->setContentsMargins(0, 0, 0, 4);
+        boxLayout->setSpacing(4);
+        std::vector<QToolButton*> tiles;
+        std::vector<QToolButton*> pushes;
+        std::vector<std::string> more;
         for (const levelToolkit::Item& item : s->items)
-            if (item.action.empty())
-                flow->endRow();
-            else if (QToolButton* b = actionButton(item.action, QString::fromStdString(item.icon), QString::fromStdString(item.text), rows))
-                flow->addWidget(optionBox::withOptionBox(b, item.action, rows));
-        if (flow->count())
         {
-            boxLayout->addWidget(rows);
-            mGrids.push_back(rows);
+            if (item.action.empty() || !actions::find(item.action))
+                continue;
+            const QString label = QString::fromStdString(item.text);
+            if (!item.shelf.empty())
+                tiles.push_back(tile(item.action, item.icon, label, box));
+            else if (pushes.size() < 6)
+                pushes.push_back(push(item.action, label, box));
+            else
+                more.push_back(item.action);
         }
-        else
-            delete rows;
+        if (!tiles.empty())
+            boxLayout->addWidget(levelGroup(tiles, {}, kToolkitColumns, box));
+        if (!pushes.empty() || !more.empty())
+            boxLayout->addWidget(levelGroup(pushes, more, 2, box));
         if (s->create)
             if (QWidget* extra = s->create(box))
                 boxLayout->addWidget(extra);
@@ -200,68 +183,85 @@ void LevelToolkit::rebuild()
             delete box;
             continue;
         }
-        v->addWidget(levelSection(QString::fromStdString(s->title), box, mBody, s->docs));
+        QToolButton* header = nullptr;
+        v->addWidget(collapsibleSection(QString::fromStdString(s->title), box, mBody, kLevelCollapsedPref, true, &header));
+        // The docs button takes its own clicks, so it doesn't fold the section.
+        if (!s->docs.empty() && header)
+        {
+            auto* row = new QHBoxLayout(header);
+            row->setContentsMargins(0, 0, 2, 0);
+            row->addStretch(1);
+            row->addWidget(docs::helpButton(s->docs, header));
+        }
         ++shown;
     }
 
     if (!shown)
     {
-        auto* empty = new QLabel("No level tools are loaded. Terrain, Settlement, Masonry, Stagehand and other extensions add theirs here.", mBody);
+        auto* empty = new QLabel("No level tools loaded. Enable Terrain, Settlement, Masonry or Stagehand in the Extension Manager.", mBody);
         empty->setWordWrap(true);
-        empty->setContentsMargins(4, 4, 4, 4);
+        empty->setContentsMargins(2, 4, 2, 4);
+        controls::setRole(empty, "hint");
         v->addWidget(empty);
+        if (actions::find("window.extensionManager"))
+            v->addWidget(levelGroup({push("window.extensionManager", "Extension Manager", mBody)}, {}, 2, mBody));
     }
     else
     {
+        // The in-view popup is the main place for these; the section serves those who turn it off.
         auto* optionsBox = new QWidget(mBody);
         auto* optionsLayout = new QVBoxLayout(optionsBox);
-        optionsLayout->setContentsMargins(4, 0, 4, 4);
+        optionsLayout->setContentsMargins(0, 0, 0, 4);
         optionsLayout->addWidget(new LastOpEditor(optionsBox));
-        v->addWidget(levelSection("Tool Options", optionsBox, mBody));
+        v->addWidget(collapsibleSection("Tool Options", optionsBox, mBody, kLevelCollapsedPref, false));
     }
     v->addStretch(1);
-    updateMinimumWidth();
+    refreshButtons();
 }
 
-void LevelToolkit::updateMinimumWidth()
+QToolButton* LevelToolkit::tile(const std::string& id, const std::string& iconName, const QString& label, QWidget* parent)
 {
-    const QMargins m = mBody->layout()->contentsMargins();
-    int width = mBody->minimumSizeHint().width();
-    for (QWidget* grid : mGrids)
-        width = std::max(width, grid->layout()->sizeHint().width() + m.left() + m.right());
-    mScroll->setMinimumWidth(width + mScroll->verticalScrollBar()->sizeHint().width());
-}
-
-QToolButton* LevelToolkit::actionButton(const std::string& id, const QString& iconName, const QString& text, QWidget* parent)
-{
-    const Action* action = actions::find(id);
-    if (!action)
+    if (!actions::find(id))
         return nullptr;
-    auto* b = new QToolButton(parent);
-    if (!iconName.isEmpty())
-        b->setIcon(icon(iconName));
-    b->setText(text.isEmpty() ? QString::fromStdString(action->label) : text);
-    b->setToolButtonStyle(iconName.isEmpty() ? Qt::ToolButtonTextOnly : Qt::ToolButtonTextBesideIcon);
+    QToolButton* b = controls::tile(id, iconName.empty() ? nullptr : iconName.c_str(), parent, label);
     b->setProperty("lilaAction", QString::fromStdString(id));
-    b->setToolTip(QString::fromStdString(actions::tooltip(id)));
-    connect(b, &QToolButton::clicked, this, [id] {
-        if ((QApplication::keyboardModifiers() & Qt::ShiftModifier) && optionBox::available(id))
-            optionBox::open(id);
-        else
-            actions::run(json(id));
-    });
+    connect(b, &QToolButton::clicked, this, [this] { mRefresh->start(); });
     mButtons.push_back(b);
     return b;
+}
+
+QToolButton* LevelToolkit::push(const std::string& id, const QString& label, QWidget* parent)
+{
+    if (!actions::find(id))
+        return nullptr;
+    QToolButton* b = controls::push(id, parent, label);
+    b->setProperty("lilaAction", QString::fromStdString(id));
+    connect(b, &QToolButton::clicked, this, [this] { mRefresh->start(); });
+    mButtons.push_back(b);
+    return b;
+}
+
+void LevelToolkit::refreshButtons()
+{
+    for (QToolButton* b : mButtons)
+    {
+        const std::string id = b->property("lilaAction").toString().toStdString();
+        const Action* a = actions::find(id);
+        if (!a)
+            continue;
+        // Hotkeys are live-editable, so tooltips pick up the current keys.
+        QString tip = QString::fromStdString(actions::tooltip(id));
+        if (optionBox::available(id))
+            tip += "\nClick corner, right-click or Shift+click for options";
+        b->setToolTip(tip);
+        if (a->checked && b->isCheckable())
+            b->setChecked(a->checked());
+    }
 }
 
 void LevelToolkit::showEvent(QShowEvent* e)
 {
     QWidget::showEvent(e);
-    // Styles land on first show and change the buttons' hints.
-    updateMinimumWidth();
-    // Hotkeys are live-editable, so tooltips pick up the current keys whenever the panel shows.
-    for (QToolButton* b : mButtons)
-        if (std::string id = b->property("lilaAction").toString().toStdString(); actions::find(id))
-            b->setToolTip(QString::fromStdString(actions::tooltip(id)));
+    refreshButtons();
 }
 } // namespace lila::ui

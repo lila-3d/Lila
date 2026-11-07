@@ -21,7 +21,8 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
-#include <QPushButton>
+#include <QGroupBox>
+#include <QToolButton>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -472,6 +473,17 @@ std::string infoText(NodeId id)
     }
 }
 
+/** A labelled button in the app sheet's push style. */
+QToolButton* physPush(QWidget* parent, const char* label, const char* tip)
+{
+    auto* b = new QToolButton(parent);
+    b->setText(label);
+    b->setToolTip(QString("%1\n%2").arg(label, tip));
+    b->setProperty("role", "push");
+    b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    return b;
+}
+
 /** Simulate / Record / Snap / Live / Clear buttons and a status line for one solver. */
 QWidget* solverControls(NodeId id, QWidget* parent = nullptr)
 {
@@ -480,32 +492,34 @@ QWidget* solverControls(NodeId id, QWidget* parent = nullptr)
     v->setContentsMargins(0, 0, 0, 0);
     auto* row1 = new QHBoxLayout;
     auto* row2 = new QHBoxLayout;
+    row1->setSpacing(2);
+    row2->setSpacing(2);
     auto* status = new QLabel(w);
     status->setWordWrap(true);
+    status->setForegroundRole(QPalette::PlaceholderText);
     auto name = [id] {
         Node* n = Graph::current().node(id);
         return n ? n->path() : std::string();
     };
     auto refresh = [status, id] { status->setText(QString::fromStdString(infoText(id))); };
     auto button = [&](QHBoxLayout* row, const char* label, const char* tip, std::function<void()> fn) {
-        auto* b = new QPushButton(label, w);
-        b->setToolTip(tip);
-        QObject::connect(b, &QPushButton::clicked, w, [fn = std::move(fn), refresh] {
+        QToolButton* b = physPush(w, label, tip);
+        QObject::connect(b, &QToolButton::clicked, w, [fn = std::move(fn), refresh] {
             fn();
             refresh();
         });
         row->addWidget(b);
     };
-    button(row1, "Simulate", "Simulate up to the current frame from the start or the cache.", [name] {
+    button(row1, "Simulate", "Simulate up to the current frame from the start or the cache", [name] {
         runCommand("simulate", {{"args", {name()}}, {"frame", sim::frameOf(Graph::current().time())}});
     });
-    button(row1, "Record", "Bake to a new additive animation layer.", [name] { runCommand("recordPhysics", {{"args", {name()}}}); });
-    button(row1, "Replace", "Bake over the joints' own keys across the range.", [name] {
+    button(row1, "Record", "Bake to a new additive animation layer", [name] { runCommand("recordPhysics", {{"args", {name()}}}); });
+    button(row1, "Replace", "Bake over the joints' own keys across the range", [name] {
         runCommand("recordPhysics", {{"args", {name()}}, {"mode", "replace"}});
     });
-    button(row2, "Snap", "Key the joints to the simulated pose at this frame.", [name] { runCommand("snapToSimulation", {{"args", {name()}}}); });
-    button(row2, "Live", "Drag the ragdoll around in the viewport.", [] { viewportTools::activate("physics.live"); });
-    button(row2, "Clear Cache", "Throw the cache away; the next frame simulates from the start.", [name] {
+    button(row2, "Snap", "Key the joints to the simulated pose at this frame", [name] { runCommand("snapToSimulation", {{"args", {name()}}}); });
+    button(row2, "Live", "Drag the ragdoll around in the viewport", [] { viewportTools::activate("physics.live"); });
+    button(row2, "Clear Cache", "Throw the cache away; the next frame simulates from the start", [name] {
         runCommand("clearSimCache", {{"args", {name()}}});
     });
     v->addLayout(row1);
@@ -521,23 +535,23 @@ QWidget* markerControls(NodeId id, QWidget* parent = nullptr)
     auto* w = new QWidget(parent);
     auto* row = new QHBoxLayout(w);
     row->setContentsMargins(0, 0, 0, 0);
+    row->setSpacing(2);
     auto name = [id] {
         Node* n = Graph::current().node(id);
         return n ? n->path() : std::string();
     };
     auto button = [&](const char* label, const char* tip, std::function<void()> fn) {
-        auto* b = new QPushButton(label, w);
-        b->setToolTip(tip);
-        QObject::connect(b, &QPushButton::clicked, w, std::move(fn));
+        QToolButton* b = physPush(w, label, tip);
+        QObject::connect(b, &QToolButton::clicked, w, std::move(fn));
         row->addWidget(b);
     };
-    button("Fit Shape", "Fit the shape to the joint's region of the skinned mesh.", [name] {
+    button("Fit Shape", "Fit the shape to the joint's region of the skinned mesh", [name] {
         runCommand("fitPhysicsMarker", {{"args", {name()}}, {"limits", false}});
     });
-    button("Fit Limits", "Fit the swing cones and twist range to the motion over the playback range.", [name] {
+    button("Fit Limits", "Fit the swing cones and twist range to the motion over the playback range", [name] {
         runCommand("fitPhysicsMarker", {{"args", {name()}}, {"fitShape", false}});
     });
-    button("Select Joint", "Select the joint this marker drives.", [id] {
+    button("Select Joint", "Select the joint this marker drives", [id] {
         Graph& g = Graph::current();
         if (Node* m = g.node(id))
             if (NodeId j = jointOf(g, *m))
@@ -550,28 +564,37 @@ QWidget* makePanel(QWidget* parent)
 {
     auto* w = new QWidget(parent);
     auto* v = new QVBoxLayout(w);
-    auto* setup = new QHBoxLayout;
+    auto* markers = new QGroupBox("Ragdoll", w);
+    auto* setup = new QHBoxLayout(markers);
+    setup->setContentsMargins(0, 4, 0, 0);
+    setup->setSpacing(2);
     auto add = [&](QHBoxLayout* row, const char* label, const char* tip, std::function<void()> fn) {
-        auto* b = new QPushButton(label, w);
-        b->setToolTip(tip);
-        QObject::connect(b, &QPushButton::clicked, w, std::move(fn));
+        QToolButton* b = physPush(w, label, tip);
+        QObject::connect(b, &QToolButton::clicked, w, std::move(fn));
         row->addWidget(b);
     };
-    add(setup, "Assign Markers", "Physics markers on the selected joints.", [] { runCommand("assignPhysicsMarker"); });
-    add(setup, "From Template", "A whole ragdoll from the skeleton's semantic labels.", [] { runCommand("physicsMarkersFromTemplate"); });
-    auto* setup2 = new QHBoxLayout;
-    add(setup2, "Pin", "A soft pin on the selected marker or joint.", [] { runCommand("createPhysicsPin"); });
-    add(setup2, "Collider", "Make the selected meshes environment colliders.", [] { runCommand("createPhysicsCollider"); });
-    add(setup2, "Wind", "A wind field.", [] { runCommand("createPhysicsField", {{"kind", "wind"}}); });
-    add(setup2, "Turbulence", "A seeded turbulence field.", [] { runCommand("createPhysicsField", {{"kind", "turbulence"}}); });
-    v->addLayout(setup);
-    v->addLayout(setup2);
+    add(setup, "Assign Markers", "Physics markers on the selected joints", [] { runCommand("assignPhysicsMarker"); });
+    add(setup, "From Template", "A whole ragdoll from the skeleton's semantic labels", [] { runCommand("physicsMarkersFromTemplate"); });
+    auto* extras = new QGroupBox("Add", w);
+    auto* setup2 = new QHBoxLayout(extras);
+    setup2->setContentsMargins(0, 4, 0, 0);
+    setup2->setSpacing(2);
+    add(setup2, "Pin", "A soft pin on the selected marker or joint", [] { runCommand("createPhysicsPin"); });
+    add(setup2, "Collider", "Make the selected meshes environment colliders", [] { runCommand("createPhysicsCollider"); });
+    add(setup2, "Wind", "A wind field", [] { runCommand("createPhysicsField", {{"kind", "wind"}}); });
+    add(setup2, "Turbulence", "A seeded turbulence field", [] { runCommand("createPhysicsField", {{"kind", "turbulence"}}); });
+    v->addWidget(markers);
+    v->addWidget(extras);
     auto* list = new QListWidget(w);
     v->addWidget(list, 1);
+    auto* empty = new QLabel("No ragdolls. Select the joints and click Assign Markers.", w);
+    empty->setWordWrap(true);
+    empty->setForegroundRole(QPalette::PlaceholderText);
+    v->addWidget(empty);
     auto* holder = new QVBoxLayout;
     v->addLayout(holder);
 
-    auto fill = [list] {
+    auto fill = [list, empty] {
         Graph& g = Graph::current();
         const QString current = list->currentItem() ? list->currentItem()->text() : QString();
         list->clear();
@@ -581,6 +604,8 @@ QWidget* makePanel(QWidget* parent)
         for (int i = 0; i < list->count(); ++i)
             if (list->item(i)->text() == current)
                 list->setCurrentRow(i);
+        list->setVisible(list->count() > 0);
+        empty->setVisible(list->count() == 0);
     };
     ui::deletion::claim(list, [list] {
         if (QListWidgetItem* it = list->currentItem())
