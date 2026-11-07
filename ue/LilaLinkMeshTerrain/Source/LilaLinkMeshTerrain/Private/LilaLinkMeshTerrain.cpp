@@ -277,7 +277,7 @@ void WriteChannels(AActor* Section, const TArray<FLilaChannel>& Channels, FInt32
 
 const TCHAR* ChannelFunctionName = TEXT("MF_LilaMeshTerrainChannel");
 const TCHAR* ChannelVersionTag = TEXT("Lila Mesh Terrain Channel v");
-constexpr int32 ChannelFunctionVersion = 1;
+constexpr int32 ChannelFunctionVersion = 2;
 const TCHAR* MeshTerrainFolder = TEXT("/Game/LilaLink/MeshTerrain");
 
 /** A material layer of Lila's terrain sent as a channel: the channel's name and the layer's look. */
@@ -331,8 +331,8 @@ int32 ChannelFunctionVersionOf(const UMaterialFunction* Function)
 
 /**
  * MF_LilaMeshTerrainChannel: a Mesh Partition channel's weight (0 to 1) at the pixel, by the channel's index in the
- * terrain's definition. setMeshTerrain reports each channel's index, and the generated material holds it in a
- * <Channel>Channel parameter.
+ * terrain's definition. setMeshTerrain reports each channel's index. The index must be a constant: Mesh Partition looks the
+ * channel up in the section's channel table when the shader compiles, and a parameter there reads nothing.
  */
 void BuildChannelFunction(UMaterialFunction* Function)
 {
@@ -341,7 +341,7 @@ void BuildChannelFunction(UMaterialFunction* Function)
 	const FString Description = FString::Printf(TEXT("%s%d: the weight of a Mesh Partition channel at the pixel, by the channel's index in the definition."),
 		ChannelVersionTag, ChannelFunctionVersion);
 	LilaLink::FFunctionGraph G(Function, *Description);
-	UMaterialExpressionFunctionInput* Index = G.ScalarInput(TEXT("ChannelIndex"), 0.0f, TEXT("Channel"), TEXT("The channel's index in the Mesh Partition definition."));
+	UMaterialExpressionFunctionInput* Index = G.ScalarInput(TEXT("ChannelIndex"), 0.0f, TEXT("Channel"), TEXT("The channel's index in the Mesh Partition definition. A Constant, never a parameter."));
 	auto* Resource = G.New<UE::MeshPartition::UMaterialExpressionMeshPartitionResource>(-800);
 	auto* Sample = G.New<UE::MeshPartition::UMaterialExpressionMeshPartitionChannelSampleIndex>(-400);
 	Sample->ChannelTextureInput.Connect(0, Resource);
@@ -368,7 +368,7 @@ UMaterialFunction* ChannelFunction(TArray<FString>& Warnings)
 
 /**
  * M_<Label>_MeshTerrain: per material layer, MF_LilaMeshTerrainChannel reads the layer's channel and feeds a chain of
- * MF_LilaTerrainLayer calls, with the layer's channel index, tint, roughness, texture and tile size as parameters
+ * MF_LilaTerrainLayer calls: the channel index a constant, the layer's tint, roughness, texture and tile size parameters
  * (defaults from Lila). Rebuilt on every send so the defaults follow Lila's rules.
  */
 UMaterial* MeshTerrainMaterial(const FString& Label, const AMeshPartition* Mesh, const TArray<FLilaMaterialLayer>& Layers, TArray<FString>& OutAssets,
@@ -420,8 +420,8 @@ UMaterial* MeshTerrainMaterial(const FString& Label, const AMeshPartition* Mesh,
 			P->Group = *LayerName;
 			return P;
 		};
-		auto* Index = Cast<UMaterialExpressionScalarParameter>(Param(UMaterialExpressionScalarParameter::StaticClass(), TEXT("Channel")));
-		Index->DefaultValue = float(ChannelIndex);
+		auto* Index = Cast<UMaterialExpressionConstant>(Make(UMaterialExpressionConstant::StaticClass(), -1200));
+		Index->R = float(ChannelIndex);
 		auto* Tint = Cast<UMaterialExpressionVectorParameter>(Param(UMaterialExpressionVectorParameter::StaticClass(), TEXT("Tint")));
 		Tint->DefaultValue = L.Color;
 		auto* LayerRough = Cast<UMaterialExpressionScalarParameter>(Param(UMaterialExpressionScalarParameter::StaticClass(), TEXT("Roughness")));
