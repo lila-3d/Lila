@@ -29,6 +29,8 @@
 #include "MeshPartitionEditorComponent.h"
 #include "MeshPartitionEditorSubsystem.h"
 #include "MeshPartitionHeightmapImporter.h"
+#include "MeshPartitionMeshData.h"
+#include "MeshPartitionPreviewSection.h"
 #include "MeshPartitionModifierComponent.h"
 #include "Components/SplineComponent.h"
 #include "Misc/PackageName.h"
@@ -40,6 +42,7 @@
 namespace
 {
 using UE::MeshPartition::AMeshPartition;
+using UE::MeshPartition::APreviewSection;
 using UE::MeshPartition::UMeshPartitionDefinition;
 using UE::MeshPartition::UMeshPartitionEditorComponent;
 using UE::MeshPartition::UMeshProviderModifier;
@@ -886,6 +889,88 @@ TSharedPtr<FJsonValue> SetMeshTerrainRoads(const TSharedPtr<FJsonObject>& Params
 }
 
 /** At each world [x, y], the base mesh vertex nearest it across the sent sections: its world position and channel weights. */
+/** A built preview section: its mesh in world space and which channels hold weight anywhere in it. */
+struct FBuiltSection
+{
+	TSharedPtr<const UE::MeshPartition::FMeshData> Mesh;
+	FTransform ToWorld;
+	TArray<uint8> ChannelTable;
+	FBox Bounds;
+};
+
+/**
+ * Samples the preview sections Mesh Partition built from the inputs and every modifier: positions per point, and per
+ * section the channel indices (as in MF_LilaMeshTerrainChannel) that hold weight, so what a spline modifier painted
+ * shows. The built meshes keep no weights of their own; they go to the channel texture. False with OutError while none
+ * are built yet.
+ */
+bool SampleBuilt(AMeshPartition* Terrain, const TArray<FVector2D>& Points, TSharedRef<FJsonObject> Out, FString& OutError)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMeshTerrain::SampleBuilt);
+
+	TArray<FBuiltSection> Built;
+	for (TActorIterator<APreviewSection> It(Terrain->GetWorld()); It; ++It)
+	{
+		if (It->GetParent() == Terrain)
+		{
+			if (TSharedPtr<const UE::MeshPartition::FMeshData> Mesh = It->GetPreviewMesh())
+			{
+				Built.Add({Mesh, It->GetActorTransform(), It->GetChannelTable(), It->GetPreviewMeshBounds()});
+			}
+		}
+	}
+	const UE::MeshPartition::UMeshPartitionEditorSubsystem* Subsystem = UE::MeshPartition::UMeshPartitionEditorSubsystem::Get();
+	const uint32 Building = Subsystem ? Subsystem->GetTotalPreviewSectionBuildNumber() : 0;
+	if (Built.IsEmpty() || Building > 0)
+	{
+		OutError = FString::Printf(TEXT("sampleMeshTerrain: the preview sections aren't built yet (%d built, %u building); try again shortly"), Built.Num(), Building);
+		return false;
+	}
+	TArray<TSharedPtr<FJsonValue>> Sections, Samples;
+	for (const FBuiltSection& Section : Built)
+	{
+		TArray<TSharedPtr<FJsonValue>> Active;
+		for (int32 Channel = 0; Channel < Section.ChannelTable.Num(); ++Channel)
+		{
+			// The table holds each channel's texture slice; 255 (-1 stored in a byte) marks one left all zero.
+			if (Section.ChannelTable[Channel] != 255)
+			{
+				Active.Add(MakeShared<FJsonValueNumber>(Channel));
+			}
+		}
+		TSharedRef<FJsonObject> S = MakeShared<FJsonObject>();
+		S->SetArrayField(TEXT("activeChannels"), Active);
+		S->SetArrayField(TEXT("min"), {MakeShared<FJsonValueNumber>(Section.Bounds.Min.X), MakeShared<FJsonValueNumber>(Section.Bounds.Min.Y)});
+		S->SetArrayField(TEXT("max"), {MakeShared<FJsonValueNumber>(Section.Bounds.Max.X), MakeShared<FJsonValueNumber>(Section.Bounds.Max.Y)});
+		Sections.Add(MakeShared<FJsonValueObject>(S));
+	}
+	for (const FVector2D& At : Points)
+	{
+		double Best = TNumericLimits<double>::Max();
+		FVector BestPosition = FVector::ZeroVector;
+		for (const FBuiltSection& Section : Built)
+		{
+			for (const int32 Vid : Section.Mesh->VertexIndicesItr())
+			{
+				const FVector P = Section.ToWorld.TransformPosition(Section.Mesh->GetVertex(Vid));
+				const double D = FVector2D::DistSquared(FVector2D(P), At);
+				if (D < Best)
+				{
+					Best = D;
+					BestPosition = P;
+				}
+			}
+		}
+		TSharedRef<FJsonObject> Sample = MakeShared<FJsonObject>();
+		Sample->SetArrayField(TEXT("position"), {MakeShared<FJsonValueNumber>(BestPosition.X), MakeShared<FJsonValueNumber>(BestPosition.Y),
+													MakeShared<FJsonValueNumber>(BestPosition.Z)});
+		Samples.Add(MakeShared<FJsonValueObject>(Sample));
+	}
+	Out->SetArrayField(TEXT("sections"), Sections);
+	Out->SetArrayField(TEXT("samples"), Samples);
+	return true;
+}
+
 TSharedPtr<FJsonValue> SampleMeshTerrain(const TSharedPtr<FJsonObject>& Params, FString& OutError)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMeshTerrain::SampleMeshTerrain);
@@ -905,6 +990,33 @@ TSharedPtr<FJsonValue> SampleMeshTerrain(const TSharedPtr<FJsonObject>& Params, 
 		return nullptr;
 	}
 	TArray<TSharedPtr<FJsonValue>> Out;
+	bool bBuilt = false;
+	if (Params->TryGetBoolField(TEXT("built"), bBuilt) && bBuilt)
+	{
+		AMeshPartition* Terrain = FindTagged(World, TagFor(Id));
+		TArray<FVector2D> At;
+		for (const TSharedPtr<FJsonValue>& Value : *Points)
+		{
+			const TArray<TSharedPtr<FJsonValue>>& XY = Value->AsArray();
+			if (XY.Num() < 2)
+			{
+				OutError = TEXT("sampleMeshTerrain: each point is [x, y]");
+				return nullptr;
+			}
+			At.Emplace(XY[0]->AsNumber(), XY[1]->AsNumber());
+		}
+		TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+		if (!Terrain)
+		{
+			OutError = TEXT("sampleMeshTerrain: no Mesh Terrain from this terrain");
+			return nullptr;
+		}
+		if (!SampleBuilt(Terrain, At, Result, OutError))
+		{
+			return nullptr;
+		}
+		return MakeShared<FJsonValueObject>(Result);
+	}
 	for (const TSharedPtr<FJsonValue>& Value : *Points)
 	{
 		const TArray<TSharedPtr<FJsonValue>>& XY = Value->AsArray();
