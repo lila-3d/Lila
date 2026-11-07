@@ -265,6 +265,14 @@ inline std::filesystem::path pendingCrashReport(const std::vector<io::recovery::
     return {};
 }
 
+/** Marks every crash report seen, so a run of crashes is reported once rather than once per launch. */
+inline void acknowledgeCrashReports()
+{
+    for (const std::filesystem::path& dir : crash::reports())
+        if (!crash::acknowledged(dir))
+            crash::acknowledge(dir);
+}
+
 inline bool runTranslator(io::translators::Op op, const QString& file, const std::string& translator)
 {
     try

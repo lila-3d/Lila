@@ -214,14 +214,14 @@ void MainWindow::startup(const std::vector<io::recovery::Session>& stale, bool s
     {
         RecoveryDialog dialog(candidates, crashReport, this);
         dialog.exec();
-        crash::acknowledge(crashReport);
+        acknowledgeCrashReports();
     }
     if (!candidates.empty())
     {
         RecoveryDialog dialog(candidates, crashReport, this);
         dialog.exec();
         if (!crashReport.empty())
-            crash::acknowledge(crashReport);
+            acknowledgeCrashReports();
         const io::recovery::Candidate& c = dialog.selected();
         try
         {
