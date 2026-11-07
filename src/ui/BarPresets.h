@@ -35,6 +35,7 @@ LILA_UI_API std::string current();
 LILA_UI_API bool activate(const std::string& name);
 /** Saves the live bars as name and makes it current. */
 LILA_UI_API void save(const std::string& name);
+/** Deletes a saved preset and its layout bindings. Removing the current one applies the default bars. */
 LILA_UI_API void remove(const std::string& name);
 /** Writes the preset to a file. False on failure, with the reason in error. */
 LILA_UI_API bool exportTo(const std::string& name, const std::filesystem::path& file, std::string& error);

@@ -133,7 +133,7 @@ void remove(const std::string& name)
         it = it->is_string() && it->get<std::string>() == name ? bound.erase(it) : std::next(it);
     PrefStore::get().set("general", kLayoutsPref, bound);
     if (PrefStore::get().value<std::string>("general", kCurrentPref, std::string()) == name)
-        setCurrent({});
+        activate({});
 }
 
 bool exportTo(const std::string& name, const std::filesystem::path& file, std::string& error)

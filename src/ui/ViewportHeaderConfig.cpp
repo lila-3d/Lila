@@ -660,6 +660,7 @@ public:
             if (name.empty())
                 return;
             barPresets::remove(name);
+            loadBar();
             refreshPresets();
         });
         QPushButton* importButton = pushButton("Import...", this);
