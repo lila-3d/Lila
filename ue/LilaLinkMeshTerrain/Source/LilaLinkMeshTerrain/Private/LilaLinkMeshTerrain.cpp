@@ -166,16 +166,9 @@ bool ReadChannels(const TSharedPtr<FJsonObject>& Params, FInt32Point Resolution,
 	return true;
 }
 
-/**
- * Declares the channels on the terrain's definition, so they are rasterized for materials to sample. The engine's default
- * definition is shared, so a terrain still on it gets its own copy first.
- */
-void DeclareChannels(AMeshPartition* Mesh, const TArray<FLilaChannel>& Channels, TArray<FString>& Warnings)
+/** The terrain's own definition; the engine's default one is shared, so a terrain still on it gets its own copy first. */
+UMeshPartitionDefinition* OwnDefinition(AMeshPartition* Mesh)
 {
-	if (!Mesh || Channels.IsEmpty())
-	{
-		return;
-	}
 	UMeshPartitionDefinition* Definition = Mesh->GetMeshPartitionDefinition();
 	if (!Definition || Definition == UMeshPartitionDefinition::GetDefaultMegaMeshDefinition())
 	{
@@ -184,6 +177,43 @@ void DeclareChannels(AMeshPartition* Mesh, const TArray<FLilaChannel>& Channels,
 		Mesh->Modify();
 		Mesh->SetMeshPartitionDefinition(Definition);
 	}
+	return Definition;
+}
+
+/**
+ * Makes Material the one the terrain's sections draw with. Mesh Partition builds every section with its definition's
+ * material and ignores the providers' own slots.
+ */
+void SetDefinitionMaterial(AMeshPartition* Mesh, UMaterialInterface* Material, TArray<FString>& Warnings)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMeshTerrain::SetDefinitionMaterial);
+
+	if (!Mesh || !Material)
+	{
+		return;
+	}
+	UMeshPartitionDefinition* Definition = OwnDefinition(Mesh);
+	// No setter either; the details panel writes it the same way.
+	FObjectProperty* Property = FindFProperty<FObjectProperty>(UMeshPartitionDefinition::StaticClass(), TEXT("Material"));
+	if (!Property)
+	{
+		Warnings.Add(TEXT("this engine's Mesh Partition definition has no Material, so the sections keep the default material"));
+		return;
+	}
+	Definition->Modify();
+	Property->SetObjectPropertyValue_InContainer(Definition, Material);
+	FPropertyChangedEvent Changed(Property);
+	Definition->PostEditChangeProperty(Changed);
+}
+
+/** Declares the channels on the terrain's definition, so they are rasterized for materials to sample. */
+void DeclareChannels(AMeshPartition* Mesh, const TArray<FLilaChannel>& Channels, TArray<FString>& Warnings)
+{
+	if (!Mesh || Channels.IsEmpty())
+	{
+		return;
+	}
+	UMeshPartitionDefinition* Definition = OwnDefinition(Mesh);
 	// The channel list has no setter; it is reached through reflection like the details panel does.
 	FStructProperty* MapProperty = FindFProperty<FStructProperty>(UMeshPartitionDefinition::StaticClass(), TEXT("ChannelMap"));
 	FArrayProperty* DescsProperty = MapProperty ? FindFProperty<FArrayProperty>(MapProperty->Struct, TEXT("ChannelDescs")) : nullptr;
@@ -651,6 +681,7 @@ TSharedPtr<FJsonValue> SetMeshTerrain(const TSharedPtr<FJsonObject>& Params, FSt
 			}
 		}
 	}
+	SetDefinitionMaterial(Result, Material ? Material : Generated, Warnings);
 
 	TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
 	Out->SetStringField(TEXT("actor"), Result ? Result->GetActorLabel() : FString());
