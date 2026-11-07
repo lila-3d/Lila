@@ -25,6 +25,7 @@ Plan: `C:\Users\Jared\.claude\plans\enumerated-watching-quilt.md` is an index; e
 ## Build and test
 
 - Build with `scripts\b.cmd [dir] [config] [-nounity] [target...]` and test with `scripts\t.cmd [dir] [config] [ctest args]`: they print only errors, failures and a summary (full logs in `<dir>\last_build.log`, `last_test.log`). Iterate on one target, then build all targets before handing back; partial builds leave extension DLLs stale.
+- Test only the suites for the area you touched (`t.cmd <dir> <config> -R <area>`). A full ctest run is for the release gate or before pushing a large body of work, never a routine end-of-task step and never from a subagent; give it `--timeout 1200` (some suites, like groomlab, can run for hours). Never leave a test run going when you report back.
 - If Jared's lila.exe is running (LNK1168), never kill it: build in `build-night` instead. Never launch his lila.exe either.
 - Run executables only from `build/` or `build-night` (new paths trigger firewall prompts). No popups, ever.
 - Compiles go through sccache (shared cache in `X:\sccache`) and link with lld-link, so a fresh build dir or worktree is mostly cache hits.
