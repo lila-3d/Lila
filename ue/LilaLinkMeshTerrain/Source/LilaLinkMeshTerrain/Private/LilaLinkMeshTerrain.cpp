@@ -17,8 +17,10 @@
 #include "MeshPartitionEditorSubsystem.h"
 #include "MeshPartitionHeightmapImporter.h"
 #include "MeshPartitionModifierComponent.h"
+#include "Components/SplineComponent.h"
 #include "Misc/PackageName.h"
 #include "Modifiers/MeshPartitionMeshProvider.h"
+#include "Modifiers/MeshPartitionSplineModifier.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "ScopedTransaction.h"
 
@@ -29,6 +31,7 @@ using UE::MeshPartition::UMeshPartitionDefinition;
 using UE::MeshPartition::UMeshPartitionEditorComponent;
 using UE::MeshPartition::UMeshProviderModifier;
 using UE::MeshPartition::UModifierComponent;
+using UE::MeshPartition::USplineModifier;
 
 const TCHAR* SectionTagPrefix = TEXT("LilaLink.MeshTerrainSection:");
 
@@ -449,6 +452,174 @@ TSharedPtr<FJsonValue> SetMeshTerrain(const TSharedPtr<FJsonObject>& Params, FSt
 	return MakeShared<FJsonValueObject>(Out);
 }
 
+FName RoadsTagFor(const FString& Id)
+{
+	return FName(*(TEXT("LilaLink.MeshTerrainRoads:") + Id.Right(900)));
+}
+
+template <typename T>
+T* PrivateMember(UObject* Object, const TCHAR* Name)
+{
+	FProperty* Property = FindFProperty<FProperty>(Object->GetClass(), Name);
+	return Property ? Property->ContainerPtrToValuePtr<T>(Object) : nullptr;
+}
+
+/**
+ * Roads on a Lila Mesh Terrain as Mesh Partition spline modifiers, one actor per road: the spline through the road's
+ * points, a plateau of its half width and its falloff beyond, writing the road's channel and, when raise or lower is
+ * on, pulling the surface to the road. Sending again replaces them.
+ */
+TSharedPtr<FJsonValue> SetMeshTerrainRoads(const TSharedPtr<FJsonObject>& Params, FString& OutError)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMeshTerrain::SetMeshTerrainRoads);
+
+	FString Id;
+	const TArray<TSharedPtr<FJsonValue>>* Roads = nullptr;
+	if (!Params->TryGetStringField(TEXT("id"), Id) || !Params->TryGetArrayField(TEXT("roads"), Roads))
+	{
+		OutError = TEXT("setMeshTerrainRoads: give id and roads");
+		return nullptr;
+	}
+	FVector Location = FVector::ZeroVector;
+	ReadVector(Params, TEXT("location"), Location);
+	UWorld* World = EditorWorld();
+	AMeshPartition* Mesh = World ? FindTagged(World, TagFor(Id)) : nullptr;
+	if (!Mesh)
+	{
+		OutError = TEXT("setMeshTerrainRoads: no Mesh Terrain from this terrain; send it with terrainSendToUnreal(kind='meshTerrain') first");
+		return nullptr;
+	}
+	FScopedTransaction Transaction(NSLOCTEXT("LilaLink", "SetMeshTerrainRoads", "Lila: Update Mesh Terrain Roads"));
+	const FName Tag = RoadsTagFor(Id);
+	TArray<AActor*> Doomed;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->ActorHasTag(Tag))
+		{
+			Doomed.Add(*It);
+		}
+	}
+	for (AActor* A : Doomed)
+	{
+		World->EditorDestroyActor(A, true);
+	}
+	const TArray<FName> Channels = Mesh->GetMeshPartitionDefinition() ? Mesh->GetMeshPartitionDefinition()->GetChannelNames() : TArray<FName>();
+	UMeshPartitionEditorComponent* Editor = Cast<UMeshPartitionEditorComponent>(Mesh->GetMeshPartitionComponent());
+	TArray<FString> Warnings;
+	int32 Made = 0;
+	for (const TSharedPtr<FJsonValue>& Value : *Roads)
+	{
+		const TSharedPtr<FJsonObject>* Road = nullptr;
+		const TArray<TSharedPtr<FJsonValue>>* Points = nullptr;
+		if (!Value.IsValid() || !Value->TryGetObject(Road) || !(*Road)->TryGetArrayField(TEXT("points"), Points) || Points->Num() < 2)
+		{
+			OutError = TEXT("setMeshTerrainRoads: each road needs at least two points");
+			return nullptr;
+		}
+		FString RoadId, Layer;
+		(*Road)->TryGetStringField(TEXT("id"), RoadId);
+		(*Road)->TryGetStringField(TEXT("layer"), Layer);
+		double HalfWidth = 300.0, Falloff = 500.0;
+		bool bRaise = false, bLower = false, bClosed = false;
+		(*Road)->TryGetNumberField(TEXT("halfWidth"), HalfWidth);
+		(*Road)->TryGetNumberField(TEXT("sideFalloff"), Falloff);
+		(*Road)->TryGetBoolField(TEXT("raiseTerrain"), bRaise);
+		(*Road)->TryGetBoolField(TEXT("lowerTerrain"), bLower);
+		(*Road)->TryGetBoolField(TEXT("closed"), bClosed);
+
+		AActor* Actor = World->SpawnActor<AActor>(AActor::StaticClass(), FTransform::Identity);
+		Actor->SetActorLabel(TEXT("Road_") + RoadId);
+		Actor->Tags.Add(Tag);
+		USplineComponent* Spline = NewObject<USplineComponent>(Actor, TEXT("Spline"), RF_Transactional);
+		Actor->AddInstanceComponent(Spline);
+		Actor->SetRootComponent(Spline);
+		Spline->RegisterComponent();
+		Spline->ClearSplinePoints(false);
+		for (const TSharedPtr<FJsonValue>& PointValue : *Points)
+		{
+			const TSharedPtr<FJsonObject>* Point = nullptr;
+			FVector Position, Arrive = FVector::ZeroVector, Leave = FVector::ZeroVector;
+			if (!PointValue->TryGetObject(Point) || !ReadVector(*Point, TEXT("position"), Position))
+			{
+				OutError = TEXT("setMeshTerrainRoads: a point has no position");
+				return nullptr;
+			}
+			Spline->AddSplinePoint(Location + Position, ESplineCoordinateSpace::World, false);
+			const int32 Index = Spline->GetNumberOfSplinePoints() - 1;
+			if (ReadVector(*Point, TEXT("arriveTangent"), Arrive) && ReadVector(*Point, TEXT("leaveTangent"), Leave))
+			{
+				Spline->SetTangentsAtSplinePoint(Index, Arrive, Leave, ESplineCoordinateSpace::World, false);
+			}
+		}
+		Spline->SetClosedLoop(bClosed, false);
+		Spline->UpdateSpline();
+
+		USplineModifier* Modifier = NewObject<USplineModifier>(Actor, TEXT("RoadModifier"), RF_Transactional);
+		Modifier->SetPriority(1.0);
+		Modifier->SetAffectedMeshPartition(Mesh);
+		Actor->AddInstanceComponent(Modifier);
+		Modifier->AttachToComponent(Spline, FAttachmentTransformRules::KeepWorldTransform);
+		Modifier->SetUseSplineScaleForFalloff(false);
+		Modifier->SetFalloffDistance(float(FMath::Max(Falloff, 0.1)));
+		Modifier->SetMeshClosedInterior(false);
+		if (float* Plateau = PrivateMember<float>(Modifier, TEXT("PlateauDistance")))
+		{
+			*Plateau = float(HalfWidth);
+		}
+		using UE::MeshPartition::ESplineModifierWriteMode;
+		ESplineModifierWriteMode Mode = ESplineModifierWriteMode(0);
+		if (bRaise || bLower)
+		{
+			Mode |= ESplineModifierWriteMode::Positions;
+			if (UE::MeshPartition::ESplineModifierBlendMode* Blend = PrivateMember<UE::MeshPartition::ESplineModifierBlendMode>(Modifier, TEXT("BlendMode")))
+			{
+				// Max moves only the surface below the road up to it, Min only the surface above it down.
+				*Blend = bRaise && bLower ? UE::MeshPartition::ESplineModifierBlendMode::Normal
+						 : bRaise		  ? UE::MeshPartition::ESplineModifierBlendMode::Max
+										  : UE::MeshPartition::ESplineModifierBlendMode::Min;
+			}
+		}
+		if (!Layer.IsEmpty())
+		{
+			if (Channels.Contains(FName(*Layer)))
+			{
+				Mode |= ESplineModifierWriteMode::Weights;
+				if (TArray<UE::MeshPartition::FSplineModifierWeightEntry>* Entries = PrivateMember<TArray<UE::MeshPartition::FSplineModifierWeightEntry>>(Modifier, TEXT("WeightChannels")))
+				{
+					UE::MeshPartition::FSplineModifierWeightEntry& Entry = Entries->AddDefaulted_GetRef();
+					Entry.WeightChannelName = UE::MeshPartition::FChannelName(FName(*Layer));
+					Entry.Value = 1.0;
+				}
+			}
+			else
+			{
+				Warnings.Add(FString::Printf(TEXT("%s: the Mesh Terrain has no channel %s, so the road paints none (send the mask as a layer)"), *RoadId, *Layer));
+			}
+		}
+		if (uint8* WriteMode = PrivateMember<uint8>(Modifier, TEXT("WriteMode")))
+		{
+			*WriteMode = uint8(Mode);
+		}
+		Modifier->SetSplineComponent(Spline, true);
+		Modifier->RegisterComponent();
+		Modifier->UpdateSplineData();
+		if (Editor)
+		{
+			Editor->OnModifierAssigned();
+		}
+		++Made;
+	}
+	TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
+	Out->SetNumberField(TEXT("modifiers"), Made);
+	TArray<TSharedPtr<FJsonValue>> WarningValues;
+	for (const FString& W : Warnings)
+	{
+		WarningValues.Add(MakeShared<FJsonValueString>(W));
+	}
+	Out->SetArrayField(TEXT("warnings"), WarningValues);
+	return MakeShared<FJsonValueObject>(Out);
+}
+
 TSharedPtr<FJsonValue> RemoveMeshTerrain(const TSharedPtr<FJsonObject>& Params, FString& OutError)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMeshTerrain::RemoveMeshTerrain);
@@ -470,7 +641,7 @@ TSharedPtr<FJsonValue> RemoveMeshTerrain(const TSharedPtr<FJsonObject>& Params, 
 	TArray<AActor*> Doomed;
 	for (TActorIterator<AActor> It(World); It; ++It)
 	{
-		if (It->ActorHasTag(Tag))
+		if (It->ActorHasTag(Tag) || It->ActorHasTag(RoadsTagFor(Id)))
 		{
 			Doomed.Add(*It);
 		}
@@ -489,4 +660,5 @@ void LilaLinkMeshTerrain::RegisterMethods()
 {
 	LilaLink::RegisterMethod(TEXT("setMeshTerrain"), &SetMeshTerrain, Feature);
 	LilaLink::RegisterMethod(TEXT("removeMeshTerrain"), &RemoveMeshTerrain, Feature);
+	LilaLink::RegisterMethod(TEXT("setMeshTerrainRoads"), &SetMeshTerrainRoads, TEXT("meshTerrainRoads"));
 }

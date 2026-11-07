@@ -1331,9 +1331,12 @@ bool registerRoads(ext::Context& ctx)
                "terrainSendToUnreal made, or landscape=): a control point every spacing cm with the road's width, bank (roll) "
                "and side falloff, segments carrying segmentMesh as spline meshes, paintLayer as the layer they paint, and "
                "raise/lower for whether they deform the landscape (off by default: Lila's heights already hold the road). "
-               "Sending again replaces them. Returns what LilaLink made.",
+               "kind='meshTerrain' sends them to the Mesh Terrain terrainSendToUnreal(kind='meshTerrain') made instead, as Mesh "
+               "Partition spline modifiers (needs the LilaLinkMeshTerrain plugin): a plateau of the road's half width, the "
+               "falloff beyond, paintLayer as the channel they write. Sending again replaces them. Returns what LilaLink made.",
         .positionalDoc = "terrain mesh or its modifier",
-        .flags = {{"landscape", "ls", T::String, "", "Landscape label in Unreal; default the terrain's name, as terrainSendToUnreal names it."},
+        .flags = {{"kind", "k", T::String, "landscape", "landscape: landscape splines; meshTerrain: Mesh Partition spline modifiers.", {"landscape", "meshTerrain"}},
+                  {"landscape", "ls", T::String, "", "Landscape label in Unreal; default the terrain's name, as terrainSendToUnreal names it."},
                   {"segmentMesh", "sm", T::String, "", "Static mesh asset each segment carries, such as /Game/Roads/SM_Road."},
                   {"meshForwardAxis", "mfa", T::String, "x", "The segment mesh's forward axis.", {"x", "y", "z"}},
                   {"scaleToWidth", "stw", T::Bool, true, "Scale the segment mesh to the road's width."},
@@ -1365,19 +1368,26 @@ bool registerRoads(ext::Context& ctx)
             }
             std::shared_ptr<link::RpcClient> client = link::Link::get().client();
             const json features = link::Link::get().status().value("features", json::array());
-            if (!client || !features.is_array() || std::find(features.begin(), features.end(), json("terrainRoads")) == features.end())
-                throw CommandError("terrainSendRoadsToUnreal: the LilaLink plugin in Unreal predates terrain roads; rebuild it from Lila's ue/LilaLink");
+            const bool meshTerrain = a.get<std::string>("kind", "landscape") == "meshTerrain";
+            const std::string feature = meshTerrain ? "meshTerrainRoads" : "terrainRoads";
+            if (!client || !features.is_array() || std::find(features.begin(), features.end(), json(feature)) == features.end())
+                throw CommandError(meshTerrain ? "terrainSendRoadsToUnreal: Mesh Terrain roads need the LilaLinkMeshTerrain plugin in Unreal, built from "
+                                                 "Lila's ue/LilaLinkMeshTerrain"
+                                               : "terrainSendRoadsToUnreal: the LilaLink plugin in Unreal predates terrain roads; rebuild it from Lila's ue/LilaLink");
             std::string landscape = a.get<std::string>("landscape", "");
             if (landscape.empty())
                 landscape = layerName(f.mesh ? f.mesh->name() : std::string("Terrain"));
             const glm::dvec3 origin = f.world(f.local->origin.x + f.local->extent().x * 0.5, 0.0, f.local->origin.y + f.local->extent().y * 0.5);
             const json params = {{"id", f.path("")}, {"landscape", landscape}, {"location", vec3(unrealOf(origin))}, {"roads", unrealRoads(f, roads, origin, a)}};
             const int timeoutMs = int(std::clamp(a.get<double>("timeout", 120.0), 1.0, 3600.0) * 1000.0);
-            link::RpcResult r = client->call("setTerrainRoads", params, timeoutMs);
+            link::RpcResult r = client->call(meshTerrain ? "setMeshTerrainRoads" : "setTerrainRoads", params, timeoutMs);
             if (!r.ok)
                 throw CommandError("terrainSendRoadsToUnreal: " + r.error);
             json out = r.result;
             out["roads"] = params["roads"].size();
+            const json warnings = out.value("warnings", json::array());
+            for (const json& w : warnings)
+                log::warn("terrainSendRoadsToUnreal: {}", w.get<std::string>());
             return out;
         },
         .examples = {"terrainSendRoadsToUnreal('Terrain', segmentMesh='/Game/Roads/SM_RoadSegment', paintLayer='Road')"},

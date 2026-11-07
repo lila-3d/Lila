@@ -132,7 +132,7 @@ All take `riverArea=` (m2 of drainage that makes a river), `seaLevel=` and `floo
 - Roundabouts: `terrainAddRoundabout(t, at=[x, z], radius=2500)` after the roads it joins. Roads reaching the ring are cut back to its centreline (one running through becomes `<id>` and `<id>_b`, listed in `approaches`); the ring is level with a cross fall away from a raised central island, and each approach gets a splitter island (`islands`, mask `roadIsland`). The ring sends to Unreal as a closed spline.
 - Masks for materials: `roadSurface`, `roadVerge`, `roadDirtEdge`, `roadWear`, `erosionProtect` (plus `paved` on roads and runways). `stage='base'` lays the road before erosion, which then leaves it alone.
 - Meshes: `terrainRoadBuild(t)` makes `<id>_Road` groups (swept surface, bridge decks and pillars, portals, walls, junction patches, islands, guardrails, markers, poles). Build again after changes.
-- Out: `terrainExport` writes `<name>_roads.json` (curves with grade, bank, width, span per point, world and Unreal positions); `terrainSendToUnreal` sends roads as landscape splines (`terrainSendRoadsToUnreal(t, segmentMesh='/Game/...', paintLayer='Road', raise=False)`).
+- Out: `terrainExport` writes `<name>_roads.json` (curves with grade, bank, width, span per point, world and Unreal positions); `terrainSendToUnreal` sends roads as landscape splines (`terrainSendRoadsToUnreal(t, segmentMesh='/Game/...', paintLayer='Road', raise=False)`); `kind='meshTerrain'` sends them to a Mesh Terrain as spline modifiers, `paintLayer` naming a channel the terrain was sent with).
 - `terrainRoads(t)` lists them; `terrainRoadRemove(t, ids=[...])` removes them. Everything undoes.
 
 ## Caves, overhangs and arches
