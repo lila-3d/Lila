@@ -389,6 +389,58 @@ void TieItem::paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*)
 
 namespace lila::ui
 {
+namespace
+{
+/**
+ * Fits a newly loaded group once the canvas is shown at a real size, and again as the panel settles, until the user
+ * pans, zooms or clicks. Framing a hidden or not yet laid out view fits the nodes into nothing, which leaves them
+ * off-screen when it appears.
+ */
+class NodeCanvasFramer : public QObject
+{
+public:
+    explicit NodeCanvasFramer(NodeCanvas* canvas) : QObject(canvas), mCanvas(canvas)
+    {
+        canvas->viewport()->installEventFilter(this);
+        canvas->installEventFilter(this);
+    }
+
+    void request()
+    {
+        mPending = true;
+        QTimer::singleShot(0, mCanvas, [self = QPointer(this)] {
+            if (self)
+                self->tryFrame();
+        });
+    }
+
+    bool eventFilter(QObject*, QEvent* e) override
+    {
+        const QEvent::Type t = e->type();
+        if (t == QEvent::MouseButtonPress || t == QEvent::Wheel || t == QEvent::KeyPress)
+            mPending = false;
+        if (mPending && (t == QEvent::Show || t == QEvent::Resize))
+            QTimer::singleShot(0, mCanvas, [self = QPointer(this)] {
+                if (self)
+                    self->tryFrame();
+            });
+        return false;
+    }
+
+private:
+    void tryFrame()
+    {
+        constexpr int kMinSide = 50;
+        if (!mPending || !mCanvas->isVisible() || mCanvas->viewport()->width() < kMinSide || mCanvas->viewport()->height() < kMinSide)
+            return;
+        mCanvas->frame(false);
+    }
+
+    NodeCanvas* mCanvas;
+    bool mPending = false;
+};
+} // namespace
+
 NodeCanvas::NodeCanvas(QWidget* parent) : QGraphicsView(parent)
 {
     setScene(&mScene);
@@ -403,6 +455,7 @@ NodeCanvas::NodeCanvas(QWidget* parent) : QGraphicsView(parent)
     setBackgroundBrush(gray(34));
     setAcceptDrops(true);
     gWireStyle = mPrefs.wires;
+    new NodeCanvasFramer(this);
     connect(&mScene, &QGraphicsScene::selectionChanged, this, [this] {
         // The editor clears onSelect as it goes; the scene then deletes items the lists still hold.
         if (!onSelect)
@@ -524,7 +577,9 @@ void NodeCanvas::build(const std::string& group, const json& info, const std::se
     refreshThumbs();
     mBuilding = false;
     if (newGroup)
-        QTimer::singleShot(0, this, [this] { frame(false); });
+        for (QObject* child : children())
+            if (auto* framer = dynamic_cast<NodeCanvasFramer*>(child))
+                framer->request();
 }
 
 void NodeCanvas::refreshThumbs()
