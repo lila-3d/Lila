@@ -1445,7 +1445,7 @@ def captureTurntable(view: str | None = None, lookThrough: str | None = None, ya
         isolate: Only the selected objects. Default False.
         frameSelection: Frame the selected objects or components instead of everything shown. Short form fs. Default False.
         grid: Ground grid in perspective views. Default True.
-        showSelection: Tint selected components. Default True.
+        showSelection: Tint selected components, and outline selected terrains drawn from their heights. Default True.
         samples: Jittered frames averaged into the image: 16 or more gives a supersampled still. Default 1.
         label: Write the view's name in the top-left corner. Default True.
         path: PNG file to write. Short form p.
@@ -1468,7 +1468,7 @@ def captureView(view: str | None = None, lookThrough: str | None = None, yaw: fl
         isolate: Only the selected objects. Default False.
         frameSelection: Frame the selected objects or components instead of everything shown. Short form fs. Default False.
         grid: Ground grid in perspective views. Default True.
-        showSelection: Tint selected components. Default True.
+        showSelection: Tint selected components, and outline selected terrains drawn from their heights. Default True.
         samples: Jittered frames averaged into the image: 16 or more gives a supersampled still. Default 1.
         label: Write the view's name in the top-left corner. Default True.
         path: PNG file to write. Short form p.
@@ -5139,7 +5139,7 @@ def measureView(view: str | None = None, lookThrough: str | None = None, yaw: fl
         isolate: Only the selected objects. Default False.
         frameSelection: Frame the selected objects or components instead of everything shown. Short form fs. Default False.
         grid: Ground grid in perspective views. Default True.
-        showSelection: Tint selected components. Default True.
+        showSelection: Tint selected components, and outline selected terrains drawn from their heights. Default True.
         samples: Jittered frames averaged into the image: 16 or more gives a supersampled still. Default 1.
         label: Write the view's name in the top-left corner. Default True.
         frames: Frames to draw; the result is their median. Default 20.
@@ -9011,6 +9011,43 @@ def tension(*objects: Any, scale: float | None = None, colorSet: str | None = No
         scale: Colour gain: strain times scale is full colour. Default 4.0.
         colorSet: Colour set to write; empty for none. Default 'tension'.
         name: Name for the deformer.
+    """
+
+def terrainDisplay(draw: str | None = None, overlay: str | None = None, overlayRamp: str | None = None, overlayOpacity: float | None = None, contours: float | None = None, contourMajor: int | None = None, flowArrows: bool | None = None, arrowSpacing: float | None = None, quadPixels: float | None = None, *, ov: str | None = None, c: float | None = None, fa: bool | None = None, qp: float | None = None) -> Any:
+    """How the viewport shows terrains: drawn from their heights (the heightfield draw: level of detail for 8K to 16K grids, paint layers) or as their mesh, and the terrain display options, which only the heightfield draw shows: a mask over the surface in a colour ramp, height contour lines and flow arrows down the slopes. A display option switches terrains to the heightfield draw while it is on. Returns the settings and, per terrain, its grid and masks.
+
+    Args:
+        draw: heightfield or mesh: the /viewport/heightfieldDraw pref. One of 'heightfield', 'mesh'.
+        overlay: A mask to show over the surface (flow, wear, deposit, a paint layer...); empty for none. Short form ov.
+        overlayRamp: Colour ramp of the overlay: turbo (data) or grey. One of 'turbo', 'grey'.
+        overlayOpacity: How strongly the overlay covers the shading.
+        contours: Contour line interval in cm; 0 for none. Short form c.
+        contourMajor: Every this many contour lines is drawn bolder.
+        flowArrows: Arrows down the slopes, stronger where the flow mask is. Short form fa.
+        arrowSpacing: Rough spacing of the flow arrows in pixels.
+        quadPixels: Level of detail of the heightfield draw: how many pixels the finest grid quads span. Lower is finer and slower; 4 by default. Short form qp.
+
+    Examples:
+        terrainDisplay(draw='heightfield')
+
+        terrainDisplay(overlay='flow', contours=1000, contourMajor=5)
+
+        terrainDisplay(flowArrows=True, overlay='')
+    """
+
+def terrainDisplayLayers(*objects: Any, layers: Any | None = None, clear: bool | None = None, l: Any | None = None) -> Any:
+    """The paint layers a terrain shows in the viewport's heightfield draw: each paints its colour, roughness and maps over the terrain's material where its mask's weights (0 to 1) lie. A layer is {name, mask (default name), color ('#rrggbb' or [r, g, b] 0 to 1), roughness, baseColor (image file), normal (image file, DirectX), tiling (cm per repeat of the maps, seen from above)}. Without layers, the list is returned with each mask's coverage. Stored on the terrain's mesh as the terrainLayers attribute (JSON), which layer rules may write directly.
+
+    Args:
+        objects: The terrain: its mesh or its geometry-nodes modifier; the selection when none.
+        layers: The layers, replacing the ones there: a list of {name, mask, color, roughness, baseColor, normal, tiling}. Short form l.
+        clear: Remove every layer. Default False.
+
+    Examples:
+        terrainDisplayLayers('Terrain', layers=[{'name': 'rock', 'mask': 'wear', 'color': '#7a7068', 'roughness': 0.9},
+            {'name': 'sand', 'mask': 'deposit', 'color': [0.76, 0.66, 0.48], 'baseColor': 'textures/sand.png', 'tiling': 300}])
+
+        terrainDisplayLayers('Terrain')
     """
 
 def texAddAnchor(*objects: Any) -> Any:
