@@ -217,6 +217,39 @@ TEST_CASE("water: a drawn river is turned downhill, keeps a waterfall at a cliff
     CHECK(r.springs.size() == 1);
 }
 
+TEST_CASE("water: a spring on a flat bed never raises the water level downstream")
+{
+    // Flat ground with a low hump inside the spring's growth run: the bed holds level over it while the channel deepens.
+    geo::Heightfield h = geo::makeHeightfieldCovering({0.0, 0.0}, {30000.0, 6000.0}, 301);
+    for (int z = 0; z < h.nz; ++z)
+        for (int x = 0; x < h.nx; ++x)
+        {
+            const glm::dvec2 p = h.samplePos(x, z);
+            h.heights[h.index(x, z)] = float(60.0 * std::exp(-(p.x + 13800.0) * (p.x + 13800.0) / (2.0 * 400.0 * 400.0)));
+        }
+    terrain::WaterSpec spec;
+    terrain::RiverSpec river;
+    river.id = "spring";
+    river.path = {{-15000.0, 0.0}, {15000.0, 0.0}};
+    river.width = 500.0;
+    river.depth = 150.0;
+    river.meander = 0.0;
+    spec.rivers.push_back(river);
+    const terrain::WaterResult r = terrain::applyWater(h, spec);
+    REQUIRE(r.rivers.size() == 1);
+    const terrain::RiverResult& rr = r.rivers[0];
+    REQUIRE(rr.spring);
+    double worst = 0.0;
+    for (size_t k = 1; k < rr.points.size(); ++k)
+    {
+        worst = std::max(worst, rr.points[k].level - rr.points[k - 1].level);
+        CHECK(rr.points[k].bed <= rr.points[k - 1].bed);
+    }
+    CHECK(worst <= 1e-6);
+    // Away from the spring the channel is still its full depth.
+    CHECK(rr.points.back().level - rr.points.back().bed == doctest::Approx(river.depth).epsilon(0.01));
+}
+
 TEST_CASE("water: lakes fill a basin to its spill, a drawn lake digs and dams, and the sea makes beaches")
 {
     geo::Heightfield h = waterValley();

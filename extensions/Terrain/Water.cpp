@@ -253,8 +253,9 @@ Profile profileOf(const Heightfield& h0, const Drainage& d0, const RiverSpec& sp
     for (size_t k = 0; k < m; ++k)
     {
         pr.bed[k] = pr.ground[k] - pr.depth[k];
+        // Depth grows downstream (springs, gathering area), so on a flat bed the bed digs in to keep the water from rising.
         if (k > 0)
-            pr.bed[k] = std::min(pr.bed[k], pr.bed[k - 1]);
+            pr.bed[k] = std::min({pr.bed[k], pr.bed[k - 1], pr.level[k - 1] - pr.depth[k]});
         pr.level[k] = pr.bed[k] + pr.depth[k];
     }
     // Waterfalls: runs where the ground drops steeper than the cliff angle by at least waterfallHeight.

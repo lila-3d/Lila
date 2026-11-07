@@ -131,11 +131,13 @@ void waterIssues(const std::string& terrain, json& issues)
         const json pts = member(s, "points", json::array());
         for (size_t k = 1; k < pts.size(); ++k)
         {
-            const double rise = number(pts[k], "bedHeight", 0.0) - number(pts[k - 1], "bedHeight", 0.0);
-            if (rise > 1.0)
+            const double bedRise = number(pts[k], "bedHeight", 0.0) - number(pts[k - 1], "bedHeight", 0.0);
+            const double levelRise = number(pts[k], "waterLevel", 0.0) - number(pts[k - 1], "waterLevel", 0.0);
+            if (bedRise > 1.0 || levelRise > 1.0)
             {
+                const bool bed = bedRise >= levelRise;
                 issues.push_back({{"type", "riverUphill"}, {"about", text(s, "id")}, {"position", member(pts[k], "position", json::array())},
-                                  {"message", std::format("bed rises {:.0f} cm downstream", rise)}});
+                                  {"message", std::format("{} rises {:.0f} cm downstream", bed ? "bed" : "water level", bed ? bedRise : levelRise)}});
                 break;
             }
         }
