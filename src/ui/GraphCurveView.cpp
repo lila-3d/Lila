@@ -13,7 +13,9 @@
 #include "ui/Theme.h"
 #include "ui/UiCommon.h"
 #include "ui/ViewportDisplay.h"
+#include "ui/ViewportWidget.h"
 
+#include <QApplication>
 #include <QDateTime>
 #include <QMenu>
 #include <QMouseEvent>
@@ -38,6 +40,15 @@ constexpr double kBandHalf = 1.25; // a Stacked band spans its -1..1 plus a marg
 double cvDegrees(double slope) { return std::atan(slope) * 180.0 / 3.14159265358979323846; }
 double cvRadians(double degrees) { return degrees * 3.14159265358979323846 / 180.0; }
 double cvFps() { return anim::playback().fps > 0.0 ? anim::playback().fps : 30.0; }
+
+/** Previews only dirty the curves, which sends no graph change, so the viewports are asked for a frame directly. */
+void redrawViewports()
+{
+    for (QWidget* top : QApplication::topLevelWidgets())
+        for (ViewportWidget* v : top->findChildren<ViewportWidget*>())
+            if (v->isVisible())
+                v->requestFrame();
+}
 
 /** Region handles 0..3 are corners, 4..7 the top, right, bottom and left edges; each needs extent along what it scales. */
 bool regionHandleUsable(int i, const QRectF& r)
@@ -1633,11 +1644,13 @@ void CurveView::pushPreviews()
         if (mDrag != Drag::Tangent && mDrag != Drag::TangentRotate && rotations.contains(real) && rotationsDone.insert(real).second)
             anim::setPreview(g, real, previewRotation(real));
     }
+    redrawViewports();
 }
 
 void CurveView::dropPreviews()
 {
     anim::clearPreviews(Graph::current());
+    redrawViewports();
 }
 
 void CurveView::toolKeyDown(Tool tool, bool holdToDrag)
