@@ -188,8 +188,9 @@ UMaterialInterface* VolumeInstance(const FString& Label, UMaterialInterface* Lan
 }
 
 /**
- * Holes render only through a Landscape Visibility Mask in the landscape (or hole) material. A material Lila generated
- * gets one on its opacity mask; anyone else's is left alone and reported. Returns the material that now draws the holes.
+ * Holes exist only through a Landscape Visibility Mask in the landscape (or hole) material: without one Unreal drops the
+ * visibility data, collision included. A material Lila generated gets one on its opacity mask; anyone else's is left
+ * alone and reported. Returns the material that now draws the holes.
  */
 UMaterialInterface* EnsureHoleMaterial(ALandscape* Landscape, TArray<FString>& OutWarnings)
 {
@@ -199,7 +200,7 @@ UMaterialInterface* EnsureHoleMaterial(ALandscape* Landscape, TArray<FString>& O
 	UMaterial* Base = Used ? Used->GetMaterial() : nullptr;
 	if (!Base)
 	{
-		OutWarnings.Add(TEXT("the landscape has no material, so its holes cut collision only"));
+		OutWarnings.Add(TEXT("the landscape has no material, so its holes were not cut (Unreal keeps holes only through a Landscape Visibility Mask)"));
 		return nullptr;
 	}
 	if (Base->HasAnyExpressionsInMaterialAndFunctionsOfType<UMaterialExpressionLandscapeVisibilityMask>())
@@ -208,7 +209,7 @@ UMaterialInterface* EnsureHoleMaterial(ALandscape* Landscape, TArray<FString>& O
 	}
 	if (!Base->GetPathName().StartsWith(LandscapeFolder))
 	{
-		OutWarnings.Add(FString::Printf(TEXT("%s has no Landscape Visibility Mask, so the holes cut collision only; add one on Opacity Mask (Masked) "
+		OutWarnings.Add(FString::Printf(TEXT("%s has no Landscape Visibility Mask, so the holes were not cut; add one on Opacity Mask (Masked) "
 										 "or set a Landscape Hole Material"),
 			*Base->GetPathName()));
 		return nullptr;
@@ -303,17 +304,31 @@ TSharedPtr<FJsonValue> SetLandscapeVolume(const TSharedPtr<FJsonObject>& Params,
 			OutError = TEXT("setLandscapeVolume: the landscape has no Lila edit layer or visibility layer");
 			return nullptr;
 		}
+		// The engine adds the visibility target layer on load only, so a landscape made this session lacks it and its holes
+		// would never merge.
+		const FName VisibilityName = ALandscapeProxy::VisibilityLayer->GetLayerName();
+		if (!Landscape->HasTargetLayer(VisibilityName))
+		{
+			Landscape->AddTargetLayer(VisibilityName, FLandscapeTargetLayerSettings(ALandscapeProxy::VisibilityLayer));
+			Info->UpdateLayerInfoMap(Landscape);
+		}
+		// The mask first: Unreal skips visibility data for components whose material has none.
+		UMaterialInterface* HoleDrawer = nullptr;
+		if (Holes > 0)
+		{
+			HoleDrawer = EnsureHoleMaterial(Landscape, Warnings);
+			HoleMaterial = HoleDrawer ? HoleDrawer->GetPathName() : FString();
+		}
+		else
+		{
+			UMaterialInterface* Used = Landscape->LandscapeHoleMaterial ? Landscape->LandscapeHoleMaterial.Get() : Landscape->LandscapeMaterial.Get();
+			HoleDrawer = Used && Used->GetMaterial()->HasAnyExpressionsInMaterialAndFunctionsOfType<UMaterialExpressionLandscapeVisibilityMask>() ? Used : nullptr;
+		}
+		if (HoleDrawer)
 		{
 			FScopedSetLandscapeEditingLayer Scope(Landscape, Layer->GetGuid(), [Landscape] { Landscape->RequestLayersContentUpdateForceAll(); });
 			FLandscapeEditDataInterface Edit(Info, Layer->GetGuid());
 			Edit.SetAlphaData(ALandscapeProxy::VisibilityLayer, Extent.Min.X, Extent.Min.Y, Extent.Max.X, Extent.Max.Y, Bytes.GetData(), 0);
-		}
-		if (Holes > 0)
-		{
-			if (UMaterialInterface* M = EnsureHoleMaterial(Landscape, Warnings))
-			{
-				HoleMaterial = M->GetPathName();
-			}
 		}
 	}
 
