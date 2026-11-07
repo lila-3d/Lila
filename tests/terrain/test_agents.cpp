@@ -1,6 +1,9 @@
 #include "TestUtil.h"
 
 #include "core/ImageIO.h"
+#include "scene/Graph.h"
+#include "render/HeightfieldRenderer.h"
+#include "ui/HeightfieldDisplay.h"
 
 #include <cmath>
 #include <filesystem>
@@ -185,5 +188,41 @@ TEST_CASE("agents: terrainWedge builds spec variants in parallel lilabatch proce
     CHECK(seq["note"] == "parallel=False");
     CHECK(seq["variants"][0]["ok"] == true);
     CHECK(seq["variants"][1]["vary"]["seed"] == 1);
+    run("newScene");
+}
+
+TEST_CASE("agents: material rules set the heightfield draw's paint layers, one per layer in its colour")
+{
+    loadTerrain();
+    if (!ops::find("terrainDisplay"))
+        ui::heightfieldDisplay::registerCommands();
+    run("newScene");
+    const json t = run("terrainCreate", {{"size", {60000.0, 60000.0}}, {"resolution", 129}, {"erosion", 20}, {"name", "Painted"}});
+    json rules = run("terrainMaterialRules", {{"args", {"Painted"}}, {"set", {{"name", "moss"}, {"color", {0.1, 0.4, 0.05}}, {"when", {{"slope", {0.0, 20.0}}}}}}});
+    const size_t count = rules["layers"].size();
+    REQUIRE(count >= 3);
+    REQUIRE(rules["displayLayers"].size() == count);
+
+    json shown = run("terrainDisplayLayers", {{"args", {"Painted"}}});
+    REQUIRE(shown["layers"].size() == count);
+    for (size_t i = 0; i < count; ++i)
+    {
+        const std::string name = rules["layers"][i]["name"];
+        CHECK(shown["layers"][i]["name"] == name);
+        CHECK(shown["layers"][i]["mask"] == "layer_" + name);
+        CHECK(shown["layers"][i]["found"] == true);
+    }
+    CHECK(rules["displayLayers"].back()["color"] == "#59aa3f");
+
+    scene::Graph& g = scene::Graph::current();
+    ui::heightfieldDisplay::Settings set;
+    std::optional<render::HeightfieldDraw> d = ui::heightfieldDisplay::drawFor(g, g.find("Painted")->id(), set, true);
+    REQUIRE(d);
+    REQUIRE(d->layers.size() == count);
+    CHECK(d->layers.back().color.g == doctest::Approx(0.4f).epsilon(0.02));
+
+    // A rule change reaches the draw again.
+    run("terrainMaterialRules", {{"args", {"Painted"}}, {"remove", {"moss"}}});
+    CHECK(run("terrainDisplayLayers", {{"args", {"Painted"}}})["layers"].size() == count - 1);
     run("newScene");
 }
