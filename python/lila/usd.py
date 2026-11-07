@@ -107,6 +107,10 @@ class _PxrFinder:
         if name != "pxr" or _core is not None:
             return None
         try:
+            # An extension loading before OpenUSD (or with it turned off) imports pxr: load OpenUSD for it.
+            if _lila.is_main_thread() and not ops.extensionInfo("OpenUSD").get("loaded"):
+                ops.loadExtension("OpenUSD")
+                print("lila.usd: loaded the OpenUSD extension for 'import pxr'")
             py = os.path.join(package_root(), "python")
         except Exception:
             return None

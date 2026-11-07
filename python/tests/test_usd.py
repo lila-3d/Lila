@@ -52,6 +52,26 @@ def loaded_modules(basename):
     return out
 
 
+def test_pxr_imports_while_an_extension_loads_before_openusd():
+    # First of the tests, so nothing has imported pxr yet.
+    assert "pxr" not in sys.modules
+    if ops.extensionInfo("OpenUSD").get("loaded"):
+        ops.unloadExtension("OpenUSD")
+    pkg = os.path.join(tempfile.gettempdir(), "lila_py_usd_pxr_probe")
+    shutil.rmtree(pkg, ignore_errors=True)
+    os.makedirs(os.path.join(pkg, "pxrprobe"))
+    with open(os.path.join(pkg, "extension.json"), "w") as f:
+        f.write('{"id": "PxrProbe", "version": "1.0", "sdk": "1.0", "python": "pxrprobe"}')
+    with open(os.path.join(pkg, "pxrprobe", "__init__.py"), "w") as f:
+        f.write("def initialize_extension():\n    from pxr import Sdf\n\n    Sdf.Layer.CreateAnonymous()\n")
+    ops.loadExtension(pkg)
+    try:
+        assert ops.extensionInfo("PxrProbe").get("loaded"), ops.extensionInfo("PxrProbe").get("error")
+        assert ops.extensionInfo("OpenUSD").get("loaded")
+    finally:
+        ops.unloadExtension("PxrProbe")
+
+
 def test_pxr_imports_from_the_extension():
     from pxr import Sdf, Tf, Usd, UsdGeom
 
