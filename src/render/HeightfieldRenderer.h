@@ -62,6 +62,33 @@ struct HeightfieldSelection
 
 LILA_UI_API HeightPyramid buildHeightPyramid(const std::vector<float>& heights, int nx, int nz);
 
+/** Samples along a side of the tiles a changed grid is compared and uploaded by: the span of a pyramid block. */
+constexpr int kHeightfieldTile = 2 * kHeightfieldPatch;
+
+/** Grid samples [x0, x1) along X by [z0, z1) along Z. */
+struct HeightfieldRect
+{
+    int x0 = 0, z0 = 0, x1 = 0, z1 = 0;
+    bool operator==(const HeightfieldRect&) const = default;
+};
+
+/** One copy of count heights from src in packed staging data to dst in the grid, both counted in floats. */
+struct HeightfieldCopy
+{
+    size_t src = 0, dst = 0, count = 0;
+    bool operator==(const HeightfieldCopy&) const = default;
+};
+
+/**
+ * Where heights b differ from a (both nx by nz), in whole tiles: each row of tiles' runs of changed ones, joined with
+ * the same run in the rows below. Empty when they match.
+ */
+LILA_UI_API std::vector<HeightfieldRect> heightfieldDirtyRects(const float* a, const float* b, int nx, int nz);
+/** The copies that carry rects' rows, packed one after another, into an nx-wide grid; rows contiguous in both join. */
+LILA_UI_API std::vector<HeightfieldCopy> heightfieldRectCopies(const std::vector<HeightfieldRect>& rects, int nx);
+/** Brings p up to date with heights h after they changed within rects. */
+LILA_UI_API void updateHeightPyramid(HeightPyramid& p, const std::vector<float>& h, int nx, int nz, const std::vector<HeightfieldRect>& rects);
+
 /**
  * Continuous level of detail (CDLOD) for one heightfield seen from view: patches over the visible grid, finer near the
  * camera so a quad stays about pixelsPerQuad device pixels across, every level at most one apart from its neighbours.
@@ -118,6 +145,7 @@ private:
         GridValues keep;
         uint64_t lastUsed = 0;
         HeightPyramid pyramid; // heights only
+        int nx = 0, nz = 0;    // heights only
     };
     struct FrameData
     {
@@ -136,7 +164,11 @@ private:
     Grid* heights(VulkanContext& vk, VkCommandBuffer cmd, FrameData& f, const HeightfieldDraw& d, uint64_t frame);
     VkDeviceAddress mask(VulkanContext& vk, VkCommandBuffer cmd, FrameData& f, const GridValues& values, size_t count, bool stretch, uint64_t frame);
 
+    /** Copies the tiles of d's heights that differ from g's into g's buffer and pyramid, in place. */
+    void patchHeights(VulkanContext& vk, VkCommandBuffer cmd, FrameData& f, Grid& g, const HeightfieldDraw& d);
+
     std::unordered_map<const void*, Grid> mHeights;
+    std::unordered_map<uint64_t, const void*> mNodeHeights; // a node's last heights, the grid its next heights patch
     std::map<std::pair<const void*, bool>, Grid> mMasks; // keyed by values and whether stretched to their range
     std::unordered_map<const void*, FrameData> mFrames;
     std::vector<Prepared> mPrepared;

@@ -14,6 +14,8 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstring>
+#include <limits>
 #include <random>
 
 using namespace lila;
@@ -487,6 +489,92 @@ TEST_CASE("heightfield draw: stylised shading models shade it like the terrain's
         CHECK(share < 0.03);
         CHECK(mean < 2.0);
     }
+}
+
+TEST_CASE("heightfield draw: an edit's dirty tiles, their copies and the pyramid's update")
+{
+    constexpr int T = render::kHeightfieldTile;
+    const int nx = 5 * T + 1, nz = 4 * T + 1;
+    std::mt19937 rng(11);
+    std::uniform_real_distribution<float> u(-500.0f, 900.0f);
+    std::vector<float> a(size_t(nx) * nz);
+    for (float& v : a)
+        v = u(rng);
+    std::vector<float> b = a;
+    CHECK(render::heightfieldDirtyRects(a.data(), b.data(), nx, nz).empty());
+
+    // A brush over tiles (1..2, 1..2), one sample in the last tile's corner, and a NaN that stays a NaN.
+    for (int z = T + 10; z < 3 * T - 5; ++z)
+        for (int x = T + 3; x < 2 * T + 7; ++x)
+            b[size_t(z) * nx + x] += 50.0f;
+    b[size_t(nz - 1) * nx + (nx - 1)] = 2000.0f;
+    a[0] = b[0] = std::numeric_limits<float>::quiet_NaN();
+    const std::vector<render::HeightfieldRect> rects = render::heightfieldDirtyRects(a.data(), b.data(), nx, nz);
+    REQUIRE(rects.size() == 2);
+    CHECK(rects[0] == render::HeightfieldRect{T, T, 3 * T, 3 * T});
+    CHECK(rects[1] == render::HeightfieldRect{5 * T, 4 * T, nx, nz});
+
+    // Copying the packed rows into a reproduces b exactly, row runs joined where both sides run on.
+    const std::vector<render::HeightfieldCopy> copies = render::heightfieldRectCopies(rects, nx);
+    CHECK(copies.size() == size_t(2 * T + 1));
+    std::vector<float> packed;
+    for (const render::HeightfieldRect& r : rects)
+        for (int z = r.z0; z < r.z1; ++z)
+            packed.insert(packed.end(), b.begin() + ptrdiff_t(size_t(z) * nx + r.x0), b.begin() + ptrdiff_t(size_t(z) * nx + r.x1));
+    REQUIRE(copies.back().src + copies.back().count == packed.size());
+    std::vector<float> patched = a;
+    for (const render::HeightfieldCopy& c : copies)
+        std::copy_n(packed.begin() + ptrdiff_t(c.src), c.count, patched.begin() + ptrdiff_t(c.dst));
+    CHECK(std::memcmp(patched.data(), b.data(), b.size() * sizeof(float)) == 0);
+    const std::vector<render::HeightfieldCopy> wide = render::heightfieldRectCopies({{0, 3, nx, 9}}, nx);
+    REQUIRE(wide.size() == 1);
+    CHECK(wide[0] == render::HeightfieldCopy{0, size_t(3) * nx, size_t(6) * nx});
+
+    // The pyramid patched over the rects matches one built from scratch, including a change on a block's shared edge.
+    b[size_t(T + 20) * nx + 3 * T] = -3000.0f;
+    render::HeightPyramid p = render::buildHeightPyramid(a, nx, nz);
+    render::updateHeightPyramid(p, b, nx, nz, render::heightfieldDirtyRects(a.data(), b.data(), nx, nz));
+    const render::HeightPyramid fresh = render::buildHeightPyramid(b, nx, nz);
+    REQUIRE(p.levels() == fresh.levels());
+    for (int level = 0; level < p.levels(); ++level)
+        CHECK(p.ranges[level] == fresh.ranges[level]);
+}
+
+TEST_CASE("heightfield draw: an edited terrain draws the same patched as uploaded whole")
+{
+    auto& r = render::Renderer::get();
+    if (!r.running() && !r.start())
+    {
+        MESSAGE("no GPU for the heightfield patch test");
+        return;
+    }
+    auto before = hills(513, 3000.0);
+    ui::Camera cam;
+    cam.distance = 60000.0;
+    cam.pitch = -55.0;
+    cam.nearClip = 100.0;
+    std::string err;
+    auto shoot = [&](const std::shared_ptr<geo::Heightfield>& h, uint64_t node) {
+        render::FrameState s = shotState(cam, 1.6);
+        s.heightfields.push_back(drawOf(h));
+        s.heightfields[0].node = node;
+        Shot out;
+        REQUIRE_MESSAGE(r.renderOffscreen(std::move(s), out.w, out.h, out.bgra, &err), err);
+        return out;
+    };
+    const Shot original = shoot(before, 77);
+    // A crater dug into one corner: the next draw of node 77 patches only those tiles.
+    auto after = std::make_shared<geo::Heightfield>(*before);
+    for (int z = 300; z < 420; ++z)
+        for (int x = 40; x < 200; ++x)
+            after->heights[after->index(x, z)] -= 4000.0f;
+    const Shot patched = shoot(after, 77);
+    auto copy = std::make_shared<geo::Heightfield>(*after);
+    const Shot whole = shoot(copy, 0);
+    CHECK(difference(original, patched).second > 0.01);
+    const auto [mean, share] = difference(patched, whole);
+    MESSAGE("patched vs uploaded whole: mean " << mean << ", " << share * 100.0 << "% off by more than 8");
+    CHECK(patched.bgra == whole.bgra);
 }
 
 TEST_CASE("terrain display commands: options and paint layers round trip, layers undo")

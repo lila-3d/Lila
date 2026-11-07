@@ -241,33 +241,31 @@ struct HfSelector
 };
 } // namespace
 
-HeightPyramid buildHeightPyramid(const std::vector<float>& h, int nx, int nz)
+/** The lowest and highest finite sample of level 0's block (bx, bz), which spans its edges' samples. */
+static glm::vec2 heightBlockRange(const std::vector<float>& h, int nx, int nz, int bx, int bz)
 {
-    LILA_ZONE();
-    HeightPyramid p;
-    glm::ivec2 dim((nx - 2) / kHfNodeSamples + 1, (nz - 2) / kHfNodeSamples + 1);
-    std::vector<glm::vec2> level(size_t(dim.x) * size_t(dim.y));
-    tbb::parallel_for(0, dim.y, [&](int bz) {
-        const int z0 = bz * kHfNodeSamples, z1 = std::min(z0 + kHfNodeSamples, nz - 1);
-        for (int bx = 0; bx < dim.x; ++bx)
-        {
-            const int x0 = bx * kHfNodeSamples, x1 = std::min(x0 + kHfNodeSamples, nx - 1);
-            float lo = FLT_MAX, hi = -FLT_MAX;
-            for (int z = z0; z <= z1; ++z)
+    const int z0 = bz * kHfNodeSamples, z1 = std::min(z0 + kHfNodeSamples, nz - 1);
+    const int x0 = bx * kHfNodeSamples, x1 = std::min(x0 + kHfNodeSamples, nx - 1);
+    float lo = FLT_MAX, hi = -FLT_MAX;
+    for (int z = z0; z <= z1; ++z)
+    {
+        const float* row = h.data() + size_t(z) * size_t(nx);
+        for (int x = x0; x <= x1; ++x)
+            if (std::isfinite(row[x]))
             {
-                const float* row = h.data() + size_t(z) * size_t(nx);
-                for (int x = x0; x <= x1; ++x)
-                    if (std::isfinite(row[x]))
-                    {
-                        lo = std::min(lo, row[x]);
-                        hi = std::max(hi, row[x]);
-                    }
+                lo = std::min(lo, row[x]);
+                hi = std::max(hi, row[x]);
             }
-            level[size_t(bz) * size_t(dim.x) + size_t(bx)] = lo <= hi ? glm::vec2(lo, hi) : glm::vec2(0.0f);
-        }
-    });
-    p.dims.push_back(dim);
-    p.ranges.push_back(std::move(level));
+    }
+    return lo <= hi ? glm::vec2(lo, hi) : glm::vec2(0.0f);
+}
+
+/** Every level above the first, rebuilt from it. */
+static void buildUpperLevels(HeightPyramid& p)
+{
+    p.dims.resize(1);
+    p.ranges.resize(1);
+    glm::ivec2 dim = p.dims[0];
     while ((dim.x > 1 || dim.y > 1) && p.levels() < kHeightfieldMaxLods)
     {
         const glm::ivec2 up((dim.x + 1) / 2, (dim.y + 1) / 2);
@@ -284,7 +282,114 @@ HeightPyramid buildHeightPyramid(const std::vector<float>& h, int nx, int nz)
         p.dims.push_back(dim);
         p.ranges.push_back(std::move(next));
     }
+}
+
+HeightPyramid buildHeightPyramid(const std::vector<float>& h, int nx, int nz)
+{
+    LILA_ZONE();
+    HeightPyramid p;
+    const glm::ivec2 dim((nx - 2) / kHfNodeSamples + 1, (nz - 2) / kHfNodeSamples + 1);
+    std::vector<glm::vec2> level(size_t(dim.x) * size_t(dim.y));
+    tbb::parallel_for(0, dim.y, [&](int bz) {
+        for (int bx = 0; bx < dim.x; ++bx)
+            level[size_t(bz) * size_t(dim.x) + size_t(bx)] = heightBlockRange(h, nx, nz, bx, bz);
+    });
+    p.dims.push_back(dim);
+    p.ranges.push_back(std::move(level));
+    buildUpperLevels(p);
     return p;
+}
+
+void updateHeightPyramid(HeightPyramid& p, const std::vector<float>& h, int nx, int nz, const std::vector<HeightfieldRect>& rects)
+{
+    if (p.levels() == 0 || rects.empty())
+        return;
+    LILA_ZONE();
+    const glm::ivec2 dim = p.dims[0];
+    for (const HeightfieldRect& r : rects)
+    {
+        // A block spans the sample on its far edge too, so a change at a block's first sample reaches the block before.
+        const int bx0 = std::max((r.x0 - 1) / kHfNodeSamples, 0), bx1 = std::min((r.x1 - 1) / kHfNodeSamples, dim.x - 1);
+        const int bz0 = std::max((r.z0 - 1) / kHfNodeSamples, 0), bz1 = std::min((r.z1 - 1) / kHfNodeSamples, dim.y - 1);
+        tbb::parallel_for(bz0, bz1 + 1, [&](int bz) {
+            for (int bx = bx0; bx <= bx1; ++bx)
+                p.ranges[0][size_t(bz) * size_t(dim.x) + size_t(bx)] = heightBlockRange(h, nx, nz, bx, bz);
+        });
+    }
+    buildUpperLevels(p);
+}
+
+std::vector<HeightfieldRect> heightfieldDirtyRects(const float* a, const float* b, int nx, int nz)
+{
+    LILA_ZONE();
+    const int tilesX = (nx + kHeightfieldTile - 1) / kHeightfieldTile, tilesZ = (nz + kHeightfieldTile - 1) / kHeightfieldTile;
+    std::vector<uint8_t> dirty(size_t(tilesX) * size_t(tilesZ), 0);
+    tbb::parallel_for(0, tilesZ, [&](int tz) {
+        const int z0 = tz * kHeightfieldTile, z1 = std::min(z0 + kHeightfieldTile, nz);
+        for (int tx = 0; tx < tilesX; ++tx)
+        {
+            const int x0 = tx * kHeightfieldTile, x1 = std::min(x0 + kHeightfieldTile, nx);
+            for (int z = z0; z < z1; ++z)
+            {
+                const size_t at = size_t(z) * size_t(nx) + size_t(x0);
+                // Bitwise, so a NaN that stays a NaN is no change.
+                if (std::memcmp(a + at, b + at, size_t(x1 - x0) * sizeof(float)) != 0)
+                {
+                    dirty[size_t(tz) * size_t(tilesX) + size_t(tx)] = 1;
+                    break;
+                }
+            }
+        }
+    });
+    std::vector<HeightfieldRect> out;
+    std::vector<size_t> open, next; // rects reaching the previous row of tiles, then this one
+    for (int tz = 0; tz < tilesZ; ++tz)
+    {
+        next.clear();
+        const int z0 = tz * kHeightfieldTile, z1 = std::min(z0 + kHeightfieldTile, nz);
+        for (int tx = 0; tx < tilesX;)
+        {
+            if (!dirty[size_t(tz) * size_t(tilesX) + size_t(tx)])
+            {
+                ++tx;
+                continue;
+            }
+            const int start = tx;
+            while (tx < tilesX && dirty[size_t(tz) * size_t(tilesX) + size_t(tx)])
+                ++tx;
+            const int x0 = start * kHeightfieldTile, x1 = std::min(tx * kHeightfieldTile, nx);
+            auto same = std::ranges::find_if(open, [&](size_t i) { return out[i].x0 == x0 && out[i].x1 == x1; });
+            if (same != open.end())
+            {
+                out[*same].z1 = z1;
+                next.push_back(*same);
+            }
+            else
+            {
+                next.push_back(out.size());
+                out.push_back({x0, z0, x1, z1});
+            }
+        }
+        std::swap(open, next);
+    }
+    return out;
+}
+
+std::vector<HeightfieldCopy> heightfieldRectCopies(const std::vector<HeightfieldRect>& rects, int nx)
+{
+    std::vector<HeightfieldCopy> out;
+    size_t packed = 0;
+    for (const HeightfieldRect& r : rects)
+        for (int z = r.z0; z < r.z1; ++z)
+        {
+            const size_t dst = size_t(z) * size_t(nx) + size_t(r.x0), count = size_t(r.x1 - r.x0);
+            if (!out.empty() && out.back().src + out.back().count == packed && out.back().dst + out.back().count == dst)
+                out.back().count += count;
+            else
+                out.push_back({packed, dst, count});
+            packed += count;
+        }
+    return out;
 }
 
 HeightfieldSelection selectHeightfieldPatches(const HeightfieldDraw& d, const HeightPyramid& py, const HeightfieldView& view, double pixelsPerQuad,
@@ -356,19 +461,73 @@ HeightfieldSelection selectHeightfieldPatches(const HeightfieldDraw& d, const He
 
 HeightfieldRenderer::Grid* HeightfieldRenderer::heights(VulkanContext& vk, VkCommandBuffer cmd, FrameData& f, const HeightfieldDraw& d, uint64_t frame)
 {
-    auto it = mHeights.find(d.heights.get());
+    const void* key = d.heights.get();
+    auto it = mHeights.find(key);
     if (it != mHeights.end())
     {
         it->second.lastUsed = frame;
         return &it->second;
     }
+    // New heights for a node whose last ones are still on the GPU at the same size: an edit, so only what changed goes up.
+    // Not when a draw this frame still reads the last ones.
+    if (d.node)
+        if (auto last = mNodeHeights.find(d.node); last != mNodeHeights.end())
+            if (auto old = mHeights.find(last->second);
+                old != mHeights.end() && old->second.nx == d.nx && old->second.nz == d.nz && old->second.lastUsed != frame)
+            {
+                patchHeights(vk, cmd, f, old->second, d);
+                auto moved = mHeights.extract(old);
+                moved.key() = key;
+                Grid& g = mHeights.insert(std::move(moved)).position->second;
+                g.keep = d.heights;
+                g.lastUsed = frame;
+                last->second = key;
+                return &g;
+            }
     LILA_ZONE_N("Upload heightfield heights");
     Grid g;
     g.pyramid = buildHeightPyramid(*d.heights, d.nx, d.nz);
     g.buffer = uploadHeightfieldGrid(vk, cmd, f.staging, d.heights->data(), size_t(d.nx) * size_t(d.nz) * sizeof(float));
     g.keep = d.heights;
     g.lastUsed = frame;
-    return &mHeights.emplace(d.heights.get(), std::move(g)).first->second;
+    g.nx = d.nx;
+    g.nz = d.nz;
+    if (d.node)
+        mNodeHeights[d.node] = key;
+    return &mHeights.emplace(key, std::move(g)).first->second;
+}
+
+void HeightfieldRenderer::patchHeights(VulkanContext& vk, VkCommandBuffer cmd, FrameData& f, Grid& g, const HeightfieldDraw& d)
+{
+    LILA_ZONE_N("Patch heightfield heights");
+    const std::vector<float>& now = *d.heights;
+    const std::vector<HeightfieldRect> rects = heightfieldDirtyRects(g.keep->data(), now.data(), d.nx, d.nz);
+    if (rects.empty())
+        return;
+    const std::vector<HeightfieldCopy> copies = heightfieldRectCopies(rects, d.nx);
+    const size_t floats = copies.back().src + copies.back().count;
+    compute::Buffer from = compute::makeBuffer(vk, floats * sizeof(float), 0, compute::Host::Write);
+    f.staging.push_back(from);
+    std::vector<VkBufferCopy> regions;
+    regions.reserve(copies.size());
+    auto* out = static_cast<float*>(from.mapped);
+    for (const HeightfieldCopy& c : copies)
+    {
+        std::memcpy(out + c.src, now.data() + c.dst, c.count * sizeof(float));
+        regions.push_back({c.src * sizeof(float), c.dst * sizeof(float), c.count * sizeof(float)});
+    }
+    vmaFlushAllocation(vk.allocator, from.alloc, 0, VK_WHOLE_SIZE);
+    // Earlier frames' draws may still read the grid: they finish before the copy overwrites it.
+    VkMemoryBarrier2 mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    mb.srcStageMask = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+    mb.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+    mb.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    VkDependencyInfo di{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    di.memoryBarrierCount = 1;
+    di.pMemoryBarriers = &mb;
+    vkCmdPipelineBarrier2(cmd, &di);
+    vkCmdCopyBuffer(cmd, from.buffer, g.buffer.buffer, uint32_t(regions.size()), regions.data());
+    updateHeightPyramid(g.pyramid, now, d.nx, d.nz, rects);
 }
 
 VkDeviceAddress HeightfieldRenderer::mask(VulkanContext& vk, VkCommandBuffer cmd, FrameData& f, const GridValues& values, size_t count, bool stretch,
@@ -619,6 +778,7 @@ void HeightfieldRenderer::evict(VulkanContext& vk, uint64_t frame)
         compute::destroy(vk, e.second.buffer);
         return true;
     });
+    std::erase_if(mNodeHeights, [&](const auto& e) { return !mHeights.contains(e.second); });
     std::erase_if(mMasks, [&](auto& e) {
         if (!stale(e.second))
             return false;
@@ -650,6 +810,7 @@ void HeightfieldRenderer::destroy(VulkanContext& vk)
             compute::destroy(vk, b);
     }
     mHeights.clear();
+    mNodeHeights.clear();
     mMasks.clear();
     mFrames.clear();
     mPrepared.clear();

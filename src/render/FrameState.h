@@ -167,6 +167,7 @@ struct HeightfieldDraw
     float arrowSpacing = 48.0f;
     /** How many device pixels the finest quads near the camera span: fewer draws more detail and costs more. */
     float quadPixels = 4.0f;
+    /** The node drawn: its new heights at the same size upload only the tiles that changed. 0 uploads them whole. */
     uint64_t node = 0;
 };
 
