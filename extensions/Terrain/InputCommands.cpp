@@ -29,6 +29,7 @@
 #include <lila/Workspace.h>
 
 #include <QApplication>
+#include <QPointer>
 #include <QTimer>
 
 #include <algorithm>
@@ -1355,7 +1356,8 @@ bool registerInputs(ext::Context& ctx)
     });
 
     // Extensions load before the application object exists, so the poll timer starts on the first idle of the UI loop.
-    auto timer = std::make_shared<QTimer*>(nullptr);
+    // QPointer: the application deletes its child timer before extensions unload at shutdown.
+    auto timer = std::make_shared<QPointer<QTimer>>();
     ctx.subscribe(events::Event::AppIdle, [timer](const events::EventData&) {
         if (*timer || !qobject_cast<QApplication*>(QCoreApplication::instance()))
             return;
