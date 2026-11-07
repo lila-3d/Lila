@@ -3183,8 +3183,22 @@ struct Renderer::Impl
             pass.pipeline = prepassPipeline;
             pass.aoSet = whiteAoSet;
             pass.viewProj = viewProj;
+            // The heightfields draw inline first, in an instance of the pass that the chunks' instance resumes.
+            const bool heightfieldsFirst = heightfields.count() > 0;
+            if (heightfieldsFirst)
+            {
+                ri.flags = VK_RENDERING_SUSPENDING_BIT;
+                vkCmdBeginRendering(cmd, &ri);
+                const VkViewport viewport{0, 0, float(v.extent.width), float(v.extent.height), 0, 1};
+                const VkRect2D scissor{{0, 0}, v.extent};
+                vkCmdSetViewport(cmd, 0, 1, &viewport);
+                vkCmdSetScissor(cmd, 0, 1, &scissor);
+                drawHeightfields(cmd, s, viewProj, whiteAoSet, true);
+                vkCmdEndRendering(cmd);
+                pass.flags = VK_RENDERING_RESUMING_BIT;
+            }
             const std::vector<VkCommandBuffer> chunks = recordChunks(f, s, pass);
-            ri.flags = VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT;
+            ri.flags = pass.flags | VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT;
             vkCmdBeginRendering(cmd, &ri);
             vkCmdExecuteCommands(cmd, uint32_t(chunks.size()), chunks.data());
             cullCmd = VK_NULL_HANDLE;
