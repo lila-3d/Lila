@@ -1354,8 +1354,14 @@ void AttributeEditor::rebuild()
             grip->setCursor(Qt::OpenHandCursor);
             h->addWidget(pencil);
             h->addWidget(grip);
-            pencil->hide();
-            grip->hide();
+            // Hidden but still sized, so revealing them on hover doesn't move or resize the field.
+            for (QWidget* w : {static_cast<QWidget*>(pencil), static_cast<QWidget*>(grip)})
+            {
+                QSizePolicy p = w->sizePolicy();
+                p.setRetainSizeWhenHidden(true);
+                w->setSizePolicy(p);
+                w->hide();
+            }
             connect(pencil, &QToolButton::clicked, this, [this, attr, pencil] { openEdit(attr, pencil); });
             auto* hover = new RowGestures(row);
             hover->reveal = {pencil, grip};
@@ -1595,43 +1601,55 @@ void AttributeEditor::rebuild()
         QFormLayout* form = newForm(content);
         int added = 0;
         std::vector<std::string> categories{""};
+        auto addCategory = [&](const std::string& c) {
+            if (std::find(categories.begin(), categories.end(), c) == categories.end())
+                categories.push_back(c);
+        };
+        // The schema list itself stays out: each schema is its heading, and removing the heading removes it.
+        const int schemaList = n->type().attrIndex("usdApiSchemas");
+        auto shownExtra = [&](const scene::AttrDef& def) { return (def.flags & scene::AttrUser) && def.name != "usdApiSchemas"; };
         for (const scene::AttrDef& def : n->type().attrs)
-            if ((def.flags & scene::AttrUser) && std::find(categories.begin(), categories.end(), def.category) == categories.end())
-                categories.push_back(def.category);
+            if (shownExtra(def))
+                addCategory(def.category);
+        if (schemaList >= 0 && n->type().attrs[size_t(schemaList)].type == scene::PlugType::String)
+            for (const auto& [index, v] : n->elements(schemaList))
+                if (const std::string* s = std::get_if<std::string>(&v); s && !s->empty())
+                    addCategory(*s);
         for (const std::string& c : categories)
         {
-            bool headed = c.empty();
-            for (const scene::AttrDef& def : n->type().attrs)
+            QFormLayout* rows = form;
+            if (!c.empty())
             {
-                if (!(def.flags & scene::AttrUser) || def.category != c)
-                    continue;
-                if (!headed)
-                {
-                    QLabel* heading = subHeading(form, c, [this, c] { removeCategory(c); });
-                    // Only USD objects look up labels: listing USD's schemas loads OpenUSDCore.
-                    if (n->type().attrIndex("usdApiSchemas") >= 0)
-                        heading->setText(QString::fromStdString(scene::attrComponents::labelOf(c)));
-                    heading->setObjectName("componentHeading");
-                    heading->setContextMenuPolicy(Qt::CustomContextMenu);
-                    connect(heading, &QWidget::customContextMenuRequested, this, [this, heading, c](const QPoint& at) { headingMenu(c, heading, at); });
-                    heading->setAcceptDrops(true);
-                    heading->setCursor(Qt::OpenHandCursor);
-                    auto* gestures = new RowGestures(heading);
-                    gestures->dragMime = kHeadingMime;
-                    gestures->dragText = QString::fromStdString(c);
-                    gestures->accepts = [c](const QMimeData* d) {
-                        return d->hasFormat(kAttrMime) || (d->hasFormat(kHeadingMime) && mimeText(d, kHeadingMime) != c);
-                    };
-                    gestures->dropped = [this, c](const QMimeData* d) {
-                        if (d->hasFormat(kAttrMime))
-                            dropAttr(mimeText(d, kAttrMime), {}, c);
-                        else
-                            dropHeading(mimeText(d, kHeadingMime), c);
-                    };
-                    headed = true;
-                }
-                added += addAttrRows(form, def);
+                auto* indented = new QWidget;
+                rows = newForm(indented);
+                rows->setContentsMargins(14, 0, 0, 4);
+                QLabel* heading = subHeading(form, c, [this, c] { removeCategory(c); });
+                form->addRow(indented);
+                ++added;
+                // Only USD objects look up labels: listing USD's schemas loads OpenUSDCore.
+                if (schemaList >= 0)
+                    heading->setText(QString::fromStdString(scene::attrComponents::labelOf(c)));
+                heading->setObjectName("componentHeading");
+                heading->setContextMenuPolicy(Qt::CustomContextMenu);
+                connect(heading, &QWidget::customContextMenuRequested, this, [this, heading, c](const QPoint& at) { headingMenu(c, heading, at); });
+                heading->setAcceptDrops(true);
+                heading->setCursor(Qt::OpenHandCursor);
+                auto* gestures = new RowGestures(heading);
+                gestures->dragMime = kHeadingMime;
+                gestures->dragText = QString::fromStdString(c);
+                gestures->accepts = [c](const QMimeData* d) {
+                    return d->hasFormat(kAttrMime) || (d->hasFormat(kHeadingMime) && mimeText(d, kHeadingMime) != c);
+                };
+                gestures->dropped = [this, c](const QMimeData* d) {
+                    if (d->hasFormat(kAttrMime))
+                        dropAttr(mimeText(d, kAttrMime), {}, c);
+                    else
+                        dropHeading(mimeText(d, kHeadingMime), c);
+                };
             }
+            for (const scene::AttrDef& def : n->type().attrs)
+                if (shownExtra(def) && def.category == c)
+                    added += addAttrRows(rows, def);
         }
         if (added)
         {
@@ -2151,8 +2169,9 @@ void AttributeEditor::applySearch()
     {
         const bool show = attrAuthoring::matches(r.def, q);
         r.form->setRowVisible(r.label, show);
-        if (show && r.form->parentWidget())
-            hit.insert(r.form->parentWidget()->parentWidget());
+        if (show)
+            for (QWidget* w = r.form->parentWidget(); w && w != mBody; w = w->parentWidget())
+                hit.insert(w);
     }
     for (const auto& [box, title] : mSections)
     {

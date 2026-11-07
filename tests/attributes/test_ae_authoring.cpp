@@ -14,6 +14,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
+#include <QHBoxLayout>
 #include <QToolButton>
 
 using namespace lila;
@@ -191,4 +192,36 @@ TEST_CASE("Attribute Editor: search filters rows and sections, added attributes 
     cmd("renameAttr", {{"args", {"Prop.armour", "shield"}}});
     settle();
     CHECK(rowVisible("Shield"));
+}
+
+TEST_CASE("Extra Attributes: schemas as indented headings, no schema list, hover keeps fields still")
+{
+    cmd("newScene");
+    cmd("spaceLocator", {{"name", "Prim"}});
+    cmd("addAttr", {{"args", {"Prim"}}, {"longName", "usdApiSchemas"}, {"dataType", "stringArray"}});
+    cmd("setAttr", {{"args", {"Prim.usdApiSchemas", json::array({"SpeedAPI", "EmptyAPI"})}}});
+    cmd("addAttr", {{"args", {"Prim"}}, {"longName", "speed"}, {"category", "SpeedAPI"}});
+    cmd("select", {{"args", {"Prim"}}});
+    ui::AttributeEditor ae;
+    ae.resize(400, 900);
+    ae.show();
+    settle();
+
+    QStringList headings;
+    for (QLabel* l : ae.findChildren<QLabel*>("componentHeading"))
+        headings << l->text();
+    CHECK(headings == QStringList{"SpeedAPI", "EmptyAPI"});
+    for (QLabel* l : ae.findChildren<QLabel*>())
+        CHECK(l->text() != "Usd Api Schemas");
+
+    QToolButton* pencil = ae.findChild<QToolButton*>("editAttr");
+    REQUIRE(pencil);
+    QWidget* row = pencil->parentWidget();
+    QWidget* field = qobject_cast<QHBoxLayout*>(row->layout())->itemAt(0)->widget();
+    const QRect before = field->geometry();
+    QEvent enter(QEvent::Enter);
+    QApplication::sendEvent(row, &enter);
+    settle();
+    CHECK(pencil->isVisible());
+    CHECK(field->geometry() == before);
 }
