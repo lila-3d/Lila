@@ -694,6 +694,11 @@ void registerBuiltins()
         "Makes the selected edges hard, or every edge of the selected meshes in object mode.");
     cmd("mesh.setNormalAngle", "Soften by Angle", "Mesh", "polySoftEdge", {{"angle", 30.0}},
         "Hardens the selected edges whose faces meet sharper than the angle and softens the rest.");
+    cmd("mesh.crease", "Crease Edges", "Mesh", "polyCrease", json::object(),
+        "Creases the selected edges so the subdivision preview and Subdivide keep them sharp.");
+    cmd("mesh.uncrease", "Uncrease Edges", "Mesh", "polyCrease", {{"value", 0.0}}, "Removes the crease from the selected edges.");
+    cmd("mesh.bevelWeight", "Bevel Weight", "Mesh", "polyBevelWeight", json::object(),
+        "Sets the bevel weight of the selected edges; Auto Bevel in weight mode bevels them.");
     cmd("mesh.duplicateFaces", "Duplicate Faces", "Mesh", "polyDuplicateFaces", json::object(),
         "Copies the selected faces into a separate shell of the same mesh and selects the copies.");
     cmd("mesh.connect", "Connect", "Mesh", "polyConnect", json::object(), "Splits faces with new edges between the selected vertices or edges.");

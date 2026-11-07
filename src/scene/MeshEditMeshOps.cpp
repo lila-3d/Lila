@@ -372,6 +372,36 @@ void registerMeshEditMeshOpsCommands()
         },
     });
 
+    auto setEdgeWeight = [](const char* label, std::string_view attr, float value) {
+        return editSelected(label, K::Edge, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
+            std::span<float> w = m.edgeAttrs().getOrAdd<float>(attr);
+            for (Index e : withMirror(m, s, sel, K::Edge))
+                if (m.edgeValid(e))
+                    w[e] = value;
+            return edges(sel);
+        });
+    };
+
+    ops::registerCommand({
+        .name = "polyCrease",
+        .doc = "Set the subdivision crease of the selected edges. Each subdivision level spends 1 of it, so 1 is sharp for "
+               "one level and smooth after, and 10 stays sharp. 0 removes the crease.",
+        .flags = {{"value", "v", T::Float, 10.0, "Crease: levels the edge stays sharp for.", {}, {}, 0.0, 10.0}},
+        .run = [setEdgeWeight](const Args& a) -> json {
+            return setEdgeWeight("Crease Edges", geo::attr::kCrease, float(a.get<double>("value")));
+        },
+    });
+
+    ops::registerCommand({
+        .name = "polyBevelWeight",
+        .doc = "Set the bevel weight of the selected edges, read by Auto Bevel in weight mode (it bevels edges above its "
+               "weightThreshold).",
+        .flags = {{"value", "v", T::Float, 1.0, "Bevel weight, 0 to 1.", {}, {}, 0.0, 1.0}},
+        .run = [setEdgeWeight](const Args& a) -> json {
+            return setEdgeWeight("Bevel Weight", geo::attr::kBevelWeight, float(a.get<double>("value")));
+        },
+    });
+
     ops::registerCommand({
         .name = "polyDuplicateFaces",
         .doc = "Copy the selected faces into a separate shell of the same mesh and select the copies.",

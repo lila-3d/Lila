@@ -323,3 +323,25 @@ TEST_CASE("selectFoldEdges and measure")
     CHECK(thin > 0.0);
     CHECK(run("getAttr", {{"args", {mod + ".thin"}}}).get<double>() == doctest::Approx(thin));
 }
+
+TEST_CASE("polyBevelWeight feeds weight mode and polyCrease keeps subdivided edges sharp")
+{
+    run("newScene");
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
+    run("selectComponents", {{"args", {cube}}, {"edges", {0}}});
+    run("polyBevelWeight");
+    std::string mod = run("autoBevel", {{"args", {cube}}, {"segments", 1}, {"offset", 5.0}, {"mode", "weight"}})[0];
+    CHECK(run("bevelEdgeInfo", {{"args", {mod}}})["count"] == 1);
+
+    std::string box = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
+    run("select", {{"args", {box}}});
+    run("selectMode", {{"args", {"edge"}}});
+    run("selectComponents", {{"args", {box}}, {"edges", {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}}});
+    run("polyCrease");
+    run("polySubdivide", {{"args", {box}}, {"levels", 2}});
+    double most = 0.0;
+    const json data = run("meshData", {{"args", {box}}});
+    for (const json& p : data["points"])
+        most = std::max(most, p[0].get<double>());
+    CHECK(most == doctest::Approx(50.0));
+}

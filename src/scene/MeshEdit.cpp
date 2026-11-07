@@ -251,7 +251,7 @@ void registerMeshEditCommands()
     detail::registerMeshEditNormalsCommands();
 
     for (const char* name : {"polyExtrude", "polyInset", "polyBevel", "polyInsertLoop", "polySplitRings", "polyOffsetLoop", "polyMerge", "polyBridge", "polyGridFill", "polyQuadrangulate",
-                             "polySubdivide", "polyMirror", "polyTriangulate", "polyReduce", "polySoftEdge"})
+                             "polySubdivide", "polyMirror", "polyTriangulate", "polyReduce", "polySoftEdge", "polyCrease", "polyBevelWeight"})
         ops::setAdjustable(name);
     {
         namespace opt = ops::options;

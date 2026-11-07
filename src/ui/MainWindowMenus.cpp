@@ -151,7 +151,8 @@ void MainWindow::buildMenus()
     menus::addActions("Mesh/Symmetry", {"mesh.toggleSymmetry", "mesh.symmetryX", "mesh.symmetryY", "mesh.symmetryZ", "mesh.symmetryRadial", "mesh.symmetryOff", "viewport.toggleSymmetryLine", "",
                                  "mesh.symmetryCheck", "mesh.symmetrizePositive", "mesh.symmetrizeNegative", "mesh.symmetryRebuild", "mesh.symmetrizeRadial",
                                  "mesh.symmetryRepair", "mesh.symmetryRebuildTopological"});
-    menus::addActions("Mesh", {"#Tessellation", "mesh.triangulate", "mesh.quadrangulate", "mesh.subdivide", "#Attributes",
+    menus::addActions("Mesh", {"#Tessellation", "mesh.triangulate", "mesh.quadrangulate", "mesh.subdivide", "#Edge Weights",
+                               "mesh.crease", "mesh.uncrease", "mesh.bevelWeight", "#Attributes",
                                "mesh.transferAttributes"});
     menus::addActions("Mesh", {"#Cleanup", "mesh.repair", "mesh.selectIssues", "#Nodes", "window.nodeEditor"});
 
