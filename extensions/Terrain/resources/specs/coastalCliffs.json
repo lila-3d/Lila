@@ -4,9 +4,9 @@
     "size": [400000, 400000],
     "resolution": 513,
     "seed": 3,
-    "source": {"type": "noise", "amplitude": 25000, "featureSize": 100000, "ridged": 0.3, "roughness": 0.5},
+    "source": {"type": "noise", "amplitude": 35000, "featureSize": 70000, "ridged": 0.3, "roughness": 0.5},
     "sculpt": [
-        {"brush": "ramp", "points": [[0, -200000], [0, 200000]], "radius": 400000, "height": 12000, "endHeight": -12000, "strength": 1}
+        {"brush": "ramp", "points": [[0, -200000], [0, 200000]], "radius": 400000, "height": 35000, "endHeight": -25000, "strength": 0.75}
     ],
     "erosion": {"preset": "natural", "age": 0.5},
     "landforms": [{"process": "cliff", "settings": {"threshold": 30, "step": 1500, "strength": 0.8}}],

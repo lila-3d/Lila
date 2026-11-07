@@ -6,7 +6,7 @@
     "seed": 1,
     "source": {"type": "noise", "amplitude": 70000, "featureSize": 120000, "ridged": 0.8, "roughness": 0.5},
     "constraints": [
-        {"id": "valley", "kind": "valley", "path": [[0, -190000], [12000, 0], [0, 190000]], "height": 40000, "width": 110000}
+        {"id": "valley", "kind": "valley", "path": [[0, -190000], [12000, 0], [0, 190000]], "height": 90000, "width": 90000}
     ],
     "erosion": {"preset": "alpine", "age": 0.6},
     "water": {

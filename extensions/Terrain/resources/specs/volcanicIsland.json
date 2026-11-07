@@ -6,8 +6,8 @@
     "seed": 5,
     "source": {"type": "noise", "amplitude": 6000, "featureSize": 40000, "ridged": 0.5, "roughness": 0.55},
     "sculpt": [
-        {"brush": "lower", "points": [[0, 0]], "radius": 400000, "strength": 8000},
-        {"brush": "stamp", "stamp": "volcano", "points": [[0, 0]], "radius": 150000, "strength": 70000}
+        {"brush": "lower", "points": [[0, 0]], "radius": 400000, "strength": 16000},
+        {"brush": "stamp", "stamp": "volcano", "points": [[0, 0]], "radius": 150000, "strength": 80000}
     ],
     "erosion": {"preset": "natural", "age": 0.5},
     "water": {"sea": {"level": 0, "beachSlope": 10}},

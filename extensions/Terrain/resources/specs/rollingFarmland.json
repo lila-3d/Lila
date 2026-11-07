@@ -4,7 +4,7 @@
     "size": [400000, 400000],
     "resolution": 513,
     "seed": 4,
-    "source": {"type": "noise", "amplitude": 6000, "featureSize": 140000, "ridged": 0.0, "roughness": 0.4, "warp": 0.3},
+    "source": {"type": "noise", "amplitude": 16000, "featureSize": 90000, "ridged": 0.0, "roughness": 0.4, "warp": 0.3},
     "constraints": [
         {"id": "riverValley", "kind": "river", "path": [[-200000, -30000], [-60000, 10000], [60000, -15000], [200000, 20000]], "height": 600, "width": 30000}
     ],
