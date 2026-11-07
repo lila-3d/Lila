@@ -1451,6 +1451,18 @@ void NodeEditor::distributeSelected(bool horizontal) { mCanvas->distribute(horiz
 
 void NodeEditor::straightenSelected() { mCanvas->straighten(); }
 
+namespace
+{
+/** The action a grab started from, when its key started it; a menu or script start has none to release or tap again. */
+std::string grabAction(const char* action) { return Hotkeys::fromKey() ? action : std::string(); }
+} // namespace
+
+void NodeEditor::grabMove() { mCanvas->beginGrab(NodeCanvas::Grab::Move, grabAction("nodeEditor.grabMove")); }
+
+void NodeEditor::grabSpacing() { mCanvas->beginGrab(NodeCanvas::Grab::Spacing, grabAction("nodeEditor.grabSpacing")); }
+
+void NodeEditor::turnTie() { mCanvas->beginGrab(NodeCanvas::Grab::TieTurn, grabAction("nodeEditor.turnTie")); }
+
 void NodeEditor::autoLayout() { mCanvas->autoLayout(); }
 
 void NodeEditor::setMinimap(bool on) { mCanvas->setMinimap(on); }
@@ -1510,7 +1522,7 @@ void NodeEditor::showCanvasMenu(QPoint global)
     menu.addSeparator();
     QMenu* arrange = menu.addMenu("Arrange");
     for (const char* id : {"nodeEditor.alignLeft", "nodeEditor.alignCenter", "nodeEditor.alignRight", "nodeEditor.alignTop", "nodeEditor.alignMiddle",
-                           "nodeEditor.alignBottom", "nodeEditor.distributeHorizontal", "nodeEditor.distributeVertical", "nodeEditor.straighten", "nodeEditor.autoLayout"})
+                           "nodeEditor.alignBottom", "nodeEditor.distributeHorizontal", "nodeEditor.distributeVertical", "nodeEditor.grabSpacing", "nodeEditor.straighten", "nodeEditor.autoLayout"})
         item(arrange, id);
     QMenu* merge = menu.addMenu("Merge");
     for (const char* id : {"nodeEditor.mergeAdd", "nodeEditor.mergeSubtract", "nodeEditor.mergeMultiply", "nodeEditor.mergeDivide"})
@@ -1845,6 +1857,15 @@ void registerEditActions()
     }
     add("nodeEditor.autoLayout", "Auto Layout", &NodeEditor::autoLayout,
         "Arrange the selected nodes, or the whole graph when fewer than two are selected, in columns from left to right by data flow.");
+    add("nodeEditor.grabMove", "Move Nodes", &NodeEditor::grabMove,
+        "Pick the selected nodes up to follow the cursor; click or Enter places them, Esc or right-click puts them back. "
+        "X or Y locks an axis, Shift snaps to the grid.");
+    add("nodeEditor.grabSpacing", "Scale Spacing", &NodeEditor::grabSpacing,
+        "Spread or tighten the gaps between the selected nodes from their centre, without resizing them; click or Enter "
+        "places them, Esc or right-click puts them back. X or Y scales one axis, Shift steps in tenths.");
+    add("nodeEditor.turnTie", "Turn Zip Tie", &NodeEditor::turnTie,
+        "Turn the zip tie under the cursor with it; click or Enter places it, Esc or right-click puts it back. It steps by 15 "
+        "degrees, or turns freely with Ctrl.");
     add("nodeEditor.straighten", "Straighten Links", &NodeEditor::straightenSelected,
         "Nudge the selected nodes up or down so the wires between them run level; a lone node lines up with what feeds it.");
     struct FlagAction

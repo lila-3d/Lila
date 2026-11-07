@@ -489,6 +489,9 @@ bool Hotkeys::eventFilter(QObject* obj, QEvent* e)
     if (QApplication::activeModalWidget())
         return false;
     QWidget* focus = QApplication::focusWidget();
+    // A widget mid-gesture (a node editor grab) owns every key until the gesture ends.
+    if (focus && focus->property("keysCaptured").toBool())
+        return false;
     // An open menu takes typing as a search (MenuSearch).
     if (MarkingMenu::active() || qobject_cast<QMenu*>(QApplication::activePopupWidget()))
         return false;

@@ -65,6 +65,7 @@
 #include <QToolTip>
 #include <QVBoxLayout>
 #include <QWheelEvent>
+#include <QElapsedTimer>
 #include <QtMath>
 
 #include <array>
@@ -679,6 +680,27 @@ public:
      */
     void autoLayout();
 
+    enum class Grab : uint8_t
+    {
+        None,
+        Move,
+        Spacing,
+        TieTurn,
+        TieArmed, // E with no tie under the cursor: the next tie pressed turns
+    };
+    /**
+     * W and R: the selection follows the cursor (Move) or its gaps grow and shrink from its centre (Spacing, never
+     * packing nodes that started apart closer than a small gap) until a click or Enter places it; Esc or RMB puts it
+     * back. X and Y lock an axis, Shift snaps (moves to the grid, spacing to tenths). One undo step (NodeCanvasGrab.cpp).
+     * E (TieTurn) turns the zip tie under the cursor the same way, in 15 degree steps or freely with Ctrl. Away from
+     * a tie it waits for one: pressing a tie then turns it while dragged, and letting go places it.
+     *
+     * action is the hotkey action that started it, empty from a menu: its key pressed again places the grab, and
+     * released after a hold places it too, so a tap toggles and a hold drags.
+     */
+    void beginGrab(Grab mode, const std::string& action = {});
+    Grab grab() const { return mGrab; }
+
     /** RMB on the canvas, outside ties and frames: the editor's menu of node actions. */
     std::function<void(QPoint)> onContextMenu;
 
@@ -723,6 +745,11 @@ protected:
     void drawForeground(QPainter* p, const QRectF&) override;
 
     void drawGhostLines(QPainter* p);
+    /** The active grab's locked-axis line and spacing readout, in view coordinates. */
+    void drawGrab(QPainter* p);
+    void keyPressEvent(QKeyEvent* e) override;
+    void keyReleaseEvent(QKeyEvent* e) override;
+    void focusOutEvent(QFocusEvent* e) override;
 
     void drawBackground(QPainter* p, const QRectF& rect) override;
     /** Each zone as a tinted box around its input, output and the nodes between them, outer zones first. */
@@ -889,6 +916,18 @@ private:
 
     void commitMoves();
 
+    void updateGrab(QPointF sp, Qt::KeyboardModifiers mods);
+    void endGrab(bool keep);
+    /** True when the grab took the key. */
+    bool grabKey(QKeyEvent* e);
+    bool grabKeyRelease(QKeyEvent* e);
+    /** A mouse press or release during a grab; true when the grab took it. */
+    bool grabPress(QMouseEvent* e);
+    bool grabRelease(QMouseEvent* e);
+    void turnTieAt(int tie, QPointF at);
+    /** The smallest spacing factor that keeps every pair of grabbed nodes that started apart from touching. */
+    double minSpacing(int axis) const;
+
     QGraphicsScene mScene;
     std::string mGroup;
     json mInfo;
@@ -933,6 +972,20 @@ private:
     CanvasPrefs mPrefs = readCanvasPrefs();
     bool mPanning = false;
     bool mBuilding = false;
+    Grab mGrab = Grab::None;
+    std::map<NodeItem*, QPointF> mGrabStart;
+    QPointF mGrabAnchor, mGrabCentre;
+    QPoint mGrabCursor;
+    int mGrabAxis = 0; // 0 free, 1 X, 2 Y
+    double mGrabFactor = 1.0;
+    bool mGrabEnded = false; // swallows the release of the click that placed a grab
+    std::string mGrabAction;
+    bool mGrabDragging = false; // a tie picked by a press turns until the button lets go
+    std::optional<QPointF> mHoverScene; // the last cursor position over the canvas, kept from mouse moves
+    QElapsedTimer mGrabHeld; // since the grab began, to tell a hold from a tap
+    int mGrabTie = -1;
+    TieView mGrabTieBefore;
+    std::optional<double> mGrabTurnFrom; // the cursor's angle around the tie once it first clears the middle
     QPoint mLast;
 };
 } // namespace lila::ui

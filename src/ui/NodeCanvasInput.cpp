@@ -5,11 +5,13 @@ namespace lila::ui
 void NodeCanvas::drawForeground(QPainter* p, const QRectF&)
 {
     drawGhostLines(p);
-    if (mPrefs.minimap)
+    if (mPrefs.minimap || mGrab != Grab::None)
     {
         p->save();
         p->resetTransform();
-        drawMinimap(p);
+        if (mPrefs.minimap)
+            drawMinimap(p);
+        drawGrab(p);
         p->restore();
     }
 }
@@ -99,6 +101,27 @@ void NodeCanvas::wheelEvent(QWheelEvent* e)
     scale(f, f);
 }
 
+void NodeCanvas::keyPressEvent(QKeyEvent* e)
+{
+    if (!grabKey(e))
+        QGraphicsView::keyPressEvent(e);
+}
+
+void NodeCanvas::keyReleaseEvent(QKeyEvent* e)
+{
+    if (grabKeyRelease(e))
+        return;
+    if (mGrab != Grab::None && (e->key() == Qt::Key_Shift || e->key() == Qt::Key_Control))
+        updateGrab(mapToScene(mGrabCursor), e->modifiers());
+    QGraphicsView::keyReleaseEvent(e);
+}
+
+void NodeCanvas::focusOutEvent(QFocusEvent* e)
+{
+    endGrab(false);
+    QGraphicsView::focusOutEvent(e);
+}
+
 void NodeCanvas::focusInEvent(QFocusEvent* e)
 {
     QGraphicsView::focusInEvent(e);
@@ -110,6 +133,8 @@ void NodeCanvas::mousePressEvent(QMouseEvent* e)
 {
     setFocus(Qt::MouseFocusReason);
     QPointF sp = mapToScene(e->pos());
+    if (grabPress(e))
+        return;
     if (e->button() == Qt::MiddleButton)
     {
         mPanning = true;
@@ -258,6 +283,12 @@ void NodeCanvas::mousePressEvent(QMouseEvent* e)
 void NodeCanvas::mouseMoveEvent(QMouseEvent* e)
 {
     QPointF sp = mapToScene(e->pos());
+    mHoverScene = sp;
+    if (mGrab != Grab::None)
+    {
+        updateGrab(sp, e->modifiers());
+        return;
+    }
     if (mPanning)
     {
         QPoint d = e->pos() - mLast;
@@ -340,6 +371,8 @@ void NodeCanvas::mouseMoveEvent(QMouseEvent* e)
 void NodeCanvas::mouseReleaseEvent(QMouseEvent* e)
 {
     QPointF sp = mapToScene(e->pos());
+    if (grabRelease(e))
+        return;
     if (mPanning)
     {
         mPanning = false;

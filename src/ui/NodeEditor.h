@@ -79,6 +79,12 @@ public:
     /** Lines the selection up: 0 left, 1 centre, 2 right, 3 top, 4 middle, 5 bottom. */
     void alignSelected(int how);
     void distributeSelected(bool horizontal);
+    /** W: the selected nodes follow the cursor until a click places them. */
+    void grabMove();
+    /** R: the gaps between the selected nodes scale with the cursor until a click places them. */
+    void grabSpacing();
+    /** E: the zip tie under the cursor turns with it until a click places it. */
+    void turnTie();
     /** Nudges the selection so the wires between them run level. */
     void straightenSelected();
     /** Arranges the selection, or the whole graph, in columns by data flow. */

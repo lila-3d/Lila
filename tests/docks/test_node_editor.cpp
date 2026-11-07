@@ -19,6 +19,8 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QCursor>
+#include <QElapsedTimer>
 #include <QGraphicsItem>
 #include <QGraphicsPathItem>
 #include <QGraphicsView>
@@ -26,6 +28,8 @@
 #include <QLineEdit>
 #include <QMainWindow>
 #include <QMouseEvent>
+
+#include <cmath>
 
 using namespace lila;
 using json = nlohmann::json;
@@ -234,8 +238,44 @@ TEST_CASE("holding T and dragging across wires ties them, and the tie drags")
     CHECK(g.ties[0].position.x == doctest::Approx(235.0).epsilon(0.02));
     CHECK(g.ties[0].angle == doctest::Approx(0.0));
 
-    // Dragging the band moves the tie, undoably.
+    // E turns the tie under the cursor in 15 degree steps; Esc puts it back, a click places it.
     QPointF at(g.ties[0].position.x, g.ties[0].position.y);
+    const double px = 1.0 / view->transform().m11(); // scene units per screen pixel
+    const QPointF down = at + QPointF(3, 100) * px;
+    auto turn = [&] {
+        mouse(view, QEvent::MouseMove, at, Qt::NoButton);
+        press(view, Qt::Key_E);
+        mouse(view, QEvent::MouseMove, at + QPointF(100, 0) * px, Qt::NoButton);
+        mouse(view, QEvent::MouseMove, down, Qt::NoButton);
+    };
+    turn();
+    CHECK(editor->shownTies().size() == 1);
+    press(view, Qt::Key_Escape);
+    CHECK(gn::readGroup(*gn::findGroupNode(scene::Graph::current(), "G")).ties[0].angle == doctest::Approx(0.0));
+    turn();
+    mouse(view, QEvent::MouseButtonPress, down, Qt::LeftButton);
+    mouse(view, QEvent::MouseButtonRelease, down, Qt::NoButton);
+    g = gn::readGroup(*gn::findGroupNode(scene::Graph::current(), "G"));
+    CHECK(std::fmod(g.ties[0].angle, 15.0) == doctest::Approx(0.0));
+    REQUIRE(g.ties[0].angle != doctest::Approx(0.0));
+    run("undo");
+    pump();
+    CHECK(gn::readGroup(*gn::findGroupNode(scene::Graph::current(), "G")).ties[0].angle == doctest::Approx(0.0));
+
+    // E away from any tie waits: pressing a tie then turns it while dragged, and letting go places it.
+    mouse(view, QEvent::MouseMove, at + QPointF(0, -400) * px, Qt::NoButton);
+    press(view, Qt::Key_E);
+    mouse(view, QEvent::MouseButtonPress, at, Qt::LeftButton);
+    mouse(view, QEvent::MouseMove, at + QPointF(100, 0) * px, Qt::LeftButton);
+    mouse(view, QEvent::MouseMove, down, Qt::LeftButton);
+    mouse(view, QEvent::MouseButtonRelease, down, Qt::NoButton);
+    REQUIRE(gn::readGroup(*gn::findGroupNode(scene::Graph::current(), "G")).ties.size() == 1);
+    CHECK(gn::readGroup(*gn::findGroupNode(scene::Graph::current(), "G")).ties[0].angle != doctest::Approx(0.0));
+    run("undo");
+    pump();
+    CHECK(gn::readGroup(*gn::findGroupNode(scene::Graph::current(), "G")).ties[0].angle == doctest::Approx(0.0));
+
+    // Dragging the band moves the tie, undoably.
     dragInView(view, at, at + QPointF(30, 20));
     g = gn::readGroup(*gn::findGroupNode(scene::Graph::current(), "G"));
     CHECK(g.ties[0].position.x == doctest::Approx(at.x() + 30).epsilon(0.02));
@@ -833,4 +873,96 @@ TEST_CASE("graph editor Delete stays in the graph editor")
     press(curves, Qt::Key_Delete);
     press(curves, Qt::Key_Backspace);
     CHECK(scene::Graph::current().find("keepMe"));
+}
+
+TEST_CASE("W grabs the selection to the cursor and R scales its spacing; Esc puts it back, a click places it")
+{
+    run("newScene");
+    run("gnCreateGroup", {{"args", {"G"}}});
+    run("gnMoveNodes", {{"args", {"G"}}, {"positions", {{"GroupOutput", {900, 600}}, {"GroupInput", {-300, 600}}}}});
+    run("gnAddNode", {{"args", {"G", "SetPosition"}}, {"position", {0, 0}}, {"name", "A"}});
+    run("gnAddNode", {{"args", {"G", "SetPosition"}}, {"position", {400, 0}}, {"name", "B"}});
+    QMainWindow win;
+    ui::NodeEditor* editor = openOn(win, "G");
+    auto* view = editor->findChild<QGraphicsView*>();
+    view->setFocus();
+    pump();
+    auto read = [] { return gn::readGroup(*gn::findGroupNode(scene::Graph::current(), "G")); };
+    auto live = [&](QPointF at) { return itemAt(view, at); };
+    selectNode(view, "A");
+    live({400, 0})->setSelected(true);
+    QGraphicsItem* a = live({0, 0});
+    QGraphicsItem* b = live({400, 0});
+
+    // The selection follows the cursor's travel; X locks it to the horizontal and is not Delete.
+    press(view, Qt::Key_W);
+    mouse(view, QEvent::MouseMove, {100, 100}, Qt::NoButton);
+    const QPointF a1 = a->pos();
+    mouse(view, QEvent::MouseMove, {160, 130}, Qt::NoButton);
+    CHECK(a->pos().x() - a1.x() == doctest::Approx(60).epsilon(0.02));
+    CHECK(a->pos().y() - a1.y() == doctest::Approx(30).epsilon(0.02));
+    CHECK(b->pos() - a->pos() == QPointF(400, 0));
+    press(view, Qt::Key_X);
+    CHECK(nodeCount("G") == 4);
+    CHECK(a->pos().y() == doctest::Approx(0));
+    press(view, Qt::Key_Escape);
+    CHECK(a->pos() == QPointF(0, 0));
+    CHECK(b->pos() == QPointF(400, 0));
+
+    // A click places it as one undo step.
+    press(view, Qt::Key_W);
+    mouse(view, QEvent::MouseMove, {100, 100}, Qt::NoButton);
+    mouse(view, QEvent::MouseMove, {150, 100}, Qt::NoButton);
+    const double moved = a->pos().x();
+    mouse(view, QEvent::MouseButtonPress, {150, 100}, Qt::LeftButton);
+    mouse(view, QEvent::MouseButtonRelease, {150, 100}, Qt::NoButton);
+    CHECK(read().node("A")->position.x == doctest::Approx(moved));
+    CHECK(read().node("B")->position.x == doctest::Approx(moved + 400));
+    run("undo");
+    pump();
+    CHECK(read().node("A")->position.x == doctest::Approx(0));
+
+    // A tap of W toggles: W again places it. Held past a tap, its release places it.
+    auto reselect = [&] {
+        a = live({0, 0});
+        b = live({400, 0});
+        REQUIRE(a);
+        REQUIRE(b);
+        a->setSelected(true);
+        b->setSelected(true);
+    };
+    reselect();
+    press(view, Qt::Key_W);
+    mouse(view, QEvent::MouseMove, {100, 100}, Qt::NoButton);
+    mouse(view, QEvent::MouseMove, {130, 100}, Qt::NoButton);
+    press(view, Qt::Key_W);
+    CHECK(read().node("A")->position.x != doctest::Approx(0));
+    CHECK(read().node("B")->position.x - read().node("A")->position.x == doctest::Approx(400));
+    run("undo");
+    pump();
+    reselect();
+    key(view, QEvent::KeyPress, Qt::Key_W);
+    mouse(view, QEvent::MouseMove, {100, 100}, Qt::NoButton);
+    QElapsedTimer held;
+    held.start();
+    while (held.elapsed() < 300)
+        pump();
+    mouse(view, QEvent::MouseMove, {120, 100}, Qt::NoButton);
+    key(view, QEvent::KeyRelease, Qt::Key_W);
+    CHECK(read().node("A")->position.x != doctest::Approx(0));
+    run("undo");
+    pump();
+    reselect();
+
+    // R: further from the centre spreads the pair apart, never pulls them into each other.
+    press(view, Qt::Key_R);
+    mouse(view, QEvent::MouseMove, {700, 0}, Qt::NoButton);
+    const double wide = b->pos().x() - a->pos().x();
+    mouse(view, QEvent::MouseMove, {1200, 0}, Qt::NoButton);
+    CHECK(b->pos().x() - a->pos().x() > wide);
+    mouse(view, QEvent::MouseMove, {285, 0}, Qt::NoButton);
+    CHECK(b->pos().x() - a->pos().x() >= 170.0 + 8.0 - 0.01);
+    press(view, Qt::Key_Escape);
+    CHECK(a->pos() == QPointF(0, 0));
+    CHECK(b->pos() == QPointF(400, 0));
 }
