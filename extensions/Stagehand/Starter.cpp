@@ -1,4 +1,4 @@
-// The starter library: props for industrial sites, ruins and starfighter facilities, built from code into the user's
+// The starter library: props for industrial sites, ruins, starfighter facilities and roadsides, built from code into the user's
 // config folder the first time the library is used. Nothing binary ships; the meshes are boxes, cylinders and hulls
 // written as OBJ beside their asset.json.
 
@@ -27,7 +27,7 @@ namespace stagehand::library
 namespace
 {
 /** Bumped whenever an asset changes, so existing starter folders are rebuilt. */
-constexpr int kStarterVersion = 1;
+constexpr int kStarterVersion = 2;
 constexpr double kPi = 3.14159265358979323846;
 
 /** Polygons built up piece by piece, written as one OBJ object. */
@@ -318,6 +318,30 @@ std::vector<Starter> starters()
              b.cylinder({-80, 0.8, 0}, {0, 0.8, 0}, 0.8, 8);
              b.cylinder({0, 0.8, 0}, {0, 0.8, 60}, 0.8, 8);
          }});
+
+    // Road: terrainRoadBuild stands these along roads, +X along the road and arms reaching over it along +Z.
+    add({"Road", "Delineator", "Roadside marker post with a reflector, 100 cm.", "plastic", "box", "static", {"delineator", "marker", "post", "road"},
+         [](Builder& b) {
+             b.box({-6, 0, -6}, {6, 100, 6});
+             b.box({-5, 80, 6}, {5, 92, 7});
+         }});
+    add({"Road", "StreetLight", "Street light, 8 m, with an arm over the road.", "metal", "decompose", "static", {"streetlight", "light", "lamp", "pole", "road"},
+         [](Builder& b) {
+             b.cylinder({0, 0, 0}, {0, 800, 0}, 10, 12);
+             b.cylinder({0, 790, 0}, {0, 790, 180}, 5, 8);
+             b.box({-15, 775, 170}, {15, 790, 230});
+         }, 4});
+    add({"Road", "EdgeLight", "Runway edge light on a frangible stem, 35 cm.", "metal", "auto", "static", {"edgelight", "runway", "light", "airfield"},
+         [](Builder& b) {
+             b.cylinder({0, 0, 0}, {0, 25, 0}, 4, 8);
+             b.cylinder({0, 25, 0}, {0, 35, 0}, 12, 12);
+         }});
+    add({"Road", "CatenaryMast", "Rail catenary mast, 6.5 m, with a cantilever over the track.", "metal", "decompose", "static", {"mast", "catenary", "rail", "pole"},
+         [](Builder& b) {
+             b.box({-12, 0, -12}, {12, 650, 12});
+             b.cylinder({0, 600, 0}, {0, 600, 260}, 4, 8);
+             b.cylinder({0, 520, 0}, {0, 600, 200}, 3, 8);
+         }, 4});
 
     // Facility.
     add({"Facility", "Locker", "Steel locker, 180 cm.", "metal", "box", "dynamic", {"locker", "cabinet", "metal", "facility", "hangar"},

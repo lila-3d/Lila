@@ -243,7 +243,7 @@ TEST_CASE("library: the starter props are built on first use, found by words and
     for (const char* id : {"Industrial/Crate", "Industrial/Barrel", "Industrial/Pallet", "Industrial/Beam", "Industrial/IBeam", "Industrial/PipeSegment",
                            "Industrial/Panel", "Industrial/CableSpool", "Industrial/ScaffoldFrame", "Debris/StoneChunkS1", "Debris/StoneChunkXL3",
                            "Debris/RubblePile", "Debris/BrokenSlab", "Debris/Rebar", "Facility/Locker", "Facility/Console", "Facility/SupplyCrate",
-                           "Facility/CableTray"})
+                           "Facility/CableTray", "Road/Delineator", "Road/StreetLight", "Road/EdgeLight", "Road/CatenaryMast"})
         CHECK(std::find(ids.begin(), ids.end(), id) != ids.end());
     CHECK(std::filesystem::exists(std::filesystem::path(built["dir"].get<std::string>()) / "Industrial" / "Barrel" / "asset.json"));
     // Built once: asking again finds them current.
@@ -527,4 +527,33 @@ TEST_CASE("library: a saved prop comes back with one body and its snap points, a
     CHECK(empties == 0);
     std::error_code ec;
     std::filesystem::remove_all(lib, ec);
+}
+
+TEST_CASE("stagehand: terrain roads stand the starter library's road props, turned along the road")
+{
+    loadTerrain();
+    run("newScene");
+    json t = run("terrainCreate", {{"size", {40000.0, 40000.0}}, {"resolution", 129}, {"flat", true}, {"name", "Propped"}});
+    const std::string mesh = t["mesh"];
+    run("terrainAddRoad", {{"args", {mesh}}, {"id", "lit"}, {"path", {{-15000.0, 0.0}, {15000.0, 0.0}}}, {"settings", {{"poleSpacing", 3000.0}, {"markerSpacing", 5000.0}}}});
+    json built = run("terrainRoadBuild", {{"args", {mesh}}});
+    REQUIRE(built.size() == 1);
+    int lights = 0, markers = 0;
+    for (const json& p : built[0]["props"])
+    {
+        const std::string node = p.get<std::string>();
+        lights += node.find("StreetLight") != std::string::npos;
+        markers += node.find("Delineator") != std::string::npos;
+    }
+    CHECK(lights >= 9);
+    CHECK(markers >= 10);
+
+    json boxes = run("terrainRoadBuild", {{"args", {mesh}}, {"props", "boxes"}});
+    for (const json& p : boxes[0]["props"])
+    {
+        const std::string node = p.get<std::string>();
+        CHECK(node.find("StreetLight") == std::string::npos);
+        CHECK(node.find("Delineator") == std::string::npos);
+    }
+    run("newScene");
 }

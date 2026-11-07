@@ -26,6 +26,7 @@
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <limits>
 #include <optional>
@@ -757,7 +758,20 @@ void arrayRun(const std::vector<glm::dvec3>& at, const std::string& piece, const
     out.push_back(piece);
 }
 
-json buildRoad(const Terrain& f, const RoadEntry& e, const std::string& cmd)
+/** The Set Dressing library asset standing for each road prop kind, by default. */
+const json& defaultPropAssets()
+{
+    static const json d = {{"marker", "Road/Delineator"}, {"pole", "Road/StreetLight"}, {"edgeLight", "Road/EdgeLight"}, {"mast", "Road/CatenaryMast"}};
+    return d;
+}
+
+/** Degrees to turn an asset about the scene's up so its +X runs along dir. */
+double headingOf(const glm::dvec3& dir)
+{
+    return glm::degrees(zUp() ? std::atan2(dir.y, dir.x) : std::atan2(-dir.z, dir.x));
+}
+
+json buildRoad(const Terrain& f, const RoadEntry& e, const json& propAssets, json& warnings)
 {
     LILA_ZONE();
 
@@ -939,9 +953,32 @@ json buildRoad(const Terrain& f, const RoadEntry& e, const std::string& cmd)
     std::map<std::pair<std::string, int>, std::vector<const RoadResult::Prop*>> groups;
     for (const RoadResult::Prop& q : r.props)
         groups[{q.kind, q.side}].push_back(&q);
+    std::set<std::string> boxed;
     for (const auto& [key, list] : groups)
     {
         const std::string& kind = key.first;
+        // A library asset stands at each place, turned along the road; boxes stand in when there is none.
+        if (const std::string asset = propAssets.is_object() ? propAssets.value(kind, std::string()) : std::string(); !asset.empty() && !boxed.count(kind))
+        {
+            try
+            {
+                for (const RoadResult::Prop* q : list)
+                {
+                    const json placed = ops::execute("place", {{"args", {asset}}, {"at", vec3(p.world(q->at))}, {"snap", false}, {"rotate", headingOf(p.direction(q->direction))}});
+                    for (const json& one : placed)
+                    {
+                        nodes.push_back(one.at("node").get<std::string>());
+                        props.push_back(one.at("node"));
+                    }
+                }
+                continue;
+            }
+            catch (const std::exception& ex)
+            {
+                boxed.insert(kind);
+                warnings.push_back(std::format("{}: {} props are boxes: library asset {} could not be placed ({})", rd.id, kind, asset, ex.what()));
+            }
+        }
         std::vector<std::pair<glm::dvec3, glm::dvec3>> boxes;
         if (kind == "pole" || kind == "mast")
             boxes = {{{-12.0, 0.0, -12.0}, {12.0, kind == "mast" ? 650.0 : 800.0, 12.0}}};
@@ -987,7 +1024,6 @@ json buildRoad(const Terrain& f, const RoadEntry& e, const std::string& cmd)
         args.push_back(n);
     out["group"] = ops::execute("group", {{"args", args}, {"name", base + "_Road"}});
     out["nodes"] = unique.size();
-    (void)cmd;
     return out;
 }
 
@@ -1204,15 +1240,36 @@ bool registerRoads(ext::Context& ctx)
         .doc = "Build a terrain's roads as meshes, each under a group <id>_Road made again on every call: the surface swept along "
                "the banked centreline with the road's cross-section (extrude), bridge decks swept likewise with pillars by "
                "arrayAlongCurve, tunnel portal arches, retaining walls, junction corner patches, guardrails bent along their "
-               "runs and markers, edge lights and poles placed by arrayAlongCurve. The meshes are made from the road as it is "
+               "runs, raised islands, and markers, edge lights, poles and masts from the Set Dressing library (props=). The meshes are made from the road as it is "
                "now: call again after the terrain or the road changes. Returns the nodes made per road.",
         .positionalDoc = "terrain mesh or its modifier",
-        .flags = {{"ids", "i", T::List, json::array(), "Road ids; empty builds every road."}, {"layer", "ly", T::String, "", "Only this roads layer."}},
+        .flags = {{"ids", "i", T::List, json::array(), "Road ids; empty builds every road."},
+                  {"layer", "ly", T::String, "", "Only this roads layer."},
+                  {"props", "pp", T::Any, "library",
+                   "library: Set Dressing assets Road/Delineator, Road/StreetLight, Road/EdgeLight and Road/CatenaryMast; boxes: plain "
+                   "stand-ins; or {kind: asset id} for marker, pole, edgeLight and mast (the rest from the library)."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             const Terrain f = firstTerrain(a, "terrainRoadBuild");
             const std::set<std::string> ids = idsFlag(a);
             const std::string layer = a.get<std::string>("layer", "");
+            json assets = defaultPropAssets();
+            if (a.has("props"))
+            {
+                const json& pp = a.flags["props"];
+                if (pp.is_string() && pp.get<std::string>() == "boxes")
+                    assets = json::object();
+                else if (pp.is_object())
+                    assets.update(pp);
+                else if (!pp.is_string() || pp.get<std::string>() != "library")
+                    throw CommandError("terrainRoadBuild: props is library, boxes or {kind: asset id}");
+            }
+            if (!assets.empty() && !ops::find("place"))
+            {
+                log::warn("terrainRoadBuild: road props are boxes: the Set Dressing (Stagehand) extension is not loaded");
+                assets = json::object();
+            }
+            json warnings = json::array();
             json out = json::array();
             for (const RoadEntry& e : allRoads(g, f, "terrainRoadBuild"))
             {
@@ -1220,8 +1277,10 @@ bool registerRoads(ext::Context& ctx)
                     continue;
                 if (Node* old = g.find(layerName(e.road.id) + "_Road"))
                     ops::execute("delete", {{"args", {old->path()}}});
-                out.push_back(buildRoad(f, e, "terrainRoadBuild"));
+                out.push_back(buildRoad(f, e, assets, warnings));
             }
+            for (const json& w : warnings)
+                log::warn("terrainRoadBuild: {}", w.get<std::string>());
             return out;
         },
         .examples = {"terrainRoadBuild('Terrain', ids=['passRoad'])[0]['surface']"},

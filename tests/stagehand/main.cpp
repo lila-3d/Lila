@@ -1,6 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT
 #include <doctest/doctest.h>
 
+#include "curve/CurveNodes.h"
 #include "ops/Command.h"
 #include "core/MainQueue.h"
 #include "extensions/ExtensionManager.h"
@@ -36,6 +37,8 @@ int main(int argc, char** argv)
     lila::io::registerCommands();
     lila::extensions::registerCommands();
     lila::gn::registerCommands();
+    lila::curve::registerTypes();
+    lila::curve::registerCommands();
     lila::gltf::registerCommands();
     lila::fbx::registerCommands();
     lila::link::registerCommands();
