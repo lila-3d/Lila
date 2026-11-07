@@ -1,6 +1,7 @@
 #include "TestUtil.h"
 
 #include "geo/Heightfield.h"
+#include "geo/Primitives.h"
 #include "render/HeightfieldRenderer.h"
 #include "render/Renderer.h"
 #include "scene/Graph.h"
@@ -14,6 +15,8 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstring>
+#include <limits>
 #include <random>
 
 using namespace lila;
@@ -358,6 +361,278 @@ TEST_CASE("heightfield draw: shades like the terrain's mesh, and draws its wire,
         greenGain += double(layeredShot.bgra[i + 1]) - double(layeredShot.bgra[i + 2]) - (double(hfShot.bgra[i + 1]) - double(hfShot.bgra[i + 2]));
     CHECK(greenGain > 0.0);
     CHECK(changed(layeredShot) > 0.2);
+}
+
+TEST_CASE("heightfield draw: casts into the shadow map like the terrain's mesh")
+{
+    auto& r = render::Renderer::get();
+    if (!r.running() && !r.start())
+    {
+        MESSAGE("no GPU for the heightfield shadow test");
+        return;
+    }
+    auto h = hills(257, 3000.0);
+    ui::Camera cam;
+    cam.distance = 30000.0;
+    cam.pitch = -55.0;
+    cam.nearClip = 100.0;
+    std::string err;
+    auto shoot = [&](render::FrameState s) {
+        Shot out;
+        REQUIRE_MESSAGE(r.renderOffscreen(std::move(s), out.w, out.h, out.bgra, &err), err);
+        return out;
+    };
+
+    // A low sun along +X, mapped over the whole terrain.
+    render::LightDraw sun;
+    sun.kind = render::LightDraw::Directional;
+    sun.direction = glm::normalize(glm::vec3(1.0f, -0.15f, 0.2f));
+    sun.radiance = glm::vec3(12.0f);
+    sun.shadows = true;
+    const double radius = 50.0 * 256.0 * 1.5;
+    const glm::dvec3 dir(sun.direction);
+    const glm::dmat4 view = glm::lookAt(-dir * radius * 2.0, glm::dvec3(0.0), glm::dvec3(0.0, 1.0, 0.0));
+    glm::dmat4 reverse(1.0);
+    reverse[2][2] = -1.0;
+    reverse[3][2] = 1.0;
+    sun.shadowViewProj = glm::mat4(reverse * glm::orthoRH_ZO(-radius, radius, -radius, radius, radius * 0.5, radius * 3.5) * view);
+    sun.shadowTexel = float(2.0 * radius / 2048.0);
+    sun.shadowDepth = glm::vec4(float(radius * 0.5), float(radius * 3.5), 0.005f, float(0.5 / radius));
+
+    geo::HeightfieldMeshOptions mo;
+    mo.masks = false;
+    scene::MeshPtr mesh = std::make_shared<geo::Mesh>(geo::heightfieldToMesh(*h, mo));
+    render::MeshDraw md;
+    md.mesh = ui::renderMeshFor(mesh);
+    REQUIRE(md.mesh);
+    auto lit = [&](bool shadows) {
+        render::FrameState s = shotState(cam, 1.6);
+        s.lighting = render::FrameState::Lighting::Studio;
+        s.lights.push_back(sun);
+        s.lights.back().shadows = shadows;
+        return s;
+    };
+    render::FrameState meshLit = lit(true);
+    meshLit.meshes.push_back(md);
+    const Shot meshShot = shoot(meshLit);
+    render::FrameState meshUnshadowed = lit(false);
+    meshUnshadowed.meshes.push_back(md);
+    const Shot meshPlain = shoot(meshUnshadowed);
+    render::FrameState hfLit = lit(true);
+    hfLit.heightfields.push_back(drawOf(h));
+    const Shot hfShot = shoot(hfLit);
+
+    const double shadowed = difference(meshShot, meshPlain).second;
+    const auto [mean, share] = difference(meshShot, hfShot);
+    MESSAGE("shadows change " << shadowed * 100.0 << "% of the mesh; heightfield vs mesh with shadows: mean " << mean << ", " << share * 100.0
+                              << "% off by more than 8");
+    REQUIRE(shadowed > 0.05);
+    CHECK(share < shadowed * 0.25);
+    CHECK(mean < 3.0);
+}
+
+TEST_CASE("heightfield draw: stylised shading models shade it like the terrain's mesh")
+{
+    auto& r = render::Renderer::get();
+    if (!r.running() && !r.start())
+    {
+        MESSAGE("no GPU for the heightfield shading model test");
+        return;
+    }
+    auto h = hills(257, 3000.0);
+    ui::Camera cam;
+    cam.distance = 30000.0;
+    cam.pitch = -55.0;
+    cam.nearClip = 100.0;
+    std::string err;
+    auto shoot = [&](render::FrameState s) {
+        Shot out;
+        REQUIRE_MESSAGE(r.renderOffscreen(std::move(s), out.w, out.h, out.bgra, &err), err);
+        return out;
+    };
+    geo::HeightfieldMeshOptions mo;
+    mo.masks = false;
+    scene::MeshPtr mesh = std::make_shared<geo::Mesh>(geo::heightfieldToMesh(*h, mo));
+    render::MeshDraw md;
+    md.mesh = ui::renderMeshFor(mesh);
+    REQUIRE(md.mesh);
+
+    render::Material plain;
+    plain.baseColor = glm::vec3(0.6f, 0.55f, 0.5f);
+    render::FrameState defaultLit = shotState(cam, 1.6);
+    defaultLit.heightfields.push_back(drawOf(h));
+    defaultLit.heightfields[0].materials = std::vector<render::Material>{plain};
+    const Shot hfLit = shoot(defaultLit);
+
+    render::Material toon = plain;
+    toon.style.model = render::ShadingModel::Toon;
+    toon.style.toonSoftness = 0.01f;
+    render::Material foliage = plain;
+    foliage.style.model = render::ShadingModel::Foliage;
+    foliage.style.foliageGradient = 1.0f;
+    foliage.style.foliageBottomColor = glm::vec3(0.02f, 0.05f, 0.02f);
+    foliage.style.foliageTopColor = glm::vec3(0.2f, 0.8f, 0.1f);
+    for (const render::Material& m : {toon, foliage})
+    {
+        render::FrameState asMesh = shotState(cam, 1.6);
+        render::MeshDraw styled = md;
+        styled.materials = std::vector<render::Material>{m};
+        asMesh.meshes.push_back(styled);
+        render::FrameState asHeightfield = shotState(cam, 1.6);
+        asHeightfield.heightfields.push_back(drawOf(h));
+        asHeightfield.heightfields[0].materials = std::vector<render::Material>{m};
+        const Shot hf = shoot(asHeightfield);
+        const auto [mean, share] = difference(shoot(asMesh), hf);
+        const double changed = difference(hfLit, hf).second;
+        MESSAGE("model " << int(m.style.model) << ": changes " << changed * 100.0 << "% of the default lit heightfield; vs its mesh: mean " << mean
+                         << ", " << share * 100.0 << "% off by more than 8");
+        CHECK(changed > 0.2);
+        CHECK(share < 0.03);
+        CHECK(mean < 2.0);
+    }
+}
+
+TEST_CASE("heightfield draw: an edit's dirty tiles, their copies and the pyramid's update")
+{
+    constexpr int T = render::kHeightfieldTile;
+    const int nx = 5 * T + 1, nz = 4 * T + 1;
+    std::mt19937 rng(11);
+    std::uniform_real_distribution<float> u(-500.0f, 900.0f);
+    std::vector<float> a(size_t(nx) * nz);
+    for (float& v : a)
+        v = u(rng);
+    std::vector<float> b = a;
+    CHECK(render::heightfieldDirtyRects(a.data(), b.data(), nx, nz).empty());
+
+    // A brush over tiles (1..2, 1..2), one sample in the last tile's corner, and a NaN that stays a NaN.
+    for (int z = T + 10; z < 3 * T - 5; ++z)
+        for (int x = T + 3; x < 2 * T + 7; ++x)
+            b[size_t(z) * nx + x] += 50.0f;
+    b[size_t(nz - 1) * nx + (nx - 1)] = 2000.0f;
+    a[0] = b[0] = std::numeric_limits<float>::quiet_NaN();
+    const std::vector<render::HeightfieldRect> rects = render::heightfieldDirtyRects(a.data(), b.data(), nx, nz);
+    REQUIRE(rects.size() == 2);
+    CHECK(rects[0] == render::HeightfieldRect{T, T, 3 * T, 3 * T});
+    CHECK(rects[1] == render::HeightfieldRect{5 * T, 4 * T, nx, nz});
+
+    // Copying the packed rows into a reproduces b exactly, row runs joined where both sides run on.
+    const std::vector<render::HeightfieldCopy> copies = render::heightfieldRectCopies(rects, nx);
+    CHECK(copies.size() == size_t(2 * T + 1));
+    std::vector<float> packed;
+    for (const render::HeightfieldRect& r : rects)
+        for (int z = r.z0; z < r.z1; ++z)
+            packed.insert(packed.end(), b.begin() + ptrdiff_t(size_t(z) * nx + r.x0), b.begin() + ptrdiff_t(size_t(z) * nx + r.x1));
+    REQUIRE(copies.back().src + copies.back().count == packed.size());
+    std::vector<float> patched = a;
+    for (const render::HeightfieldCopy& c : copies)
+        std::copy_n(packed.begin() + ptrdiff_t(c.src), c.count, patched.begin() + ptrdiff_t(c.dst));
+    CHECK(std::memcmp(patched.data(), b.data(), b.size() * sizeof(float)) == 0);
+    const std::vector<render::HeightfieldCopy> wide = render::heightfieldRectCopies({{0, 3, nx, 9}}, nx);
+    REQUIRE(wide.size() == 1);
+    CHECK(wide[0] == render::HeightfieldCopy{0, size_t(3) * nx, size_t(6) * nx});
+
+    // The pyramid patched over the rects matches one built from scratch, including a change on a block's shared edge.
+    b[size_t(T + 20) * nx + 3 * T] = -3000.0f;
+    render::HeightPyramid p = render::buildHeightPyramid(a, nx, nz);
+    render::updateHeightPyramid(p, b, nx, nz, render::heightfieldDirtyRects(a.data(), b.data(), nx, nz));
+    const render::HeightPyramid fresh = render::buildHeightPyramid(b, nx, nz);
+    REQUIRE(p.levels() == fresh.levels());
+    for (int level = 0; level < p.levels(); ++level)
+        CHECK(p.ranges[level] == fresh.ranges[level]);
+}
+
+TEST_CASE("heightfield draw: an edited terrain draws the same patched as uploaded whole")
+{
+    auto& r = render::Renderer::get();
+    if (!r.running() && !r.start())
+    {
+        MESSAGE("no GPU for the heightfield patch test");
+        return;
+    }
+    auto before = hills(513, 3000.0);
+    ui::Camera cam;
+    cam.distance = 60000.0;
+    cam.pitch = -55.0;
+    cam.nearClip = 100.0;
+    std::string err;
+    auto shoot = [&](const std::shared_ptr<geo::Heightfield>& h, uint64_t node) {
+        render::FrameState s = shotState(cam, 1.6);
+        s.heightfields.push_back(drawOf(h));
+        s.heightfields[0].node = node;
+        Shot out;
+        REQUIRE_MESSAGE(r.renderOffscreen(std::move(s), out.w, out.h, out.bgra, &err), err);
+        return out;
+    };
+    const Shot original = shoot(before, 77);
+    // A crater dug into one corner: the next draw of node 77 patches only those tiles.
+    auto after = std::make_shared<geo::Heightfield>(*before);
+    for (int z = 300; z < 420; ++z)
+        for (int x = 40; x < 200; ++x)
+            after->heights[after->index(x, z)] -= 4000.0f;
+    const Shot patched = shoot(after, 77);
+    auto copy = std::make_shared<geo::Heightfield>(*after);
+    const Shot whole = shoot(copy, 0);
+    CHECK(difference(original, patched).second > 0.01);
+    const auto [mean, share] = difference(patched, whole);
+    MESSAGE("patched vs uploaded whole: mean " << mean << ", " << share * 100.0 << "% off by more than 8");
+    CHECK(patched.bgra == whole.bgra);
+}
+
+TEST_CASE("heightfield draw: occludes the same with the AO prepass recorded in chunks")
+{
+    auto& r = render::Renderer::get();
+    if (!r.running() && !r.start())
+    {
+        MESSAGE("no GPU for the heightfield chunked prepass test");
+        return;
+    }
+    // Ridges and pits a few AO radii across.
+    auto h = std::make_shared<geo::Heightfield>(geo::makeHeightfield(257, 257, 10.0, glm::dvec2(-1280.0)));
+    for (int z = 0; z < h->nz; ++z)
+        for (int x = 0; x < h->nx; ++x)
+            h->heights[h->index(x, z)] = float(60.0 * std::sin(x * 0.35) * std::cos(z * 0.3));
+    ui::Camera cam;
+    cam.distance = 2500.0;
+    cam.pitch = -55.0;
+    cam.nearClip = 10.0;
+    render::FrameState s = shotState(cam, 1.6);
+    s.ambientOcclusion = true;
+    s.aoFast = false;
+    s.aoRadius = 60.0f;
+    s.heightfields.push_back(drawOf(h));
+    // Enough separate meshes, out of view, that the prepass records its sections on worker threads.
+    for (int i = 0; i < 2200; ++i)
+    {
+        geo::CubeOptions o;
+        o.width = o.height = o.depth = 1.0 + 0.001 * i;
+        render::MeshDraw md;
+        md.mesh = ui::renderMeshFor(std::make_shared<geo::Mesh>(geo::makeCube(o)));
+        md.world = glm::translate(glm::mat4(1.0f), glm::vec3(float(i), -1.0e6f, 0.0f));
+        s.meshes.push_back(md);
+    }
+    std::string err;
+    auto shoot = [&](bool chunks) {
+#ifdef _WIN32
+        _putenv_s("LILA_VK_NO_CHUNKS", chunks ? "" : "1");
+#else
+        chunks ? unsetenv("LILA_VK_NO_CHUNKS") : setenv("LILA_VK_NO_CHUNKS", "1", 1);
+#endif
+        Shot out;
+        REQUIRE_MESSAGE(r.renderOffscreen(s, out.w, out.h, out.bgra, &err), err);
+        return out;
+    };
+    const Shot inline_ = shoot(false);
+    const Shot chunked = shoot(true);
+    render::FrameState noAo = s;
+    noAo.ambientOcclusion = false;
+    Shot plain;
+    REQUIRE_MESSAGE(r.renderOffscreen(noAo, plain.w, plain.h, plain.bgra, &err), err);
+    const double occluded = difference(inline_, plain).second;
+    const auto [mean, share] = difference(inline_, chunked);
+    MESSAGE("AO changes " << occluded * 100.0 << "% of the terrain; chunked vs inline prepass: mean " << mean << ", " << share * 100.0 << "% off by more than 8");
+    CHECK(occluded > 0.1);
+    CHECK(share < 0.005);
+    CHECK(mean < 0.5);
 }
 
 TEST_CASE("terrain display commands: options and paint layers round trip, layers undo")

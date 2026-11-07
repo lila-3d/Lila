@@ -767,7 +767,7 @@ struct Renderer::Impl
     std::vector<uint32_t> frameTable;
     std::map<std::pair<uint64_t, uint64_t>, uint32_t> frameHandles;
     /** Style block offsets in the frame's table per (draw, material slot), for slots with a stylised shading model. */
-    std::map<std::pair<const MeshDraw*, uint32_t>, uint32_t> frameStyles;
+    std::map<std::pair<const void*, uint32_t>, uint32_t> frameStyles; // by MeshDraw or HeightfieldDraw, and slot
     VkDeviceAddress frameTableAddress = 0;
     /** The frame's mesh draws grouped for instancing, and the address of their instance buffer (0 if it failed). */
     DrawBatches frameBatches;
@@ -2191,6 +2191,8 @@ struct Renderer::Impl
                 add(mat.normalMap, kFlatNormalKey);
                 add(mat.ormMap, kWhiteLinearKey);
                 add(mat.emissiveMap, kWhiteSrgbKey);
+                if (mat.style.strokeMap && !mat.style.strokeMap->isUdimSet())
+                    add(mat.style.strokeMap, kWhiteLinearKey);
             }
             for (const HeightfieldLayer& l : d.layers)
             {
@@ -2473,8 +2475,9 @@ struct Renderer::Impl
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, 2, 1, &whiteAoSet, 0, nullptr);
         constexpr uint32_t tilesPerRow = kShadowAtlas / kShadowTile;
         cullCmd = VK_NULL_HANDLE;
-        for (const auto& [tile, viewProj] : frameShadows)
+        for (size_t view = 0; view < frameShadows.size(); ++view)
         {
+            const auto& [tile, viewProj] = frameShadows[view];
             const VkViewport viewport{float(tile % tilesPerRow * kShadowTile), float(tile / tilesPerRow * kShadowTile), float(kShadowTile),
                                       float(kShadowTile), 0.0f, 1.0f};
             const VkRect2D scissor{{int32_t(tile % tilesPerRow * kShadowTile), int32_t(tile / tilesPerRow * kShadowTile)}, {kShadowTile, kShadowTile}};
@@ -2484,6 +2487,11 @@ struct Renderer::Impl
             for (SectionRecord& r : *frameRecords)
                 if (!r.translucent)
                     emitSection(cmd, s, r.push, r.set, *r.mesh, r.section, frameBatches.shaded[r.batch].count, viewProj, boundSet);
+            if (heightfields.count() > 0)
+            {
+                drawHeightfields(cmd, s, viewProj, whiteAoSet, HeightfieldPass::Shadow, int(view));
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline);
+            }
         }
         vkCmdEndRendering(cmd);
         barrier(cmd, shadowAtlas.image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, depthStage, depthWrite,
@@ -2491,6 +2499,23 @@ struct Renderer::Impl
     }
 
     /** Appends a style block per shaded draw section whose material uses a stylised shading model. */
+    void writeStyle(const void* draw, uint32_t slot, const MaterialStyle& style, const glm::vec3& boundsMin, const glm::vec3& boundsMax, bool zUp)
+    {
+        uint32_t stroke = 0xffffffffu;
+        if (style.strokeMap && !style.strokeMap->isUdimSet() && textureKey(style.strokeMap, 0) != 0)
+        {
+            // The fixed-sampler path binds the sheet itself; bindless reads its slot through the table.
+            auto it = frameHandles.find({style.strokeMap->key, kWhiteLinearKey});
+            if (!bindless)
+                stroke = 0;
+            else if (it != frameHandles.end() && it->second != kNoHandle)
+                stroke = it->second;
+        }
+        const auto block = packStyle(style, stroke, boundsMin, boundsMax, zUp);
+        frameStyles[{draw, slot}] = uint32_t(frameTable.size());
+        frameTable.insert(frameTable.end(), block.begin(), block.end());
+    }
+
     void writeStyles(const FrameState& s)
     {
         for (const MeshDraw& d : s.meshes)
@@ -2498,24 +2523,17 @@ struct Renderer::Impl
             if (!(d.flags & DrawShaded) || !d.mesh)
                 continue;
             for (uint32_t slot = 0; slot < d.materials.size(); ++slot)
-            {
-                const MaterialStyle& style = d.materials[slot].style;
-                if (style.model == ShadingModel::DefaultLit)
-                    continue;
-                uint32_t stroke = 0xffffffffu;
-                if (style.strokeMap && !style.strokeMap->isUdimSet() && textureKey(style.strokeMap, 0) != 0)
-                {
-                    // The fixed-sampler path binds the sheet itself; bindless reads its slot through the table.
-                    auto it = frameHandles.find({style.strokeMap->key, kWhiteLinearKey});
-                    if (!bindless)
-                        stroke = 0;
-                    else if (it != frameHandles.end() && it->second != kNoHandle)
-                        stroke = it->second;
-                }
-                const auto block = packStyle(style, stroke, d.mesh->boundsMin, d.mesh->boundsMax, s.zUp);
-                frameStyles[{&d, slot}] = uint32_t(frameTable.size());
-                frameTable.insert(frameTable.end(), block.begin(), block.end());
-            }
+                if (d.materials[slot].style.model != ShadingModel::DefaultLit)
+                    writeStyle(&d, slot, d.materials[slot].style, d.mesh->boundsMin, d.mesh->boundsMax, s.zUp);
+        }
+        // A heightfield shades with slot 0, over bounds in its own space as its mesh's would be.
+        for (const HeightfieldDraw& d : s.heightfields)
+        {
+            if (!(d.flags & DrawShaded) || d.materials.empty() || d.materials[0].style.model == ShadingModel::DefaultLit)
+                continue;
+            const glm::vec2 range = heightfields.heightRange(d);
+            const glm::vec2 corner = d.origin + glm::vec2(float(std::max(d.nx - 1, 0)), float(std::max(d.nz - 1, 0))) * d.cell;
+            writeStyle(&d, 0, d.materials[0].style, glm::vec3(d.origin.x, range.x, d.origin.y), glm::vec3(corner.x, range.y, corner.y), s.zUp);
         }
     }
 
@@ -2552,12 +2570,19 @@ struct Renderer::Impl
 
     // ---------------------------------------------------------------- heightfield draw path
 
-    /** Uploads the heightfields' grids and picks their patches for this view (HeightfieldRenderer). Runs before rendering begins. */
+    /**
+     * Uploads the heightfields' grids and picks their patches for this view and the frame's shadow tiles
+     * (HeightfieldRenderer). After writeLights, before rendering begins.
+     */
     void prepareHeightfields(VkCommandBuffer cmd, Frame& f, const FrameState& s, uint32_t heightPx)
     {
         heightfields.bindless = bindless;
+        std::vector<glm::mat4> shadowViews;
+        if (heightfields.shadow)
+            for (const auto& [tile, viewProj] : frameShadows)
+                shadowViews.push_back(viewProj);
         heightfields.prepare(vk, cmd, &f, s, heightPx, frameCounter,
-                             [&](const TexturePtr& t, bool normal) { return mapHandle(t, normal ? kFlatNormalKey : kWhiteSrgbKey); });
+                             [&](const TexturePtr& t, bool normal) { return mapHandle(t, normal ? kFlatNormalKey : kWhiteSrgbKey); }, shadowViews);
     }
 
     /** A heightfield's material as the mesh shader takes it, and the set its maps sample through (null draws nothing). */
@@ -2570,11 +2595,26 @@ struct Renderer::Impl
         md.lightingChannels = d.lightingChannels;
         const DrawBatch b{&md, 0, 0, 1};
         const GpuMesh none{};
-        return sectionPush(s, b, none, MeshSection{}, set);
+        MeshPush p = sectionPush(s, b, none, MeshSection{}, set);
+        if (frameTableAddress)
+            if (auto it = frameStyles.find({&d, 0u}); it != frameStyles.end())
+                p.style = it->second;
+        return p;
     }
 
-    /** The prepared heightfields, opaque and depth tested like meshes: shaded (or wire alone), or into the AO prepass. */
-    void drawHeightfields(VkCommandBuffer cmd, const FrameState& s, const glm::mat4& viewProj, VkDescriptorSet aoSet, bool prepass = false)
+    enum class HeightfieldPass
+    {
+        Scene,
+        Prepass,
+        Shadow,
+    };
+
+    /**
+     * The prepared heightfields, opaque and depth tested like meshes: shaded (or wire alone), into the AO prepass, or
+     * into shadow tile shadowView's depth.
+     */
+    void drawHeightfields(VkCommandBuffer cmd, const FrameState& s, const glm::mat4& viewProj, VkDescriptorSet aoSet,
+                          HeightfieldPass pass = HeightfieldPass::Scene, int shadowView = -1)
     {
         if (heightfields.count() == 0)
             return;
@@ -2587,7 +2627,10 @@ struct Renderer::Impl
         {
             const HeightfieldDraw& d = heightfields.draw(i);
             const bool shaded = (d.flags & DrawShaded) != 0;
-            const VkPipeline want = prepass ? (shaded ? heightfields.prepass : VK_NULL_HANDLE) : shaded ? heightfields.shaded : heightfields.wire;
+            const VkPipeline want = pass == HeightfieldPass::Prepass ? (shaded ? heightfields.prepass : VK_NULL_HANDLE)
+                                    : pass == HeightfieldPass::Shadow ? (shaded ? heightfields.shadow : VK_NULL_HANDLE)
+                                    : shaded                          ? heightfields.shaded
+                                                                      : heightfields.wire;
             VkDescriptorSet set = VK_NULL_HANDLE;
             const MeshPush p = heightfieldPush(s, d, set);
             if (!want || !set)
@@ -2599,7 +2642,7 @@ struct Renderer::Impl
             }
             if (set != boundSet)
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, 1, 1, &(boundSet = set), 0, nullptr);
-            heightfields.record(cmd, meshLayout, i, p, viewProj);
+            heightfields.record(cmd, meshLayout, i, p, viewProj, pass == HeightfieldPass::Shadow ? shadowView : -1);
         }
         // The meshes after these set their own cull mode again.
         cullCmd = VK_NULL_HANDLE;
@@ -3183,8 +3226,22 @@ struct Renderer::Impl
             pass.pipeline = prepassPipeline;
             pass.aoSet = whiteAoSet;
             pass.viewProj = viewProj;
+            // The heightfields draw inline first, in an instance of the pass that the chunks' instance resumes.
+            const bool heightfieldsFirst = heightfields.count() > 0;
+            if (heightfieldsFirst)
+            {
+                ri.flags = VK_RENDERING_SUSPENDING_BIT;
+                vkCmdBeginRendering(cmd, &ri);
+                const VkViewport viewport{0, 0, float(v.extent.width), float(v.extent.height), 0, 1};
+                const VkRect2D scissor{{0, 0}, v.extent};
+                vkCmdSetViewport(cmd, 0, 1, &viewport);
+                vkCmdSetScissor(cmd, 0, 1, &scissor);
+                drawHeightfields(cmd, s, viewProj, whiteAoSet, HeightfieldPass::Prepass);
+                vkCmdEndRendering(cmd);
+                pass.flags = VK_RENDERING_RESUMING_BIT;
+            }
             const std::vector<VkCommandBuffer> chunks = recordChunks(f, s, pass);
-            ri.flags = VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT;
+            ri.flags = pass.flags | VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT;
             vkCmdBeginRendering(cmd, &ri);
             vkCmdExecuteCommands(cmd, uint32_t(chunks.size()), chunks.data());
             cullCmd = VK_NULL_HANDLE;
@@ -3200,7 +3257,7 @@ struct Renderer::Impl
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, 0, 1, &envSet, 0, nullptr);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, 2, 1, &whiteAoSet, 0, nullptr);
             cullCmd = VK_NULL_HANDLE;
-            drawHeightfields(cmd, s, viewProj, whiteAoSet, true);
+            drawHeightfields(cmd, s, viewProj, whiteAoSet, HeightfieldPass::Prepass);
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, prepassPipeline);
             VkDescriptorSet boundSet = VK_NULL_HANDLE;
             for (SectionRecord& r : *frameRecords)
@@ -4104,6 +4161,8 @@ struct Renderer::Impl
             heightfields.wire = buildPipeline(meshLayout, hf, "heightfieldVS", "heightfieldWirePS", sceneFormat, topology, none, false, true, true, 0.0f, true);
             heightfields.prepass = buildPipeline(meshLayout, hf, "heightfieldVS", "heightfieldPrepassPS", kAoNormalFormat, topology, none, true, false, true,
                                                  0.0f, true, true);
+            heightfields.shadow = buildPipeline(meshLayout, hf, "heightfieldVS", "heightfieldPrepassPS", VK_FORMAT_UNDEFINED, topology, none, true, false,
+                                                true, 0.0f, true, true, false, nullptr, true, false);
             vkDestroyShaderModule(vk.device, hf, nullptr);
         }
         externalLayout = layoutFor(sizeof(ExternalPush), VK_SHADER_STAGE_FRAGMENT_BIT, materialSetLayout);
@@ -4129,7 +4188,7 @@ struct Renderer::Impl
                               &meshWireBlendPipeline, &meshLeanPipeline, &meshWireLeanPipeline, &aoApplyPipeline, &pointsPipeline, &wirePipeline,
                               &wireXrayPipeline, &backgroundPipeline, &linesOnTopPipeline, &tris3dPipeline, &linesOverPipeline, &contactPipeline, &prepassPipeline, &gtaoPipeline, &pointsNearestPipeline, &pointsKeepPipeline,
                               &denoisePipeline, &imageOverPipeline, &imageDepthPipeline, &imageBlendPipeline, &imageBehindPipeline, &gridFramePipeline, &externalDepthPipeline, &heightfields.shaded,
-                              &heightfields.wire, &heightfields.prepass,
+                              &heightfields.wire, &heightfields.prepass, &heightfields.shadow,
                               &composeOverPipeline, &postPipeline, &externalPipeline,
                               &taaPipeline, &composePipeline, &composeSinglePipeline,
                               &bloomDownPipeline, &bloomUpPipeline, &histogramPipeline, &averagePipeline, &shadowPipeline, &rtaoPipeline, &bevelPipeline, &rtShadowPipeline})
@@ -4426,10 +4485,10 @@ struct Renderer::Impl
         else if (f.feedback.active())
             f.feedback.destroy(vk);
         prepareMeshes(cmd, f, s, sameMeshes);
-        prepareHeightfields(cmd, f, s, v.extent.height);
         prepareDynamicMeshes(cmd, f, s, sameMeshes ? &v.keptDynamic : nullptr);
         writeInstances(f, s, v.offscreen ? nullptr : &v.keptBatches, sameMeshes);
         writeLights(f, s);
+        prepareHeightfields(cmd, f, s, v.extent.height);
         prepareRecords(v, s, sameMeshes);
         frameMeshDraws = frameMeshInstances = 0;
 
