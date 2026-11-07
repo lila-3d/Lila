@@ -1831,35 +1831,137 @@ Extracted buildPatchMesh(const Layout& lay, const std::vector<uint8_t>& blocked,
         if (holeRow[r])
             hole[rows[r].patch] = 1;
     // A free patch is filled by pattern (Takayama et al. 2014), which needs an even number of steps round it. An odd one
-    // takes a step on an arc that no held patch counts (a border, or one shared only with free patches).
+    // changes by a step along a chain of arcs through held patches, each step evened out on the patch's opposite side,
+    // until the chain ends on the border or at another odd free patch.
     {
-        std::vector<int> heldUses(na, 0);
-        for (const Row& row : rows)
-            if (!hole[row.patch])
-                for (auto [a, c] : row.terms)
-                    ++heldUses[a];
+        std::vector<std::vector<std::pair<Index, int>>> heldRowsOf(na);
+        for (Index r = 0; r < Index(rows.size()); ++r)
+            if (!hole[rows[r].patch])
+                for (auto [ai, c] : rows[r].terms)
+                    heldRowsOf[ai].push_back({r, int(c)});
+        std::vector<std::vector<Index>> patchesOf(na);
         for (Index p = 0; p < np; ++p)
-        {
-            if (!hole[p])
-                continue;
+            for (const Side& side : shapes[p].sides)
+                for (const auto& [ai, fwd] : side.arcs)
+                    if (std::find(patchesOf[ai].begin(), patchesOf[ai].end(), p) == patchesOf[ai].end())
+                        patchesOf[ai].push_back(p);
+        auto perimeter = [&](Index p) {
             int total = 0;
             for (const Side& side : shapes[p].sides)
-                for (const auto& [a, fwd] : side.arcs)
-                    total += arcs[a].count;
-            if (total % 2 == 0)
+                for (const auto& [ai, fwd] : side.arcs)
+                    total += arcs[ai].count;
+            return total;
+        };
+        auto stepCost = [&](Index ai, int d) {
+            const double t = alpha * arcs[ai].length;
+            return 1.0 + std::max(0.0, std::abs(arcs[ai].count + d - t) - std::abs(arcs[ai].count - t));
+        };
+        // The free patch across arc ai from a held one, or kInvalid on the border.
+        auto freeAcross = [&](Index ai) {
+            for (Index q : patchesOf[ai])
+                if (hole[q])
+                    return q;
+            return kInvalid;
+        };
+        for (Index p0 = 0; p0 < np; ++p0)
+        {
+            if (!hole[p0] || perimeter(p0) % 2 == 0)
                 continue;
-            for (const Side& side : shapes[p].sides)
+            // Dijkstra over held rows; a state is a row and the change it needs to balance again.
+            struct Back
             {
-                bool done = false;
-                for (const auto& [a, fwd] : side.arcs)
-                    if (heldUses[a] == 0)
+                Index row, arc;
+                int delta;
+            };
+            std::unordered_map<Index, double> dist;
+            std::unordered_map<Index, Back> back;
+            std::unordered_map<Index, int> need;
+            using Q = std::pair<double, Index>;
+            std::priority_queue<Q, std::vector<Q>, std::greater<>> queue;
+            double best = std::numeric_limits<double>::max();
+            Index endArc = kInvalid, endFrom = kInvalid;
+            int endDelta = 0;
+            // An end: the arc's other side is the border or an odd free patch other than the start.
+            auto consider = [&](Index ai, int delta, double d, Index from) {
+                const Index q = freeAcross(ai);
+                const bool border = patchesOf[ai].size() < 2;
+                bool ok = border;
+                for (Index other : patchesOf[ai])
+                    ok = ok || (other != p0 && hole[other] && perimeter(other) % 2 != 0);
+                (void)q;
+                if (ok && d < best)
+                {
+                    best = d;
+                    endArc = ai;
+                    endDelta = delta;
+                    endFrom = from;
+                }
+            };
+            for (const Side& side : shapes[p0].sides)
+                for (const auto& [ai, fwd] : side.arcs)
+                    for (int delta : {1, -1})
                     {
-                        ++arcs[a].count;
-                        done = true;
-                        break;
+                        if (arcs[ai].count + delta < lower[ai])
+                            continue;
+                        const double d = stepCost(ai, delta);
+                        if (heldRowsOf[ai].empty())
+                        {
+                            consider(ai, delta, d, kInvalid);
+                            continue;
+                        }
+                        if (heldRowsOf[ai].size() != 1)
+                            continue;
+                        const auto [r, c] = heldRowsOf[ai][0];
+                        if (auto it = dist.find(r); it == dist.end() || d < it->second)
+                        {
+                            dist[r] = d;
+                            need[r] = -c * delta;
+                            back[r] = {kInvalid, ai, delta};
+                            queue.push({d, r});
+                        }
                     }
-                if (done)
-                    break;
+            while (!queue.empty())
+            {
+                const auto [d, r] = queue.top();
+                queue.pop();
+                if (d > dist[r] || d >= best)
+                    continue;
+                for (auto [ai, c] : rows[r].terms)
+                {
+                    const int delta = need[r] * int(c);
+                    if (arcs[ai].count + delta < lower[ai] || ai == back[r].arc)
+                        continue;
+                    const double nd = d + stepCost(ai, delta);
+                    Index other = kInvalid;
+                    int oc = 0;
+                    for (auto [r2, c2] : heldRowsOf[ai])
+                        if (r2 != r)
+                        {
+                            other = r2;
+                            oc = c2;
+                        }
+                    if (other == kInvalid)
+                    {
+                        consider(ai, delta, nd, r);
+                        continue;
+                    }
+                    if (auto it = dist.find(other); it == dist.end() || nd < it->second)
+                    {
+                        dist[other] = nd;
+                        need[other] = -oc * delta;
+                        back[other] = {r, ai, delta};
+                        queue.push({nd, other});
+                    }
+                }
+            }
+            if (endArc == kInvalid)
+                continue;
+            arcs[endArc].count += endDelta;
+            for (Index r = endFrom; r != kInvalid;)
+            {
+                const Back& bk = back[r];
+                arcs[bk.arc].count += bk.delta;
+                r = bk.row;
             }
         }
     }
@@ -1961,6 +2063,29 @@ Extracted buildPatchMesh(const Layout& lay, const std::vector<uint8_t>& blocked,
     for (Index pi = 0; pi < npieces; ++pi)
         piecesOf[patchOf[pi]].push_back(pi);
     int tutteFailed = 0, foldedPatches = 0;
+    const bool listHoles = debug && std::getenv("LILA_PATCH_LIST");
+    auto reportHole = [&](Index p, const char* why) {
+        if (!listHoles)
+            return;
+        glm::dvec3 c(0.0);
+        int k = 0;
+        for (Index pi : piecesOf[p])
+            for (Index w : pid[pi])
+            {
+                c += weld.pos(w);
+                ++k;
+            }
+        c /= double(std::max(k, 1));
+        std::fprintf(stderr, "hole patch %d (%s): %zu sides, counts", int(p), why, shapes[p].sides.size());
+        for (const Side& sd : shapes[p].sides)
+        {
+            int n = 0;
+            for (const auto& [ai, fwd] : sd.arcs)
+                n += arcs[ai].count;
+            std::fprintf(stderr, " %d", n);
+        }
+        std::fprintf(stderr, ", unequal %d, at %.2f %.2f %.2f\n", int(unequal[p]), c.x, c.y, c.z);
+    };
     int patterned = 0, unfilled[5] = {}; // a side without steps, odd, no pattern fits, fill failed, too many sides
     for (Index p = 0; p < np; ++p)
     {
@@ -1971,6 +2096,7 @@ Extracted buildPatchMesh(const Layout& lay, const std::vector<uint8_t>& blocked,
             if (shape.sides.size() < 2 || shape.sides.size() > 6)
             {
                 ++unfilled[4];
+                reportHole(p, "many sides");
                 continue;
             }
             PatchBoundary b;
@@ -1992,22 +2118,26 @@ Extracted buildPatchMesh(const Layout& lay, const std::vector<uint8_t>& blocked,
             if (!ok)
             {
                 ++unfilled[0];
+                reportHole(p, "empty side");
                 continue;
             }
             if (ids.size() % 2 != 0)
             {
                 ++unfilled[1];
+                reportHole(p, "odd");
                 continue;
             }
             if (!patchSidesFillable(patchSideCounts(b)))
             {
                 ++unfilled[2];
+                reportHole(p, "no pattern");
                 continue;
             }
             const PatchResult r = fillPatch(b);
             if (!r.ok())
             {
                 ++unfilled[3];
+                reportHole(p, "fill failed");
                 continue;
             }
             std::vector<Index> id(r.positions.size());
@@ -2251,10 +2381,14 @@ Extracted buildPatchMesh(const Layout& lay, const std::vector<uint8_t>& blocked,
                     folded = folded || glm::dot(facing, normalAt(glm::dvec2(i + 0.5, j + 0.5))) <= 0.0;
                     grid.push_back(q);
                 }
+            // A grid that lands folded (too few steps for the patch's real size) is kept: the relax after untangles it,
+            // where a hole would take a fan.
             if (folded)
+            {
                 ++foldedPatches;
-            else
-                quads.insert(quads.end(), grid.begin(), grid.end());
+                reportHole(p, "folded");
+            }
+            quads.insert(quads.end(), grid.begin(), grid.end());
         }
     }
     // Collapsed arcs and patches weld their points; the mesh is built from the welded quads.

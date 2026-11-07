@@ -1647,8 +1647,18 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
             seamDebug("cut");
         }
         removeValence2(m, feature);
+        seamDebug("v2");
+        // Every border point on the plane is the seam's, however it was traced, so no hole fill closes a bay along it.
+        if (symmetric)
+        {
+            boundary.resize(m.pointCapacity(), 0);
+            for (Index p = 0; p < m.pointCapacity(); ++p)
+                if (m.pointValid(p) && m.isBoundaryPoint(p) && std::abs(plane.distance(m.position(p))) < 1e-6 * h)
+                    boundary[p] = 1;
+        }
         geo::conformNormals(m);
         fillHoles(m, boundary, &bvh);
+        seamDebug("holes");
         {
             std::vector<Index> tris;
             for (Index f = 0; f < m.faceCapacity(); ++f)
@@ -1658,10 +1668,12 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
             qo.maxFaceAngle = 60.0;
             geo::quadrangulateFaces(m, tris, qo);
         }
+        seamDebug("quads");
         feature.resize(m.pointCapacity(), FeatureKind::None);
         removeValence2(m, feature);
         boundary.resize(m.pointCapacity(), 0);
         compactTagged(m, feature, boundary);
+        seamDebug("compact");
         geo::conformNormals(m);
         // Conforming only makes the winding consistent; the source's own decides which way round it goes.
         if (2 * foldedFaces(m, src, bvh).size() > size_t(m.numFaces()))
@@ -1880,6 +1892,28 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
     {
         std::string why;
         Extracted ex = layoutPatches(s, qSeam, scale, double(opts.targetFaces) * (symmetric ? 0.5 : 1.0), &why);
+        if (const char* raw = std::getenv("LILA_PATCH_RAW"); raw && ex.mesh.numFaces() > 0)
+            if (FILE* f = std::fopen(raw, "w"))
+            {
+                std::vector<Index> id(ex.mesh.pointCapacity(), 0);
+                Index next = 1;
+                for (Index p = 0; p < ex.mesh.pointCapacity(); ++p)
+                    if (ex.mesh.pointValid(p))
+                    {
+                        const glm::dvec3 x = ex.mesh.position(p);
+                        std::fprintf(f, "v %.9g %.9g %.9g\n", x.x, x.y, x.z);
+                        id[p] = next++;
+                    }
+                for (Index fc = 0; fc < ex.mesh.faceCapacity(); ++fc)
+                    if (ex.mesh.faceValid(fc))
+                    {
+                        std::fprintf(f, "f");
+                        for (Index p : ex.mesh.facePoints(fc))
+                            std::fprintf(f, " %d", int(id[p]));
+                        std::fprintf(f, "\n");
+                    }
+                std::fclose(f);
+            }
         if (ex.mesh.numFaces() > 0)
         {
             QuadRemeshResult r = record(buildFrom(std::move(ex), "patches"));
