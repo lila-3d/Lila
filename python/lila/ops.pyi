@@ -9425,7 +9425,7 @@ def texSetNodeFlags(*objects: Any, muted: bool | None = None, collapsed: bool | 
     """
 
 def texSetSettings(*objects: Any) -> Any:
-    """Change a texture set's settings: the keys given replace the set's (channels, width, height, tiles, normalConvention, bakeProject, exportPreset, material, heightDepth, uvWidth, uvHeight, normalFromHeight, normalFade). Returns the full settings.
+    """Change a texture set's settings: the keys given replace the set's (channels, width, height, tiles, normalConvention, bakeProject, exportPreset, material, heightDepth, uvWidth, uvHeight, normalFromHeight, normalFade, heightSource). Returns the full settings.
 
     Args:
         objects: set settings.

@@ -270,7 +270,7 @@ void registerCommands()
     ops::registerCommand({
         .name = "texSetSettings",
         .doc = "Change a texture set's settings: the keys given replace the set's (channels, width, height, tiles, normalConvention, "
-               "bakeProject, exportPreset, material, heightDepth, uvWidth, uvHeight, normalFromHeight, normalFade). Returns the full settings.",
+               "bakeProject, exportPreset, material, heightDepth, uvWidth, uvHeight, normalFromHeight, normalFade, heightSource). Returns the full settings.",
         .positionalDoc = "set settings",
         .run = [](const Args& a) -> json {
             Node& n = setNode(positionalString(a, 0, "texSetSettings", "texture set"), "texSetSettings");

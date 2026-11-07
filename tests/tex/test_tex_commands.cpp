@@ -211,3 +211,25 @@ TEST_CASE("tex: the stack's height normal follows the set's depth and UV size")
             }
     CHECK(found);
 }
+
+TEST_CASE("tex: normalFromHeight shows the normal rebuilt from the height channel, or the baked height")
+{
+    run("newScene");
+    run("texCreateSet", {{"args", {"Wall"}}, {"resolution", 32}});
+    run("texAddLayer", {{"args", {"Wall", "fill"}}, {"material", {{"height", 0.7}}}});
+    auto types = [] {
+        std::vector<std::string> out;
+        const json info = run("texGraphInfo", {{"args", {"Wall"}}});
+        for (const json& node : info["nodes"])
+            out.push_back(node["type"]);
+        return out;
+    };
+    auto has = [](const std::vector<std::string>& v, const char* t) { return std::ranges::find(v, t) != v.end(); };
+    CHECK_FALSE(has(types(), "heightNormalRebuild"));
+    run("texSetSettings", {{"args", {"Wall", {{"normalFromHeight", true}}}}});
+    CHECK(has(types(), "heightNormalRebuild"));
+    CHECK_FALSE(has(types(), "meshHeight"));
+    run("texSetSettings", {{"args", {"Wall", {{"heightSource", "mesh"}}}}});
+    CHECK(has(types(), "meshHeight"));
+    CHECK_THROWS_AS(run("texSetSettings", {{"args", {"Wall", {{"heightSource", "nope"}}}}}), CommandError);
+}

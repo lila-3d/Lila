@@ -435,6 +435,8 @@ std::vector<geo::Mesh> highMeshes(const Sheet& s, const std::filesystem::path& f
 /** The bake result recorded beside the textures, for sends. */
 std::filesystem::path bakeRecord(const Sheet& s, const std::filesystem::path& f) { return textureFolder(s, f) / (s.name + "_bake.json"); }
 
+void syncSheetSets(const Sheet& s, const std::filesystem::path& f);
+
 json runBake(const Sheet& s, const std::filesystem::path& f, const SheetBakeOptions& opts, const char* cmd)
 {
     SheetBakeOptions o = opts;
@@ -455,6 +457,7 @@ json runBake(const Sheet& s, const std::filesystem::path& f, const SheetBakeOpti
         out << r.dump(2);
     }
     ensureMaterials(s, f);
+    syncSheetSets(s, f);
     return r;
 }
 
@@ -502,6 +505,38 @@ json bakeLayerGraph()
 }
 
 /**
+ * With a detail normal baked, the set shows and exports its normal rebuilt from the sheet's baked height, as the Unreal
+ * master draws it; without one, as painted.
+ */
+void syncHeightNormals(const Sheet& s, const std::filesystem::path& f, const std::string& set)
+{
+    const double depth = bakedHeightDepth(s, f);
+    const bool on = depth > 0.0 && std::filesystem::exists(mapFile(s, f, "detailNormal"));
+    const glm::dvec2 ext = s.worldExtent();
+    json want = {{"normalFromHeight", on}};
+    if (on)
+        want.update({{"heightSource", "mesh"}, {"heightDepth", depth}, {"uvWidth", ext.x}, {"uvHeight", ext.y}});
+    const json have = ops::execute("texGraphInfo", {{"args", {set}}}).value("settings", json::object());
+    for (const auto& [k, v] : want.items())
+        if (!have.contains(k) || have[k] != v)
+        {
+            ops::execute("texSetSettings", {{"args", {set, want}}});
+            return;
+        }
+}
+
+/** syncHeightNormals for the texture sets the sheet's palettes already have. */
+void syncSheetSets(const Sheet& s, const std::filesystem::path& f)
+{
+    std::vector<std::string> palettes = {""};
+    for (const Palette& p : s.palettes)
+        palettes.push_back(p.name);
+    for (const std::string& p : palettes)
+        if (const std::string set = textureSetName(s, p); hasTextureSet(set))
+            syncHeightNormals(s, f, set);
+}
+
+/**
  * A palette's texture set (the sheet's own for ""), bound to its material and reading the sheet's shared bake, made with a
  * Sheet Bake layer when missing. Bakes the sheet first when it has no textures.
  */
@@ -513,11 +548,13 @@ std::string ensureTextureSet(const Sheet& s, const std::filesystem::path& f, con
         ensureMaterials(s, f);
     const std::string project = ensureBakeProject(s, f, cmd);
     const std::string set = textureSetName(s, palette);
-    if (hasTextureSet(set))
-        return set;
-    ops::execute("texCreateSet", {{"args", {set}},
-                                  {"settings", {{"width", s.width}, {"height", s.height}, {"bakeProject", project}, {"material", materialName(s, palette)}}}});
-    ops::execute("texAddLayer", {{"args", {set, "procedural"}}, {"name", kBakeLayer}, {"index", 0}, {"graph", bakeLayerGraph()}});
+    if (!hasTextureSet(set))
+    {
+        ops::execute("texCreateSet", {{"args", {set}},
+                                      {"settings", {{"width", s.width}, {"height", s.height}, {"bakeProject", project}, {"material", materialName(s, palette)}}}});
+        ops::execute("texAddLayer", {{"args", {set, "procedural"}}, {"name", kBakeLayer}, {"index", 0}, {"graph", bakeLayerGraph()}});
+    }
+    syncHeightNormals(s, f, set);
     return set;
 }
 

@@ -115,6 +115,8 @@ public:
                 mG.nodes.push_back(std::move(hn));
                 mG.nodes.push_back(std::move(sn));
             }
+            if (c.name == "normal" && mSet.normalFromHeight)
+                src = rebuildFromHeight(src, heads, right);
             if (src.empty())
             {
                 out.values[c.name] = baseValue(c);
@@ -158,6 +160,35 @@ private:
     }
 
     void link(const Src& from, const std::string& toNode, const std::string& toSocket) { mG.links.push_back({from.node, from.socket, toNode, toSocket}); }
+
+    /**
+     * The normal as a Normals From Height material shows it: rebuilt from the height an engine derives from (the height
+     * channel, or the baked height for heightSource mesh), so the viewport matches the export. Unchanged without a height.
+     */
+    Src rebuildFromHeight(const Src& normal, Heads& heads, double right)
+    {
+        Src height;
+        if (mSet.heightSource == "mesh")
+        {
+            GNode mh = topNode("StackRebuildHeight", "meshHeight", {right + 130.0, 760.0});
+            height = {mh.name, "out"};
+            mG.nodes.push_back(std::move(mh));
+        }
+        else if (mSet.channel("height") && !heads["height"].empty())
+            height = heads["height"];
+        if (height.empty())
+            return normal;
+        GNode rb = topNode("StackRebuildNormal", "heightNormalRebuild", {right + 260.0, 600.0});
+        if (!normal.empty())
+            link(normal, rb.name, "normal");
+        link(height, rb.name, "height");
+        rb.values["depth"] = mSet.heightDepth;
+        rb.values["sizeU"] = mSet.uvWidth;
+        rb.values["sizeV"] = mSet.uvHeight;
+        rb.values["fade"] = mSet.normalFade;
+        mG.nodes.push_back(std::move(rb));
+        return {"StackRebuildNormal", "out"};
+    }
 
     /** A top-level input fed from a head, or the channel's base value when the head is the base. */
     void feed(GNode& n, const std::string& socket, const Src& src, const Channel& c)

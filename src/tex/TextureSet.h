@@ -65,6 +65,8 @@ struct LILA_SCENE_API SetSettings
      */
     bool normalFromHeight = false;
     double normalFade = 45.0;
+    /** The height an engine rebuilds normals from: channel (the set's height) or mesh (the bake project's height map). */
+    std::string heightSource = "channel";
 
     /** heightDepth over the UV square's size: the height's slope per UV unit along u and v. */
     glm::dvec2 heightSlope() const { return {heightDepth / std::max(uvWidth, 1e-3), heightDepth / std::max(uvHeight, 1e-3)}; }

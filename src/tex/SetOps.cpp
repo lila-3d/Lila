@@ -360,7 +360,7 @@ json exportSet(scene::Node& set, const ExportOptions& options)
     std::optional<bake::TargetProfile> target = bake::findTarget(presetName);
     if (!target)
         throw std::invalid_argument("no export preset (bake target) named " + presetName);
-    const std::vector<OutputRequest> requests = channelRequests(g, s);
+    std::vector<OutputRequest> requests = channelRequests(g, s);
     if (requests.empty())
         throw std::invalid_argument(g.firstOfType(kMaterialOutputType) ? "the set has no channels" : "the graph has no Material Output");
 
@@ -380,6 +380,11 @@ json exportSet(scene::Node& set, const ExportOptions& options)
         warnings.push_back("normalFromHeight: the set has no height channel, so the normal is written whole");
         fromHeight = false;
     }
+    // A set rebuilding from the baked height exports that height: it is the one the material rebuilds from.
+    if (fromHeight && s.heightSource == "mesh" && g.node("StackRebuildHeight"))
+        for (OutputRequest& r : requests)
+            if (r.name == "height")
+                r = {"height", "StackRebuildHeight", "out", PortType::Gray, {}};
     std::vector<bake::TargetMap> targetMaps = target->maps;
     if (fromHeight && std::ranges::none_of(targetMaps, [](const bake::TargetMap& tm) { return tm.settings.map == "height"; }))
     {
