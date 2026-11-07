@@ -14,7 +14,9 @@
 #include "IAssetTools.h"
 #include "Landscape.h"
 #include "LandscapeEdit.h"
+#include "LandscapeComponent.h"
 #include "LandscapeEditLayer.h"
+#include "LandscapeHeightfieldCollisionComponent.h"
 #include "LandscapeInfo.h"
 #include "LandscapeProxy.h"
 #include "MaterialEditingLibrary.h"
@@ -188,6 +190,37 @@ UMaterialInterface* VolumeInstance(const FString& Label, UMaterialInterface* Lan
 }
 
 /**
+ * Merges the edit layers now and rebuilds every component's collision from the result. The merge refreshes the collision
+ * layer data but the editor never rebuilds the physics heightfield from it, so without this, traces still hit the holes.
+ */
+void RebuildCollisionAfterMerge(ALandscape* Landscape)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkTerrainVolume::RebuildCollisionAfterMerge);
+
+	Landscape->ForceUpdateLayersContent();
+	ULandscapeInfo* Info = Landscape->GetLandscapeInfo();
+	if (!Info)
+	{
+		return;
+	}
+	Info->ForEachLandscapeProxy([](ALandscapeProxy* Proxy) {
+		for (ULandscapeComponent* Component : Proxy->LandscapeComponents)
+		{
+			if (!Component)
+			{
+				continue;
+			}
+			Component->UpdateCollisionLayerData();
+			if (ULandscapeHeightfieldCollisionComponent* Collision = Component->GetCollisionComponent())
+			{
+				Collision->RecreateCollision();
+			}
+		}
+		return true;
+	});
+}
+
+/**
  * Holes exist only through a Landscape Visibility Mask in the landscape (or hole) material: without one Unreal drops the
  * visibility data, collision included. A material Lila generated gets one on its opacity mask; anyone else's is left
  * alone and reported. Returns the material that now draws the holes.
@@ -326,9 +359,12 @@ TSharedPtr<FJsonValue> SetLandscapeVolume(const TSharedPtr<FJsonObject>& Params,
 		}
 		if (HoleDrawer)
 		{
-			FScopedSetLandscapeEditingLayer Scope(Landscape, Layer->GetGuid(), [Landscape] { Landscape->RequestLayersContentUpdateForceAll(); });
-			FLandscapeEditDataInterface Edit(Info, Layer->GetGuid());
-			Edit.SetAlphaData(ALandscapeProxy::VisibilityLayer, Extent.Min.X, Extent.Min.Y, Extent.Max.X, Extent.Max.Y, Bytes.GetData(), 0);
+			{
+				FScopedSetLandscapeEditingLayer Scope(Landscape, Layer->GetGuid(), [Landscape] { Landscape->RequestLayersContentUpdateForceAll(); });
+				FLandscapeEditDataInterface Edit(Info, Layer->GetGuid());
+				Edit.SetAlphaData(ALandscapeProxy::VisibilityLayer, Extent.Min.X, Extent.Min.Y, Extent.Max.X, Extent.Max.Y, Bytes.GetData(), 0);
+			}
+			RebuildCollisionAfterMerge(Landscape);
 		}
 	}
 
