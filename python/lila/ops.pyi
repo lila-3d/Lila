@@ -7235,7 +7235,7 @@ def retopoPoles(*objects: Any, preset: str | None = None, method: str | None = N
         adaptivity: 0 uniform, 1 much denser where curved; painted point 'density' multiplies. Default 0.25.
         useHardEdges: Follow edges marked hard. Default True.
         sharpAngle: Also follow creases sharper than this, degrees; negative disables. Default 40.0.
-        symmetry: off, x, y or z: remesh half and mirror, exactly symmetric. The mesh has to be symmetric across that plane through its origin. One of 'off', 'x', 'y', 'z'. Default 'x'.
+        symmetry: off, x, y or z: remesh half and mirror, exactly symmetric. The mesh has to be symmetric across that plane through its origin. One of 'off', 'x', 'y', 'z'. Default 'off'.
         guides: Mesh nodes whose edges are guide curves.
         guidePoints: Guide polylines as lists of world [x, y, z].
         featureGuides: Mesh nodes whose edges get an edge loop laid on them, like a hard edge.
