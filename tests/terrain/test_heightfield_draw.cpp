@@ -1,6 +1,7 @@
 #include "TestUtil.h"
 
 #include "geo/Heightfield.h"
+#include "geo/Primitives.h"
 #include "render/HeightfieldRenderer.h"
 #include "render/Renderer.h"
 #include "scene/Graph.h"
@@ -575,6 +576,63 @@ TEST_CASE("heightfield draw: an edited terrain draws the same patched as uploade
     const auto [mean, share] = difference(patched, whole);
     MESSAGE("patched vs uploaded whole: mean " << mean << ", " << share * 100.0 << "% off by more than 8");
     CHECK(patched.bgra == whole.bgra);
+}
+
+TEST_CASE("heightfield draw: occludes the same with the AO prepass recorded in chunks")
+{
+    auto& r = render::Renderer::get();
+    if (!r.running() && !r.start())
+    {
+        MESSAGE("no GPU for the heightfield chunked prepass test");
+        return;
+    }
+    // Ridges and pits a few AO radii across.
+    auto h = std::make_shared<geo::Heightfield>(geo::makeHeightfield(257, 257, 10.0, glm::dvec2(-1280.0)));
+    for (int z = 0; z < h->nz; ++z)
+        for (int x = 0; x < h->nx; ++x)
+            h->heights[h->index(x, z)] = float(60.0 * std::sin(x * 0.35) * std::cos(z * 0.3));
+    ui::Camera cam;
+    cam.distance = 2500.0;
+    cam.pitch = -55.0;
+    cam.nearClip = 10.0;
+    render::FrameState s = shotState(cam, 1.6);
+    s.ambientOcclusion = true;
+    s.aoFast = false;
+    s.aoRadius = 60.0f;
+    s.heightfields.push_back(drawOf(h));
+    // Enough separate meshes, out of view, that the prepass records its sections on worker threads.
+    for (int i = 0; i < 2200; ++i)
+    {
+        geo::CubeOptions o;
+        o.width = o.height = o.depth = 1.0 + 0.001 * i;
+        render::MeshDraw md;
+        md.mesh = ui::renderMeshFor(std::make_shared<geo::Mesh>(geo::makeCube(o)));
+        md.world = glm::translate(glm::mat4(1.0f), glm::vec3(float(i), -1.0e6f, 0.0f));
+        s.meshes.push_back(md);
+    }
+    std::string err;
+    auto shoot = [&](bool chunks) {
+#ifdef _WIN32
+        _putenv_s("LILA_VK_NO_CHUNKS", chunks ? "" : "1");
+#else
+        chunks ? unsetenv("LILA_VK_NO_CHUNKS") : setenv("LILA_VK_NO_CHUNKS", "1", 1);
+#endif
+        Shot out;
+        REQUIRE_MESSAGE(r.renderOffscreen(s, out.w, out.h, out.bgra, &err), err);
+        return out;
+    };
+    const Shot inline_ = shoot(false);
+    const Shot chunked = shoot(true);
+    render::FrameState noAo = s;
+    noAo.ambientOcclusion = false;
+    Shot plain;
+    REQUIRE_MESSAGE(r.renderOffscreen(noAo, plain.w, plain.h, plain.bgra, &err), err);
+    const double occluded = difference(inline_, plain).second;
+    const auto [mean, share] = difference(inline_, chunked);
+    MESSAGE("AO changes " << occluded * 100.0 << "% of the terrain; chunked vs inline prepass: mean " << mean << ", " << share * 100.0 << "% off by more than 8");
+    CHECK(occluded > 0.1);
+    CHECK(share < 0.005);
+    CHECK(mean < 0.5);
 }
 
 TEST_CASE("terrain display commands: options and paint layers round trip, layers undo")
