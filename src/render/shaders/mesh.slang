@@ -743,17 +743,19 @@ float shadowFilterRadius(GpuLight l, float2 at, float2 lo, float2 hi, float2 tex
 float shadowFactor(GpuLight l, uint index, float3 P, float3 ng)
 {
     const float4 traced = ((GpuFrame*)pc.lights)->shadowing;
+    float rt = 1.0;
     for (uint c = 0; c < 4; ++c)
         if (uint(traced[c] + 0.5) == index + 1)
-            return rtShadowTex.Load(int3(int2(gVtPixel), 0))[c];
-    if (l.shadowRect.z <= 0.0)
-        return 1.0;
+            rt = rtShadowTex.Load(int3(int2(gVtPixel), 0))[c];
+    // A traced light keeps a shadow map only for the heightfields, which the rays don't see.
+    if (l.shadowRect.z <= 0.0 || rt <= 0.0)
+        return rt;
     // A texel and a half along the surface normal keeps acne off without lifting shadows from contacts.
     float4 c = mul(l.shadow, float4(P + ng * l.right.w * 1.5, 1.0));
     float3 ndc = c.xyz / c.w;
     float2 uv = ndc.xy * 0.5 + 0.5;
     if (any(uv < 0.0) || any(uv > 1.0) || ndc.z <= 0.0 || ndc.z > 1.0)
-        return 1.0;
+        return rt;
     uint w, h;
     shadowAtlas.GetDimensions(w, h);
     const float2 texel = 1.0 / float2(w, h);
@@ -763,7 +765,7 @@ float shadowFactor(GpuLight l, uint index, float3 P, float3 ng)
     float cs = cos(angle), sn = sin(angle);
     float radius = shadowFilterRadius(l, at, lo, hi, texel, ndc.z, cs, sn);
     if (radius < 0.0)
-        return 1.0;
+        return rt;
     float lit = 0.0;
     for (int k = 0; k < 8; ++k)
     {
@@ -772,7 +774,7 @@ float shadowFactor(GpuLight l, uint index, float3 P, float3 ng)
         // Reversed-Z: the occluder nearest the light holds the largest depth.
         lit += ndc.z + 1e-5 >= d ? 1.0 : 0.0;
     }
-    return lit / 8.0;
+    return rt * lit / 8.0;
 }
 
 /**

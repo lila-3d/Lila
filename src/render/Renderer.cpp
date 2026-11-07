@@ -716,7 +716,14 @@ struct Renderer::Impl
     /** The frame's lights on the GPU, and the shadow tiles to draw: tile index and the light's view-projection. */
     VkDeviceAddress frameLightAddress = 0;
     uint32_t frameLightCount = 0;
-    std::vector<std::pair<uint32_t, glm::mat4>> frameShadows;
+    struct ShadowView
+    {
+        uint32_t tile = 0;
+        glm::mat4 viewProj{1.0f};
+        /** A ray traced light's tile: the meshes are in its traced shadows, so only the heightfields draw here. */
+        bool heightfieldsOnly = false;
+    };
+    std::vector<ShadowView> frameShadows;
     VkDescriptorSet envSet = VK_NULL_HANDLE;
     VkSampler envSampler = VK_NULL_HANDLE;
     Image envCube, brdfLut;
@@ -2416,6 +2423,9 @@ struct Renderer::Impl
                     frameRtLights.push_back(uint32_t(i) + 1);
         auto* out = static_cast<GpuLight*>(f.lights.mapped) + 1;
         constexpr uint32_t tilesPerRow = kShadowAtlas / kShadowTile;
+        // Heightfields are not in the acceleration structure, so they cast through a shadow map even for traced lights.
+        const bool heightfieldCasters =
+            heightfields.shadow && std::ranges::any_of(s.heightfields, [](const HeightfieldDraw& d) { return (d.flags & DrawShaded) != 0; });
         for (size_t i = 0; i < count; ++i)
         {
             const LightDraw& l = s.lights[i];
@@ -2427,14 +2437,14 @@ struct Renderer::Impl
             g.cone = glm::vec4(l.cosOuter, 1.0f / std::max(l.cosInner - l.cosOuter, 1e-4f), l.width, l.height);
             g.right = glm::vec4(l.right, l.shadowTexel);
             const uint32_t tile = uint32_t(frameShadows.size());
-            if (l.shadows && tile < tilesPerRow * tilesPerRow && shadowPipeline &&
-                std::ranges::find(frameRtLights, uint32_t(i) + 1) == frameRtLights.end())
+            const bool traced = std::ranges::find(frameRtLights, uint32_t(i) + 1) != frameRtLights.end();
+            if (l.shadows && tile < tilesPerRow * tilesPerRow && shadowPipeline && (!traced || heightfieldCasters))
             {
                 g.shadow = l.shadowViewProj;
                 g.shadowDepth = l.shadowDepth;
                 const float scale = float(kShadowTile) / float(kShadowAtlas);
                 g.shadowRect = glm::vec4(float(tile % tilesPerRow) * scale, float(tile / tilesPerRow) * scale, scale, scale);
-                frameShadows.emplace_back(tile, l.shadowViewProj);
+                frameShadows.push_back({tile, l.shadowViewProj, traced});
             }
             out[i] = g;
         }
@@ -2477,16 +2487,17 @@ struct Renderer::Impl
         cullCmd = VK_NULL_HANDLE;
         for (size_t view = 0; view < frameShadows.size(); ++view)
         {
-            const auto& [tile, viewProj] = frameShadows[view];
+            const auto& [tile, viewProj, heightfieldsOnly] = frameShadows[view];
             const VkViewport viewport{float(tile % tilesPerRow * kShadowTile), float(tile / tilesPerRow * kShadowTile), float(kShadowTile),
                                       float(kShadowTile), 0.0f, 1.0f};
             const VkRect2D scissor{{int32_t(tile % tilesPerRow * kShadowTile), int32_t(tile / tilesPerRow * kShadowTile)}, {kShadowTile, kShadowTile}};
             vkCmdSetViewport(cmd, 0, 1, &viewport);
             vkCmdSetScissor(cmd, 0, 1, &scissor);
             VkDescriptorSet boundSet = VK_NULL_HANDLE;
-            for (SectionRecord& r : *frameRecords)
-                if (!r.translucent)
-                    emitSection(cmd, s, r.push, r.set, *r.mesh, r.section, frameBatches.shaded[r.batch].count, viewProj, boundSet);
+            if (!heightfieldsOnly)
+                for (SectionRecord& r : *frameRecords)
+                    if (!r.translucent)
+                        emitSection(cmd, s, r.push, r.set, *r.mesh, r.section, frameBatches.shaded[r.batch].count, viewProj, boundSet);
             if (heightfields.count() > 0)
             {
                 drawHeightfields(cmd, s, viewProj, whiteAoSet, HeightfieldPass::Shadow, int(view));
@@ -2579,8 +2590,8 @@ struct Renderer::Impl
         heightfields.bindless = bindless;
         std::vector<glm::mat4> shadowViews;
         if (heightfields.shadow)
-            for (const auto& [tile, viewProj] : frameShadows)
-                shadowViews.push_back(viewProj);
+            for (const ShadowView& v : frameShadows)
+                shadowViews.push_back(v.viewProj);
         heightfields.prepare(vk, cmd, &f, s, heightPx, frameCounter,
                              [&](const TexturePtr& t, bool normal) { return mapHandle(t, normal ? kFlatNormalKey : kWhiteSrgbKey); }, shadowViews);
     }
