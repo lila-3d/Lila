@@ -229,8 +229,9 @@ LILA_SCENE_API std::vector<FieldSingularity> cancelClosePoles(const Surface& s, 
                                                               const std::vector<double>& scale, double reach);
 /**
  * Poles moved apart until no two are closer than minSep lattice steps over the surface. Each pole too close to one
- * already placed moves to the nearest clear spot within two steps, or failing that joins the nearest placed pole.
- * With allowed, a pole on a triangle it rejects moves to the nearest allowed clear spot within four steps.
+ * already placed moves to the nearest clear spot within two steps. With allowed, a pole on a triangle it rejects moves to
+ * the nearest allowed clear spot within four steps. A pole with no such spot goes to the nearest clear one within four
+ * steps, allowed or not, or stays where it is.
  */
 LILA_SCENE_API std::vector<FieldSingularity> spreadPoles(const Surface& s, const std::vector<FieldSingularity>& poles,
                                                          const std::vector<double>& scale, double minSep,

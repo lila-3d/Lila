@@ -314,18 +314,13 @@ std::vector<FieldSingularity> spreadPoles(const Surface& s, const std::vector<Fi
             place({best, p.index});
             continue;
         }
-        size_t nearest = 0;
-        double bestD = std::numeric_limits<double>::max();
-        for (size_t i = 0; i < placed.size(); ++i)
-            if (const double d = glm::length(centre(placed[i].tri) - centre(p.tri)); d < bestD)
-            {
-                bestD = d;
-                nearest = i;
-            }
-        if (placed.empty())
-            place(p);
-        else
-            placed[nearest].index += p.index;
+        // Nowhere allowed and clear: the nearest clear spot, allowed or not, or failing that where it is. Joining it to a
+        // placed pole would make one pole of twice the turn (a point of eight or ten edges).
+        spread(p.tri, 4.0, [&](Index t, double) {
+            if (best == kInvalid && clearance[t] >= minSep)
+                best = t;
+        });
+        place({best != kInvalid ? best : p.tri, p.index});
     }
     std::erase_if(placed, [](const FieldSingularity& p) { return p.index == 0; });
     return placed;
