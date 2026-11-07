@@ -97,7 +97,7 @@ struct MaterialSlot
     float4 scalars;   // roughness, metallic, opacity, emissive intensity
     TextureRef texture;
     uint channel;
-    uint pad0;
+    uint srgb; // the texture's values are sRGB-encoded
     uint pad1;
     uint pad2;
 };

@@ -228,7 +228,8 @@ struct GpuMaterialSlot
     glm::vec4 scalars{0.55f, 0.0f, 1.0f, 1.0f};
     GpuTextureRef texture;
     uint32_t channel = 0;
-    uint32_t pad[3] = {};
+    uint32_t srgb = 0; // the texture's values are sRGB-encoded
+    uint32_t pad[2] = {};
 };
 static_assert(sizeof(GpuMaterialSlot) == 96);
 

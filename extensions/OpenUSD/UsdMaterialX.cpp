@@ -273,10 +273,11 @@ mtlx::Network MaterialWriter::network(const std::string& slot, mtlx::Surface sur
         return texcoord;
     };
     std::map<std::string, std::string> images; // file, type and sampling -> image node
-    auto image = [&](const std::string& lilaPath, int mapAttr, const char* role, const std::string& type, bool srgb) -> std::string {
+    auto image = [&](const std::string& lilaPath, int mapAttr, const char* role, const std::string& type) -> std::string {
         const std::string asset = assetPath(lilaPath);
         const mat::TextureSampling s = scene::materials::sampling(*n, mapAttr);
-        const std::string key = std::format("{}|{}|{}|{}|{}", asset, type, int(s.wrapU), int(s.wrapV), int(s.filter));
+        const bool srgb = scene::materials::srgb(*n, mapAttr);
+        const std::string key = std::format("{}|{}|{}|{}|{}|{}", asset, type, int(s.wrapU), int(s.wrapV), int(s.filter), srgb);
         if (auto it = images.find(key); it != images.end())
             return it->second;
         const std::string name = std::string("MtlxTex_") + role;
@@ -306,7 +307,7 @@ mtlx::Network MaterialWriter::network(const std::string& slot, mtlx::Surface sur
     {
         if (alpha)
         {
-            const std::string img = image(baseMap, mat::kBaseColorMap, "baseColor", "color4", true);
+            const std::string img = image(baseMap, mat::kBaseColorMap, "baseColor", "color4");
             color = "MtlxBaseColorRgb";
             add(net, color, "convert", "color3", "ND_convert_color4_color3");
             link(net, color, "in", "color4", img);
@@ -323,7 +324,7 @@ mtlx::Network MaterialWriter::network(const std::string& slot, mtlx::Surface sur
             }
         }
         else
-            color = image(baseMap, mat::kBaseColorMap, "baseColor", "color3", true);
+            color = image(baseMap, mat::kBaseColorMap, "baseColor", "color3");
     }
     auto writeOpacity = [&](const char* name, bool asColor) {
         if (!alpha)
@@ -364,7 +365,7 @@ mtlx::Network MaterialWriter::network(const std::string& slot, mtlx::Surface sur
     {
         static const char* kOut[3] = {"outx", "outy", "outz"};
         const std::array<int, 3> ch = scene::materials::packedChannels(mat::PackedLayout(n->as<int64_t>(mat::kPackedLayout)));
-        const std::string img = image(orm, mat::kOrmMap, "orm", "vector3", false);
+        const std::string img = image(orm, mat::kOrmMap, "orm", "vector3");
         mtlx::Node& split = add(net, "MtlxOrmChannels", "separate3", "multioutput", "ND_separate3_vector3");
         for (const char* o : kOut)
             split.outputs.push_back({o, "float"});
@@ -375,11 +376,11 @@ mtlx::Network MaterialWriter::network(const std::string& slot, mtlx::Surface sur
     else
     {
         if (const std::string& p = n->as<std::string>(mat::kMetallicMap); !p.empty())
-            connect(model.metalness, "float", image(p, mat::kMetallicMap, "metallic", "float", false));
+            connect(model.metalness, "float", image(p, mat::kMetallicMap, "metallic", "float"));
         else
             value(model.metalness, "float", {float(n->as<double>(mat::kMetallic))});
         if (const std::string& p = n->as<std::string>(mat::kRoughnessMap); !p.empty())
-            connect(model.roughness, "float", image(p, mat::kRoughnessMap, "roughness", "float", false));
+            connect(model.roughness, "float", image(p, mat::kRoughnessMap, "roughness", "float"));
         else
             value(model.roughness, "float", {float(n->as<double>(mat::kRoughness))});
         if (alone && !n->as<std::string>(mat::kAmbientOcclusionMap).empty())
@@ -390,7 +391,7 @@ mtlx::Network MaterialWriter::network(const std::string& slot, mtlx::Surface sur
 
     if (const std::string& p = n->as<std::string>(mat::kNormalMap); !p.empty())
     {
-        std::string src = image(p, mat::kNormalMap, "normal", "vector3", false);
+        std::string src = image(p, mat::kNormalMap, "normal", "vector3");
         // MaterialX reads normal maps OpenGL style; a DirectX map's green becomes 1 - g on the way in.
         if (mat::NormalFormat(n->as<int64_t>(mat::kNormalFormat)) == mat::NormalFormat::DirectX)
         {
@@ -410,7 +411,7 @@ mtlx::Network MaterialWriter::network(const std::string& slot, mtlx::Surface sur
     const float intensity = float(n->as<double>(mat::kEmissiveIntensity));
     if (const std::string& p = n->as<std::string>(mat::kEmissiveMap); !p.empty())
     {
-        connect(model.emissionColor, "color3", image(p, mat::kEmissiveMap, "emissive", "color3", true));
+        connect(model.emissionColor, "color3", image(p, mat::kEmissiveMap, "emissive", "color3"));
         value(model.emission, "float", {intensity});
     }
     else if (const glm::dvec3 e = n->as<glm::dvec3>(mat::kEmissiveColor); e * double(intensity) != glm::dvec3(0.0))
@@ -854,12 +855,17 @@ void MaterialReader::readMtlx(const UsdShadeShader& surface, scene::NodeId id, c
         if (TfToken cs; space.empty() && valueOf(t.image, "sourceColorSpace", &cs) && cs != "auto")
             space = cs == "sRGB" ? "srgb_texture" : cs.GetString();
         const bool srgb = space.find("srgb") != std::string::npos;
+        mat::TextureSampling s = imageSampling(t.image);
         if (color && !space.empty() && !srgb)
-            warnings.push_back(std::format("material {}: {} texture is marked {}; Lila reads color maps as sRGB", name, role, space));
-        if (!color && srgb)
-            warnings.push_back(std::format("material {}: {} texture is marked {}; Lila reads data maps as linear", name, role, space));
+        {
+            s.colorSpace = mat::TextureColorSpace::Linear;
+            if (space != "lin_rec709" && space != "raw")
+                warnings.push_back(std::format("material {}: {} texture is in {}; Lila reads it as linear Rec.709", name, role, space));
+        }
+        else if (!color && srgb)
+            s.colorSpace = mat::TextureColorSpace::Srgb;
         set(mapAttr, texturePath(t.image, name));
-        materials::setSampling(mGraph, id, mapAttr, imageSampling(t.image));
+        materials::setSampling(mGraph, id, mapAttr, s);
     };
     auto plain = [&](const Signal& t, const char* role) {
         const size_t c = std::min<size_t>(t.channels.size(), 3);

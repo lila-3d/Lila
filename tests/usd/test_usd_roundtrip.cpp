@@ -284,6 +284,42 @@ TEST_CASE("usd round trip: unlit materials and texture wrap and filter")
     CHECK(flatBack.as<glm::dvec3>(material::kEmissiveColor) == glm::dvec3(0.0));
 }
 
+TEST_CASE("usd round trip: texture colour spaces")
+{
+    fresh();
+    Graph& g = graph();
+    addMesh("Rock", geo::makeCube({.width = 10, .height = 10, .depth = 10}));
+    const fs::path tex = tempDir() / "src_tex_cs";
+    fs::create_directories(tex);
+    std::ofstream(tex / "rock_d.png") << "png";
+    std::ofstream(tex / "rock_r.png") << "png";
+    Node* m = materials::create(g, "RockMat");
+    g.setValue({m->id(), material::kBaseColorMap, -1}, (tex / "rock_d.png").generic_string());
+    g.setValue({m->id(), material::kRoughnessMap, -1}, (tex / "rock_r.png").generic_string());
+    material::TextureSampling lin, enc;
+    lin.colorSpace = material::TextureColorSpace::Linear;
+    enc.colorSpace = material::TextureColorSpace::Srgb;
+    materials::setSampling(g, m->id(), material::kBaseColorMap, lin);
+    materials::setSampling(g, m->id(), material::kRoughnessMap, enc);
+    run("assignMaterial", {{"args", {"RockMat", "Rock"}}});
+
+    const fs::path file = tempDir() / "colorspace.usda";
+    run("exportUsd", {{"args", {file.generic_string(), "Rock"}}});
+    const std::string text = readAll(file);
+    const size_t base = text.find("def Shader \"Tex_baseColor\""), rough = text.find("def Shader \"Tex_roughness\"");
+    REQUIRE(base != std::string::npos);
+    REQUIRE(rough != std::string::npos);
+    CHECK(text.find("sourceColorSpace = \"raw\"", base) < text.find("}", base));
+    CHECK(text.find("sourceColorSpace = \"sRGB\"", rough) < text.find("}", rough));
+
+    fresh();
+    json r = run("importUsd", {{"args", {file.generic_string()}}, {"report", true}});
+    INFO(r.dump());
+    Node& back = node("RockMat");
+    CHECK(materials::sampling(back, material::kBaseColorMap).colorSpace == material::TextureColorSpace::Linear);
+    CHECK(materials::sampling(back, material::kRoughnessMap).colorSpace == material::TextureColorSpace::Srgb);
+}
+
 TEST_CASE("usd round trip: a mesh cache goes out as time-sampled points and comes back as one")
 {
     UpAxisScope axis(math::UpAxis::Z);

@@ -655,21 +655,25 @@ std::vector<unsigned char> packBits(const std::vector<unsigned char>& in)
 }
 
 /** An 8-bit chunky RGB TIFF, one strip, with the given compression. */
-void writeRgbTiff(const fs::path& path, int w, int h, const std::vector<unsigned char>& rgb, uint16_t compression)
+void writeRgbTiff(const fs::path& path, int w, int h, const std::vector<unsigned char>& rgb, uint16_t compression,
+                  const std::vector<unsigned char>& icc = {})
 {
     const std::vector<unsigned char> data = compression == 5 ? lzwEncode(rgb) : packBits(rgb);
     std::vector<unsigned char> b = {'I', 'I', 42, 0};
     auto p16 = [&](uint32_t v) { b.insert(b.end(), {static_cast<unsigned char>(v), static_cast<unsigned char>(v >> 8)}); };
     auto p32 = [&](uint32_t v) { p16(v & 0xffff); p16(v >> 16); };
-    const uint32_t bitsAt = 8, dataAt = 14;
-    p32(uint32_t(dataAt + data.size()));
+    const uint32_t bitsAt = 8, dataAt = 14, iccAt = uint32_t(dataAt + data.size());
+    p32(uint32_t(iccAt + icc.size()));
     p16(8);
     p16(8);
     p16(8);
     b.insert(b.end(), data.begin(), data.end());
-    const std::tuple<uint16_t, uint16_t, uint32_t, uint32_t> entries[] = {
+    b.insert(b.end(), icc.begin(), icc.end());
+    std::vector<std::tuple<uint16_t, uint16_t, uint32_t, uint32_t>> entries = {
         {256, 3, 1, uint32_t(w)}, {257, 3, 1, uint32_t(h)}, {258, 3, 3, bitsAt}, {259, 3, 1, compression}, {262, 3, 1, 2},
         {273, 4, 1, dataAt},      {277, 3, 1, 3},           {278, 3, 1, uint32_t(h)}, {279, 4, 1, uint32_t(data.size())}};
+    if (!icc.empty())
+        entries.push_back({34675, 7, uint32_t(icc.size()), iccAt});
     p16(uint32_t(std::size(entries)));
     for (auto [tag, type, count, value] : entries)
     {
@@ -714,5 +718,18 @@ TEST_CASE("TIFF reads LZW and PackBits strips")
             bad += img.rgba[i * 4 + 3] != 1.0f;
         }
         CHECK(bad == 0);
+        CHECK(img.icc.empty());
     }
+
+    // An embedded ICC profile (tag 34675) comes back as its bytes.
+    std::vector<unsigned char> icc(300);
+    for (size_t i = 0; i < icc.size(); ++i)
+        icc[i] = static_cast<unsigned char>(i * 31);
+    const fs::path f = dir / "icc.tif";
+    writeRgbTiff(f, w, h, rgb, 5, icc);
+    std::string err;
+    const image::Image img = image::read(f, &err);
+    INFO(err);
+    REQUIRE(img.width == w);
+    CHECK(img.icc == icc);
 }

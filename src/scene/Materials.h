@@ -5,6 +5,7 @@
 #include "scene/Node.h"
 
 #include <array>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -118,7 +119,7 @@ enum Attr
     kHeightUvHeight,
     // Per-texture sampling: wrapU, wrapV and filter for each of materials::sampledMaps(), in that order.
     kTextureSampling,
-    kCount = kTextureSampling + 7 * 3
+    kCount = kTextureSampling + 7 * 4
 };
 
 /** The viewport (and Unreal master material) lighting model; DefaultLit is Unreal's default lit. */
@@ -179,12 +180,21 @@ enum class TextureFilter
     Nearest,
 };
 
+/** How a texture's 8- and 16-bit values are read. EXR and HDR files are always linear. */
+enum class TextureColorSpace
+{
+    Auto, // sRGB for the colour maps (base colour, emissive), linear for the rest
+    Srgb,
+    Linear,
+};
+
 /** How one texture of a material is sampled. */
 struct TextureSampling
 {
     TextureWrap wrapU = TextureWrap::Repeat;
     TextureWrap wrapV = TextureWrap::Repeat;
     TextureFilter filter = TextureFilter::Linear;
+    TextureColorSpace colorSpace = TextureColorSpace::Auto;
 
     bool operator==(const TextureSampling&) const = default;
     bool isDefault() const { return *this == TextureSampling{}; }
@@ -220,7 +230,7 @@ LILA_SCENE_API const std::vector<std::pair<std::string, int>>& textureChannels()
 LILA_SCENE_API std::string guessTextureChannel(std::string_view fileName);
 /** The map attrs with sampling settings: base color, metallic, roughness, normal, occlusion, packed and emissive. */
 LILA_SCENE_API std::span<const int> sampledMaps();
-/** The first of a map attr's three sampling attrs (wrapU, wrapV, filter), or -1 for an attr without them. */
+/** The first of a map attr's four sampling attrs (wrapU, wrapV, filter, colorSpace), or -1 for an attr without them. */
 LILA_SCENE_API int samplingAttr(int mapAttr);
 /** How a material samples one of its maps; the default for an attr without sampling settings. */
 LILA_SCENE_API material::TextureSampling sampling(const Node& material, int mapAttr);
@@ -228,6 +238,20 @@ LILA_SCENE_API material::TextureSampling sampling(const Node& material, int mapA
 LILA_SCENE_API void setSampling(Graph& g, NodeId material, int mapAttr, const material::TextureSampling& s);
 /** "repeat", "clamp", "mirror" or "black". */
 LILA_SCENE_API const char* wrapName(material::TextureWrap w);
+/** True for the maps that hold colour (base colour, emissive), read as sRGB unless their colour space says otherwise. */
+LILA_SCENE_API bool colorMap(int mapAttr);
+/** Whether a map's 8- and 16-bit values are sRGB-encoded: its colorSpace, with auto resolved by colorMap. */
+LILA_SCENE_API bool srgb(const Node& material, int mapAttr);
+/** "auto", "sRGB" or "linear": the colorSpace enum's names. */
+LILA_SCENE_API const char* colorSpaceName(material::TextureColorSpace c);
+/**
+ * Whether another app's colour space name means sRGB-encoded values (true) or linear ones (false): Maya's, Blender's,
+ * OCIO's and MaterialX's ("sRGB", "Utility - sRGB - Texture", "Raw", "Non-Color", "scene-linear Rec.709-sRGB",
+ * "ACEScg", "lin_rec709", "srgb_texture"). Empty when the name is unknown.
+ */
+LILA_SCENE_API std::optional<bool> srgbFromName(std::string_view name);
+/** The colorSpace that reads a map as srgb says: auto when that is the map's own default. */
+LILA_SCENE_API material::TextureColorSpace colorSpaceFor(int mapAttr, bool srgb);
 
 /** The stroke sheets shipped in resources/strokes, by file stem; a material's strokeMap may name one instead of a path. */
 LILA_SCENE_API std::vector<std::string> builtinStrokeSheets();

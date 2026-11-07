@@ -131,11 +131,17 @@ UTexture* ImportTexture(const FString& File, const FString& Folder, ETextureUse 
 	{
 		if (UTexture* Texture = Cast<UTexture>(Existing.GetAsset()))
 		{
-			// One texture asset per file, so the latest send decides its green convention.
+			// One texture asset per file, so the latest send decides its green convention and sRGB.
 			if (Use == ETextureUse::Normal && Texture->bFlipGreenChannel != bFlipGreen)
 			{
 				Texture->Modify();
 				Texture->bFlipGreenChannel = bFlipGreen;
+				Texture->PostEditChange();
+			}
+			if ((Use == ETextureUse::Color || Use == ETextureUse::Linear) && Texture->SRGB != (Use == ETextureUse::Color))
+			{
+				Texture->Modify();
+				Texture->SRGB = Use == ETextureUse::Color;
 				Texture->PostEditChange();
 			}
 			return Texture;
@@ -182,6 +188,17 @@ UTexture* ImportTexture(const FString& File, const FString& Folder, ETextureUse 
  * A texture's address modes and filter from Lila's sampling of the map in Field (<Field>WrapU, WrapV, Filter). Unreal
  * has no black border, so black clamps. One texture asset per file, so the latest send decides them.
  */
+/** A map's use with its <map>ColorSpace from Lila applied: sRGB reads it as colour, linear as data. Normal maps stay normal. */
+ETextureUse UseFor(const TSharedPtr<FJsonObject>& In, const TCHAR* Field, ETextureUse Default)
+{
+	const FString Space = String(In, *(FString(Field) + TEXT("ColorSpace")));
+	if (Default == ETextureUse::Normal || Default == ETextureUse::Height)
+	{
+		return Default;
+	}
+	return Space == TEXT("sRGB") ? ETextureUse::Color : Space == TEXT("linear") ? ETextureUse::Linear : Default;
+}
+
 void ApplySampling(UTexture* Texture, const TSharedPtr<FJsonObject>& In, const TCHAR* Field)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMaterials::ApplySampling);
@@ -245,6 +262,7 @@ UMaterial* CreateMaterial(const FString& Name, const FMaterialRequest& R, const 
 		{
 			return nullptr;
 		}
+		Use = UseFor(In, Field, Use);
 		UTexture* Texture = ImportTexture(File, R.MaterialFolder, Use, bFlipGreen, OutCreated, OutWarnings);
 		if (!Texture)
 		{
@@ -726,6 +744,10 @@ void SetStylisedParameters(UMaterialInstanceConstant* Instance, bool bToon, cons
 	const FString BaseFile = String(In, TEXT("baseColorMap"));
 	if (!BaseFile.IsEmpty() && bImportBaseMap)
 	{
+		if (UseFor(In, TEXT("baseColorMap"), ETextureUse::Color) != ETextureUse::Color)
+		{
+			OutWarnings.Add(FString::Printf(TEXT("%s is marked linear in Lila, but the stylised material samples its base colour map as sRGB colour"), *BaseFile));
+		}
 		if (UTexture* Texture = ImportTexture(BaseFile, TextureFolder, ETextureUse::Color, false, OutCreated, OutWarnings))
 		{
 			ApplySampling(Texture, In, TEXT("baseColorMap"));

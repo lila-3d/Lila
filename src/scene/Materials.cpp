@@ -116,15 +116,15 @@ void heightAttrs(std::vector<AttrDef>& a)
 }
 
 constexpr int kSampledMaps[] = {kBaseColorMap, kMetallicMap, kRoughnessMap, kNormalMap, kAmbientOcclusionMap, kOrmMap, kEmissiveMap};
-static_assert(kCount == kTextureSampling + int(std::size(kSampledMaps)) * 3);
+static_assert(kCount == kTextureSampling + int(std::size(kSampledMaps)) * 4);
 
-/** wrapU, wrapV and filter of every sampled map, named after it (baseColorMapWrapU). */
+/** wrapU, wrapV, filter and colorSpace of every sampled map, named after it (baseColorMapWrapU). */
 void samplingAttrs(std::vector<AttrDef>& a)
 {
     for (size_t k = 0; k < std::size(kSampledMaps); ++k)
     {
         const std::string map = a[size_t(kSampledMaps[k])].name;
-        const int first = kTextureSampling + int(k) * 3;
+        const int first = kTextureSampling + int(k) * 4;
         for (int axis = 0; axis < 2; ++axis)
         {
             const char* uv = axis == 0 ? "U" : "V";
@@ -137,6 +137,11 @@ void samplingAttrs(std::vector<AttrDef>& a)
         a[size_t(first + 2)] = enumAttr(map + "Filter", {"linear", "nearest"},
                                         std::format("How {} is filtered: linear (smooth, mipmapped) or nearest (hard texels, for pixel art).", map));
         a[size_t(first + 2)].category = "Texture Sampling";
+        a[size_t(first + 3)] = enumAttr(map + "ColorSpace", {"auto", "sRGB", "linear"},
+                                        std::format("How {}'s 8- and 16-bit values are read: auto ({}), sRGB, or linear (raw data). "
+                                                    "EXR and HDR files are always linear.",
+                                                    map, kSampledMaps[k] == kBaseColorMap || kSampledMaps[k] == kEmissiveMap ? "sRGB, as a colour map" : "linear, as a data map"));
+        a[size_t(first + 3)].category = "Texture Sampling";
     }
 }
 
@@ -144,7 +149,7 @@ std::vector<AttrDef> materialAttrs()
 {
     std::vector<AttrDef> a(kCount);
     a[kBaseColor] = colorAttr("baseColor", glm::dvec3(0.5), "Linear base color, used when no base color map is set.");
-    a[kBaseColorMap] = pathAttr("baseColorMap", "sRGB base color texture; its alpha is the opacity of masked and translucent materials.");
+    a[kBaseColorMap] = pathAttr("baseColorMap", "Base color texture (sRGB unless baseColorMapColorSpace says otherwise); its alpha is the opacity of masked and translucent materials.");
     a[kMetallic] = floatAttr("metallic", 0.0, "0 dielectric, 1 metal.", 0.0, 1.0);
     a[kMetallicMap] = pathAttr("metallicMap", "Linear metallic texture (red channel).");
     a[kSpecular] = floatAttr("specular", 0.5, "Dielectric reflectance; 0.5 is 4%, Unreal's default.", 0.0, 1.0);
@@ -160,7 +165,7 @@ std::vector<AttrDef> materialAttrs()
                                 "Channel order of the packed map: orm (R occlusion, G roughness, B metallic, Unreal) or mro (R metallic, "
                                 "G roughness, B occlusion).");
     a[kEmissiveColor] = colorAttr("emissiveColor", glm::dvec3(0.0), "Linear emitted light, used when no emissive map is set.");
-    a[kEmissiveMap] = pathAttr("emissiveMap", "sRGB emissive texture.");
+    a[kEmissiveMap] = pathAttr("emissiveMap", "Emissive texture (sRGB unless emissiveMapColorSpace says otherwise).");
     a[kEmissiveIntensity] = floatAttr("emissiveIntensity", 1.0, "Scales the emissive color or map.", 0.0);
     a[kOpacity] = floatAttr("opacity", 1.0, "Masked and translucent only; multiplies the base color map's alpha.", 0.0, 1.0);
     a[kOpacityMaskClip] = floatAttr("opacityMaskClipValue", 0.3333, "Masked only: opacity below this is cut away.", 0.0, 1.0);
@@ -443,7 +448,7 @@ int samplingAttr(int mapAttr)
 {
     for (size_t k = 0; k < std::size(kSampledMaps); ++k)
         if (kSampledMaps[k] == mapAttr)
-            return kTextureSampling + int(k) * 3;
+            return kTextureSampling + int(k) * 4;
     return -1;
 }
 
@@ -457,6 +462,7 @@ TextureSampling sampling(const Node& material, int mapAttr)
     s.wrapU = TextureWrap(pick(first, 4));
     s.wrapV = TextureWrap(pick(first + 1, 4));
     s.filter = TextureFilter(pick(first + 2, 2));
+    s.colorSpace = TextureColorSpace(pick(first + 3, 3));
     return s;
 }
 
@@ -466,8 +472,8 @@ void setSampling(Graph& g, NodeId material, int mapAttr, const TextureSampling& 
     const Node* n = g.node(material);
     if (first < 0 || !n)
         return;
-    const int64_t values[3] = {int64_t(s.wrapU), int64_t(s.wrapV), int64_t(s.filter)};
-    for (int k = 0; k < 3; ++k)
+    const int64_t values[4] = {int64_t(s.wrapU), int64_t(s.wrapV), int64_t(s.filter), int64_t(s.colorSpace)};
+    for (int k = 0; k < 4; ++k)
         if (n->as<int64_t>(first + k) != values[k])
             g.setValue({material, first + k, -1}, values[k]);
 }
@@ -481,6 +487,49 @@ const char* wrapName(TextureWrap w)
     case TextureWrap::Black: return "black";
     default: return "repeat";
     }
+}
+
+bool colorMap(int mapAttr) { return mapAttr == kBaseColorMap || mapAttr == kEmissiveMap; }
+
+bool srgb(const Node& material, int mapAttr)
+{
+    switch (sampling(material, mapAttr).colorSpace)
+    {
+    case TextureColorSpace::Srgb: return true;
+    case TextureColorSpace::Linear: return false;
+    default: return colorMap(mapAttr);
+    }
+}
+
+const char* colorSpaceName(TextureColorSpace c)
+{
+    switch (c)
+    {
+    case TextureColorSpace::Srgb: return "sRGB";
+    case TextureColorSpace::Linear: return "linear";
+    default: return "auto";
+    }
+}
+
+std::optional<bool> srgbFromName(std::string_view name)
+{
+    std::string n(name);
+    std::transform(n.begin(), n.end(), n.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    if (n.empty() || n == "auto")
+        return std::nullopt;
+    for (const char* lin : {"raw", "linear", "lin_", "non-color", "acescg", "aces2065", "acescct", "data", "utility - xyz"})
+        if (n.find(lin) != std::string::npos)
+            return false;
+    if (n.find("srgb") != std::string::npos || n.find("gamma 2.2") != std::string::npos || n.find("rec.709 (srgb)") != std::string::npos)
+        return true;
+    return std::nullopt;
+}
+
+TextureColorSpace colorSpaceFor(int mapAttr, bool srgb)
+{
+    if (srgb == colorMap(mapAttr))
+        return TextureColorSpace::Auto;
+    return srgb ? TextureColorSpace::Srgb : TextureColorSpace::Linear;
 }
 
 std::string resolvePath(const std::string& path)

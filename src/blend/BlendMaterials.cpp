@@ -453,8 +453,12 @@ std::string Importer::material(const View& ma)
         }
         return out;
     };
-    auto sampling = [&](const Map& m) {
+    auto sampling = [&](const Map& m, int attr) {
         TextureSampling s;
+        if (m.image)
+            if (const View cs = m.image.sub("colorspace_settings"))
+                if (const std::optional<bool> srgb = materials::srgbFromName(cs.str("name")))
+                    s.colorSpace = materials::colorSpaceFor(attr, *srgb);
         if (const View storage = m.node ? m.node.deref("storage") : View())
         {
             const int ext = storage.i("extension");
@@ -470,7 +474,7 @@ std::string Importer::material(const View& ma)
         if (!m.uv.empty() && !materialUv.count(slot))
             materialUv[slot] = m.uv;
         set(attr, p);
-        if (const TextureSampling s = sampling(m); !s.isDefault())
+        if (const TextureSampling s = sampling(m, attr); !s.isDefault())
             materials::setSampling(g, id, attr, s);
         return true;
     };

@@ -399,10 +399,12 @@ uint64_t GpuResident::materialTable(size_t g, const std::string& map)
             const bake::TransferSource ts = bake::transferSource(mat, map);
             GpuTextureRef ref = loadTexture(ts.texture);
             slot.channel = uint32_t(ts.channel);
+            slot.srgb = ts.srgb ? 1u : 0u;
             if (!ref.width && !ts.fallback.empty())
             {
                 ref = loadTexture(ts.fallback);
                 slot.channel = uint32_t(ts.fallbackChannel);
+                slot.srgb = ts.fallbackSrgb ? 1u : 0u;
             }
             slot.texture = ref;
             textured = textured || ref.width;

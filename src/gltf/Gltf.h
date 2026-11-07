@@ -145,6 +145,17 @@ struct MaterialSnapshot
         auto it = sampling.find(mapAttr);
         return it == sampling.end() ? scene::material::TextureSampling{} : it->second;
     }
+
+    /** Whether a map's values are sRGB-encoded (its colorSpace, auto resolved). */
+    bool srgbOf(int mapAttr) const
+    {
+        switch (samplingOf(mapAttr).colorSpace)
+        {
+        case scene::material::TextureColorSpace::Srgb: return true;
+        case scene::material::TextureColorSpace::Linear: return false;
+        default: return scene::materials::colorMap(mapAttr);
+        }
+    }
 };
 
 /** What an export needs, taken on the main thread. */

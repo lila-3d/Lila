@@ -183,6 +183,9 @@ struct TransferSource
     int channel = 0;
     std::string fallback;
     int fallbackChannel = 0;
+    /** Whether texture's and fallback's values are sRGB-encoded. */
+    bool srgb = false;
+    bool fallbackSrgb = false;
 };
 LILA_SCENE_API TransferSource transferSource(const MaterialInput& material, std::string_view map);
 /** Reads a texture through the installed loader (setTextureLoader): RGBA floats, row 0 the top. */

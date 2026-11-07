@@ -9,6 +9,7 @@
 #include "render/VirtualTexture.h"
 #include "ui/ViewportTool.h"
 
+#include <QColorSpace>
 #include <QCoreApplication>
 #include <QThreadPool>
 #include <QTimer>
@@ -164,6 +165,8 @@ struct Pixels
     bool linear = false;
     /** A DDS's compressed blocks, kept as they are for the GPU (srgb still to be set). */
     std::shared_ptr<render::TextureImage> blocks;
+    /** The file's embedded colour profile; invalid when it carries none. */
+    QColorSpace space;
 
     bool empty() const { return rgba8.isNull() && floats.rgba.empty() && !blocks; }
 };
@@ -325,6 +328,8 @@ Pixels readPixels(const std::string& file, std::string& error, bool allowBlocks 
     {
         std::string err;
         px.floats = image::read(path, &err);
+        if (!px.floats.icc.empty())
+            px.space = QColorSpace::fromIccProfile(QByteArray(reinterpret_cast<const char*>(px.floats.icc.data()), qsizetype(px.floats.icc.size())));
         if (px.floats.rgba.empty())
         {
             // Qt's image format plugins read variants the built-in readers do not (tiled TIFF, compressed PSD).
@@ -344,6 +349,7 @@ Pixels readPixels(const std::string& file, std::string& error, bool allowBlocks 
     else
     {
         QImage img(QString::fromStdU16String(path.u16string()));
+        px.space = img.colorSpace();
         if (img.isNull())
             error = "unsupported or unreadable image";
         else if (img.depth() > 32 || img.format() == QImage::Format_Grayscale16)
@@ -569,6 +575,45 @@ render::TexturePtr toVirtual(const std::string& path, Pixels& px, bool srgb)
     return vt->map(0);
 }
 
+/**
+ * Colour data in a file profiled other than sRGB (Adobe RGB, Display P3, ...) converted to sRGB, the space the viewport
+ * reads colour textures in. Linear float files and compressed blocks are left alone.
+ */
+void convertToSrgb(Pixels& px)
+{
+    if (!px.space.isValid() || px.space.colorModel() != QColorSpace::ColorModel::Rgb || px.space == QColorSpace(QColorSpace::SRgb) || px.blocks ||
+        px.linear)
+        return;
+    if (px.floats.rgba.empty())
+    {
+        if (px.rgba8.isNull())
+            return;
+        QImage img = px.rgba8.convertToFormat(QImage::Format_RGBA8888);
+        img.setColorSpace(px.space);
+        img.convertToColorSpace(QColorSpace::SRgb);
+        px.rgba8 = img.convertToFormat(QImage::Format_RGBA8888);
+        return;
+    }
+    image::Image& f = px.floats;
+    QImage img(f.width, f.height, QImage::Format_RGBA64);
+    for (int y = 0; y < f.height; ++y)
+    {
+        auto* row = reinterpret_cast<quint16*>(img.scanLine(y));
+        const float* src = &f.rgba[size_t(y) * size_t(f.width) * 4];
+        for (int i = 0; i < f.width * 4; ++i)
+            row[i] = quint16(std::lround(std::clamp(src[i], 0.0f, 1.0f) * 65535.0f));
+    }
+    img.setColorSpace(px.space);
+    img.convertToColorSpace(QColorSpace::SRgb);
+    for (int y = 0; y < f.height; ++y)
+    {
+        const auto* row = reinterpret_cast<const quint16*>(img.constScanLine(y));
+        float* dst = &f.rgba[size_t(y) * size_t(f.width) * 4];
+        for (int i = 0; i < f.width * 4; ++i)
+            dst[i] = float(row[i]) / 65535.0f;
+    }
+}
+
 /** One file as a texture: past kMaxSize, a virtual texture at full size when the renderer has it, else shrunk to fit. */
 Result loadSingle(const std::string& path, bool srgb)
 {
@@ -577,6 +622,8 @@ Result loadSingle(const std::string& path, bool srgb)
     Pixels px = readPixels(path, r.error, true, true);
     if (px.empty())
         return r;
+    if (srgb)
+        convertToSrgb(px);
     const int w = px.blocks ? 0 : !px.floats.rgba.empty() ? px.floats.width : px.rgba8.width();
     const int h = px.blocks ? 0 : !px.floats.rgba.empty() ? px.floats.height : px.rgba8.height();
     if (w > kMaxSize || h > kMaxSize)
@@ -617,6 +664,8 @@ Result loadTiles(const std::vector<std::pair<int, std::string>>& found, bool srg
     {
         std::string err;
         Pixels px = readPixels(file, err, true);
+        if (srgb)
+            convertToSrgb(px);
         render::TexturePtr tile = px.empty() ? nullptr : toTexture(px, srgb);
         if (!tile)
         {
@@ -642,16 +691,29 @@ Result loadTiles(const std::vector<std::pair<int, std::string>>& found, bool srg
     return r;
 }
 
-Result loadPacked(const std::vector<std::string>& files, std::array<int, 3> channels)
+/** sRGB-encoded bytes to linear bytes. */
+const std::array<uchar, 256>& srgbToLinear8()
+{
+    static const std::array<uchar, 256> lut = [] {
+        std::array<uchar, 256> t{};
+        for (int i = 0; i < 256; ++i)
+            t[size_t(i)] = uchar(std::lround(decodeSrgb(float(i) / 255.0f) * 255.0f));
+        return t;
+    }();
+    return lut;
+}
+
+Result loadPacked(const std::vector<std::string>& files, std::array<int, 3> channels, uint32_t srgbMask)
 {
     LILA_ZONE();
 
+    const std::array<uchar, 256>& decode = srgbToLinear8();
     Result r;
     r.times = stamps(files);
     if (!files[0].empty())
     {
         // A compressed packed map in the usual order goes to the GPU as it is.
-        if (channels == std::array<int, 3>{0, 1, 2})
+        if (channels == std::array<int, 3>{0, 1, 2} && !(srgbMask & 1u))
         {
             std::string err;
             if (Pixels px = readPixels(files[0], err, true); px.blocks)
@@ -663,7 +725,7 @@ Result loadPacked(const std::vector<std::string>& files, std::array<int, 3> chan
         QImage img = readImage(files[0], r.error);
         if (img.isNull())
             return r;
-        if (channels != std::array<int, 3>{0, 1, 2})
+        if (channels != std::array<int, 3>{0, 1, 2} || (srgbMask & 1u))
             for (int y = 0; y < img.height(); ++y)
             {
                 uchar* d = img.scanLine(y);
@@ -672,7 +734,10 @@ Result loadPacked(const std::vector<std::string>& files, std::array<int, 3> chan
                     uchar* px = d + x * 4;
                     const uchar src[3] = {px[0], px[1], px[2]};
                     for (int i = 0; i < 3; ++i)
-                        px[i] = src[channels[size_t(i)]];
+                    {
+                        const uchar v = src[channels[size_t(i)]];
+                        px[i] = (srgbMask & 1u) ? decode[v] : v;
+                    }
                 }
             }
         r.image = toTexture(img, false);
@@ -698,12 +763,13 @@ Result loadPacked(const std::vector<std::string>& files, std::array<int, 3> chan
         if (parts[i].isNull())
             continue;
         QImage src = parts[i].size() == out.size() ? parts[i] : parts[i].scaled(w, h, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        const bool encoded = srgbMask & (2u << i);
         for (int y = 0; y < h; ++y)
         {
             const uchar* s = src.constScanLine(y);
             uchar* d = out.scanLine(y);
             for (int x = 0; x < w; ++x)
-                d[x * 4 + i] = s[x * 4];
+                d[x * 4 + i] = encoded ? decode[s[x * 4]] : s[x * 4];
         }
     }
     r.image = toTexture(out, false);
@@ -814,16 +880,16 @@ render::TexturePtr get(const std::string& path, bool srgb, bool udimTiles)
 }
 
 render::TexturePtr packed(const std::string& orm, const std::string& occlusion, const std::string& roughness, const std::string& metallic,
-                          std::array<int, 3> channels)
+                          std::array<int, 3> channels, uint32_t srgbMask)
 {
     if (orm.empty() && occlusion.empty() && roughness.empty() && metallic.empty())
         return nullptr;
     std::vector<std::string> files = {orm, orm.empty() ? occlusion : "", orm.empty() ? roughness : "", orm.empty() ? metallic : ""};
     if (orm.empty())
         channels = {0, 1, 2};
-    std::string key = std::format("p{}{}{}|", channels[0], channels[1], channels[2]) + files[0] + "|" + files[1] + "|" + files[2] + "|" +
+    std::string key = std::format("p{}{}{}{}|", channels[0], channels[1], channels[2], srgbMask) + files[0] + "|" + files[1] + "|" + files[2] + "|" +
                       files[3];
-    return entry(key, files, [files, channels] {
+    return entry(key, files, [files, channels, srgbMask] {
                // A packed map can be a UDIM set too; separate maps cannot (their tiles would have to line up).
                if (auto pattern = image::udimPattern(files[0], true))
                {
@@ -835,7 +901,7 @@ render::TexturePtr packed(const std::string& orm, const std::string& occlusion, 
                        for (const auto& [udim, file] : found)
                        {
                            r.files.push_back(file);
-                           Result tile = loadPacked({file, "", "", ""}, channels);
+                           Result tile = loadPacked({file, "", "", ""}, channels, srgbMask);
                            if (tile.image)
                                set->tiles.push_back({udim, tile.image});
                            else
@@ -854,7 +920,7 @@ render::TexturePtr packed(const std::string& orm, const std::string& occlusion, 
                        return r;
                    }
                }
-               return loadPacked(files, channels);
+               return loadPacked(files, channels, srgbMask);
            }).image;
 }
 

@@ -138,6 +138,8 @@ struct MaterialInput
     int packedLayout = 0;
     /** Resolved absolute texture paths, empty when unset. */
     std::string baseColorMap, metallicMap, roughnessMap, normalMap, ormMap, emissiveMap, occlusionMap;
+    /** Whether each map's values are sRGB-encoded (its colorSpace, auto resolved). */
+    bool baseColorSrgb = true, metallicSrgb = false, roughnessSrgb = false, ormSrgb = false, emissiveSrgb = true;
 };
 
 /** Every group of one bake. Immutable once built; backends and kernels only read it. */

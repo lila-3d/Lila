@@ -170,22 +170,25 @@ void shadeCS(uint3 id: SV_DispatchThreadID)
         bool mapped = m.texture.width != 0;
         float4 t = mapped ? sampleTexture(m.texture, hitUv(h.high, h)) : float4(1.0);
         float4 v = float4(1.0);
+        // Colour outputs are written sRGB-encoded and scalars linear, whatever the source's encoding.
+        float3 encoded = m.srgb != 0 ? t.xyz : linearToSrgb(t.xyz);
+        float3 decoded = m.srgb != 0 ? srgbToLinear(t.xyz) : t.xyz;
         switch (pc.mode)
         {
-        case 0: v = float4(mapped ? t.xyz : linearToSrgb(m.baseColor.xyz), 1.0); break;
+        case 0: v = float4(mapped ? encoded : linearToSrgb(m.baseColor.xyz), 1.0); break;
         case 1:
         {
-            float r = mapped ? t[m.channel] : m.scalars.x;
+            float r = mapped ? decoded[min(m.channel, 2u)] : m.scalars.x;
             v = float4(r, r, r, 1.0);
             break;
         }
         case 2:
         {
-            float r = mapped ? t[m.channel] : m.scalars.y;
+            float r = mapped ? decoded[min(m.channel, 2u)] : m.scalars.y;
             v = float4(r, r, r, 1.0);
             break;
         }
-        case 3: v = float4(linearToSrgb((mapped ? srgbToLinear(t.xyz) : m.emissive.xyz) * m.scalars.w), 1.0); break;
+        case 3: v = float4(linearToSrgb((mapped ? decoded : m.emissive.xyz) * m.scalars.w), 1.0); break;
         default:
         {
             float r = m.emissive.w == 0.0 ? 1.0 : clamp(m.scalars.z * (mapped ? t.w : 1.0), 0.0, 1.0);

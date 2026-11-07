@@ -27,6 +27,8 @@ struct Image
     int height = 0;
     /** width * height * 4 floats. */
     std::vector<float> rgba;
+    /** The file's embedded ICC colour profile (TIFF and PSD), empty when it carries none. */
+    std::vector<unsigned char> icc;
 };
 
 /** How write() stores an image. */

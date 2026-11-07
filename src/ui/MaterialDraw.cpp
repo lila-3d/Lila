@@ -140,6 +140,17 @@ uint32_t samplingOf(const scene::Node& n)
     return samplingBits(n, kBaseColorMap) | samplingBits(n, kNormalMap) << 8 | samplingBits(n, orm) << 16 | samplingBits(n, kEmissiveMap) << 24;
 }
 
+/** Which of the packed map's sources (packed, occlusion, roughness, metallic as bits 0 to 3) are sRGB-encoded. */
+uint32_t packedSrgb(const scene::Node& n)
+{
+    uint32_t mask = 0;
+    const int maps[4] = {kOrmMap, kAmbientOcclusionMap, kRoughnessMap, kMetallicMap};
+    for (int i = 0; i < 4; ++i)
+        if (scene::materials::srgb(n, maps[i]))
+            mask |= 1u << i;
+    return mask;
+}
+
 render::Material convert(const scene::Node& n)
 {
     render::Material m;
@@ -153,7 +164,7 @@ render::Material convert(const scene::Node& n)
     m.flags = 0;
     m.sampling = samplingOf(n);
 
-    if ((m.baseColorMap = textures::get(file(n, kBaseColorMap), true, true)))
+    if ((m.baseColorMap = textures::get(file(n, kBaseColorMap), scene::materials::srgb(n, kBaseColorMap), true)))
         m.flags |= render::MatBaseColorMap;
     const bool greenUp = NormalFormat(n.as<int64_t>(kNormalFormat)) == NormalFormat::OpenGL;
     const std::string height = n.as<bool>(kNormalFromHeight) ? file(n, kHeightMap) : std::string();
@@ -164,7 +175,7 @@ render::Material convert(const scene::Node& n)
                                              depth / std::max(double(floatAttr(n, kHeightUvHeight)), 1e-3), greenUp);
     }
     else
-        m.normalMap = textures::get(file(n, kNormalMap), false, true);
+        m.normalMap = textures::get(file(n, kNormalMap), scene::materials::srgb(n, kNormalMap), true);
     if (m.normalMap)
     {
         m.flags |= render::MatNormalMap;
@@ -175,7 +186,7 @@ render::Material convert(const scene::Node& n)
     std::string orm = file(n, kOrmMap), ao = file(n, kAmbientOcclusionMap), rough = file(n, kRoughnessMap),
                 metal = file(n, kMetallicMap);
     if ((m.ormMap = textures::packed(orm, ao, rough, metal,
-                                     scene::materials::packedChannels(PackedLayout(n.as<int64_t>(kPackedLayout))))))
+                                     scene::materials::packedChannels(PackedLayout(n.as<int64_t>(kPackedLayout))), packedSrgb(n))))
     {
         if (!orm.empty())
             m.flags |= render::MatOcclusionMap | render::MatRoughnessMap | render::MatMetallicMap;
@@ -185,7 +196,7 @@ render::Material convert(const scene::Node& n)
     }
 
     float intensity = floatAttr(n, kEmissiveIntensity);
-    if ((m.emissiveMap = textures::get(file(n, kEmissiveMap), true, true)))
+    if ((m.emissiveMap = textures::get(file(n, kEmissiveMap), scene::materials::srgb(n, kEmissiveMap), true)))
     {
         m.flags |= render::MatEmissiveMap;
         m.emissive = glm::vec3(intensity);

@@ -38,6 +38,8 @@ struct SlotSource
     std::shared_ptr<const TextureSampler> map;
     /** The texture channel a scalar reads (packed maps). */
     int channel = 0;
+    /** The map's values are sRGB-encoded. */
+    bool srgb = false;
 };
 
 struct MaterialPrep
@@ -91,10 +93,12 @@ Prepare materialPrepare(Channel channel)
                     const TransferSource ts = transferSource(mat, channelMap(channel));
                     src.map = cache.get(ts.texture);
                     src.channel = ts.channel;
+                    src.srgb = ts.srgb;
                     if (!src.map && !ts.fallback.empty())
                     {
                         src.map = cache.get(ts.fallback);
                         src.channel = ts.fallbackChannel;
+                        src.srgb = ts.fallbackSrgb;
                     }
                 }
             }
@@ -120,26 +124,29 @@ CpuKernel materialKernel(Channel channel)
             const SlotSource& src = slot < slots.size() ? slots[slot] : SlotSource{};
             const MaterialInput& m = src.material ? *src.material : neutralMaterial();
             const glm::vec4 t = src.map ? src.map->sample(hitUv(high, h)) : glm::vec4(1.0f);
+            // Colour outputs are written sRGB-encoded and scalars linear, whatever the source's encoding.
+            const glm::vec3 encoded = src.srgb ? glm::vec3(t) : linearToSrgb(glm::vec3(t));
+            const glm::vec3 linear = src.srgb ? srgbToLinear(glm::vec3(t)) : glm::vec3(t);
             switch (channel)
             {
             case Channel::BaseColor:
-                out[i] = glm::vec4(src.map ? glm::vec3(t) : linearToSrgb(m.baseColor), 1.0f);
+                out[i] = glm::vec4(src.map ? encoded : linearToSrgb(m.baseColor), 1.0f);
                 break;
             case Channel::Roughness:
             {
-                const float v = src.map ? t[src.channel] : m.roughness;
+                const float v = src.map ? linear[src.channel] : m.roughness;
                 out[i] = glm::vec4(v, v, v, 1.0f);
                 break;
             }
             case Channel::Metallic:
             {
-                const float v = src.map ? t[src.channel] : m.metallic;
+                const float v = src.map ? linear[src.channel] : m.metallic;
                 out[i] = glm::vec4(v, v, v, 1.0f);
                 break;
             }
             case Channel::Emissive:
             {
-                const glm::vec3 lin = (src.map ? srgbToLinear(glm::vec3(t)) : m.emissive) * m.emissiveIntensity;
+                const glm::vec3 lin = (src.map ? linear : m.emissive) * m.emissiveIntensity;
                 out[i] = glm::vec4(linearToSrgb(lin), 1.0f);
                 break;
             }
@@ -204,21 +211,31 @@ TransferSource transferSource(const MaterialInput& mat, std::string_view map)
     {
         s.texture = mat.baseColorMap;
         s.channel = 3;
+        s.srgb = mat.baseColorSrgb;
     }
     else if (map == "emissive")
+    {
         s.texture = mat.emissiveMap;
+        s.srgb = mat.emissiveSrgb;
+    }
     else if (map == "roughness" || map == "metallic")
     {
         const std::array<int, 3> packed = scene::materials::packedChannels(scene::material::PackedLayout(mat.packedLayout));
         const std::string& own = map == "roughness" ? mat.roughnessMap : mat.metallicMap;
+        const bool ownSrgb = map == "roughness" ? mat.roughnessSrgb : mat.metallicSrgb;
         if (!mat.ormMap.empty())
         {
             s.texture = mat.ormMap;
             s.channel = packed[map == "roughness" ? 1 : 2];
+            s.srgb = mat.ormSrgb;
             s.fallback = own;
+            s.fallbackSrgb = ownSrgb;
         }
         else
+        {
             s.texture = own;
+            s.srgb = ownSrgb;
+        }
     }
     return s;
 }
@@ -252,6 +269,11 @@ MaterialInput materialInput(scene::Graph& g, const std::string& slot)
     m.ormMap = path(kOrmMap);
     m.emissiveMap = path(kEmissiveMap);
     m.occlusionMap = path(kAmbientOcclusionMap);
+    m.baseColorSrgb = scene::materials::srgb(*n, kBaseColorMap);
+    m.metallicSrgb = scene::materials::srgb(*n, kMetallicMap);
+    m.roughnessSrgb = scene::materials::srgb(*n, kRoughnessMap);
+    m.ormSrgb = scene::materials::srgb(*n, kOrmMap);
+    m.emissiveSrgb = scene::materials::srgb(*n, kEmissiveMap);
     return m;
 }
 

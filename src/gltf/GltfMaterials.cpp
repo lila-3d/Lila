@@ -576,8 +576,29 @@ json materialJson(const MaterialSnapshot& m, TextureSink& textures, const Export
         return false;
     };
 
+    // glTF fixes each slot's encoding (colour sRGB, the rest linear), so a map stored the other way is re-encoded.
+    auto recode = [](Pixels& p, bool fromSrgb) {
+        for (size_t k = 0; k < p.rgba.size(); ++k)
+            if (k % 4 != 3)
+                p.rgba[k] = fromSrgb ? toLinear(p.rgba[k]) : toSrgb(p.rgba[k]);
+    };
+    auto fileAs = [&](int attr, const std::string& path, const char* suffix) {
+        const bool want = materials::colorMap(attr), have = m.srgbOf(attr);
+        if (want == have)
+            return textures.file(path, m.samplingOf(attr));
+        return textures.made(
+            std::string(have ? "lin|" : "srgb|") + path, m.name + suffix,
+            [&](Pixels& p) {
+                if (!load(path, p))
+                    return false;
+                recode(p, have);
+                return true;
+            },
+            m.samplingOf(attr));
+    };
+
     const double alpha = m.blendMode == int(BlendMode::Opaque) ? 1.0 : std::clamp(m.opacity, 0.0, 1.0);
-    int baseTex = tex && !m.baseColorMap.empty() ? textures.file(m.baseColorMap, m.samplingOf(kBaseColorMap)) : -1;
+    int baseTex = tex && !m.baseColorMap.empty() ? fileAs(kBaseColorMap, m.baseColorMap, "_BaseColor") : -1;
     if (baseTex >= 0)
     {
         pbr["baseColorTexture"] = info(baseTex);
@@ -592,16 +613,20 @@ json materialJson(const MaterialSnapshot& m, TextureSink& textures, const Export
     double metallic = m.metallic, roughness = m.roughness;
     if (litTex && !m.ormMap.empty())
     {
-        if (!m.packedMro)
+        const bool encoded = m.srgbOf(kOrmMap);
+        if (!m.packedMro && !encoded)
             mrTex = occTex = textures.file(m.ormMap, m.samplingOf(kOrmMap));
         else
             mrTex = occTex = textures.made(
-                "mro|" + m.ormMap, m.name + "_ORM",
+                std::format("orm{}{}|", m.packedMro ? "m" : "", encoded ? "s" : "") + m.ormMap, m.name + "_ORM",
                 [&](Pixels& p) {
                     if (!load(m.ormMap, p))
                         return false;
-                    for (size_t k = 0; k < p.rgba.size(); k += 4)
-                        std::swap(p.rgba[k], p.rgba[k + 2]);
+                    if (encoded)
+                        recode(p, true);
+                    if (m.packedMro)
+                        for (size_t k = 0; k < p.rgba.size(); k += 4)
+                            std::swap(p.rgba[k], p.rgba[k + 2]);
                     return true;
                 },
                 m.samplingOf(kOrmMap));
@@ -610,11 +635,19 @@ json materialJson(const MaterialSnapshot& m, TextureSink& textures, const Export
     }
     else if (litTex && (!m.metallicMap.empty() || !m.roughnessMap.empty()))
     {
-        mrTex = textures.made("mr|" + m.metallicMap + "|" + m.roughnessMap + "|" + m.occlusionMap, m.name + "_ORM", [&](Pixels& p) {
+        const std::string key = std::format("mr{}{}{}|", int(m.srgbOf(kMetallicMap)), int(m.srgbOf(kRoughnessMap)), int(m.srgbOf(kAmbientOcclusionMap)));
+        mrTex = textures.made(key + m.metallicMap + "|" + m.roughnessMap + "|" + m.occlusionMap, m.name + "_ORM", [&](Pixels& p) {
             Pixels metal, rough, ao;
-            const bool hasMetal = !m.metallicMap.empty() && load(m.metallicMap, metal);
-            const bool hasRough = !m.roughnessMap.empty() && load(m.roughnessMap, rough);
-            const bool hasAo = !m.occlusionMap.empty() && load(m.occlusionMap, ao);
+            auto read = [&](int attr, const std::string& path, Pixels& out) {
+                if (path.empty() || !load(path, out))
+                    return false;
+                if (m.srgbOf(attr))
+                    recode(out, true);
+                return true;
+            };
+            const bool hasMetal = read(kMetallicMap, m.metallicMap, metal);
+            const bool hasRough = read(kRoughnessMap, m.roughnessMap, rough);
+            const bool hasAo = read(kAmbientOcclusionMap, m.occlusionMap, ao);
             if (!hasMetal && !hasRough)
                 return false;
             p.width = std::max({hasMetal ? metal.width : 0, hasRough ? rough.width : 0, hasAo ? ao.width : 0});
@@ -645,7 +678,7 @@ json materialJson(const MaterialSnapshot& m, TextureSink& textures, const Export
         }
     }
     else if (litTex && !m.occlusionMap.empty())
-        occTex = textures.file(m.occlusionMap, m.samplingOf(kAmbientOcclusionMap));
+        occTex = fileAs(kAmbientOcclusionMap, m.occlusionMap, "_Occlusion");
     pbr["metallicFactor"] = std::clamp(metallic, 0.0, 1.0);
     pbr["roughnessFactor"] = std::clamp(roughness, 0.0, 1.0);
     if (mrTex >= 0)
@@ -657,23 +690,28 @@ json materialJson(const MaterialSnapshot& m, TextureSink& textures, const Export
     if (litTex && !m.normalMap.empty())
     {
         const material::TextureSampling s = m.samplingOf(kNormalMap);
-        const int n = m.normalOpenGl ? textures.file(m.normalMap, s)
-                                     : textures.made(
-                                           "dx|" + m.normalMap, m.name + "_Normal",
-                                           [&](Pixels& p) {
-                                               if (!load(m.normalMap, p))
-                                                   return false;
-                                               for (size_t k = 0; k < p.rgba.size(); k += 4)
-                                                   p.rgba[k + 1] = 1.0f - p.rgba[k + 1];
-                                               return true;
-                                           },
-                                           s);
+        const bool encoded = m.srgbOf(kNormalMap);
+        const int n = m.normalOpenGl && !encoded ? textures.file(m.normalMap, s)
+                                                 : textures.made(
+                                                       std::format("n{}{}|", m.normalOpenGl ? "gl" : "dx", encoded ? "s" : "") + m.normalMap,
+                                                       m.name + "_Normal",
+                                                       [&](Pixels& p) {
+                                                           if (!load(m.normalMap, p))
+                                                               return false;
+                                                           if (encoded)
+                                                               recode(p, true);
+                                                           if (!m.normalOpenGl)
+                                                               for (size_t k = 0; k < p.rgba.size(); k += 4)
+                                                                   p.rgba[k + 1] = 1.0f - p.rgba[k + 1];
+                                                           return true;
+                                                       },
+                                                       s);
         if (n >= 0)
             mat["normalTexture"] = info(n);
     }
 
     glm::dvec3 emissive = m.emissiveColor * m.emissiveIntensity;
-    if (int e = litTex && !m.emissiveMap.empty() ? textures.file(m.emissiveMap, m.samplingOf(kEmissiveMap)) : -1; e >= 0)
+    if (int e = litTex && !m.emissiveMap.empty() ? fileAs(kEmissiveMap, m.emissiveMap, "_Emissive") : -1; e >= 0)
     {
         mat["emissiveTexture"] = info(e);
         emissive = glm::dvec3(m.emissiveIntensity);

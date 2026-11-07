@@ -26,10 +26,11 @@ LILA_UI_API render::TexturePtr get(const std::string& path, bool srgb, bool udim
 /**
  * One linear image with occlusion in R, roughness in G and metallic in B: the packed map when given, its channels
  * picked by `channels` (the source channel of occlusion, roughness and metallic), else the red channels of the
- * separate maps, white where one is missing.
+ * separate maps, white where one is missing. Bits 0 to 3 of srgbMask mark orm, occlusion, roughness and metallic as
+ * sRGB-encoded, decoded to linear as they are packed.
  */
 LILA_UI_API render::TexturePtr packed(const std::string& orm, const std::string& occlusion, const std::string& roughness,
-                          const std::string& metallic, std::array<int, 3> channels = {0, 1, 2});
+                          const std::string& metallic, std::array<int, 3> channels = {0, 1, 2}, uint32_t srgbMask = 0);
 
 /**
  * The normal a material rebuilds from its height map (bake/HeightNormal.h combineNormals): the height's own normals

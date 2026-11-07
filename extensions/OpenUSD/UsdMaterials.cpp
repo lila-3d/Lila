@@ -225,11 +225,12 @@ void MaterialWriter::writePreview(const UsdShadeMaterial& m, const scene::Node* 
         return reader;
     };
     std::map<std::string, UsdShadeShader> textures; // asset path and sampling -> texture shader
-    auto texture = [&](const std::string& lilaPath, const char* role, bool srgb, int mapAttr, GfVec4f scale = GfVec4f(1.0f),
+    auto texture = [&](const std::string& lilaPath, const char* role, int mapAttr, GfVec4f scale = GfVec4f(1.0f),
                        GfVec4f bias = GfVec4f(0.0f)) -> UsdShadeShader {
         const std::string asset = assetPath(lilaPath);
         const mat::TextureSampling s = scene::materials::sampling(*n, mapAttr);
-        const std::string key = std::format("{}|{}|{}|{}", asset, int(s.wrapU), int(s.wrapV), int(s.filter));
+        const bool srgb = scene::materials::srgb(*n, mapAttr);
+        const std::string key = std::format("{}|{}|{}|{}|{}", asset, int(s.wrapU), int(s.wrapV), int(s.filter), srgb);
         if (auto it = textures.find(key); it != textures.end())
             return it->second;
         UsdShadeShader t = UsdShadeShader::Define(mStage, path.AppendChild(TfToken(std::string("Tex_") + role)));
@@ -263,14 +264,14 @@ void MaterialWriter::writePreview(const UsdShadeMaterial& m, const scene::Node* 
     if (mat::ShadingModel(n->as<int64_t>(mat::kShadingModel)) == mat::ShadingModel::Unlit)
     {
         writeUnlit(m, surface, *n, slot,
-                   [&](const std::string& p, GfVec4f scale) { return texture(p, "baseColor", true, mat::kBaseColorMap, scale); });
+                   [&](const std::string& p, GfVec4f scale) { return texture(p, "baseColor", mat::kBaseColorMap, scale); });
         return;
     }
     UsdShadeInput diffuse = input("diffuseColor", SdfValueTypeNames->Color3f);
     if (!baseMap.empty())
     {
         const GfVec4f scale(1.0f, 1.0f, 1.0f, blend == mat::BlendMode::Opaque ? 1.0f : float(opacity));
-        UsdShadeShader t = texture(baseMap, "baseColor", true, mat::kBaseColorMap, scale);
+        UsdShadeShader t = texture(baseMap, "baseColor", mat::kBaseColorMap, scale);
         connect(diffuse, t, "rgb");
         if (blend != mat::BlendMode::Opaque)
             connect(input("opacity", SdfValueTypeNames->Float), t, "a");
@@ -291,7 +292,7 @@ void MaterialWriter::writePreview(const UsdShadeMaterial& m, const scene::Node* 
     {
         static const char* kChannel[3] = {"r", "g", "b"};
         const std::array<int, 3> ch = scene::materials::packedChannels(mat::PackedLayout(n->as<int64_t>(mat::kPackedLayout)));
-        UsdShadeShader t = texture(orm, "orm", false, mat::kOrmMap);
+        UsdShadeShader t = texture(orm, "orm", mat::kOrmMap);
         connect(input("occlusion", SdfValueTypeNames->Float), t, kChannel[ch[0]]);
         connect(roughness, t, kChannel[ch[1]]);
         connect(metallic, t, kChannel[ch[2]]);
@@ -299,15 +300,15 @@ void MaterialWriter::writePreview(const UsdShadeMaterial& m, const scene::Node* 
     else
     {
         if (const std::string& p = n->as<std::string>(mat::kMetallicMap); !p.empty())
-            connect(metallic, texture(p, "metallic", false, mat::kMetallicMap), "r");
+            connect(metallic, texture(p, "metallic", mat::kMetallicMap), "r");
         else
             metallic.Set(float(n->as<double>(mat::kMetallic)));
         if (const std::string& p = n->as<std::string>(mat::kRoughnessMap); !p.empty())
-            connect(roughness, texture(p, "roughness", false, mat::kRoughnessMap), "r");
+            connect(roughness, texture(p, "roughness", mat::kRoughnessMap), "r");
         else
             roughness.Set(float(n->as<double>(mat::kRoughness)));
         if (const std::string& p = n->as<std::string>(mat::kAmbientOcclusionMap); !p.empty())
-            connect(input("occlusion", SdfValueTypeNames->Float), texture(p, "occlusion", false, mat::kAmbientOcclusionMap), "r");
+            connect(input("occlusion", SdfValueTypeNames->Float), texture(p, "occlusion", mat::kAmbientOcclusionMap), "r");
     }
     if (const double s = n->as<double>(mat::kSpecular); std::abs(s - 0.5) > 1e-6)
         input("ior", SdfValueTypeNames->Float).Set(float(iorOfSpecular(s)));
@@ -316,7 +317,7 @@ void MaterialWriter::writePreview(const UsdShadeMaterial& m, const scene::Node* 
     {
         // USD's normal input is OpenGL style; a DirectX map's green is flipped by the texture's scale and bias.
         const bool directX = mat::NormalFormat(n->as<int64_t>(mat::kNormalFormat)) == mat::NormalFormat::DirectX;
-        UsdShadeShader t = texture(p, "normal", false, mat::kNormalMap, GfVec4f(2.0f, directX ? -2.0f : 2.0f, 2.0f, 1.0f),
+        UsdShadeShader t = texture(p, "normal", mat::kNormalMap, GfVec4f(2.0f, directX ? -2.0f : 2.0f, 2.0f, 1.0f),
                                    GfVec4f(-1.0f, directX ? 1.0f : -1.0f, -1.0f, 0.0f));
         connect(input("normal", SdfValueTypeNames->Normal3f), t, "rgb");
     }
@@ -325,7 +326,7 @@ void MaterialWriter::writePreview(const UsdShadeMaterial& m, const scene::Node* 
     if (const std::string& p = n->as<std::string>(mat::kEmissiveMap); !p.empty())
     {
         const float k = float(intensity);
-        connect(input("emissiveColor", SdfValueTypeNames->Color3f), texture(p, "emissive", true, mat::kEmissiveMap, GfVec4f(k, k, k, 1.0f)),
+        connect(input("emissiveColor", SdfValueTypeNames->Color3f), texture(p, "emissive", mat::kEmissiveMap, GfVec4f(k, k, k, 1.0f)),
                 "rgb");
     }
     else if (const glm::dvec3 e = n->as<glm::dvec3>(mat::kEmissiveColor) * intensity; e != glm::dvec3(0.0))
@@ -542,13 +543,15 @@ std::string MaterialReader::slot(const UsdShadeMaterial& m)
         return name;
     }
 
-    auto colorSpaceCheck = [&](const TextureUse& t, bool color, const char* role) {
-        if (t.colorSpace.empty() || t.colorSpace == "auto")
-            return;
-        if (color && t.colorSpace == "raw")
-            warnings.push_back(std::format("material {}: {} texture is marked raw; Lila reads color maps as sRGB", name, role));
-        if (!color && t.colorSpace == "sRGB")
-            warnings.push_back(std::format("material {}: {} texture is marked sRGB; Lila reads data maps as linear", name, role));
+    // The texture's sampling with its sourceColorSpace; one that matches the map's own default stays auto.
+    auto sampled = [&](const TextureUse& t, int mapAttr) {
+        mat::TextureSampling s = samplingOf(t.tex);
+        const bool color = materials::colorMap(mapAttr);
+        if (t.colorSpace == "sRGB" && !color)
+            s.colorSpace = mat::TextureColorSpace::Srgb;
+        else if (t.colorSpace == "raw" && color)
+            s.colorSpace = mat::TextureColorSpace::Linear;
+        return s;
     };
     auto plainScale = [&](const TextureUse& t, const char* role) {
         if (GfVec3f(t.scale[0], t.scale[1], t.scale[2]) != GfVec3f(1.0f) || GfVec3f(t.bias[0], t.bias[1], t.bias[2]) != GfVec3f(0.0f))
@@ -597,7 +600,6 @@ std::string MaterialReader::slot(const UsdShadeMaterial& m)
     if (base.tex)
     {
         noteUv(base);
-        colorSpaceCheck(base, true, "base color");
         if (unlit)
         {
             if (GfVec3f(base.scale[0], base.scale[1], base.scale[2]) != GfVec3f(1.0f))
@@ -606,7 +608,7 @@ std::string MaterialReader::slot(const UsdShadeMaterial& m)
         else
             plainScale(base, "base color");
         set(material::kBaseColorMap, texturePath(base.tex, name));
-        materials::setSampling(mGraph, n->id(), material::kBaseColorMap, samplingOf(base.tex));
+        materials::setSampling(mGraph, n->id(), material::kBaseColorMap, sampled(base, material::kBaseColorMap));
     }
     else
     {
@@ -650,9 +652,8 @@ std::string MaterialReader::slot(const UsdShadeMaterial& m)
             {
                 const TextureUse& any = occFile == packedFile ? occ : roughFile == packedFile ? rough : metal;
                 noteUv(any);
-                colorSpaceCheck(any, false, "packed");
                 set(material::kOrmMap, texturePath(any.tex, name));
-                materials::setSampling(mGraph, n->id(), material::kOrmMap, samplingOf(any.tex));
+                materials::setSampling(mGraph, n->id(), material::kOrmMap, sampled(any, material::kOrmMap));
                 set(material::kPackedLayout, int64_t(layout));
                 packed = true;
                 if (shared < 3)
@@ -671,12 +672,11 @@ std::string MaterialReader::slot(const UsdShadeMaterial& m)
         if (t.tex && !packed)
         {
             noteUv(t);
-            colorSpaceCheck(t, false, role);
             plainScale(t, role);
             if (t.channel != "r")
                 warnings.push_back(std::format("material {}: the {} texture is read from its {} channel; Lila reads red", name, role, t.channel));
             set(mapAttr, texturePath(t.tex, name));
-            materials::setSampling(mGraph, n->id(), mapAttr, samplingOf(t.tex));
+            materials::setSampling(mGraph, n->id(), mapAttr, sampled(t, mapAttr));
         }
         if (valueAttr >= 0 && !t.tex)
         {
@@ -696,9 +696,8 @@ std::string MaterialReader::slot(const UsdShadeMaterial& m)
     if (const TextureUse nrm = textureOf(surface, "normal"); nrm.tex)
     {
         noteUv(nrm);
-        colorSpaceCheck(nrm, false, "normal");
         set(material::kNormalMap, texturePath(nrm.tex, name));
-        materials::setSampling(mGraph, n->id(), material::kNormalMap, samplingOf(nrm.tex));
+        materials::setSampling(mGraph, n->id(), material::kNormalMap, sampled(nrm, material::kNormalMap));
         set(material::kNormalFormat, int64_t(nrm.scale[1] < 0.0f ? material::NormalFormat::DirectX : material::NormalFormat::OpenGL));
     }
 
@@ -708,9 +707,8 @@ std::string MaterialReader::slot(const UsdShadeMaterial& m)
     if (em.tex)
     {
         noteUv(em);
-        colorSpaceCheck(em, true, "emissive");
         set(material::kEmissiveMap, texturePath(em.tex, name));
-        materials::setSampling(mGraph, n->id(), material::kEmissiveMap, samplingOf(em.tex));
+        materials::setSampling(mGraph, n->id(), material::kEmissiveMap, sampled(em, material::kEmissiveMap));
         set(material::kEmissiveIntensity, double(em.scale[0] + em.scale[1] + em.scale[2]) / 3.0);
     }
     else if (GfVec3f e(0.0f); !unlit && inputValue(surface, "emissiveColor", &e) && e != GfVec3f(0.0f))

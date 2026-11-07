@@ -758,11 +758,19 @@ Image readTiffImpl(const fs::path& path, std::string* err)
     if (ifd + 2 + n * 12 > d.size())
         return fail("truncated IFD");
     std::map<uint16_t, std::vector<uint32_t>> tags;
+    std::vector<unsigned char> icc;
     for (size_t e = 0; e < n; ++e)
     {
         const size_t p = ifd + 2 + e * 12;
         const uint16_t tag = u16(p), type = u16(p + 2);
         const uint32_t count = u32(p + 4);
+        if (tag == 34675 && (type == 7 || type == 1))
+        {
+            const size_t base = count <= 4 ? p + 8 : u32(p + 8);
+            if (base + count <= d.size())
+                icc.assign(d.begin() + std::ptrdiff_t(base), d.begin() + std::ptrdiff_t(base + count));
+            continue;
+        }
         const size_t size = type == kTiffShort ? 2 : type == kTiffLong ? 4 : 0;
         if (!size)
             continue;
@@ -835,6 +843,7 @@ Image readTiffImpl(const fs::path& path, std::string* err)
                 }
         }
     }
+    img.icc = std::move(icc);
     return img;
 }
 
@@ -969,11 +978,31 @@ bool parsePsd(const fs::path& path, PsdFile& out, std::string* err, bool wantLay
     out.bits = bits;
     const size_t bytes = size_t(bits / 8);
     size_t at = 26;
+    std::vector<unsigned char> icc;
     for (int skip = 0; skip < 2; ++skip)
     {
         if (at + 4 > d.size())
             return fail("truncated");
-        at += 4 + be32(&d[at]);
+        const size_t end = at + 4 + be32(&d[at]);
+        // Image resources: 8BIM blocks of id, padded Pascal name, size and padded data; 1039 is the ICC profile.
+        for (size_t r = at + 4; skip == 1 && r + 12 <= std::min(end, d.size());)
+        {
+            if (std::memcmp(&d[r], "8BIM", 4) != 0)
+                break;
+            const uint16_t id = be16(&d[r + 4]);
+            size_t p = r + 6;
+            p += (size_t(d[p]) + 2) & ~size_t(1);
+            if (p + 4 > d.size())
+                break;
+            const size_t size = be32(&d[p]);
+            p += 4;
+            if (p + size > d.size())
+                break;
+            if (id == 1039)
+                icc.assign(d.begin() + std::ptrdiff_t(p), d.begin() + std::ptrdiff_t(p + size));
+            r = p + ((size + 1) & ~size_t(1));
+        }
+        at = end;
     }
     if (at + 4 > d.size())
         return fail("truncated");
@@ -1084,6 +1113,7 @@ bool parsePsd(const fs::path& path, PsdFile& out, std::string* err, bool wantLay
     for (int c = 0; c < std::min(channels, 4); ++c)
         for (size_t i = 0; i < size_t(w) * size_t(h); ++i)
             out.composite.rgba[i * 4 + size_t(c)] = sample(&d[at + size_t(c) * plane + i * bytes]);
+    out.composite.icc = std::move(icc);
     return true;
 }
 

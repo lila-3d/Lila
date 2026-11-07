@@ -1951,7 +1951,16 @@ private:
             {
                 set(attr, p);
                 if (file >= 0)
-                    materials::setSampling(mG, id, attr, fileSampling(file));
+                {
+                    material::TextureSampling s = fileSampling(file);
+                    const std::string space = text(mIx.node(file), {"cs", "colorSpace"});
+                    if (const std::optional<bool> srgb = materials::srgbFromName(space))
+                        s.colorSpace = materials::colorSpaceFor(attr, *srgb);
+                    else if (!space.empty())
+                        mR.warnings.push_back(std::format("{}: texture colour space {} is unknown; read as {}", name, space,
+                                                          materials::colorMap(attr) ? "sRGB" : "linear"));
+                    materials::setSampling(mG, id, attr, s);
+                }
             }
         };
         auto opacityFrom = [&](double opacity) {

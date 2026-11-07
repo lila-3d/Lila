@@ -887,19 +887,24 @@ void MaterialEditor::rebuild()
         onMiddleClickReset(l, [apply] { apply(""); }, "none", box);
         if (const int first = scene::materials::samplingAttr(attr); first >= 0)
         {
-            // Wrap U, wrap V and filter on a row of their own, shown while the map is set.
+            // Wrap U, wrap V, filter and colour space on a row of their own, shown while the map is set.
             auto* opts = new QWidget(mBody);
             auto* oh = new QHBoxLayout(opts);
             oh->setContentsMargins(kPreviewThumb + 6, 0, 0, 0);
-            const char* tips[3] = {"What the map shows past its edges along U.", "What the map shows past its edges along V.",
-                                   "Linear: smooth, mipmapped. Nearest: hard texels, for pixel art."};
-            for (int k = 0; k < 3; ++k)
+            const char* tips[4] = {"What the map shows past its edges along U.", "What the map shows past its edges along V.",
+                                   "Linear: smooth, mipmapped. Nearest: hard texels, for pixel art.",
+                                   "How the file's values are read. Auto: sRGB for colour maps, linear for data maps. EXR and HDR "
+                                   "are always linear."};
+            const QString autoSpace = scene::materials::colorMap(attr) ? "Auto (sRGB)" : "Auto (Linear)";
+            for (int k = 0; k < 4; ++k)
             {
                 auto* c = new QComboBox(opts);
                 c->setToolTip(tips[k]);
                 c->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
                 c->setMinimumContentsLength(5);
-                const QStringList labels = k < 2 ? QStringList{"Repeat", "Clamp", "Mirror", "Black"} : QStringList{"Linear", "Nearest"};
+                const QStringList labels = k < 2    ? QStringList{"Repeat", "Clamp", "Mirror", "Black"}
+                                           : k == 2 ? QStringList{"Linear", "Nearest"}
+                                                    : QStringList{autoSpace, "sRGB", "Linear"};
                 for (const QString& s : labels)
                     c->addItem(k == 0 ? "U: " + s : k == 1 ? "V: " + s : s);
                 oh->addWidget(c, 1);

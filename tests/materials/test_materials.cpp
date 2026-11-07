@@ -398,3 +398,58 @@ TEST_CASE("texture channel from file name")
     CHECK(guessTextureChannel("Normal.png") == "");
     CHECK(guessTextureChannel("T_Rock_Mask.png") == "");
 }
+
+TEST_CASE("texture colour space: auto follows the slot, overrides survive scene files")
+{
+    using namespace scene;
+    run("newScene");
+    Graph& g = Graph::current();
+    Node* m = materials::create(g, "M_Space");
+    REQUIRE(m);
+    CHECK(materials::srgb(*m, material::kBaseColorMap));
+    CHECK(materials::srgb(*m, material::kEmissiveMap));
+    CHECK_FALSE(materials::srgb(*m, material::kRoughnessMap));
+    CHECK_FALSE(materials::srgb(*m, material::kNormalMap));
+
+    run("setAttr", {{"args", {"M_Space.baseColorMapColorSpace", "linear"}}});
+    run("setAttr", {{"args", {"M_Space.roughnessMapColorSpace", "sRGB"}}});
+    CHECK_FALSE(materials::srgb(*m, material::kBaseColorMap));
+    CHECK(materials::srgb(*m, material::kRoughnessMap));
+    CHECK(materials::sampling(*m, material::kBaseColorMap).colorSpace == material::TextureColorSpace::Linear);
+
+    const auto path = tempFile("colorspace.lila");
+    io::save(path);
+    run("newScene");
+    io::load(path);
+    Node* back = Graph::current().find("M_Space");
+    REQUIRE(back);
+    CHECK_FALSE(materials::srgb(*back, material::kBaseColorMap));
+    CHECK(materials::srgb(*back, material::kRoughnessMap));
+    CHECK(materials::srgb(*back, material::kEmissiveMap));
+}
+
+TEST_CASE("texture colour space names from other apps")
+{
+    using scene::materials::srgbFromName;
+    CHECK(srgbFromName("sRGB") == true);
+    CHECK(srgbFromName("Utility - sRGB - Texture") == true);
+    CHECK(srgbFromName("sRGB Encoded Rec.709 (sRGB)") == true);
+    CHECK(srgbFromName("srgb_texture") == true);
+    CHECK(srgbFromName("Raw") == false);
+    CHECK(srgbFromName("Non-Color") == false);
+    CHECK(srgbFromName("Linear sRGB") == false);
+    CHECK(srgbFromName("scene-linear Rec.709-sRGB") == false);
+    CHECK(srgbFromName("Linear Rec.709") == false);
+    CHECK(srgbFromName("ACEScg") == false);
+    CHECK(srgbFromName("lin_rec709") == false);
+    CHECK_FALSE(srgbFromName("").has_value());
+    CHECK_FALSE(srgbFromName("auto").has_value());
+    CHECK_FALSE(srgbFromName("Display P3").has_value());
+
+    using scene::materials::colorSpaceFor;
+    using scene::material::TextureColorSpace;
+    CHECK(colorSpaceFor(scene::material::kBaseColorMap, true) == TextureColorSpace::Auto);
+    CHECK(colorSpaceFor(scene::material::kBaseColorMap, false) == TextureColorSpace::Linear);
+    CHECK(colorSpaceFor(scene::material::kRoughnessMap, false) == TextureColorSpace::Auto);
+    CHECK(colorSpaceFor(scene::material::kRoughnessMap, true) == TextureColorSpace::Srgb);
+}
