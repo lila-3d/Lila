@@ -27,6 +27,12 @@ struct Drainage
 /** Priority-flood fill, steepest-descent receivers (8 neighbours) and accumulated drainage. Deterministic. */
 Drainage drain(const Heightfield& h);
 
+/**
+ * drain() from heights already filled exactly the way drain() fills them (the GPU fill): the order is the flood's own
+ * (filled height, then index), so receivers, order and area are drain()'s.
+ */
+Drainage drainFilled(const Heightfield& h, std::vector<float> filled);
+
 struct ErosionParams
 {
     /** Steps of stream-power erosion; more is an older landscape. */

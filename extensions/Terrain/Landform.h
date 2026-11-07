@@ -20,6 +20,16 @@
  */
 namespace terrain
 {
+/** Where the landform steps get their drainage: drain(), or drainGpu() (the same result, faster) when gpu is set. */
+struct DrainSource
+{
+    bool gpu = false;
+    /** Why the GPU was not used, from the first time it was not; empty while it ran every time. */
+    std::string fallback;
+
+    Drainage operator()(const Heightfield& h);
+};
+
 /** Stream power with n = 1 solved along the drainage tree for a time, instead of stepped (Tzathas 2024). */
 struct AnalyticParams
 {
@@ -38,7 +48,7 @@ struct AnalyticParams
     bool writeMasks = true;
 };
 
-void erodeAnalytic(Heightfield& h, const AnalyticParams& p);
+void erodeAnalytic(Heightfield& h, const AnalyticParams& p, DrainSource* drains = nullptr);
 
 /** Catmull-Rom resampling of the heights onto another grid; masks bilinear. */
 Heightfield upsampledCubic(const Heightfield& h, int nx, int nz, double cell, glm::dvec2 origin);
@@ -61,7 +71,7 @@ Heightfield amplified(const Heightfield& h, const AmplifyParams& p);
  * coarse brought onto fine's grid, its large shapes kept and fine's own detail (fine minus its low-pass) laid over them,
  * then eroded at the fine scale: what the preset uses after shaping the macro form at low resolution.
  */
-Heightfield amplifiedOnto(const Heightfield& coarse, const Heightfield& fine, double age, uint32_t seed);
+Heightfield amplifiedOnto(const Heightfield& coarse, const Heightfield& fine, double age, uint32_t seed, DrainSource* drains = nullptr);
 
 /** Debris flow (after Jain 2024): steep, small catchments scour; material runs out and settles as cones below. */
 struct DebrisParams
@@ -76,7 +86,7 @@ struct DebrisParams
     int iterations = 3;
 };
 
-void debrisFlow(Heightfield& h, const DebrisParams& p);
+void debrisFlow(Heightfield& h, const DebrisParams& p, DrainSource* drains = nullptr);
 
 /** Talus angle per sample: base, then each (mask, angle) mixed over it by the mask's value, in order. */
 std::vector<float> talusAngles(const Heightfield& h, double baseAngle, const std::vector<std::pair<std::string, double>>& materials);
@@ -120,7 +130,7 @@ struct DepositionParams
     int iterations = 2;
 };
 
-void deposition(Heightfield& h, const DepositionParams& p);
+void deposition(Heightfield& h, const DepositionParams& p, DrainSource* drains = nullptr);
 
 /** Snow: lies above the snowline on slopes gentle enough to hold it, gathers in hollows and slides off steep ground. */
 struct SnowParams

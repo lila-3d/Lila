@@ -5,6 +5,7 @@
 
 #include "Landform.h"
 
+#include "ErosionGpu.h"
 #include "LandformGpu.h"
 #include "Shaping.h"
 
@@ -112,7 +113,23 @@ private:
     PresetReport* mReport;
     std::chrono::steady_clock::time_point mLast = std::chrono::steady_clock::now();
 };
+
+Drainage drainWith(const Heightfield& h, DrainSource* drains) { return drains ? (*drains)(h) : drain(h); }
 } // namespace landform_
+
+Drainage DrainSource::operator()(const Heightfield& h)
+{
+    if (gpu)
+    {
+        Drainage d;
+        std::string err;
+        if (drainGpu(h, d, &err))
+            return d;
+        if (fallback.empty())
+            fallback = "drainage ran on the CPU: " + err;
+    }
+    return drain(h);
+}
 
 void accumulateMask(Heightfield& h, const std::string& name, const std::vector<float>& src)
 {
@@ -148,7 +165,7 @@ uint64_t heightfieldHash(const Heightfield& h)
 
 // ------------------------------------------------------------------------------------------------- analytic
 
-void erodeAnalytic(Heightfield& h, const AnalyticParams& p)
+void erodeAnalytic(Heightfield& h, const AnalyticParams& p, DrainSource* drains)
 {
     LILA_ZONE();
     using namespace landform_;
@@ -158,7 +175,7 @@ void erodeAnalytic(Heightfield& h, const AnalyticParams& p)
     const size_t n = h.size();
     const glm::dvec2 range0 = h.range();
     const std::vector<float> start = h.heights;
-    const Drainage d = drain(h);
+    const Drainage d = drainWith(h, drains);
     const std::vector<float> hardness = maskOrValue(h, p.hardnessMask, 0.0f);
     const std::vector<float> uplift = maskOrValue(h, p.upliftMask, 1.0f);
     const double cellArea = (h.cell * 0.01) * (h.cell * 0.01);
@@ -287,7 +304,7 @@ void erodeAnalytic(Heightfield& h, const AnalyticParams& p)
     h.heights = std::move(out);
     if (p.writeMasks)
     {
-        writeFlowMasks(h, drain(h));
+        writeFlowMasks(h, drainWith(h, drains));
         changeMasks(h, start);
     }
 }
@@ -357,7 +374,7 @@ Heightfield amplified(const Heightfield& h, const AmplifyParams& p)
     return hi;
 }
 
-Heightfield amplifiedOnto(const Heightfield& coarse, const Heightfield& fine, double age, uint32_t seed)
+Heightfield amplifiedOnto(const Heightfield& coarse, const Heightfield& fine, double age, uint32_t seed, DrainSource* drains)
 {
     LILA_ZONE();
     (void)seed;
@@ -379,7 +396,7 @@ Heightfield amplifiedOnto(const Heightfield& coarse, const Heightfield& fine, do
         AnalyticParams a;
         a.age = age;
         a.writeMasks = false;
-        erodeAnalytic(out, a);
+        erodeAnalytic(out, a, drains);
         landform_::restoreLarge(out, shaped, std::max(2, int(std::lround(2.0 * coarse.cell / fine.cell))));
     }
     return out;
@@ -387,7 +404,7 @@ Heightfield amplifiedOnto(const Heightfield& coarse, const Heightfield& fine, do
 
 // ------------------------------------------------------------------------------------------------- debris flow
 
-void debrisFlow(Heightfield& h, const DebrisParams& p)
+void debrisFlow(Heightfield& h, const DebrisParams& p, DrainSource* drains)
 {
     LILA_ZONE();
     using namespace landform_;
@@ -400,7 +417,7 @@ void debrisFlow(Heightfield& h, const DebrisParams& p)
     std::vector<float> wear(h.size(), 0.0f), laid(h.size(), 0.0f), load(h.size());
     for (int it = 0; it < std::max(1, p.iterations); ++it)
     {
-        const Drainage d = drain(h);
+        const Drainage d = drainWith(h, drains);
         std::vector<float>& z = h.heights;
         z = d.filled;
         std::fill(load.begin(), load.end(), 0.0f);
@@ -675,7 +692,7 @@ void droplets(Heightfield& h, const DropletParams& p)
 
 // ------------------------------------------------------------------------------------------------- deposition
 
-void deposition(Heightfield& h, const DepositionParams& p)
+void deposition(Heightfield& h, const DepositionParams& p, DrainSource* drains)
 {
     LILA_ZONE();
     using namespace landform_;
@@ -688,7 +705,7 @@ void deposition(Heightfield& h, const DepositionParams& p)
     std::vector<int32_t> lake(h.size());
     for (int it = 0; it < std::max(1, p.iterations); ++it)
     {
-        const Drainage d = drain(h);
+        const Drainage d = drainWith(h, drains);
         std::vector<float>& z = h.heights;
         std::fill(load.begin(), load.end(), 0.0f);
         // Lakes are the connected runs of filled samples; what flows into one settles from its floor up.
@@ -953,6 +970,8 @@ void erodePreset(Heightfield& h, const PresetParams& p, PresetReport* report)
     const double age = std::clamp(p.age, 0.0, 2.0);
     const std::vector<float> start = h.heights;
     Timer timer(report);
+    DrainSource drains;
+    drains.gpu = p.gpu;
 
     // Macro form at low resolution, where the analytic solve is cheap, then amplified back keeping its drainage.
     const int longest = std::max(h.nx, h.nz);
@@ -975,7 +994,7 @@ void erodePreset(Heightfield& h, const PresetParams& p, PresetReport* report)
         Heightfield coarse = lila::geo::resampled(h, cnx, cnz, cell, h.origin);
         erodeAnalytic(coarse, macro);
         timer.step("macro");
-        h = amplifiedOnto(coarse, h, def.fineAge * age, p.seed);
+        h = amplifiedOnto(coarse, h, def.fineAge * age, p.seed, &drains);
         timer.step("amplify");
     }
 
@@ -983,7 +1002,7 @@ void erodePreset(Heightfield& h, const PresetParams& p, PresetReport* report)
     debris.strength = def.debris * age;
     debris.scourAngle = def.scourAngle;
     debris.iterations = 2;
-    debrisFlow(h, debris);
+    debrisFlow(h, debris, &drains);
     timer.step("debris");
 
     std::vector<std::pair<std::string, double>> materials;
@@ -1013,7 +1032,7 @@ void erodePreset(Heightfield& h, const PresetParams& p, PresetReport* report)
     dep.supply = def.supply * age;
     dep.hardnessMask = p.hardnessMask;
     dep.iterations = 1;
-    deposition(h, dep);
+    deposition(h, dep, &drains);
     timer.step("deposition");
 
     if (def.snow)
@@ -1021,8 +1040,10 @@ void erodePreset(Heightfield& h, const PresetParams& p, PresetReport* report)
         snow(h, SnowParams());
         timer.step("snow");
     }
-    writeFlowMasks(h, drain(h));
+    writeFlowMasks(h, drains(h));
     changeMasks(h, start);
     timer.step("masks");
+    if (report && !drains.fallback.empty())
+        report->fallbacks.push_back(drains.fallback);
 }
 } // namespace terrain
