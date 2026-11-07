@@ -630,6 +630,30 @@ void smoothSurface(Surface& s, const geo::MeshBvh& source, int iterations)
 
     const Index n = s.vertexCount();
     std::vector<glm::dvec3> next(n);
+    auto facing = [&](const std::array<Index, 3>& t, const std::vector<glm::dvec3>& p) {
+        return glm::cross(p[t[1]] - p[t[0]], p[t[2]] - p[t[0]]);
+    };
+    // A move that turns a triangle over (a projection onto the far side of a thin part, or neighbours crossing) is undone.
+    auto keepUnflipped = [&]() {
+        for (int pass = 0; pass < 8; ++pass)
+        {
+            bool undone = false;
+            for (const auto& t : s.tris)
+            {
+                const glm::dvec3 before = facing(t, s.pos), after = facing(t, next);
+                if (glm::dot(before, after) > 0.1 * glm::length(before) * glm::length(after))
+                    continue;
+                for (Index v : t)
+                    if (next[v] != s.pos[v])
+                    {
+                        next[v] = s.pos[v];
+                        undone = true;
+                    }
+            }
+            if (!undone)
+                break;
+        }
+    };
     for (int it = 0; it < iterations; ++it)
     {
         tbb::parallel_for(Index(0), n, [&](Index v) {
@@ -645,6 +669,7 @@ void smoothSurface(Surface& s, const geo::MeshBvh& source, int iterations)
             if (source.closestPoint(s.pos[v] + d, c))
                 next[v] = c.point;
         });
+        keepUnflipped();
         s.pos.swap(next);
         s.buildGeometry();
     }

@@ -1181,7 +1181,7 @@ struct Work
     Surface s;
     bool symmetric = false;
     geo::SymmetryPlane plane;
-    double h = 0.0, cf = 1.0;
+    double h = 0.0, h0 = 0.0, cf = 1.0;
     std::vector<double> scale;
     /** The spacing before gaps and thin parts capped it. */
     std::vector<double> uncapped;
@@ -1191,6 +1191,27 @@ struct Work
     Work() = default;
     Work(const Work&) = delete;
 };
+
+/** Edges whose two triangles face apart (debug: LILA_SURFACE_DEBUG). */
+int foldedSurfaceEdges(const Surface& s)
+{
+    std::unordered_map<uint64_t, std::vector<Index>> by;
+    for (Index t = 0; t < Index(s.tris.size()); ++t)
+        for (int k = 0; k < 3; ++k)
+            by[edgeKey(s.tris[t][k], s.tris[t][(k + 1) % 3])].push_back(t);
+    auto normal = [&](Index t) {
+        const auto& f = s.tris[t];
+        return glm::cross(s.pos[f[1]] - s.pos[f[0]], s.pos[f[2]] - s.pos[f[0]]);
+    };
+    int n = 0;
+    for (const auto& [k, ts] : by)
+        if (ts.size() == 2)
+        {
+            const glm::dvec3 a = normal(ts[0]), b = normal(ts[1]);
+            n += glm::dot(a, b) < -0.5 * glm::length(a) * glm::length(b);
+        }
+    return n;
+}
 
 void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts, Stopwatch& clock)
 {
@@ -1210,12 +1231,33 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
     Surface& s = w.s;
     s = surfaceFromMesh(w.src, opts.useHardEdges);
     s.pins = opts.pinnedPoints;
+    if (std::getenv("LILA_SURFACE_DEBUG"))
+        std::fprintf(stderr, "surface %s: %zu tris, %d folded edges\n", "source", s.tris.size(), foldedSurfaceEdges(s));
     w.symmetric = opts.symmetryAxis >= 0 && opts.symmetryAxis < 3;
     const bool symmetric = w.symmetric;
     if (symmetric)
     {
         w.plane.normal = glm::dvec3(0.0);
         w.plane.normal[opts.symmetryAxis] = 1.0;
+    }
+    // Sizes are for the half that is remeshed; the shape is simplified whole and clipped after, since simplifying the
+    // clipped half folds triangles beside its cut border.
+    const double halves = symmetric ? 2.0 : 1.0;
+    const double area = s.totalArea() / halves;
+    const double faces = std::max(8.0, double(opts.targetFaces) / halves);
+    const double h0 = opts.targetEdgeLength > 0.0 ? opts.targetEdgeLength : std::sqrt(area / faces);
+    const double cf = opts.pureQuads ? 2.0 : 1.0;
+    w.cf = cf;
+    w.h0 = h0;
+    double workLength = cf * h0 / 4.0;
+    const double workTris = std::max(64.0, area / (0.433 * workLength * workLength));
+    bool decimated = double(s.tris.size()) > 1.5 * halves * workTris;
+    if (decimated)
+        decimateSurface(s, Index(halves * workTris));
+    if (std::getenv("LILA_SURFACE_DEBUG"))
+        std::fprintf(stderr, "surface %s: %zu tris, %d folded edges\n", "decimated", s.tris.size(), foldedSurfaceEdges(s));
+    if (symmetric)
+    {
         clipSurface(s, w.plane, opts.symmetryAxis);
         if (s.tris.empty())
         {
@@ -1223,18 +1265,10 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
             return;
         }
     }
-    const double area = s.totalArea();
-    const double faces = std::max(8.0, double(opts.targetFaces) * (symmetric ? 0.5 : 1.0));
-    const double h0 = opts.targetEdgeLength > 0.0 ? opts.targetEdgeLength : std::sqrt(area / faces);
-    const double cf = opts.pureQuads ? 2.0 : 1.0;
-    w.cf = cf;
-    double workLength = cf * h0 / 4.0;
-    const double workTris = std::max(64.0, area / (0.433 * workLength * workLength));
-    bool decimated = double(s.tris.size()) > 1.5 * workTris;
-    if (decimated)
-        decimateSurface(s, Index(workTris));
     refineSurface(s, 1.5 * workLength);
     embedFeatureGuides(s, opts.featureGuides, bvh);
+    if (std::getenv("LILA_SURFACE_DEBUG"))
+        std::fprintf(stderr, "surface %s: %zu tris, %d folded edges\n", "refined", s.tris.size(), foldedSurfaceEdges(s));
     auto prepare = [&]() {
         s.buildTopology();
         s.buildGeometry();
@@ -1246,6 +1280,8 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
         // Simplification leaves slivers that make the fields noisy.
         smoothSurface(s, bvh, 8);
         prepare();
+    if (std::getenv("LILA_SURFACE_DEBUG"))
+        std::fprintf(stderr, "surface %s: %zu tris, %d folded edges\n", "smoothed", s.tris.size(), foldedSurfaceEdges(s));
     }
     clock.lap("surface");
 
