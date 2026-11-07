@@ -404,7 +404,6 @@ bool requadBand(geo::Mesh& m, std::span<const Index> band, double hardAngle, dou
 
     // The band keeps its own density: finer where the seam's edges are shorter than the border's.
     retopo::QuadRemeshOptions o;
-    o.seamless = true;
     o.targetEdgeLength = medianLength(patch, borderEdges);
     o.adaptivity = 0.0;
     {

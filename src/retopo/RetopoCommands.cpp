@@ -260,7 +260,8 @@ const std::vector<RemeshPreset>& remeshPresets()
     return presets;
 }
 
-std::vector<FlagDef> remeshFlags();
+/** The flags quadRemesh and retopoPoles share; quadRemesh is symmetric across X unless told otherwise. */
+std::vector<FlagDef> remeshFlags(const char* symmetry = "off");
 
 /** The call with its preset's settings in place of the flags it left at their defaults. */
 Args withPreset(const Args& a, const char* cmd)
@@ -283,13 +284,17 @@ Args withPreset(const Args& a, const char* cmd)
     return out;
 }
 
-std::vector<FlagDef> remeshFlags()
+std::vector<FlagDef> remeshFlags(const char* symmetry)
 {
     using T = ArgType;
     return {{"preset", "", T::String, "none",
              "Starting settings for what the mesh is for: gameCharacter, midPoly, hero, stylized, hardSurface, prop, or the name of a preset "
              "saved from the option box. Flags set to other than their default win."},
-            {"method", "", T::String, "field", "field: quads follow curvature, creases and guides; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), field otherwise."},
+            {"method", "", T::String, "patches",
+             "patches: lines from the poles cut the surface into patches filled with even grids, so loops run unbroken; field: each point placed "
+             "from the flow nearby, quicker but with broken loops; grid: a straight grid over an open sheet seen from one side (terrain tiles, "
+             "panels), patches otherwise.",
+             {"patches", "field", "grid"}},
             {"targetFaces", "", T::Int, 3000, "Approximate face count.", {}, {}, 8.0},
             {"countTolerance", "", T::Float, 0.1, "Retry at a corrected size until the face count is within this fraction of targetFaces; 0 takes the first try.", {}, {}, 0.0, 1.0},
             {"timeout", "", T::Float, 0.0, "Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits until done or aborted.", {}, {}, 0.0},
@@ -297,7 +302,8 @@ std::vector<FlagDef> remeshFlags()
             {"adaptivity", "", T::Float, 0.25, "0 uniform, 1 much denser where curved; painted point 'density' multiplies.", {}, {}, 0.0, 1.0},
             {"useHardEdges", "", T::Bool, true, "Follow edges marked hard."},
             {"sharpAngle", "", T::Float, 40.0, "Also follow creases sharper than this, degrees; negative disables.", {}, {}, {}, 180.0},
-            {"symmetry", "", T::String, "off", "off, x, y or z: remesh half and mirror, exactly symmetric."},
+            {"symmetry", "", T::String, symmetry, "off, x, y or z: remesh half and mirror, exactly symmetric. The mesh has to be symmetric across that plane through its origin.",
+             {"off", "x", "y", "z"}},
             nodeFlag({"guides", "", T::List, nullptr, "Mesh nodes whose edges are guide curves."}, "mesh"),
             {"guidePoints", "", T::List, nullptr, "Guide polylines as lists of world [x, y, z]."},
             nodeFlag({"featureGuides", "", T::List, nullptr, "Mesh nodes whose edges get an edge loop laid on them, like a hard edge."}, "mesh"),
@@ -310,7 +316,6 @@ std::vector<FlagDef> remeshFlags()
             {"jointPoleAvoidance", "", T::Float, 30.0, "Keeps poles out of joints, armpits and finger webs; higher pushes them further onto flatter parts. 0 off.", {}, {}, 0.0, 100.0},
             {"edgesAround", "", T::Int, 12, "Thin round parts of a closed shape, like fingers, get at least this many edges round them, at the cost of faces elsewhere; 0 off.", {}, {}, 0.0, 64.0},
             {"resolveGaps", "", T::Bool, true, "Finer where the surface comes close to itself across a gap (a ball in a pocket), so the gap isn't bridged; costs faces."},
-            {"seamless", "", T::Bool, true, "Also try a global layout that only turns at the poles, with close poles merged or spread apart; kept when it is as clean with fewer irregular points. Slower."},
             {"poles", "", T::List, nullptr,
              "The poles the edge flow turns at, as {position: world [x, y, z], valence: 3 or 5}, and nowhere else. Start from "
              "retopoPoles; on a closed shell (4 - valence) must sum to what retopoPoles reports."}};
@@ -320,10 +325,10 @@ QuadRemeshOptions remeshOptions(const Args& given, const Node& src, const char* 
 {
     const Args a = withPreset(given, cmd);
     QuadRemeshOptions o;
-    const std::string method = a.get<std::string>("method", "field");
-    if (method != "field" && method != "grid")
-        throw CommandError(std::string(cmd) + ": method must be field or grid");
-    o.method = method == "grid" ? RemeshMethod::Grid : RemeshMethod::Field;
+    const std::string method = a.get<std::string>("method", "patches");
+    if (method != "patches" && method != "field" && method != "grid")
+        throw CommandError(std::string(cmd) + ": method must be patches, field or grid");
+    o.method = method == "grid" ? RemeshMethod::Grid : method == "field" ? RemeshMethod::Field : RemeshMethod::Patches;
     o.targetFaces = std::max(8, a.get<int>("targetFaces", 3000));
     o.countTolerance = std::clamp(a.get<double>("countTolerance", 0.1), 0.0, 1.0);
     o.timeout = std::max(0.0, a.get<double>("timeout", 0.0));
@@ -340,7 +345,6 @@ QuadRemeshOptions remeshOptions(const Args& given, const Node& src, const char* 
     if (a.has("densityHandles") && !a.flags["densityHandles"].is_null())
         o.densityHandles = densityHandlesFor(a.flags["densityHandles"], src, cmd);
     o.pureQuads = a.get<bool>("pureQuads", true);
-    o.seamless = a.get<bool>("seamless", true);
     o.resolveGaps = a.get<bool>("resolveGaps", true);
     o.edgesAround = std::clamp(a.get<int>("edgesAround", 12), 0, 64);
     o.jointDensity = std::clamp(a.get<double>("jointDensity", 0.5), 0.0, 1.0);
@@ -476,13 +480,13 @@ void registerCommands()
         .name = "quadRemesh",
         .doc = "Auto quad remesh: a new all-quad mesh whose edge flow follows curvature, hard edges and guide curves, at about "
                "the target face count, optionally with UVs and normals transferred from the source. Open borders, sharp "
-               "creases, crease corners and cone tips are kept. Where the shape is too thin or tight for the requested size "
-               "(a strip narrower than the edge length) it retries finer, so the face count can come out higher. The kept source "
+               "creases, crease corners and cone tips are kept. With method=field, where the shape is too thin or tight for the "
+               "requested size (a strip narrower than the edge length) it retries finer, so the face count can come out higher. The kept source "
                "is hidden. Runs off the UI thread with a cancellable progress bar, and gives up after timeout= seconds with "
                "an error saying how far it got, changing nothing. Returns {name, metrics, layout, attempts: [{layout, faces, defects, irregular}] for every layout tried, notes: where the result departs from what was asked}, and with poles= where each "
                "pole landed: {point, position, valence, valenceMatched}, or null where none came out near it.",
         .positionalDoc = "source",
-        .flags = flagsWith(remeshFlags(), {{"relaxIterations", "", T::Int, 6, "Tangential relax passes on the surface.", {}, {}, 0.0, 100.0},
+        .flags = flagsWith(remeshFlags("x"), {{"relaxIterations", "", T::Int, 6, "Tangential relax passes on the surface.", {}, {}, 0.0, 100.0},
                   {"transferUvs", "", T::Bool, false, "Copy UV sets from the source."},
                   {"transferNormals", "", T::Bool, false, "Copy the source's normals as custom normals."},
                   {"keepSource", "", T::Bool, true, "Keep the source mesh; false deletes it."},
@@ -511,7 +515,11 @@ void registerCommands()
                 throw CommandError("quadRemesh: " + r.error + (r.error.rfind("gave up", 0) == 0 ? "; raise timeout= or lower targetFaces" : ""));
             double total = 0.0;
             for (auto& [stage, sec] : r.timings)
+            {
                 total += sec;
+                if (std::getenv("LILA_TIMINGS"))
+                    log::info("quadRemesh {}: {:.2f} s", stage, sec);
+            }
             log::info("quadRemesh {}: {} ({:.2f} s)", src.path(), r.metrics.summary(), total);
             if (r.defects > 0)
                 log::warn("quadRemesh {}: {} folds or other flaws left; a higher targetFaces or adaptivity may clear them", src.path(), r.defects);

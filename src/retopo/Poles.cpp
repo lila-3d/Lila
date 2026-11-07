@@ -297,7 +297,12 @@ std::vector<FieldSingularity> spreadPoles(const Surface& s, const std::vector<Fi
         spread(p.tri, 3.0 * minSep, [&](Index t, double d) { clearance[t] = std::min(clearance[t], d); });
     };
     auto clear = [&](Index t) { return clearance[t] >= minSep && (!allowed || allowed(t)); };
+    // A pole of two quarter turns or more (a point of two or six edges) goes as that many single poles, spread apart.
+    std::vector<FieldSingularity> single;
     for (const FieldSingularity& p : poles)
+        for (int k = 0; k < std::abs(p.index); ++k)
+            single.push_back({p.tri, p.index > 0 ? 1 : -1});
+    for (const FieldSingularity& p : single)
     {
         if (clear(p.tri))
         {

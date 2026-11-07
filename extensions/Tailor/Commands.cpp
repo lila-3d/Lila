@@ -1435,6 +1435,7 @@ void registerCommands(ext::Context& ctx)
                 const json r = ops::execute("quadRemesh", {{"args", {drape}},
                                                            {"targetFaces", faces},
                                                            {"guidePoints", guides},
+                                                           {"symmetry", "off"},
                                                            {"timeout", 120.0},
                                                            {"transferUvs", true},
                                                            {"keepSource", bakeMaps},

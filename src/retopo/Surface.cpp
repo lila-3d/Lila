@@ -9,6 +9,8 @@
 #include <glm/gtc/constants.hpp>
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <cmath>
 #include <numeric>
@@ -121,6 +123,11 @@ void Surface::dropShortCreases(const std::vector<uint8_t>& byAngle, double minCr
     for (size_t e = 0; e < edges.size(); ++e)
         if (edgeFeature[e] && byAngle[e] && length[find(edges[e][0])] < kRuns * minCreaseLength)
             edgeFeature[e] = 0;
+    if (std::getenv("LILA_CREASE_DEBUG"))
+        for (Index v = 0; v < vertexCount(); ++v)
+            if (find(v) == v && length[v] > 0.0)
+                std::fprintf(stderr, "crease run at %.3f %.3f %.3f: %.3f long (%.2fx min)%s\n", pos[v].x, pos[v].y, pos[v].z, length[v],
+                             length[v] / minCreaseLength, length[v] < kRuns * minCreaseLength ? " dropped" : "");
 }
 
 void Surface::detectFeatures(double sharpAngleDeg, double cornerDeficitDeg, double minCreaseLength)
@@ -320,14 +327,20 @@ void Surface::detectFeatures(double sharpAngleDeg, double cornerDeficitDeg, doub
         {
             if (cornerDeficitDeg >= 0.0 && !onBoundary[v])
             {
-                // Over the ring as well, where the bumps of a noisy surface cancel out and a real tip doesn't.
+                // Over the ring as well, where the bumps of a noisy surface cancel out and a real tip doesn't. A needle
+                // (one point pulled out of a ring that turns the other way) sums to the opposite sign: no tip.
                 const double own = glm::two_pi<double>() - angleSum[v];
                 double ring = own;
                 for (Index k = adjStart[v]; k < adjStart[v + 1]; ++k)
                     ring += glm::two_pi<double>() - angleSum[adj[k]];
                 const double limit = glm::radians(cornerDeficitDeg);
-                if (std::abs(own) > limit && std::abs(ring) > limit)
+                if (std::abs(own) > limit && std::abs(ring) > limit && own * ring > 0.0)
+                {
                     feature[v] = FeatureKind::Corner;
+                    if (std::getenv("LILA_CREASE_DEBUG"))
+                        std::fprintf(stderr, "tip corner at %.3f %.3f %.3f: %.1f deg, ring %.1f\n", pos[v].x, pos[v].y, pos[v].z, glm::degrees(own),
+                                     glm::degrees(ring));
+                }
             }
             continue;
         }

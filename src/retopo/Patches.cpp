@@ -218,11 +218,19 @@ Layout makeLayout(const Surface& s, const std::vector<glm::dvec3>& q, const std:
     for (Index e = 0; e < ne; ++e)
         if (lay.wall[e])
             onWall[s.edges[e][0]] = onWall[s.edges[e][1]] = 1;
+    // A needle (one point poking out of a ring that bends the other way, left by simplification) turns the frame round
+    // it by its own sharp tip, which the field, smooth over the ring, doesn't follow: no pole of the layout's.
+    auto needle = [&](Index v) {
+        double ring = deficit[v];
+        for (Index k = s.adjStart[v]; k < s.adjStart[v + 1]; ++k)
+            ring += deficit[s.adj[k]];
+        return std::abs(deficit[v]) > glm::radians(75.0) && deficit[v] * ring < 0.0;
+    };
     lay.singular.assign(nv, 0);
     lay.source.assign(nv, 0);
     for (Index v = 0; v < nv; ++v)
     {
-        lay.singular[v] = !border[v] && std::lround(turn[v] / kQuarter) != 0;
+        lay.singular[v] = !border[v] && std::lround(turn[v] / kQuarter) != 0 && !needle(v);
         lay.quarters.push_back(int(std::lround(turn[v] / kQuarter)));
         const bool saddle = !onWall[v] && !s.pinned[v] && deficit[v] < 0.0;
         lay.source[v] = lay.singular[v] || (s.feature[v] == FeatureKind::Corner && !saddle);
@@ -475,6 +483,16 @@ Traces trace(const Layout& lay, const std::vector<ExtraStart>& extras = {}, cons
                     poleDone[v] = 1;
                     for (const PoleLine& line : poleLines(lay, v, t))
                     {
+                        // A pole on a crease corner (a cube's) has walls for some of its lines already.
+                        const int lc = lay.cornerOf(line.tri, v);
+                        const glm::dvec2 lp = lay.chart[line.tri][lc], la = lay.chart[line.tri][(lc + 1) % 3] - lp,
+                                         lb = lay.chart[line.tri][(lc + 2) % 3] - lp;
+                        const glm::dvec2 ld = line.free != glm::dvec2(0.0) ? line.free : axis(line.dir);
+                        auto along = [&](const glm::dvec2& edge, Index e) {
+                            return e != kInvalid && lay.wall[e] && std::abs(std::atan2(cross2(edge, ld), glm::dot(edge, ld))) < glm::radians(15.0);
+                        };
+                        if (along(la, lay.triEdge[line.tri][lc]) || along(lb, lay.triEdge[line.tri][(lc + 2) % 3]))
+                            continue;
                         Tracer tracer{line.tri, lay.chart[line.tri][lay.cornerOf(line.tri, v)], line.dir};
                         tracer.free = line.free;
                         tracers.push_back(tracer);
@@ -2889,10 +2907,12 @@ Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, cons
     std::vector<uint8_t> blocked;            // walls, and triangle edges a line runs along
     std::vector<std::vector<uint8_t>> joined; // per piece side: joined to a piece across it
     Index np = 0;
-    // A line across each wanted patch from the middle of its longest traced side, started as that side's line passes.
+    // A line across each wanted patch from the middle of its longest traced side, started as that side's line passes;
+    // a patch walled in by creases alone (the side of a cylinder) gets it from the middle of its longest wall side, and
+    // one with no side at all (a torus has no poles) from the middle of its first piece.
     auto cutsFor = [&](const std::vector<uint8_t>& want) {
-        std::vector<double> longest(np, 0.0);
-        std::vector<ExtraStart> cut(np, ExtraStart{kInvalid});
+        std::vector<double> longest(np, 0.0), longestWall(np, 0.0);
+        std::vector<ExtraStart> cut(np, ExtraStart{kInvalid}), wallCut(np, ExtraStart{kInvalid}), seed(np, ExtraStart{kInvalid});
         for (Index pi = 0; pi < Index(pieces.size()); ++pi)
         {
             const Piece& P = pieces[pi];
@@ -2902,9 +2922,28 @@ Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, cons
             glm::dvec2 centroid(0.0);
             for (const glm::dvec2& p : P.poly)
                 centroid += p / double(P.poly.size());
+            if (seed[patch].tri == kInvalid)
+                seed[patch] = {P.tri, centroid, 0, 0.0};
             for (size_t k = 0; k < P.poly.size(); ++k)
             {
-                if (P.side[k] < kSegSide || slitTracer[tr.segments[P.side[k] - kSegSide].tracer])
+                if (P.side[k] < kSegSide)
+                {
+                    const Index e = lay.triEdge[P.tri][P.side[k]];
+                    const glm::dvec2 a = P.poly[k], b = P.poly[(k + 1) % P.poly.size()];
+                    const double len = glm::length(b - a);
+                    if (e == kInvalid || !lay.wall[e] || len <= longestWall[patch])
+                        continue;
+                    const glm::dvec2 mid = 0.5 * (a + b), inward = centroid - mid;
+                    int best = 0;
+                    for (int d = 1; d < 4; ++d)
+                        if (glm::dot(axis(d), inward) > glm::dot(axis(best), inward))
+                            best = d;
+                    longestWall[patch] = len;
+                    // Just inside the wall, so the line starts in the patch rather than on its border.
+                    wallCut[patch] = {P.tri, mid + 1e-6 * inward, best, 0.0};
+                    continue;
+                }
+                if (slitTracer[tr.segments[P.side[k] - kSegSide].tracer])
                     continue;
                 const glm::dvec2 a = P.poly[k], b = P.poly[(k + 1) % P.poly.size()];
                 const double len = glm::length(b - a);
@@ -2918,9 +2957,13 @@ Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, cons
             }
         }
         std::vector<ExtraStart> out;
-        for (const ExtraStart& x : cut)
-            if (x.tri != kInvalid)
-                out.push_back(x);
+        for (Index p = 0; p < np; ++p)
+            if (cut[p].tri != kInvalid)
+                out.push_back(cut[p]);
+            else if (wallCut[p].tri != kInvalid)
+                out.push_back(wallCut[p]);
+            else if (seed[p].tri != kInvalid)
+                out.push_back(seed[p]);
         return out;
     };
     Extracted ex;
@@ -2998,7 +3041,7 @@ Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, cons
             patchOf[pi] = patchIndex.try_emplace(find(pi), Index(patchIndex.size())).first->second;
         np = Index(patchIndex.size());
         st.patches = int(np);
-        if (extras.empty() && dropRounds < 6 && std::getenv("LILA_PATCH_DROP"))
+        if (extras.empty() && dropRounds < 6)
         {
             const size_t more = dropSlivers(lay, tr, pieces, patchOf, np, dropped);
             if (debug)
@@ -3053,8 +3096,8 @@ Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, cons
                 ++reflex[std::get<0>(key)];
             }
         }
-        // A patch with too few corners (a ring round a bare tube, a strip) gets a line across it from the middle of its
-        // longest side, and the layout is traced again.
+        // A patch with too few corners (a ring round a bare tube, a strip) or a reflex one (where a dropped line left a
+        // corner bent inward) gets a line across it from the middle of its longest side, and the layout is traced again.
         if (round >= 3)
             break;
         // A line with the same patch both sides is the only cut through a tube, which leaves the patch no disk: a
@@ -3087,7 +3130,7 @@ Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, cons
             }
         std::vector<uint8_t> want(np, 0);
         for (Index p = 0; p < np; ++p)
-            want[p] = (corners[p] < 4 && !reflex[p]) || slitPatch[p];
+            want[p] = corners[p] < 4 || reflex[p] || slitPatch[p];
         const std::vector<ExtraStart> more = cutsFor(want);
         if (more.empty())
             break;

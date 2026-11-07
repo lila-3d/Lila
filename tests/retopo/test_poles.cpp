@@ -124,12 +124,12 @@ TEST_CASE("retopoPoles and quadRemesh poles= round trip through commands")
     // World space: the poles sit around the moved sphere.
     for (const auto& p : found["poles"])
         CHECK(p["position"][0].get<double>() > 40.0);
-    nlohmann::json made = run("quadRemesh", {{"args", {ball}}, {"targetFaces", 600}, {"poles", found["poles"]}});
+    nlohmann::json made = run("quadRemesh", {{"args", {ball}}, {"targetFaces", 600}, {"symmetry", "off"}, {"poles", found["poles"]}});
     CHECK(made["metrics"]["faces"].get<int>() > 300);
 
     nlohmann::json lone = found["poles"];
     lone.erase(lone.begin());
-    CHECK_THROWS(run("quadRemesh", {{"args", {ball}}, {"targetFaces", 600}, {"poles", lone}}));
+    CHECK_THROWS(run("quadRemesh", {{"args", {ball}}, {"targetFaces", 600}, {"symmetry", "off"}, {"poles", lone}}));
 }
 
 TEST_CASE("quadRemesh hides the kept source and errors without changing the scene on timeout")

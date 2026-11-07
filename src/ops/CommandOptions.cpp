@@ -41,13 +41,15 @@ void registerBuiltinOverrides(std::map<std::string, Override, std::less<>>& m)
     m["transferAttributes"] = std::move(transfer);
 
     O remesh;
-    remesh.order = {"method"};
-    remesh.choices["method"] = {{"field", "Field (Flowing Loops)"}, {"grid", "Grid (Open Sheets)"}};
-    remesh.choiceDocs["method"] = {{"field", "Quads follow curvature, creases and guides, with poles where the flow turns."},
-                                   {"grid", "A straight grid seen down the sheet's normal, for terrain tiles and panels. Closed shapes fall back to Field."}};
+    remesh.order = {"symmetry", "method"};
+    remesh.choices["symmetry"] = {{"off", "Off"}, {"x", "X"}, {"y", "Y"}, {"z", "Z"}};
+    remesh.choices["method"] = {{"patches", "Patches"}, {"field", "Field (Quick)"}, {"grid", "Grid (Open Sheets)"}};
+    remesh.choiceDocs["method"] = {{"patches", "Lines from the poles cut the surface into patches filled with even grids: loops run unbroken between poles."},
+                                   {"field", "Each point placed from the flow nearby: quicker, with broken loops and more poles."},
+                                   {"grid", "A straight grid seen down the sheet's normal, for terrain tiles and panels. Closed shapes get Patches."}};
     for (const char* f : {"targetFaces", "countTolerance", "targetEdgeLength", "adaptivity", "jointDensity", "jointDensityReach", "edgesAround"})
         remesh.sections[f] = "Density";
-    for (const char* f : {"useHardEdges", "sharpAngle", "jointPoleAvoidance", "symmetry", "pureQuads", "relaxIterations"})
+    for (const char* f : {"useHardEdges", "sharpAngle", "jointPoleAvoidance", "pureQuads", "relaxIterations"})
         remesh.sections[f] = "Edge Flow";
     for (const char* f : {"transferUvs", "transferNormals", "keepSource"})
         remesh.sections[f] = "Output";

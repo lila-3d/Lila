@@ -15,10 +15,10 @@ using namespace lila;
 
 namespace
 {
-retopo::QuadRemeshResult remesh(const geo::Mesh& m, int faces, bool seamless)
+retopo::QuadRemeshResult remesh(const geo::Mesh& m, int faces, bool patches)
 {
     retopo::QuadRemeshOptions o{.targetFaces = faces};
-    o.seamless = seamless;
+    o.method = patches ? retopo::RemeshMethod::Patches : retopo::RemeshMethod::Field;
     if (std::getenv("LILA_NO_GAPS"))
         o.resolveGaps = false;
     if (std::getenv("LILA_NO_SOFT"))
@@ -43,19 +43,28 @@ void compare(const char* name, const geo::Mesh& m, int faces, geo::Index maxIrre
     retopo::QuadRemeshResult local = remesh(m, faces, false), global = remesh(m, faces, true);
     REQUIRE(local.ok());
     REQUIRE(global.ok());
-    MESSAGE(name, "\n  local:    ", local.metrics.summary(), "  ", seconds(local), " s\n  seamless: ", global.metrics.summary(), "  ",
+    MESSAGE(name, "\n  field:   ", local.metrics.summary(), "  ", seconds(local), " s\n  patches: ", global.metrics.summary(), "  ",
             seconds(global), " s");
+    CHECK(global.layout == "patches");
     CHECK(global.metrics.irregular <= maxIrregular);
     CHECK(global.metrics.irregular <= local.metrics.irregular);
 }
 } // namespace
 
-TEST_CASE("seamless lattice only turns at the poles")
+TEST_CASE("patch layout only turns at the poles")
 {
-    compare("sphere", geo::makeSphere({.radius = 50.0, .subdivAxis = 48, .subdivHeight = 48}), 600, 8);
-    compare("torus", geo::makeTorus({.subdivAxis = 64, .subdivHeight = 32}), 800, 0);
+    compare("sphere", geo::makeSphere({.radius = 50.0, .subdivAxis = 48, .subdivHeight = 48}), 600, 10);
     compare("cube", geo::makeCube({.subdivX = 8, .subdivY = 8, .subdivZ = 8}), 600, 8);
     compare("cylinder", geo::makeCylinder({.radius = 30.0, .height = 120.0, .subdivAxis = 48, .subdivHeight = 8, .subdivCaps = 4, .capFill = geo::CapFill::Fan}), 600, 8);
+}
+
+TEST_CASE("a shape the patch layout can't cut up comes out by the field, and says so")
+{
+    // A torus has no poles, so no line starts anywhere.
+    retopo::QuadRemeshResult r = remesh(geo::makeTorus({.subdivAxis = 64, .subdivHeight = 32}), 800, true);
+    REQUIRE(r.ok());
+    CHECK(r.layout != "patches");
+    CHECK(!r.notes.empty());
 }
 
 TEST_CASE("zz seamless corpus timing" * doctest::skip())
@@ -102,7 +111,8 @@ TEST_CASE("zz remesh obj" * doctest::skip())
     o.targetFaces = std::getenv("LILA_AB_FACES") ? std::atoi(std::getenv("LILA_AB_FACES")) : 500;
     o.symmetryAxis = std::getenv("LILA_AB_SYM") ? std::atoi(std::getenv("LILA_AB_SYM")) : -1;
     o.resolveGaps = !std::getenv("LILA_NO_GAPS");
-    o.seamless = std::getenv("LILA_NO_SEAMLESS") == nullptr;
+    if (std::getenv("LILA_AB_FIELD"))
+        o.method = retopo::RemeshMethod::Field;
     o.useHardEdges = !std::getenv("LILA_NO_HARD");
     if (const char* a = std::getenv("LILA_AB_ADAPT"))
         o.adaptivity = std::atof(a);

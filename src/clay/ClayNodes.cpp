@@ -953,7 +953,7 @@ void registerCommands()
             g.select({out->id()});
             if (a.get<bool>("remesh", false))
                 return ops::execute("quadRemesh", {{"args", json::array({out->path()})}, {"targetFaces", a.get<int>("targetFaces", 2000)},
-                                                   {"keepSource", false}});
+                                                   {"symmetry", "off"}, {"keepSource", false}});
             return out->path();
         },
         .examples = {"convertClayToMesh(\"Dog\")", "convertClayToMesh(\"Dog\", remesh=True, targetFaces=3000)"},

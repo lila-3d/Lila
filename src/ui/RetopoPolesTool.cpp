@@ -303,8 +303,7 @@ void RetopoPolesTool::build()
     for (const retopo::Pole& p : mPoles)
         poles.push_back({{"position", {p.position.x, p.position.y, p.position.z}}, {"valence", p.valence}});
     json call = {{"args", {n->path()}}, {"targetFaces", targetFaces()}, {"poles", poles}};
-    if (mSymmetryAxis >= 0)
-        call["symmetry"] = std::string(1, char('x' + mSymmetryAxis));
+    call["symmetry"] = mSymmetryAxis >= 0 ? std::string(1, char('x' + mSymmetryAxis)) : std::string("off");
     try
     {
         json r = ops::execute("quadRemesh", call, CallSource::UI);

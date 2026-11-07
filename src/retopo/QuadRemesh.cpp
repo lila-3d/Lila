@@ -36,7 +36,7 @@ public:
         mLast = now;
         // Roughly where each stage ends in a typical run, for the progress bar.
         static const std::pair<const char*, double> kAt[] = {{"bvh", 0.03}, {"surface", 0.12}, {"density", 0.18}, {"cross field", 0.3},
-                                                             {"seamless", 0.6}, {"local", 0.9}, {"finish", 1.0}};
+                                                             {"seamless", 0.6}, {"patches", 0.85}, {"local", 0.9}, {"finish", 1.0}};
         double at = mAt;
         for (auto [stage, f] : kAt)
             if (std::string_view(stage) == name)
@@ -93,21 +93,73 @@ void projectPoints(geo::Mesh& m, std::vector<FeatureKind>& feature, const geo::M
     });
 }
 
+/** The lattice spacing anywhere near the surface: the scale at the nearest surface vertex. */
+class SizeField
+{
+public:
+    SizeField(const Surface& s, const std::vector<double>& scale) : mS(s), mScale(scale)
+    {
+        double sum = 0.0;
+        for (double v : scale)
+            sum += v;
+        mCell = std::max(1e-12, sum / std::max<double>(1.0, double(scale.size())));
+        for (Index v = 0; v < s.vertexCount(); ++v)
+            mGrid[key(cellOf(s.pos[v]))].push_back(v);
+    }
+    double at(const glm::dvec3& p) const
+    {
+        const glm::ivec3 c = cellOf(p);
+        for (int r = 1; r <= 3; ++r)
+        {
+            Index best = kInvalid;
+            double bestD = std::numeric_limits<double>::max();
+            for (int x = -r; x <= r; ++x)
+                for (int y = -r; y <= r; ++y)
+                    for (int z = -r; z <= r; ++z)
+                        if (auto it = mGrid.find(key(c + glm::ivec3(x, y, z))); it != mGrid.end())
+                            for (Index v : it->second)
+                                if (const double d = glm::length(mS.pos[v] - p); d < bestD)
+                                {
+                                    bestD = d;
+                                    best = v;
+                                }
+            if (best != kInvalid)
+                return mScale[best];
+        }
+        return mCell;
+    }
+
+private:
+    glm::ivec3 cellOf(const glm::dvec3& p) const { return glm::ivec3(glm::floor(p / mCell)); }
+    static int64_t key(const glm::ivec3& c) { return (int64_t(c.x) * 73856093) ^ (int64_t(c.y) * 19349663) ^ (int64_t(c.z) * 83492791); }
+    const Surface& mS;
+    const std::vector<double>& mScale;
+    double mCell = 1.0;
+    std::unordered_map<int64_t, std::vector<Index>> mGrid;
+};
+
 /**
  * Tangential Laplacian relax that slides points along the surface and crease points along their creases. With a seam
  * axis, the half of a symmetric remesh: border points on the plane relax as if their mirrored neighbours were there,
- * so the rows crossing the seam meet it straight, and stay on the plane.
+ * so the rows crossing the seam meet it straight, and stay on the plane. With a size field, each neighbour pulls by
+ * the inverse of the size between them, so edges settle at lengths in proportion to it instead of all alike.
  */
 void relaxAlongFeatures(geo::Mesh& m, const std::vector<FeatureKind>& feature, const geo::MeshBvh& bvh, const FeatureLines& lines, double h,
-                    int iterations, int seamAxis = -1)
+                    int iterations, int seamAxis = -1, const SizeField* sizes = nullptr)
 {
     LILA_ZONE();
 
     auto nb = pointNeighbours(m);
     std::vector<glm::dvec3> next(m.pointCapacity());
+    std::vector<double> size(m.pointCapacity(), 1.0);
     for (int it = 0; it < iterations; ++it)
     {
         Budget::checkpoint();
+        if (sizes && it % 5 == 0)
+            tbb::parallel_for(Index(0), m.pointCapacity(), [&](Index p) {
+                if (m.pointValid(p))
+                    size[p] = sizes->at(m.position(p));
+            });
         std::vector<glm::vec3> normals = geo::pointNormals(m);
         tbb::parallel_for(Index(0), m.pointCapacity(), [&](Index p) {
             if (!m.pointValid(p))
@@ -138,25 +190,31 @@ void relaxAlongFeatures(geo::Mesh& m, const std::vector<FeatureKind>& feature, c
                 return;
             }
             glm::dvec3 avg(0.0);
+            double weight = 0.0;
             int count = 0;
             for (Index o : nb[p])
                 if (feature[p] == FeatureKind::None || feature[o] != FeatureKind::None)
                 {
-                    avg += m.position(o);
+                    const double w = 2.0 / (size[p] + size[o]);
+                    avg += w * m.position(o);
+                    weight += w;
                     ++count;
                 }
+            if (count == 0)
+                return;
+            avg /= weight;
             if (feature[p] == FeatureKind::Line)
             {
                 // Slide only between the two crease neighbours.
                 if (count != 2)
                     return;
-                glm::dvec3 target = glm::mix(at, avg / double(count), 0.5), q;
+                glm::dvec3 target = glm::mix(at, avg, 0.5), q;
                 if (lines.closest(target, 0.5 * h, q))
                     next[p] = q;
                 return;
             }
             glm::dvec3 n(normals[p]);
-            glm::dvec3 d = avg / double(count) - at;
+            glm::dvec3 d = avg - at;
             d -= n * glm::dot(n, d);
             geo::BvhClosest c;
             if (bvh.closestPoint(at + 0.5 * d, c))
@@ -408,28 +466,6 @@ void splitHighValence(geo::Mesh& m, std::vector<FeatureKind>& feature)
 }
 
 void compactTagged(geo::Mesh& m, std::vector<FeatureKind>& feature, std::vector<uint8_t>& boundary);
-
-/** A whole symmetric remesh cut back to the faces on the plane's positive side, for the mirror to complete. */
-void keepPositiveSide(geo::Mesh& m, std::vector<FeatureKind>& feature, std::vector<uint8_t>& boundary, const geo::SymmetryPlane& plane)
-{
-    LILA_ZONE();
-
-    for (Index f = 0; f < m.faceCapacity(); ++f)
-        if (m.faceValid(f) && plane.distance(m.faceCentroid(f)) < 0.0)
-            m.removeFace(f);
-    std::vector<Index> edges, points;
-    for (Index e = 0; e < m.edgeCapacity(); ++e)
-        if (m.edgeValid(e) && m.edgeFaceCount(e) == 0)
-            edges.push_back(e);
-    m.removeLoose(edges, {});
-    for (Index p = 0; p < m.pointCapacity(); ++p)
-        if (m.pointValid(p) && m.pointFaces(p).empty())
-            points.push_back(p);
-    m.removeLoose({}, points);
-    feature.resize(m.pointCapacity(), FeatureKind::None);
-    boundary.resize(m.pointCapacity(), 0);
-    compactTagged(m, feature, boundary);
-}
 
 /**
  * On the half of a symmetric remesh, folds each quad with three corners in a row on the seam (the middle one with no
@@ -1556,10 +1592,13 @@ std::vector<glm::dvec3> symmetricField(Work& w, const QuadRemeshOptions& opts)
     return q;
 }
 
+/** Whether the field is solved on the half joined to its reflection, with its poles cancelled and spread once there. */
+bool usesSymmetricField(const Work& w, const QuadRemeshOptions& opts) { return w.symmetric && !opts.poles && !std::getenv("LILA_HALF_FIELD"); }
+
 /** The cross field, turning exactly at opts.poles when given. */
 std::vector<glm::dvec3> crossField(Work& w, const QuadRemeshOptions& opts, std::string& error)
 {
-    if (w.symmetric && !opts.poles && !std::getenv("LILA_HALF_FIELD"))
+    if (usesSymmetricField(w, opts))
         return symmetricField(w, opts);
     if (opts.poles)
     {
@@ -1575,6 +1614,57 @@ std::vector<glm::dvec3> crossField(Work& w, const QuadRemeshOptions& opts, std::
 }
 
 Index defects(const geo::Mesh& m, const geo::Mesh& src, const geo::MeshBvh& bvh, bool sourceClosed);
+
+/** The share of the mesh's points whose mirror image across the axis plane lies off the mesh, by over 1% of its size. */
+double asymmetry(const geo::Mesh& m, const geo::MeshBvh& bvh, int axis)
+{
+    const geo::Bounds box = m.bounds();
+    const double tol = 0.01 * glm::length(box.max - box.min);
+    std::vector<Index> points;
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        if (m.pointValid(p))
+            points.push_back(p);
+    if (points.empty())
+        return 0.0;
+    const size_t step = std::max<size_t>(1, points.size() / 2000);
+    int far = 0, n = 0;
+    for (size_t i = 0; i < points.size(); i += step, ++n)
+    {
+        glm::dvec3 q = m.position(points[i]);
+        q[axis] = -q[axis];
+        geo::BvhClosest c;
+        far += !bvh.closestPoint(q, c) || glm::length(c.point - q) > tol;
+    }
+    return double(far) / double(n);
+}
+
+/** Relax passes on a patch layout per Relax Iteration asked for. */
+constexpr int kPatchRelaxPerIteration = 5;
+
+/** Debug dumps: the mesh as an obj. */
+void dumpObj(const geo::Mesh& m, const std::string& path)
+{
+    FILE* f = std::fopen(path.c_str(), "w");
+    if (!f)
+        return;
+    std::vector<Index> id(m.pointCapacity(), 0);
+    Index next = 1;
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        if (m.pointValid(p))
+        {
+            std::fprintf(f, "v %.9g %.9g %.9g\n", m.position(p).x, m.position(p).y, m.position(p).z);
+            id[p] = next++;
+        }
+    for (Index fc = 0; fc < m.faceCapacity(); ++fc)
+        if (m.faceValid(fc))
+        {
+            std::fprintf(f, "f");
+            for (Index p : m.facePoints(fc))
+                std::fprintf(f, " %d", int(id[p]));
+            std::fprintf(f, "\n");
+        }
+    std::fclose(f);
+}
 Index largeFaces(const geo::Mesh& m);
 bool better(const QuadRemeshResult& a, int defectsA, const QuadRemeshResult& b, int defectsB);
 
@@ -1595,6 +1685,11 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
     const geo::MeshBvh& bvh = *w.bvh;
     Surface& s = w.s;
     const bool symmetric = w.symmetric;
+    if (symmetric)
+        if (const double off = asymmetry(src, bvh, opts.symmetryAxis); off > 0.05)
+            result.notes.push_back("the mesh isn't symmetric across " + std::string(1, char('X' + opts.symmetryAxis)) + " (" +
+                                   std::to_string(int(std::lround(100.0 * off))) + "% of it has no mirror image), so this mirrors its +" +
+                                   std::string(1, char('X' + opts.symmetryAxis)) + " half; set Symmetry to Off for it");
     const geo::SymmetryPlane& plane = w.plane;
     const double h = w.h, cf = w.cf;
     const std::vector<double>& scale = w.scale;
@@ -1636,42 +1731,13 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         seamDebug("extracted");
         // LILA_STAGE_DUMP=<dir>: the mesh after each cleanup step, as <layout>_<step>.obj.
         auto stageDump = [&](const char* stage) {
-            const char* dir = std::getenv("LILA_STAGE_DUMP");
-            if (!dir)
-                return;
-            if (FILE* f = std::fopen((std::string(dir) + "/" + layout + "_" + stage + ".obj").c_str(), "w"))
-            {
-                std::vector<Index> id(m.pointCapacity(), 0);
-                Index next = 1;
-                for (Index p = 0; p < m.pointCapacity(); ++p)
-                    if (m.pointValid(p))
-                    {
-                        std::fprintf(f, "v %.9g %.9g %.9g\n", m.position(p).x, m.position(p).y, m.position(p).z);
-                        id[p] = next++;
-                    }
-                for (Index fc = 0; fc < m.faceCapacity(); ++fc)
-                    if (m.faceValid(fc))
-                    {
-                        std::fprintf(f, "f");
-                        for (Index p : m.facePoints(fc))
-                            std::fprintf(f, " %d", int(id[p]));
-                        std::fprintf(f, "\n");
-                    }
-                std::fclose(f);
-            }
+            if (const char* dir = std::getenv("LILA_STAGE_DUMP"))
+                dumpObj(m, std::string(dir) + "/" + layout + "_" + stage + ".obj");
         };
         std::vector<FeatureKind>& feature = ex.feature;
         std::vector<uint8_t>& boundary = ex.boundary;
         feature.resize(m.pointCapacity(), FeatureKind::None);
         boundary.resize(m.pointCapacity(), 0);
-        // The joined extraction is symmetric face for face; cut back to the half while it still is, so the seam row it
-        // traced is kept as the half's border.
-        if (ex.mirrored)
-        {
-            keepPositiveSide(m, feature, boundary, plane);
-            ex.mirrored = false;
-            seamDebug("cut");
-        }
         removeValence2(m, feature);
         seamDebug("v2");
         stageDump("1v2");
@@ -1732,12 +1798,16 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
             seamDebug("snapped2");
             projectPoints(m, feature, bvh, lines, 0.4 * coarseH);
         }
-        int relaxIterations = opts.relaxIterations;
-        if (const char* e = std::getenv("LILA_PATCH_RELAX"); e && std::string_view(layout) == "patches")
+        // Patch grids are filled flat between their corners, so they take longer to even out over the surface.
+        const bool patches = std::string_view(layout) == "patches";
+        int relaxIterations = patches ? kPatchRelaxPerIteration * opts.relaxIterations : opts.relaxIterations;
+        if (const char* e = std::getenv("LILA_PATCH_RELAX"); e && patches)
             relaxIterations = std::atoi(e);
-        splitHighValence(m, feature);
+        if (!patches)
+            splitHighValence(m, feature);
         stageDump("6split");
-        relaxAlongFeatures(m, feature, bvh, lines, h, relaxIterations, symmetric ? opts.symmetryAxis : -1);
+        const std::optional<SizeField> sizes = patches ? std::optional<SizeField>(std::in_place, s, scale) : std::nullopt;
+        relaxAlongFeatures(m, feature, bvh, lines, h, relaxIterations, symmetric ? opts.symmetryAxis : -1, sizes ? &*sizes : nullptr);
         stageDump("7relax");
         untangle(m, feature, src, bvh, lines, h);
         stageDump("8untangle");
@@ -1745,8 +1815,6 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
 
         if (symmetric)
         {
-            if (ex.mirrored)
-                keepPositiveSide(m, feature, boundary, plane);
             // Seam points sit exactly on the plane so the mirror welds them and the halves match bit for bit.
             const int axis = opts.symmetryAxis;
             for (Index p = 0; p < m.pointCapacity(); ++p)
@@ -1757,8 +1825,12 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
                     m.setPosition(p, at);
                 }
             seamDebug("premerge");
-            collapseSeamWedges(m, feature, bvh, axis, 1e-9 * h);
-            straightenSeamRows(m, feature, bvh, axis, 1e-9 * h);
+            // The patch layout's center line is a traced line, an edge loop already.
+            if (!patches)
+            {
+                collapseSeamWedges(m, feature, bvh, axis, 1e-9 * h);
+                straightenSeamRows(m, feature, bvh, axis, 1e-9 * h);
+            }
             seamDebug("premirror");
             geo::MirrorOptions mo;
             mo.plane = plane;
@@ -1774,70 +1846,75 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         return out;
     };
 
-    // The seamless layout only turns at the poles, but rounding can tangle it near tight features; keep whichever of it
-    // and the local position field comes out with fewer irregular points.
     const bool closed = isClosed(src);
     auto record = [&](QuadRemeshResult r) {
         if (r.ok())
             result.attempts.push_back({r.layout, r.mesh.numFaces(), int(defects(r.mesh, src, bvh, closed)), r.metrics.irregular});
         // LILA_DUMP_ATTEMPTS=<dir>: every attempt as attempt<n>_<layout>.obj, in the source's space.
         if (const char* dir = std::getenv("LILA_DUMP_ATTEMPTS"); dir && r.ok())
-            if (FILE* f = std::fopen((std::string(dir) + "/attempt" + std::to_string(result.attempts.size()) + "_" + r.layout + ".obj").c_str(), "w"))
-            {
-                std::vector<Index> id(r.mesh.pointCapacity(), 0);
-                Index next = 1;
-                for (Index p = 0; p < r.mesh.pointCapacity(); ++p)
-                    if (r.mesh.pointValid(p))
-                    {
-                        const glm::dvec3 x = r.mesh.position(p);
-                        std::fprintf(f, "v %.9g %.9g %.9g\n", x.x, x.y, x.z);
-                        id[p] = next++;
-                    }
-                for (Index fc = 0; fc < r.mesh.faceCapacity(); ++fc)
-                    if (r.mesh.faceValid(fc))
-                    {
-                        std::fprintf(f, "f");
-                        for (Index p : r.mesh.facePoints(fc))
-                            std::fprintf(f, " %d", int(id[p]));
-                        std::fprintf(f, "\n");
-                    }
-                std::fclose(f);
-            }
+            dumpObj(r.mesh, std::string(dir) + "/attempt" + std::to_string(result.attempts.size()) + "_" + r.layout + ".obj");
         return r;
     };
     auto build = [&](const char* layout, const std::vector<glm::dvec3>& o, const std::vector<std::array<int, 2>>* steps = nullptr) {
         return record(buildFrom(extractMesh(s, q, o, scale, steps), layout));
     };
+    const bool pinned = !opts.pinnedPoints.empty();
     auto flawsOf = [&](const QuadRemeshResult& r) { return r.ok() ? int(defects(r.mesh, src, bvh, closed) + largeFaces(r.mesh)) : 0; };
-    // Fewer flaws first, then fewer irregular points.
-    auto seamlessBetter = [&](const QuadRemeshResult& a, int flawsA, const std::optional<QuadRemeshResult>& b, int flawsB) {
-        return a.ok() && (!b || !b->ok() || flawsA < flawsB || (flawsA == flawsB && a.metrics.irregular < b->metrics.irregular));
+    // Pinned points only hold exactly in one global parametrization, whose lattice points round onto them. Where it
+    // doesn't come out clean, the local field, which holds them only nearly, and the result says so.
+    auto pinnedLayout = [&](const std::vector<glm::dvec3>& qPin) {
+        std::optional<QuadRemeshResult> kept;
+        int keptFlaws = 0;
+        auto consider = [&](QuadRemeshResult r) {
+            const int flaws = flawsOf(r);
+            if (r.ok() && (!kept || flaws < keptFlaws || (flaws == keptFlaws && r.metrics.irregular < kept->metrics.irregular)))
+            {
+                kept = std::move(r);
+                keptFlaws = flaws;
+            }
+            return flaws;
+        };
+        // Steering the rounding away from folds untangles some layouts, so a folded one tries again with it when the
+        // budget leaves room. One folded through and through (busy creases, mostly) doesn't come right by steering.
+        for (int foldRetries : {0, 48})
+        {
+            const auto started = std::chrono::steady_clock::now();
+            std::vector<std::array<int, 2>> steps;
+            Extracted grid;
+            Index folds = 0;
+            std::vector<glm::dvec3> o = solveSeamlessPositions(s, qPin, scale, nullptr, &steps, &grid, foldRetries, &folds);
+            if (o.empty())
+                break;
+            // The grid traces folds left in the layout as holes; rounding to the nearest lattice point covers them.
+            if (grid.mesh.numFaces() == 0 || consider(record(buildFrom(std::move(grid), "seamless"))) > 0)
+                consider(record(buildFrom(extractMesh(s, qPin, o, scale, &steps), "seamless")));
+            const double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+            if (folds == 0 || folds > Index(s.tris.size() / 100) || Budget::remaining() <= 3.0 * took || (kept && keptFlaws == 0))
+                break;
+        }
+        clock.lap("seamless");
+        if (kept && keptFlaws == 0)
+            return std::move(*kept);
+        QuadRemeshResult field = build("field", solvePositionField(s, q, scale));
+        if (kept && (!field.ok() || keptFlaws <= flawsOf(field)))
+            return std::move(*kept);
+        if (field.ok())
+            result.notes.push_back("the pinned points don't fit a clean global layout here, so the local field holds them only nearly");
+        return field;
     };
-    std::optional<QuadRemeshResult> seamless;
-    int seamlessFlaws = 0;
-    const bool trySeamlessLayout = opts.seamless;
-    // The seamless layout puts every pole on a lattice point, so poles closer than a step or so fold it; a close pair of
-    // opposite poles is only a kink in the flow, and the field without it is the one to lay out.
-    std::vector<glm::dvec3> qSeam = q;
-    if (trySeamlessLayout && !opts.poles && !(symmetric && !std::getenv("LILA_HALF_FIELD")))
+    // Close poles of opposite turn are only a kink in the flow, and poles packed together crowd the layout: the field is
+    // solved again turning only at the poles left once those are cancelled and spread. The symmetric field did this once
+    // already, on its half.
+    std::vector<glm::dvec3> qLayout = q;
+    if ((pinned || opts.method == RemeshMethod::Patches) && !opts.poles && !usesSymmetricField(w, opts))
     {
         // Weaker pull to the curvature lets the field keep to the poles it is given instead of growing new ones beside them.
         FieldOptions budgeted = fo;
         budgeted.curvatureWeight *= 0.3;
-        // A seam point mirrors to an even count of edges, so a pole by the seam comes out as a pair beside it with a
-        // six-edge point between. LILA_POLES_OFF_SEAM moves poles two steps off: clears the head top and crotch on
-        // Mochi but tangles the chest, so it stays a switch.
-        std::function<bool(Index)> offSeam;
-        if (symmetric && std::getenv("LILA_POLES_OFF_SEAM"))
-            offSeam = [&](Index t) {
-                const auto& tri = s.tris[t];
-                const glm::dvec3 c = (s.pos[tri[0]] + s.pos[tri[1]] + s.pos[tri[2]]) / 3.0;
-                return std::abs(plane.distance(c)) >= 2.0 * (scale[tri[0]] + scale[tri[1]] + scale[tri[2]]) / 3.0;
-            };
         for (int round = 0; round < 3; ++round)
         {
-            const std::vector<FieldSingularity> poles = fieldSingularities(s, qSeam);
-            const std::vector<FieldSingularity> kept = spreadPoles(s, cancelClosePoles(s, poles, scale, 1.5), scale, 1.0, offSeam);
+            const std::vector<FieldSingularity> poles = fieldSingularities(s, qLayout);
+            const std::vector<FieldSingularity> kept = spreadPoles(s, cancelClosePoles(s, poles, scale, 1.5), scale, 1.0);
             bool same = kept.size() == poles.size();
             for (size_t i = 0; i < kept.size() && same; ++i)
                 same = kept[i].tri == poles[i].tri && kept[i].index == poles[i].index;
@@ -1847,82 +1924,14 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
             if (!pt.error.empty())
                 break;
             budgeted.twist = std::move(pt.twist);
-            qSeam = solveCrossField(s, budgeted);
+            qLayout = solveCrossField(s, budgeted);
         }
-        Budget::note(std::to_string(fieldSingularities(s, qSeam).size()) + " poles for the seamless layout");
+        Budget::note(std::to_string(fieldSingularities(s, qLayout).size()) + " poles for the layout");
     }
-    // The seamless solve evens its spacing out over the whole surface, softening local changes (handles, joints, thin
-    // parts); asking for half again the contrast brings back about what was asked.
-    std::vector<double> seamScale = scale;
-    if (w.uncapped.size() == scale.size())
-    {
-        constexpr double kGain = 1.5;
-        const std::vector<double>& u = w.uncapped;
-        std::vector<double> sorted = u;
-        std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
-        const double mid = sorted[sorted.size() / 2];
-        std::vector<double> gained(u.size());
-        double before = 0.0, after = 0.0;
-        for (Index v = 0; v < Index(u.size()); ++v)
-        {
-            gained[v] = mid * std::pow(u[v] / mid, kGain);
-            before += s.area[v] / (u[v] * u[v]);
-            after += s.area[v] / (gained[v] * gained[v]);
-        }
-        // Same number of cells overall: only the contrast changes. Gap and thin-part caps are hard limits, so they
-        // hold as they were rather than getting the extra contrast.
-        const double k = before > 0.0 && after > 0.0 ? std::sqrt(after / before) : 1.0;
-        for (Index v = 0; v < Index(u.size()); ++v)
-        {
-            const double g = gained[v] * k;
-            seamScale[v] = scale[v] < 0.999 * u[v] ? std::min(scale[v], g) : g;
-        }
-    }
-    auto trySeamless = [&](int foldRetries) {
-        std::vector<std::array<int, 2>> steps;
-        Extracted grid;
-        Index folds = 0;
-        // LILA_MIRROR_EXTRACT traces the seam row inside the half joined to its reflection instead of rebuilding it along
-        // an open border. With LILA_POLES_OFF_SEAM the seam row comes out clean, but the moved poles tangle the chest.
-        const geo::SymmetryPlane* mirror = symmetric && std::getenv("LILA_MIRROR_EXTRACT") ? &plane : nullptr;
-        std::vector<glm::dvec3> o = solveSeamlessPositions(s, qSeam, seamScale, nullptr, &steps, &grid, foldRetries, &folds, mirror);
-        if (o.empty())
-            return folds;
-        auto consider = [&](QuadRemeshResult r) {
-            const bool ok = r.ok();
-            const int flaws = flawsOf(r);
-            if (seamlessBetter(r, flaws, seamless, seamlessFlaws))
-            {
-                seamless = std::move(r);
-                seamlessFlaws = flaws;
-            }
-            return ok ? flaws : 1;
-        };
-        // The grid traces folds left in the layout as holes; rounding to the nearest lattice point covers them.
-        if (grid.mesh.numFaces() == 0 || consider(record(buildFrom(std::move(grid), "seamless"))) > 0)
-            consider(record(buildFrom(mirror ? extractMirrored(s, qSeam, o, scale, steps, *mirror) : extractMesh(s, qSeam, o, scale, &steps), "seamless")));
-        return folds;
-    };
-    // Steering the rounding away from folds untangles some layouts and costs others poles, so a folded one tries both,
-    // when the budget leaves room for the retry and the extraction after it. One folded through and through (busy
-    // creases, mostly) doesn't come right by steering, so it isn't retried.
-    const auto seamlessStarted = std::chrono::steady_clock::now();
-    if (trySeamlessLayout)
-    {
-        const auto started = std::chrono::steady_clock::now();
-        const Index folds = trySeamless(0);
-        const double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-        if (folds > 0 && folds <= Index(s.tris.size() / 100) && Budget::remaining() > 3.0 * took)
-            trySeamless(48);
-    }
-    clock.lap("seamless");
-    // Where the seamless layout didn't come out clean, the patch layout: lines from the poles cut the surface into
-    // rectangles filled one by one, which can't fold and meets the count. A clean one stands in for the seamless layout.
-    const bool forcePatches = std::getenv("LILA_PATCHES") != nullptr;
-    // It takes about as long as the seamless solve, so it only starts with that much time left.
-    const double seamlessTook = std::chrono::duration<double>(std::chrono::steady_clock::now() - seamlessStarted).count();
-    if (trySeamlessLayout && !opts.poles && (forcePatches || !(seamless && seamless->ok() && seamlessFlaws == 0)) &&
-        Budget::remaining() > 1.5 * seamlessTook)
+    QuadRemeshResult best;
+    if (pinned)
+        best = pinnedLayout(qLayout);
+    else if (opts.method == RemeshMethod::Patches)
     {
         std::string why;
         if (const char* dump = std::getenv("LILA_FIELD_DUMP"))
@@ -1930,70 +1939,39 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
             {
                 for (Index v = 0; v < s.vertexCount(); ++v)
                     std::fprintf(f, "%.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g\n", s.pos[v].x, s.pos[v].y, s.pos[v].z, s.normal[v].x,
-                                 s.normal[v].y, s.normal[v].z, qSeam[v].x, qSeam[v].y, qSeam[v].z);
+                                 s.normal[v].y, s.normal[v].z, qLayout[v].x, qLayout[v].y, qLayout[v].z);
                 std::fclose(f);
             }
-        Extracted ex = layoutPatches(s, qSeam, scale, double(opts.targetFaces) * (symmetric ? 0.5 : 1.0), &why);
-        if (const char* raw = std::getenv("LILA_PATCH_RAW"); raw && ex.mesh.numFaces() > 0)
-            if (FILE* f = std::fopen(raw, "w"))
-            {
-                std::vector<Index> id(ex.mesh.pointCapacity(), 0);
-                Index next = 1;
-                for (Index p = 0; p < ex.mesh.pointCapacity(); ++p)
-                    if (ex.mesh.pointValid(p))
-                    {
-                        const glm::dvec3 x = ex.mesh.position(p);
-                        std::fprintf(f, "v %.9g %.9g %.9g\n", x.x, x.y, x.z);
-                        id[p] = next++;
-                    }
-                for (Index fc = 0; fc < ex.mesh.faceCapacity(); ++fc)
-                    if (ex.mesh.faceValid(fc))
-                    {
-                        std::fprintf(f, "f");
-                        for (Index p : ex.mesh.facePoints(fc))
-                            std::fprintf(f, " %d", int(id[p]));
-                        std::fprintf(f, "\n");
-                    }
-                std::fclose(f);
-            }
-        if (ex.mesh.numFaces() > 0)
-        {
-            QuadRemeshResult r = record(buildFrom(std::move(ex), "patches"));
-            const int flaws = flawsOf(r);
-            if (r.ok() && (forcePatches || flaws == 0))
-            {
-                seamless = std::move(r);
-                seamlessFlaws = flaws;
-            }
-        }
-        else
-        {
-            Budget::note("patch layout: " + why);
-            if (std::getenv("LILA_PATCH_DEBUG"))
-                std::fprintf(stderr, "patch layout: %s\n", why.c_str());
-        }
+        Extracted ex = layoutPatches(s, qLayout, scale, double(opts.targetFaces) * (symmetric ? 0.5 : 1.0), &why);
         clock.lap("patches");
+        if (const char* raw = std::getenv("LILA_PATCH_RAW"); raw && ex.mesh.numFaces() > 0)
+            dumpObj(ex.mesh, raw);
+        if (ex.mesh.numFaces() > 0)
+            best = record(buildFrom(std::move(ex), "patches"));
+        else
+            best.error = why;
+        // Where the patches don't come out (a torus with no poles) or come out with flaws, the local field when it is
+        // cleaner, said so. A few flaws stay when the field would pay for them in poles all over.
+        const int patchFlaws = flawsOf(best);
+        if (!best.ok() || patchFlaws > 0)
+        {
+            QuadRemeshResult field = build("field", solvePositionField(s, q, scale));
+            const bool fewFlaws = patchFlaws <= std::max(8, int(best.mesh.numFaces() / 100));
+            if (field.ok() && (!best.ok() || (flawsOf(field) < patchFlaws && (!fewFlaws || field.metrics.irregular <= 3 * best.metrics.irregular / 2))))
+            {
+                result.notes.push_back(best.ok() ? "the patch layout came out with " + std::to_string(patchFlaws) +
+                                                       (patchFlaws == 1 ? " flaw" : " flaws") + ", so this is the Field layout, with more poles"
+                                                 : "the patch layout didn't work out for this shape (" + why + "), so this is the Field layout");
+                best = std::move(field);
+            }
+        }
     }
-    // Pins only hold exactly in the seamless layout, so with pins the local field is only a fallback.
-    const bool preferSeamless = !opts.pinnedPoints.empty();
-    QuadRemeshResult best;
-    if (forcePatches && seamless && seamless->ok() && seamless->layout == "patches")
-        best = std::move(*seamless);
-    else if (seamless && seamless->ok() && preferSeamless)
-        best = std::move(*seamless);
     else
-    {
         best = build("field", solvePositionField(s, q, scale));
-        clock.lap("local");
-        // Fewer poles only count when it is no less clean: a folded seamless layout is worse than any clean one.
-        if (seamless && seamless->ok() &&
-            (!best.ok() || seamlessFlaws < flawsOf(best) || (seamlessFlaws == flawsOf(best) && seamless->metrics.irregular <= best.metrics.irregular)))
-            best = std::move(*seamless);
-    }
     // Where lattice points land against a tight spot is down to where the lattice happens to sit; a lattice shifted by
     // half a cell often fits where the first didn't, at the same density.
     int bestDefects = best.ok() ? int(defects(best.mesh, src, bvh, closed)) : 0;
-    if (!preferSeamless && best.layout != "patches" && !(best.ok() && bestDefects == 0))
+    if (best.layout == "field" && !(best.ok() && bestDefects == 0))
         for (glm::dvec2 shift : {glm::dvec2(0.5, 0.0), glm::dvec2(0.0, 0.5), glm::dvec2(0.5, 0.5)})
         {
             QuadRemeshResult again = build("shifted", solvePositionField(s, q, scale, shift));
@@ -2188,8 +2166,9 @@ QuadRemeshResult cleanest(const geo::Mesh& source, const QuadRemeshOptions& opts
     asked = opts.targetFaces;
     if (source.numFaces() == 0)
         return result;
-    // Pinned points tie the lattice to the source's own spacing; a finer retry would no longer meet them.
-    if (!opts.pinnedPoints.empty() || (result.ok() && result.defects == 0))
+    // Pinned points tie the lattice to the source's own spacing; a finer retry would no longer meet them. Patches meet
+    // the count they are given rather than folding where it is coarse, so they keep it once they come out at all.
+    if (!opts.pinnedPoints.empty() || (result.ok() && (result.defects == 0 || opts.method == RemeshMethod::Patches)))
         return result;
     QuadRemeshOptions finer = opts;
     for (int attempt = 0; attempt < 4; ++attempt)
@@ -2229,7 +2208,6 @@ void fitCount(const geo::Mesh& source, const QuadRemeshOptions& opts, QuadRemesh
     const auto off = [&](const QuadRemeshResult& r) { return std::abs(double(r.mesh.numFaces()) / target - 1.0); };
     QuadRemeshOptions again = opts;
     double lastTook = 0.0;
-    bool noted = false;
     for (int attempt = 0; attempt < 3 && off(result) > opts.countTolerance; ++attempt)
     {
         if (lastTook > 0.0 && Budget::remaining() < 2.0 * lastTook)
@@ -2243,50 +2221,15 @@ void fitCount(const geo::Mesh& source, const QuadRemeshOptions& opts, QuadRemesh
         const auto started = std::chrono::steady_clock::now();
         QuadRemeshResult r = quadRemeshOnce(source, again);
         lastTook = secondsSince(started);
-        // A clean seamless layout outranks any other at a closer count: the count is a request, the flow is the result.
-        auto global = [](const QuadRemeshResult& x) { return x.layout == "seamless" || x.layout == "patches"; };
-        const bool keepsLayout = !global(result) || global(r);
-        const bool take = r.ok() && r.defects <= result.defects && off(r) < off(result) && keepsLayout;
+        const bool take = r.ok() && r.defects <= result.defects && off(r) < off(result);
         if (take)
             asked = again.targetFaces;
-        const std::string lostTo = r.ok() && !keepsLayout && r.defects <= result.defects ? r.layout : std::string();
         keepOrMerge(result, std::move(r), take);
-        if (!lostTo.empty())
-        {
-            result.notes.push_back(std::to_string(result.mesh.numFaces()) + " faces, outside the count tolerance: at the count asked only a " + lostTo +
-                                   " layout came out clean, with worse flow, so the " + result.layout + " layout is kept");
-            noted = true;
-        }
         if (!take)
             break;
     }
-    if (off(result) > opts.countTolerance && !noted)
+    if (off(result) > opts.countTolerance)
         result.notes.push_back(std::to_string(result.mesh.numFaces()) + " faces, outside the count tolerance: no closer count came out as clean");
-}
-
-/** Says so when Seamless was asked for and another layout came out, and why: a fallback is never silent. */
-void noteLayoutFallback(const QuadRemeshOptions& opts, QuadRemeshResult& result)
-{
-    if (!result.ok() || !opts.seamless || opts.method != RemeshMethod::Field || result.layout == "seamless")
-        return;
-    int fewest = -1;
-    for (const RemeshAttempt& a : result.attempts)
-        if (a.layout == "seamless" && (fewest < 0 || a.defects < fewest))
-            fewest = a.defects;
-    static const std::map<std::string, std::string, std::less<>> what = {
-        {"patches", "patches cut along the lines from the poles, whose flow can turn at patch corners"},
-        {"field", "the local field, with more poles"},
-        {"shifted", "the local field on a shifted lattice, with more poles"},
-    };
-    const auto it = what.find(result.layout);
-    const std::string layout = it != what.end() ? it->second : result.layout;
-    if (fewest < 0)
-        result.notes.push_back("Seamless found no layout for this shape; this is " + layout);
-    else if (fewest == 0)
-        result.notes.push_back("Seamless came out clean but with more poles than this layout: " + layout);
-    else
-        result.notes.push_back("Seamless didn't come out clean (best try " + std::to_string(fewest) + (fewest == 1 ? " flaw" : " flaws") + "); this is " +
-                               layout);
 }
 
 /** For each requested pole, the nearest irregular inner point within a few faces of it. */
@@ -2342,17 +2285,23 @@ void matchPoles(const QuadRemeshOptions& opts, QuadRemeshResult& result)
 static QuadRemeshResult quadRemeshWithin(const geo::Mesh& source, const QuadRemeshOptions& opts)
 {
     QuadRemeshResult result;
+    QuadRemeshOptions laid = opts;
+    std::string gridNote;
     if (opts.method == RemeshMethod::Grid)
     {
         result = gridRemesh(source, opts);
         if (result.ok())
             return result;
+        gridNote = "Grid takes an open sheet seen from one side (" + result.error + "), so this is laid out by patches";
+        result = {};
+        laid.method = RemeshMethod::Patches;
     }
-    int asked = opts.targetFaces;
-    keepOrMerge(result, cleanest(source, opts, asked), true);
-    fitCount(source, opts, result, asked);
-    noteLayoutFallback(opts, result);
-    matchPoles(opts, result);
+    int asked = laid.targetFaces;
+    keepOrMerge(result, cleanest(source, laid, asked), true);
+    fitCount(source, laid, result, asked);
+    if (!gridNote.empty() && result.ok())
+        result.notes.insert(result.notes.begin(), gridNote);
+    matchPoles(laid, result);
     return result;
 }
 } // namespace lila::retopo

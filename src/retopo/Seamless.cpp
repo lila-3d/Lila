@@ -166,54 +166,6 @@ void buildEdges(ParamMesh& m)
             m.boundary[m.edges[e][0]] = m.boundary[m.edges[e][1]] = 1;
 }
 
-/**
- * The half of a symmetric remesh joined at the seam to its reflection, charts reflected with it, so extraction traces
- * the seam row as an inner lattice line instead of stopping at an open border. Seam vertices are shared; the copy's
- * triangles run the other way round, so its reflected charts keep their orientation. The seam is a whole lattice line,
- * so each chart meets its reflection by a half turn or a whole shift, transitions extraction reads from the shared edges.
- */
-void mirrorForExtraction(const ParamMesh& m, const std::vector<Chart>& chart, const geo::SymmetryPlane& plane, ParamMesh& out,
-                         std::vector<Chart>& outChart)
-{
-    const Index nv = Index(m.pos.size()), nt = Index(m.tris.size());
-    double meanScale = 0.0;
-    for (double sc : m.scale)
-        meanScale += sc;
-    const double tol = 1e-9 * std::max(1e-12, meanScale / std::max<double>(1.0, double(m.scale.size())));
-    auto reflect = [&](const glm::dvec3& p) { return p - 2.0 * plane.distance(p) * plane.normal; };
-    auto reflectDir = [&](const glm::dvec3& d) { return d - 2.0 * glm::dot(d, plane.normal) * plane.normal; };
-    out = ParamMesh();
-    out.pos = m.pos;
-    out.scale = m.scale;
-    out.surfaceVertices = m.surfaceVertices;
-    std::vector<Index> mirrorOf(nv);
-    for (Index v = 0; v < nv; ++v)
-    {
-        if (m.boundary[v] && std::abs(plane.distance(m.pos[v])) <= tol)
-        {
-            mirrorOf[v] = v;
-            continue;
-        }
-        mirrorOf[v] = Index(out.pos.size());
-        out.pos.push_back(reflect(m.pos[v]));
-        out.scale.push_back(m.scale[v]);
-    }
-    out.tris = m.tris;
-    out.normal = m.normal;
-    out.dir = m.dir;
-    outChart = chart;
-    for (Index t = 0; t < nt; ++t)
-    {
-        const auto& tri = m.tris[t];
-        out.tris.push_back({mirrorOf[tri[0]], mirrorOf[tri[2]], mirrorOf[tri[1]]});
-        out.normal.push_back(reflectDir(m.normal[t]));
-        out.dir.push_back(reflectDir(m.dir[t]));
-        auto r = [](const glm::dvec2& p) { return glm::dvec2(-p.x, p.y); };
-        outChart.push_back({r(chart[t][0]), r(chart[t][2]), r(chart[t][1])});
-    }
-    buildEdges(out);
-}
-
 /** Quarter turns k with dir[t] ~ turn(dir[other], k) across edge e, unfolded about the edge. */
 int matching(const ParamMesh& m, Index e, Index t, Index other)
 {
@@ -758,7 +710,7 @@ Extracted extractIntegerGrid(const Surface& s, const ParamMesh& m, const std::ve
 
 std::vector<glm::dvec3> solveSeamlessPositions(const Surface& s, const std::vector<glm::dvec3>& q, const std::vector<double>& scale,
                                                std::string* error, std::vector<std::array<int, 2>>* edgeSteps, Extracted* grid,
-                                               int foldRetries, Index* folds, const geo::SymmetryPlane* mirror)
+                                               int foldRetries, Index* folds)
 {
     LILA_ZONE();
 
@@ -1205,16 +1157,7 @@ std::vector<glm::dvec3> solveSeamlessPositions(const Surface& s, const std::vect
             *folds = Index(foldedAfter);
         if (debug)
             std::fprintf(stderr, "  untangle: folded %d -> %d\n", foldedBefore, foldedAfter);
-        if (mirror)
-        {
-            ParamMesh both;
-            std::vector<Chart> bothChart;
-            mirrorForExtraction(m, chart, *mirror, both, bothChart);
-            *grid = extractIntegerGrid(s, both, bothChart);
-            grid->mirrored = true;
-        }
-        else
-            *grid = extractIntegerGrid(s, m, chart);
+        *grid = extractIntegerGrid(s, m, chart);
     }
 
     // Each surface vertex's nearest lattice point, from any one of its corners.

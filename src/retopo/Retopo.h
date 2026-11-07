@@ -137,15 +137,20 @@ struct DensityHandle
 /** How quadRemesh lays the quads out. */
 enum class RemeshMethod
 {
-    /** Follows curvature, features and guides with poles where the flow turns. */
+    /**
+     * Lines traced from the poles along the edge flow cut the surface into four-sided patches, each filled with a
+     * regular grid: edge loops run unbroken between poles and the center line of a symmetric result is one of them.
+     */
+    Patches,
+    /** Each point placed from the edge flow nearby: quick, but loops break and poles come in pairs more often. */
     Field,
-    /** A straight grid seen down the sheet's normal, for open sheets like terrain tiles and panels; Field otherwise. */
+    /** A straight grid seen down the sheet's normal, for open sheets like terrain tiles and panels; Patches otherwise. */
     Grid,
 };
 
 struct QuadRemeshOptions
 {
-    RemeshMethod method = RemeshMethod::Field;
+    RemeshMethod method = RemeshMethod::Patches;
     int targetFaces = 3000;
     /** Retries at a corrected size until the face count is within this fraction of targetFaces; 0 takes the first. */
     double countTolerance = 0.1;
@@ -179,9 +184,10 @@ struct QuadRemeshOptions
     /** All quads (extract at half density and split each polygon); otherwise quad dominant. */
     bool pureQuads = true;
     int relaxIterations = 6;
-    /** Also try one global parametrization, which only turns at the poles, and keep it when it is as clean with fewer irregular points. */
-    bool seamless = true;
-    /** Source points (object space, exact) the result keeps as vertices, like a patch's border points to stitch it back by. */
+    /**
+     * Source points (object space, exact) the result keeps as vertices, like a patch's border points to stitch it back by.
+     * Laid out by one global parametrization, which holds them exactly, whatever the method.
+     */
     std::vector<glm::dvec3> pinnedPoints;
     /** Seconds before giving up with an error saying how far it got; 0 is unlimited. The progress overlay can cancel too. */
     double timeout = 0.0;
@@ -250,7 +256,7 @@ struct QuadRemeshResult
 {
     geo::Mesh mesh;
     QualityMetrics metrics;
-    /** The layout kept: field, seamless, shifted or grid. */
+    /** The layout kept: patches, field, shifted, grid, or seamless for pinned points. */
     std::string layout;
     /** Every layout built, in order, the kept one among them. */
     std::vector<RemeshAttempt> attempts;
