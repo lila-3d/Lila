@@ -6304,7 +6304,11 @@ struct Renderer::Impl
                         v.surface = VK_NULL_HANDLE;
                     }
                     if (v.surface)
+                    {
                         initFrames(v);
+                        // The main thread can be busy for a while after the window shows; until the first frame the window would show white.
+                        fillWindow(v.window, v.state.background.r, v.state.background.g, v.state.background.b);
+                    }
                 }
                 if (!v.surface)
                     continue;

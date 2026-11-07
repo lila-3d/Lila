@@ -1,5 +1,6 @@
 #include "ui/ViewportWidgetDetail.h"
 
+#include "render/Surface.h"
 #include "scene/LightingChannels.h"
 #include "scene/SceneIndex.h"
 #include "scene/Turntable.h"
@@ -24,6 +25,16 @@ scene::viewState::ActiveCamera activeCameraOf(const Camera& camera, double aspec
         c.verticalFov = 2.0 * std::atan(extents.y);
     }
     return c;
+}
+
+/** The viewport's clear colour in sRGB: the user's preference, else the theme's. */
+glm::vec3 viewportBackground()
+{
+    const glm::vec4 themeBg = themeSrgb("viewportBackground", glm::vec4(0.30f, 0.30f, 0.30f, 1.0f));
+    auto bg = PrefStore::get().value("general", "/viewport/background", json::array({themeBg.r, themeBg.g, themeBg.b}));
+    if (bg.is_array() && bg.size() == 3)
+        return {bg[0].get<float>(), bg[1].get<float>(), bg[2].get<float>()};
+    return glm::vec3(themeBg);
 }
 } // namespace
 
@@ -260,7 +271,15 @@ void ViewportWidget::resizeEvent(QResizeEvent* e)
 
 void ViewportWidget::paintEvent(QPaintEvent*)
 {
+    if (!mId || render::Renderer::get().stats(mId).frames == 0)
+        fillBeforeFirstFrame();
     requestFrame();
+}
+
+void ViewportWidget::fillBeforeFirstFrame()
+{
+    const glm::vec3 bg = viewportBackground();
+    render::fillWindow(uintptr_t(winId()), bg.r, bg.g, bg.b);
 }
 
 bool ViewportWidget::event(QEvent* e)
@@ -378,10 +397,7 @@ render::FrameState ViewportWidget::buildFrame(const RenderView* rv)
     s.proj = camera.proj(viewAspect);
     s.eye = camera.eye();
     s.zUp = camera.zUp;
-    const glm::vec4 themeBg = themeSrgb("viewportBackground", glm::vec4(0.30f, 0.30f, 0.30f, 1.0f));
-    auto bg = PrefStore::get().value("general", "/viewport/background", json::array({themeBg.r, themeBg.g, themeBg.b}));
-    if (bg.is_array() && bg.size() == 3)
-        s.background = {bg[0].get<float>(), bg[1].get<float>(), bg[2].get<float>()};
+    s.background = viewportBackground();
     {
         LILA_ZONE_N("buildFrame settings");
         const PrefStore& p = PrefStore::get();

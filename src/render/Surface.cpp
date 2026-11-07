@@ -2,6 +2,8 @@
 
 #include "core/Log.h"
 
+#include <algorithm>
+
 #ifdef _WIN32
 #include <windows.h>
 #include <vulkan/vulkan_win32.h>
@@ -25,6 +27,28 @@ VkSurfaceKHR createSurface(VkInstance instance, uintptr_t nativeWindow)
     log::error("vulkan: window surfaces are not implemented on this platform yet");
 #endif
     return surface;
+}
+
+void fillWindow(uintptr_t nativeWindow, float r, float g, float b)
+{
+#ifdef _WIN32
+    auto byte = [](float v) { return int(std::clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f); };
+    const HWND hwnd = HWND(nativeWindow);
+    if (HDC dc = GetDC(hwnd))
+    {
+        RECT rect{};
+        GetClientRect(hwnd, &rect);
+        HBRUSH brush = CreateSolidBrush(RGB(byte(r), byte(g), byte(b)));
+        FillRect(dc, &rect, brush);
+        DeleteObject(brush);
+        ReleaseDC(hwnd, dc);
+    }
+#else
+    (void)nativeWindow;
+    (void)r;
+    (void)g;
+    (void)b;
+#endif
 }
 
 double refreshHz(uintptr_t nativeWindow)

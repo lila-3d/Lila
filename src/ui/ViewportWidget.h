@@ -142,6 +142,8 @@ protected:
     void showEvent(QShowEvent* e) override;
     void resizeEvent(QResizeEvent* e) override;
     void paintEvent(QPaintEvent* e) override;
+    /** Fills the native window with the background colour, which would otherwise show white until the renderer presents. */
+    void fillBeforeFirstFrame();
     void mousePressEvent(QMouseEvent* e) override;
     void mouseMoveEvent(QMouseEvent* e) override;
     void leaveEvent(QEvent* e) override;
