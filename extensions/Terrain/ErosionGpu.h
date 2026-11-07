@@ -16,6 +16,12 @@ bool gpuErosionAvailable();
  */
 bool erodeGpu(Heightfield& h, const ErosionParams& p, std::string* err = nullptr);
 
-/** GPU time of the last erodeGpu, ms. */
+/**
+ * drain() with the depression fill on the GPU: the same result (the fill is exact; receivers, order and area come from
+ * drainFilled). False with err when there is no GPU or it failed.
+ */
+bool drainGpu(const Heightfield& h, Drainage& out, std::string* err = nullptr);
+
+/** GPU time of the last erodeGpu or drainGpu, ms. */
 double lastGpuErosionMs();
 } // namespace terrain

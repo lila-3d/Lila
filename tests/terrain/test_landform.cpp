@@ -1,6 +1,7 @@
 #include "TestUtil.h"
 
 #include "ErosionFilter.h"
+#include "ErosionGpu.h"
 #include "Landform.h"
 #include "LandformGpu.h"
 #include "Shaping.h"
@@ -471,6 +472,34 @@ TEST_CASE("landform: preset timing at 4K" * doctest::skip())
     }
 }
 
+TEST_CASE("landform: preset step timing at 2049 and 4097, CPU and GPU" * doctest::skip())
+{
+    const bool gpu = startLandGpu();
+    for (int n : {2049, 4097})
+    {
+        const Heightfield h0 = landRanges(n, 1, 400.0 * double(n - 1));
+        auto t0 = std::chrono::steady_clock::now();
+        terrain::drain(h0);
+        MESSAGE(n << " drain CPU: " << std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() << " s");
+        for (bool useGpu : {false, true})
+        {
+            if (useGpu && !gpu)
+                continue;
+            Heightfield h = h0;
+            terrain::PresetParams p;
+            p.age = 0.6;
+            p.gpu = useGpu;
+            terrain::PresetReport r;
+            t0 = std::chrono::steady_clock::now();
+            terrain::erodePreset(h, p, &r);
+            const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+            MESSAGE(n << " natural preset " << (useGpu ? "GPU" : "CPU") << ": " << s << " s, " << r.toJson().dump());
+            if (useGpu && n == 4097)
+                CHECK(s < 15.0);
+        }
+    }
+}
+
 TEST_CASE("landform gpu: erosion filter and material thermal match the CPU within tolerance")
 {
     if (!startLandGpu())
@@ -501,6 +530,73 @@ TEST_CASE("landform gpu: erosion filter and material thermal match the CPU withi
         worst = std::max(worst, std::abs(double(tc.heights[k]) - double(tg.heights[k])));
     MESSAGE("thermal gpu vs cpu: worst " << worst << " cm");
     CHECK(worst < 1.0);
+}
+
+TEST_CASE("landform gpu: GPU drainage matches drain(), so debris, deposition and the preset match the CPU")
+{
+    if (!startLandGpu())
+        return;
+    for (int n : {257, 400})
+    {
+        const Heightfield h = landRanges(n, uint32_t(n));
+        const terrain::Drainage cpu = terrain::drain(h);
+        terrain::Drainage gpu;
+        std::string err;
+        REQUIRE_MESSAGE(terrain::drainGpu(h, gpu, &err), err);
+        CHECK(gpu.filled == cpu.filled);
+        CHECK(gpu.receiver == cpu.receiver);
+        CHECK(gpu.order == cpu.order);
+        CHECK(gpu.area == cpu.area);
+    }
+
+    auto worstOf = [](const Heightfield& a, const Heightfield& b) {
+        double worst = 0.0;
+        for (size_t k = 0; k < a.size(); ++k)
+            worst = std::max(worst, std::abs(double(a.heights[k]) - double(b.heights[k])));
+        return worst;
+    };
+    // The drainage is identical, so the steps are too; the tolerance only allows for a future GPU fill that rounds.
+    const Heightfield h0 = landRanges(300, 11);
+    const glm::dvec2 r = h0.range();
+    const double tolerance = (r.y - r.x) * 1e-4;
+    terrain::DrainSource drains;
+    drains.gpu = true;
+    Heightfield dc = h0, dg = h0;
+    terrain::DebrisParams dp;
+    dp.strength = 1.5;
+    terrain::debrisFlow(dc, dp);
+    terrain::debrisFlow(dg, dp, &drains);
+    MESSAGE("debris gpu drainage vs cpu: worst " << worstOf(dc, dg) << " cm over a " << (r.y - r.x) << " cm range");
+    CHECK(worstOf(dc, dg) <= tolerance);
+    Heightfield pc = h0, pg = h0;
+    terrain::DepositionParams sp;
+    terrain::deposition(pc, sp);
+    terrain::deposition(pg, sp, &drains);
+    MESSAGE("deposition gpu drainage vs cpu: worst " << worstOf(pc, pg) << " cm");
+    CHECK(worstOf(pc, pg) <= tolerance);
+    CHECK(drains.fallback.empty());
+
+    // A step the GPU can't take runs on the CPU and says why.
+    const Heightfield tiny = landRanges(2);
+    terrain::DrainSource tinyDrains;
+    tinyDrains.gpu = true;
+    CHECK(tinyDrains(tiny).order == terrain::drain(tiny).order);
+    CHECK(tinyDrains.fallback.find("drainage ran on the CPU") == 0);
+
+    Heightfield c = landRanges(513, 5, 200000.0), g = c;
+    terrain::PresetParams p;
+    p.preset = "alpine";
+    p.age = 0.7;
+    terrain::erodePreset(c, p);
+    p.gpu = true;
+    terrain::PresetReport report;
+    terrain::erodePreset(g, p, &report);
+    CHECK(report.fallbacks.empty());
+    // The drainage is exact; GPU thermal rounds differently and the rills after it can take other channels in places.
+    const glm::dvec2 pr = c.range();
+    const double mean = meanAbsChange(c, g);
+    MESSAGE("preset gpu vs cpu: mean " << mean << " cm, worst " << worstOf(c, g) << " cm over a " << (pr.y - pr.x) << " cm range");
+    CHECK(mean < (pr.y - pr.x) * 5e-3);
 }
 
 TEST_CASE("landform commands: terrainCreate's age, terrainErode presets, and terrainLandform steps")

@@ -5,6 +5,7 @@
 
 #include "Landform.h"
 
+#include "ErosionGpu.h"
 #include "LandformGpu.h"
 #include "Shaping.h"
 
@@ -112,7 +113,33 @@ private:
     PresetReport* mReport;
     std::chrono::steady_clock::time_point mLast = std::chrono::steady_clock::now();
 };
+
+Drainage drainWith(const Heightfield& h, DrainSource* drains) { return drains ? (*drains)(h) : drain(h); }
+
+/** Prefetches a sample's row and its neighbours' rows of z, as neighbourMax reads them. */
+void prefetchAround(const Heightfield& h, const std::vector<float>& z, uint32_t i)
+{
+    prefetchLine(&z[i]);
+    if (i >= uint32_t(h.nx))
+        prefetchLine(&z[i - uint32_t(h.nx)]);
+    if (i + uint32_t(h.nx) < z.size())
+        prefetchLine(&z[i + uint32_t(h.nx)]);
+}
 } // namespace landform_
+
+Drainage DrainSource::operator()(const Heightfield& h)
+{
+    if (gpu)
+    {
+        Drainage d;
+        std::string err;
+        if (drainGpu(h, d, &err))
+            return d;
+        if (fallback.empty())
+            fallback = "drainage ran on the CPU: " + err;
+    }
+    return drain(h);
+}
 
 void accumulateMask(Heightfield& h, const std::string& name, const std::vector<float>& src)
 {
@@ -148,7 +175,7 @@ uint64_t heightfieldHash(const Heightfield& h)
 
 // ------------------------------------------------------------------------------------------------- analytic
 
-void erodeAnalytic(Heightfield& h, const AnalyticParams& p)
+void erodeAnalytic(Heightfield& h, const AnalyticParams& p, DrainSource* drains)
 {
     LILA_ZONE();
     using namespace landform_;
@@ -158,23 +185,31 @@ void erodeAnalytic(Heightfield& h, const AnalyticParams& p)
     const size_t n = h.size();
     const glm::dvec2 range0 = h.range();
     const std::vector<float> start = h.heights;
-    const Drainage d = drain(h);
+    const Drainage d = drainWith(h, drains);
     const std::vector<float> hardness = maskOrValue(h, p.hardnessMask, 0.0f);
     const std::vector<float> uplift = maskOrValue(h, p.upliftMask, 1.0f);
     const double cellArea = (h.cell * 0.01) * (h.cell * 0.01);
 
     // Travel time of a base-level change from the outlet up to each sample: dtau = distance / (K A^m).
     std::vector<double> dtau(n, 0.0), tau(n, 0.0);
-    for (uint32_t i : d.order)
-    {
+    tbb::parallel_for(size_t(0), n, [&](size_t i) {
         const uint32_t r = d.receiver[i];
         if (r == i)
-            continue;
+            return;
         const double k = std::max(1e-9, p.strength * (1.0 - 0.9 * std::clamp(double(hardness[i]), 0.0, 1.0)));
         const double c = k * std::pow(double(d.area[i]) * cellArea, p.areaExponent);
-        dtau[i] = receiverDistance(h, i, r) * 0.01 / std::max(c, 1e-12);
-        tau[i] = tau[r] + dtau[i];
-    }
+        dtau[i] = receiverDistance(h, uint32_t(i), r) * 0.01 / std::max(c, 1e-12);
+    });
+    walkDrainage(
+        d.order, d.receiver, false,
+        [&](uint32_t i) {
+            prefetchLine(&dtau[i]);
+            prefetchLine(&tau[d.receiver[i]]);
+        },
+        [&](uint32_t i) {
+            if (const uint32_t r = d.receiver[i]; r != i)
+                tau[i] = tau[r] + dtau[i];
+        });
     std::vector<double> inner;
     inner.reserve(n);
     for (size_t i = 0; i < n; ++i)
@@ -193,9 +228,18 @@ void erodeAnalytic(Heightfield& h, const AnalyticParams& p)
     // The uplift that makes the steady state as tall as the input, so age moves between the two at one relief.
     const double rate = double(hi - lo) / tauRef;
     std::vector<double> potential(n, 0.0);
-    for (uint32_t i : d.order)
-        if (const uint32_t r = d.receiver[i]; r != i)
-            potential[i] = potential[r] + rate * double(uplift[i]) * dtau[i];
+    std::vector<double>& rise = dtau;
+    tbb::parallel_for(size_t(0), n, [&](size_t i) { rise[i] = rate * double(uplift[i]) * dtau[i]; });
+    walkDrainage(
+        d.order, d.receiver, false,
+        [&](uint32_t i) {
+            prefetchLine(&rise[i]);
+            prefetchLine(&potential[d.receiver[i]]);
+        },
+        [&](uint32_t i) {
+            if (const uint32_t r = d.receiver[i]; r != i)
+                potential[i] = potential[r] + rise[i];
+        });
 
     // Children of each sample, in index order, for a walk down every outlet's tree with the path kept on a stack.
     std::vector<uint32_t> first(n + 1, 0), kids(n);
@@ -287,7 +331,7 @@ void erodeAnalytic(Heightfield& h, const AnalyticParams& p)
     h.heights = std::move(out);
     if (p.writeMasks)
     {
-        writeFlowMasks(h, drain(h));
+        writeFlowMasks(h, drainWith(h, drains));
         changeMasks(h, start);
     }
 }
@@ -357,7 +401,7 @@ Heightfield amplified(const Heightfield& h, const AmplifyParams& p)
     return hi;
 }
 
-Heightfield amplifiedOnto(const Heightfield& coarse, const Heightfield& fine, double age, uint32_t seed)
+Heightfield amplifiedOnto(const Heightfield& coarse, const Heightfield& fine, double age, uint32_t seed, DrainSource* drains)
 {
     LILA_ZONE();
     (void)seed;
@@ -379,7 +423,7 @@ Heightfield amplifiedOnto(const Heightfield& coarse, const Heightfield& fine, do
         AnalyticParams a;
         a.age = age;
         a.writeMasks = false;
-        erodeAnalytic(out, a);
+        erodeAnalytic(out, a, drains);
         landform_::restoreLarge(out, shaped, std::max(2, int(std::lround(2.0 * coarse.cell / fine.cell))));
     }
     return out;
@@ -387,7 +431,7 @@ Heightfield amplifiedOnto(const Heightfield& coarse, const Heightfield& fine, do
 
 // ------------------------------------------------------------------------------------------------- debris flow
 
-void debrisFlow(Heightfield& h, const DebrisParams& p)
+void debrisFlow(Heightfield& h, const DebrisParams& p, DrainSource* drains)
 {
     LILA_ZONE();
     using namespace landform_;
@@ -400,15 +444,22 @@ void debrisFlow(Heightfield& h, const DebrisParams& p)
     std::vector<float> wear(h.size(), 0.0f), laid(h.size(), 0.0f), load(h.size());
     for (int it = 0; it < std::max(1, p.iterations); ++it)
     {
-        const Drainage d = drain(h);
+        const Drainage d = drainWith(h, drains);
         std::vector<float>& z = h.heights;
         z = d.filled;
         std::fill(load.begin(), load.end(), 0.0f);
-        for (auto o = d.order.rbegin(); o != d.order.rend(); ++o)
-        {
-            const uint32_t i = *o, r = d.receiver[i];
+        auto ahead = [&](uint32_t i) {
+            const uint32_t r = d.receiver[i];
+            prefetchAround(h, z, i);
+            prefetchLine(&z[r]);
+            prefetchLine(&d.area[i]);
+            prefetchLine(&load[i]);
+            prefetchLine(&load[r]);
+        };
+        walkDrainage(d.order, d.receiver, true, ahead, [&](uint32_t i) {
+            const uint32_t r = d.receiver[i];
             if (r == i)
-                continue;
+                return;
             const double dist = receiverDistance(h, i, r);
             const double s = (double(z[i]) - double(z[r])) / dist;
             const double area = double(d.area[i]) * cellArea;
@@ -431,7 +482,7 @@ void debrisFlow(Heightfield& h, const DebrisParams& p)
                 laid[i] += float(dep);
             }
             load[r] += float(q);
-        }
+        });
     }
     accumulateMask(h, "wear", wear);
     accumulateMask(h, "deposit", laid);
@@ -675,7 +726,7 @@ void droplets(Heightfield& h, const DropletParams& p)
 
 // ------------------------------------------------------------------------------------------------- deposition
 
-void deposition(Heightfield& h, const DepositionParams& p)
+void deposition(Heightfield& h, const DepositionParams& p, DrainSource* drains)
 {
     LILA_ZONE();
     using namespace landform_;
@@ -685,10 +736,11 @@ void deposition(Heightfield& h, const DepositionParams& p)
     const std::vector<float> hardness = maskOrValue(h, p.hardnessMask, 0.0f);
     const double cellArea = (h.cell * 0.01) * (h.cell * 0.01);
     std::vector<float> sediment(h.size(), 0.0f), worn(h.size(), 0.0f), load(h.size());
+    std::vector<double> carry(h.size());
     std::vector<int32_t> lake(h.size());
     for (int it = 0; it < std::max(1, p.iterations); ++it)
     {
-        const Drainage d = drain(h);
+        const Drainage d = drainWith(h, drains);
         std::vector<float>& z = h.heights;
         std::fill(load.begin(), load.end(), 0.0f);
         // Lakes are the connected runs of filled samples; what flows into one settles from its floor up.
@@ -721,20 +773,29 @@ void deposition(Heightfield& h, const DepositionParams& p)
                 }
             }
         std::vector<double> pool(lakes.size(), 0.0);
-        for (auto o = d.order.rbegin(); o != d.order.rend(); ++o)
-        {
-            const uint32_t i = *o, r = d.receiver[i];
+        tbb::parallel_for(size_t(0), h.size(), [&](size_t i) { carry[i] = p.transport * std::pow(double(d.area[i]) * cellArea, p.areaExponent); });
+        auto ahead = [&](uint32_t i) {
+            const uint32_t r = d.receiver[i];
+            prefetchAround(h, z, i);
+            prefetchLine(&d.filled[r]);
+            prefetchLine(&carry[i]);
+            prefetchLine(&lake[i]);
+            prefetchLine(&load[i]);
+            prefetchLine(&load[r]);
+        };
+        walkDrainage(d.order, d.receiver, true, ahead, [&](uint32_t i) {
+            const uint32_t r = d.receiver[i];
             double q = load[i];
             if (lake[i] >= 0)
             {
                 pool[size_t(lake[i])] += q;
-                continue;
+                return;
             }
             if (r == i)
-                continue;
+                return;
             const double dist = receiverDistance(h, i, r);
             const double s = std::max(0.0, (double(z[i]) - double(d.filled[r])) / dist);
-            const double cap = p.transport * std::pow(double(d.area[i]) * cellArea, p.areaExponent) * s;
+            const double cap = carry[i] * s;
             if (q < cap)
             {
                 const double e = std::min(p.supply * std::min(s, 1.5) * (1.0 - 0.8 * std::clamp(double(hardness[i]), 0.0, 1.0)), cap - q);
@@ -751,7 +812,7 @@ void deposition(Heightfield& h, const DepositionParams& p)
                 sediment[i] += float(dep);
             }
             load[r] += float(q);
-        }
+        });
         // Each lake fills to the level that holds its pool (never past its spill level), lowest samples first.
         for (size_t l = 0; l < lakes.size(); ++l)
         {
@@ -953,6 +1014,8 @@ void erodePreset(Heightfield& h, const PresetParams& p, PresetReport* report)
     const double age = std::clamp(p.age, 0.0, 2.0);
     const std::vector<float> start = h.heights;
     Timer timer(report);
+    DrainSource drains;
+    drains.gpu = p.gpu;
 
     // Macro form at low resolution, where the analytic solve is cheap, then amplified back keeping its drainage.
     const int longest = std::max(h.nx, h.nz);
@@ -975,7 +1038,7 @@ void erodePreset(Heightfield& h, const PresetParams& p, PresetReport* report)
         Heightfield coarse = lila::geo::resampled(h, cnx, cnz, cell, h.origin);
         erodeAnalytic(coarse, macro);
         timer.step("macro");
-        h = amplifiedOnto(coarse, h, def.fineAge * age, p.seed);
+        h = amplifiedOnto(coarse, h, def.fineAge * age, p.seed, &drains);
         timer.step("amplify");
     }
 
@@ -983,7 +1046,7 @@ void erodePreset(Heightfield& h, const PresetParams& p, PresetReport* report)
     debris.strength = def.debris * age;
     debris.scourAngle = def.scourAngle;
     debris.iterations = 2;
-    debrisFlow(h, debris);
+    debrisFlow(h, debris, &drains);
     timer.step("debris");
 
     std::vector<std::pair<std::string, double>> materials;
@@ -1013,7 +1076,7 @@ void erodePreset(Heightfield& h, const PresetParams& p, PresetReport* report)
     dep.supply = def.supply * age;
     dep.hardnessMask = p.hardnessMask;
     dep.iterations = 1;
-    deposition(h, dep);
+    deposition(h, dep, &drains);
     timer.step("deposition");
 
     if (def.snow)
@@ -1021,8 +1084,10 @@ void erodePreset(Heightfield& h, const PresetParams& p, PresetReport* report)
         snow(h, SnowParams());
         timer.step("snow");
     }
-    writeFlowMasks(h, drain(h));
+    writeFlowMasks(h, drains(h));
     changeMasks(h, start);
     timer.step("masks");
+    if (report && !drains.fallback.empty())
+        report->fallbacks.push_back(drains.fallback);
 }
 } // namespace terrain

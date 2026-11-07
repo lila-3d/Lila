@@ -6,9 +6,11 @@
 #include <lila/Profile.h>
 
 #include <tbb/parallel_for.h>
+#include <tbb/parallel_sort.h>
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <queue>
 
@@ -32,6 +34,16 @@ std::vector<float> maskOr(const Heightfield& h, const std::string& name, float f
     return std::vector<float>(h.size(), fallback);
 }
 
+/** Sorts like the flood's priority queue compares floats: ascending, with -0 equal to +0. */
+uint32_t floodKey(float f)
+{
+    if (f == 0.0f)
+        f = 0.0f;
+    uint32_t b;
+    std::memcpy(&b, &f, 4);
+    return (b & 0x80000000u) ? ~b : (b | 0x80000000u);
+}
+
 void normalisedInto(std::vector<float>& dst, const std::vector<float>& src)
 {
     float hi = 0.0f;
@@ -40,6 +52,41 @@ void normalisedInto(std::vector<float>& dst, const std::vector<float>& src)
     const float inv = hi > 0.0f ? 1.0f / hi : 0.0f;
     for (size_t k = 0; k < src.size(); ++k)
         dst[k] = src[k] * inv;
+}
+
+/** Receivers and accumulated area for d.filled and d.order. */
+void routeDrainage(const Heightfield& h, Drainage& d)
+{
+    tbb::parallel_for(0, h.nz, [&](int z) {
+        for (int x = 0; x < h.nx; ++x)
+        {
+            const uint32_t i = uint32_t(h.index(x, z));
+            d.receiver[i] = i;
+            if (onEdge(h, x, z))
+                continue;
+            double best = 0.0;
+            for (int k = 0; k < 8; ++k)
+            {
+                const uint32_t j = uint32_t(h.index(x + kDx[k], z + kDz[k]));
+                const double slope = (double(d.filled[i]) - double(d.filled[j])) / kDist[k];
+                if (slope > best)
+                {
+                    best = slope;
+                    d.receiver[i] = j;
+                }
+            }
+        }
+    });
+    walkDrainage(
+        d.order, d.receiver, true,
+        [&](uint32_t i) {
+            prefetchLine(&d.area[i]);
+            prefetchLine(&d.area[d.receiver[i]]);
+        },
+        [&](uint32_t i) {
+            if (const uint32_t r = d.receiver[i]; r != i)
+                d.area[r] += d.area[i];
+        });
 }
 } // namespace
 
@@ -86,29 +133,25 @@ Drainage drain(const Heightfield& h)
         }
     }
 
-    tbb::parallel_for(0, h.nz, [&](int z) {
-        for (int x = 0; x < h.nx; ++x)
-        {
-            const uint32_t i = uint32_t(h.index(x, z));
-            d.receiver[i] = i;
-            if (onEdge(h, x, z))
-                continue;
-            double best = 0.0;
-            for (int k = 0; k < 8; ++k)
-            {
-                const uint32_t j = uint32_t(h.index(x + kDx[k], z + kDz[k]));
-                const double slope = (double(d.filled[i]) - double(d.filled[j])) / kDist[k];
-                if (slope > best)
-                {
-                    best = slope;
-                    d.receiver[i] = j;
-                }
-            }
-        }
-    });
-    for (auto it = d.order.rbegin(); it != d.order.rend(); ++it)
-        if (const uint32_t r = d.receiver[*it]; r != *it)
-            d.area[r] += d.area[*it];
+    routeDrainage(h, d);
+    return d;
+}
+
+Drainage drainFilled(const Heightfield& h, std::vector<float> filled)
+{
+    LILA_ZONE();
+
+    Drainage d;
+    const size_t n = h.size();
+    d.filled = std::move(filled);
+    d.receiver.resize(n);
+    d.area.assign(n, 1.0f);
+    std::vector<uint64_t> keyed(n);
+    tbb::parallel_for(size_t(0), n, [&](size_t i) { keyed[i] = uint64_t(floodKey(d.filled[i])) << 32 | uint64_t(i); });
+    tbb::parallel_sort(keyed.begin(), keyed.end());
+    d.order.resize(n);
+    tbb::parallel_for(size_t(0), n, [&](size_t k) { d.order[k] = uint32_t(keyed[k]); });
+    routeDrainage(h, d);
     return d;
 }
 

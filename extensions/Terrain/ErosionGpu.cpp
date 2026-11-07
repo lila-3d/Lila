@@ -227,6 +227,28 @@ public:
         r.barrier();
     }
 
+    /** Only the buffers fill() uses: the heights, their keys, the fill, the coarse bound and the flag. */
+    void setupFill(gpu::Recorder& r)
+    {
+        const size_t f = mN * 4, c = size_t(mCnx) * mCnz * 4;
+        GpuScene g{};
+        g.buffers[BHeight] = r.buffer(BHeight, f);
+        g.buffers[BKey] = r.buffer(BKey, f);
+        g.buffers[BFill] = r.buffer(BFill, f);
+        g.buffers[BCoarse] = r.buffer(BCoarse, c);
+        g.buffers[BFlag] = r.buffer(BFlag, 16);
+        r.buffer(BScene, sizeof(GpuScene));
+        g.nx = uint32_t(mH.nx);
+        g.nz = uint32_t(mH.nz);
+        g.cnx = mCnx;
+        g.cnz = mCnz;
+        g.block = kBlock;
+        g.margin = 2 * kBlock;
+        r.upload(BScene, &g, sizeof g);
+        r.upload(BHeight, mH.heights.data(), f);
+        r.barrier();
+    }
+
     /** The filled surface into BFill: keys and block maxima, the CPU bound, then relaxation until nothing moves. */
     bool fill(std::string* err)
     {
@@ -311,6 +333,18 @@ public:
             err);
     }
 
+    /** The filled heights, after fill(). */
+    bool readFill(std::vector<float>& filled, std::string* err)
+    {
+        if (!run([&](gpu::Recorder& r) { r.readback(BFill, mN * 4); }, err))
+            return false;
+        std::vector<uint32_t> keys(mN);
+        mRun.session.read(BFill, keys.data(), mN * 4);
+        filled.resize(mN);
+        tbb::parallel_for(size_t(0), mN, [&](size_t k) { filled[k] = fromKey(keys[k]); });
+        return true;
+    }
+
     /** The final drainage for the masks, read back with the heights. */
     bool finish(Heightfield& out, std::vector<float>& filled, std::vector<float>& area, std::string* err)
     {
@@ -351,6 +385,38 @@ private:
 bool gpuErosionAvailable() { return gpu::available(); }
 
 double lastGpuErosionMs() { return runner().ms; }
+
+bool drainGpu(const Heightfield& h, Drainage& out, std::string* err)
+{
+    LILA_ZONE();
+
+    if (!gpu::available())
+    {
+        if (err)
+            *err = "no GPU (Lila's renderer isn't running)";
+        return false;
+    }
+    if (h.nx < 3 || h.nz < 3)
+    {
+        if (err)
+            *err = "the heightfield is too small";
+        return false;
+    }
+    std::vector<float> filled;
+    {
+        Runner& run = runner();
+        std::lock_guard lock(run.mutex);
+        run.ms = 0.0;
+        const ErosionParams p;
+        Job job(run, h, p);
+        std::string local;
+        std::string* e = err ? err : &local;
+        if (!job.run([&](gpu::Recorder& r) { job.setupFill(r); }, e) || !job.fill(e) || !job.readFill(filled, e))
+            return false;
+    }
+    out = drainFilled(h, std::move(filled));
+    return true;
+}
 
 bool erodeGpu(Heightfield& h, const ErosionParams& p, std::string* err)
 {

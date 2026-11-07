@@ -6,6 +6,10 @@
 #include <string>
 #include <vector>
 
+#if defined(_M_X64) || defined(_M_IX86) || defined(__x86_64__) || defined(__i386__)
+#include <xmmintrin.h>
+#endif
+
 namespace terrain
 {
 /**
@@ -24,8 +28,47 @@ struct Drainage
     std::vector<float> area;
 };
 
+/** Asks for the cache line holding p ahead of its use. */
+inline void prefetchLine(const void* p)
+{
+#if defined(_M_X64) || defined(_M_IX86) || defined(__x86_64__) || defined(__i386__)
+    _mm_prefetch(static_cast<const char*>(p), _MM_HINT_T0);
+#elif defined(__GNUC__) || defined(__clang__)
+    __builtin_prefetch(p);
+#else
+    (void)p;
+#endif
+}
+
+/**
+ * visit(i) for every sample in drainage order (outlets first, or uphill first when reverse), with ahead(i) called some
+ * samples early to prefetch what visit will read: these walks hop across the grid and wait on memory, not arithmetic.
+ * ahead may read receiver[i], which is prefetched further ahead still.
+ */
+template <class Ahead, class Visit>
+void walkDrainage(const std::vector<uint32_t>& order, const std::vector<uint32_t>& receiver, bool reverse, Ahead&& ahead, Visit&& visit)
+{
+    constexpr size_t kFar = 32, kNear = 16;
+    const size_t n = order.size();
+    auto at = [&](size_t k) { return order[reverse ? n - 1 - k : k]; };
+    for (size_t k = 0; k < n; ++k)
+    {
+        if (k + kFar < n)
+            prefetchLine(&receiver[at(k + kFar)]);
+        if (k + kNear < n)
+            ahead(at(k + kNear));
+        visit(at(k));
+    }
+}
+
 /** Priority-flood fill, steepest-descent receivers (8 neighbours) and accumulated drainage. Deterministic. */
 Drainage drain(const Heightfield& h);
+
+/**
+ * drain() from heights already filled exactly the way drain() fills them (the GPU fill): the order is the flood's own
+ * (filled height, then index), so receivers, order and area are drain()'s.
+ */
+Drainage drainFilled(const Heightfield& h, std::vector<float> filled);
 
 struct ErosionParams
 {
