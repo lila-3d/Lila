@@ -20,6 +20,7 @@
 #include "ui/FixedRowLayout.h"
 #include "ui/FlowLayout.h"
 #include "ui/Icons.h"
+#include "ui/LayoutsUi.h"
 #include "ui/ModelingToolkit.h"
 #include "ui/SculptTool.h"
 #include "ui/SpinScrub.h"
@@ -992,6 +993,7 @@ void SculptPanel::refreshSession()
 void registerSculptUi()
 {
     installSculptDrawer();
+    addLazyDock(kSculptDock, [] { return sculptDock(true); });
     // Leaving sculpt mode, however it is left, closes the panel entering opened.
     sculpt::addListener([] {
         QTimer::singleShot(0, QCoreApplication::instance(), [] {

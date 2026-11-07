@@ -23,6 +23,9 @@ namespace lila::ui
 class DockSidebars;
 class ViewportLayout;
 
+/** Registers how to build a dock that is made on first use, so a layout that opens it can create it. */
+LILA_UI_API void addLazyDock(const std::string& name, std::function<QDockWidget*()> create);
+
 /**
  * Named layouts in the main window: the Windows > Layouts menu, the switcher in the menu bar's corner, the manager
  * dialog and the window.layout.* actions. Installs the hooks behind the applyLayout and saveLayout commands.
@@ -56,6 +59,7 @@ private:
     void run(const char* command, const nlohmann::json& call);
     QDockWidget* dock(const QString& name) const;
     void ensureDocks(const nlohmann::json& docks);
+    void ensureDock(const std::string& name);
     void applyPreset(const nlohmann::json& preset);
     /** Rebuilds the listed columns at the outer edge of their dock area, left to right, each stacked top to bottom. */
     void applyColumns(const nlohmann::json& columns);

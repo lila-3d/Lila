@@ -41,6 +41,7 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
+#include <map>
 #include <set>
 
 namespace lila::ui
@@ -54,6 +55,12 @@ namespace
 {
 /** The layouts that always have a tab; the rest are one click away in the tab strip's + menu. */
 const std::vector<std::string> kTabLayouts = {"Model", "UV", "Sculpt", "Texture", "Bake", "Rig", "Animate", "Level"};
+
+std::map<std::string, std::function<QDockWidget*()>>& lazyDocks()
+{
+    static std::map<std::string, std::function<QDockWidget*()>> all;
+    return all;
+}
 
 QString displayName(const layouts::Entry& e)
 {
@@ -73,6 +80,19 @@ QString originLabel(const layouts::Entry& e)
     return {};
 }
 } // namespace
+
+void addLazyDock(const std::string& name, std::function<QDockWidget*()> create)
+{
+    lazyDocks()[name] = std::move(create);
+}
+
+void LayoutController::ensureDock(const std::string& name)
+{
+    if (dock(QString::fromStdString(name)))
+        return;
+    if (auto it = lazyDocks().find(name); it != lazyDocks().end())
+        it->second();
+}
 
 LayoutController::LayoutController(QMainWindow* window, DockSidebars* sidebars, ViewportLayout* viewports, std::function<void()> resetToDefault)
     : QObject(window), mWindow(window), mSidebars(sidebars), mViewports(viewports), mReset(std::move(resetToDefault))
@@ -320,6 +340,10 @@ json LayoutController::capture() const
 void LayoutController::ensureDocks(const json& docks)
 {
     tearoff::recreate(mWindow, tearoff::openDocks(docks));
+    if (docks.is_object())
+        for (auto& [name, entry] : docks.items())
+            if (entry.value("open", false))
+                ensureDock(name);
     if (!docks.is_object() || !python::initialized())
         return;
     for (auto& [name, entry] : docks.items())
@@ -415,7 +439,10 @@ void LayoutController::applyPreset(const json& preset)
     std::set<std::string> open;
     for (const json& n : preset.value("open", json::array()))
         if (n.is_string())
+        {
             open.insert(n.get<std::string>());
+            ensureDock(n.get<std::string>());
+        }
     for (QDockWidget* d : mWindow->findChildren<QDockWidget*>())
         if (d->parentWidget() == mWindow && !d->objectName().isEmpty())
             d->setVisible(open.count(d->objectName().toStdString()) > 0);

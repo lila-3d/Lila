@@ -85,7 +85,7 @@ const std::vector<std::pair<std::string, json>>& presets()
         // The UV editor takes its own full-height column beside the viewport; the data column stays whole beyond it.
         {"UV", preset(with({"uvEditor", "modelingToolkit"}), {"uvEditor", "modelingToolkit", "channelBox"}, "UV", {{"uvEditor", {{"width", 520}}}}, {},
                       json::array({{"uvEditor"}, {"outliner", "channelBox"}}))},
-        {"Sculpt", preset(with({}), {"channelBox"}, "Sculpt")},
+        {"Sculpt", preset(with({"sculptPanel"}), {"sculptPanel", "channelBox"}, "Sculpt")},
         {"Texture", preset(with({"textureSets", "baker", "materialEditor"}), {"textureSets", "materialEditor"}, "Texture")},
         {"Bake", preset(with({"baker", "textureSets", "materialEditor"}), {"baker", "channelBox"}, "Texture")},
         {"Rig", preset(with({"timeSlider"}), {"channelBox"}, "Rig", {{"outliner", {{"height", 0.5}}}})},

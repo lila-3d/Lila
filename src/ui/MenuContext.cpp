@@ -2,6 +2,7 @@
 
 #include "core/Events.h"
 #include "scene/Graph.h"
+#include "sculpt/SculptSession.h"
 #include "ui/Actions.h"
 
 #include <QApplication>
@@ -143,6 +144,9 @@ std::string current()
         return s.pinned;
     if (!s.tool.empty())
         return s.tool;
+    // Sculpt mode outlasts the brush: Move or Select while sculpting keeps the sculpt menus.
+    if (sculpt::active())
+        return "Sculpt";
     if (!s.editor.empty())
         return s.editor;
     // A joint selection means rigging, except where the layout already shows the rigging menus.
@@ -193,6 +197,7 @@ void install(QMainWindow* window)
         state().tool = setForTool(e.name);
         notify();
     });
+    sculpt::addListener([] { notify(); });
     events::subscribe(events::Event::SelectionChanged, [](const events::EventData&) {
         state().selection = setForSelection();
         notify();
