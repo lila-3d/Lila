@@ -3,6 +3,7 @@
 // it, and bake and export it.
 
 #include "Analysis.h"
+#include "Checks.h"
 #include "Erosion.h"
 #include "ErosionGpu.h"
 #include "Export.h"
@@ -1820,8 +1821,9 @@ void registerContractCommands(ext::Context& ctx)
                "maxGrade, pads, regions and buildings in flood (risk over floodTolerance) with no levee, embankment or seawall "
                "near, buildings over water, buildings floating (the ground under their footprint lower than their base by more "
                "than floatTolerance cm anywhere), stamps and streets across a river with no bridge or culvert, and canals that "
-               "reach no water, and volume splits whose seams crack (seamTolerance cm), whose holes no mesh fills, or with places no "
-               "mesh covers. Returns ok and the issues, each with its type, what it is about, where and a message.",
+               "reach no water, volume splits whose seams crack (seamTolerance cm), whose holes no mesh fills, or with places no "
+               "mesh covers, roads (terrainAddRoad) steeper or more banked than their design or over water with no bridge or culvert, "
+               "rivers rising downstream, and lakes below their rim with no outlet or above it with no dam. Returns ok and the issues, each with its type, what it is about, where and a message.",
         .positionalDoc = "terrain mesh or its modifier",
         .flags = withAnalysisFlags({nodeFlag({"buildings", "b", T::List, json::array(), "Meshes standing on the terrain to check."}, "mesh"),
                                     {"cutFillLimit", "cf", T::Float, 500.0, "Largest cut plus fill per pad, m3.", {}, {}, 0.0},
@@ -1970,6 +1972,8 @@ void registerContractCommands(ext::Context& ctx)
                     issue("flood", name, at, std::format("flood risk {:.2f} with no levee near", floodAt(c)));
             }
             for (const json& i : volumeIssues(f.modifier ? f.modifier->id() : 0, f.frame.m, a.get<double>("seamTolerance", 1.0)))
+                issues.push_back(i);
+            for (const json& i : featureIssues(pathOf(f, a.objects()[0]), *an, f.frame.m, 0.05))
                 issues.push_back(i);
             return {{"ok", issues.empty()}, {"issues", issues}, {"revision", revision(h)}};
         },
@@ -2657,6 +2661,7 @@ void registerCommands(ext::Context& ctx)
 TerrainRef findTerrainRef(const std::string& node, const std::string& cmd)
 {
     const Found f = findTerrain(Graph::current(), node, cmd);
-    return {f.local, f.frame.m, identifier(f.mesh ? f.mesh->name() : std::string("Terrain"))};
+    return {f.local, f.frame.m, identifier(f.mesh ? f.mesh->name() : std::string("Terrain")), f.mesh ? f.mesh->path() : std::string(),
+            f.modifier ? f.modifier->path() : std::string()};
 }
 } // namespace terrain

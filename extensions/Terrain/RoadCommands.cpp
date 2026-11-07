@@ -308,7 +308,8 @@ json roadJson(const Terrain& f, const Road& r, const RoadResult& res, const std:
                 {"cutM3", res.cut * a * a * v * 1e-6},
                 {"fillM3", res.fill * a * a * v * 1e-6},
                 {"area", res.area * a * a},
-                {"warnings", res.warnings}};
+                {"warnings", res.warnings},
+                {"design", {{"maxGrade", r.design.maxGrade}, {"maxBank", r.design.maxBank}}}};
     const size_t n = res.centreline.size();
     const size_t stride = detail || n <= 400 ? 1 : (n + 399) / 400;
     json line = json::array(), along = json::array(), grade = json::array(), bank = json::array();

@@ -5,6 +5,7 @@ set(LILA_UNITY_SKIP
     extensions/Terrain/Landform.cpp
     extensions/Terrain/LandformCommands.cpp
     extensions/Terrain/LandformGpu.cpp
+    extensions/Terrain/Wedge.cpp
     src/core/ImageIO.cpp
     src/core/PrefStore.cpp
     src/fbx/FbxImport.cpp

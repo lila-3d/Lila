@@ -530,6 +530,38 @@ json describeLayers(const SurfTerrain& f, const MaterialRules& rules, std::vecto
     return layers;
 }
 
+/** Linear colour as the '#rrggbb' sRGB the heightfield draw's layers take. */
+std::string displayHex(glm::dvec3 linear)
+{
+    auto channel = [](double c) {
+        c = std::clamp(c, 0.0, 1.0);
+        const double s = c <= 0.0031308 ? 12.92 * c : 1.055 * std::pow(c, 1.0 / 2.4) - 0.055;
+        return int(std::lround(s * 255.0));
+    };
+    char buf[8];
+    std::snprintf(buf, sizeof(buf), "#%02x%02x%02x", channel(linear.x), channel(linear.y), channel(linear.z));
+    return buf;
+}
+
+/** The heightfield draw's paint layers (the mesh's terrainLayers attribute, as terrainDisplayLayers writes it): each layer_<name> mask in its colour. */
+json syncDisplayLayers(const SurfTerrain& f, const MaterialRules& rules, std::vector<std::string>& warnings)
+{
+    json list = json::array();
+    if (!f.mesh)
+        return list;
+    for (const LayerRule& l : rules.layers)
+    {
+        const SurfLook look = surfLookOf(l, warnings);
+        list.push_back({{"name", l.name}, {"mask", look.mask}, {"color", displayHex(look.color)}, {"roughness", look.roughness}, {"tiling", look.tileCm}});
+    }
+    const std::string mesh = f.mesh->path();
+    if (f.mesh->type().attrIndex("terrainLayers") < 0)
+        ops::execute("addAttr", {{"args", {mesh}}, {"longName", "terrainLayers"}, {"dataType", "string"}, {"hidden", true},
+                                 {"doc", "Paint layers the viewport's heightfield draw shows (JSON)."}});
+    ops::execute("setAttr", {{"args", {mesh + ".terrainLayers", list.dump()}}});
+    return list;
+}
+
 void registerRuleCommands(ext::Context& ctx)
 {
     ctx.registerCommand({
@@ -633,7 +665,8 @@ void registerRuleCommands(ext::Context& ctx)
                "mask, painted ones included. With no layers it uses defaults fitted to the terrain (sand only with seaLevel=).\n\n"
                "Adds a Terrain Layers node at the end of the terrain's group, or updates it. Returns each layer's coverage "
                "(mean weight, the share of the terrain), area in m2, where it dominates, its material and colour, the largest "
-               "error of the weight sum, and any inputs the rules named that the terrain lacks (those ranges read 0).",
+               "error of the weight sum, and any inputs the rules named that the terrain lacks (those ranges read 0). The layers also "
+               "become the heightfield draw's paint layers (terrainDisplayLayers), each layer_<name> in its colour, returned as displayLayers.",
         .positionalDoc = "terrain mesh or its modifier",
         .flags = {{"layers", "l", T::Any, nullptr, "The layers, bottom first; 'default' for the defaults."},
                   {"set", "s", T::Any, nullptr, "One layer to add or replace by name, keeping the others (new ones go on top)."},
@@ -712,6 +745,8 @@ void registerRuleCommands(ext::Context& ctx)
             out["maxSumError"] = published.value("maxSumError", 0.0);
             for (const json& m : out["missing"])
                 warnings.push_back("the terrain has no " + m.get<std::string>() + "; ranges over it read 0");
+            if (!query)
+                out["displayLayers"] = syncDisplayLayers(f, rules, warnings);
             warnAll(cmd, warnings);
             out["warnings"] = warnings;
             return out;
@@ -943,8 +978,9 @@ void registerImageCommands(ext::Context& ctx)
                 layer["layer"] = id;
                 layers.push_back(layer);
             }
+            const json display = syncDisplayLayers(f, *rules, warnings);
             warnAll(cmd, warnings);
-            return {{"material", material}, {"set", setName}, {"layers", layers}, {"resolution", res}, {"warnings", warnings}};
+            return {{"material", material}, {"set", setName}, {"layers", layers}, {"displayLayers", display}, {"resolution", res}, {"warnings", warnings}};
         },
         .examples = {"terrainMaterialPreview('Terrain')['layers']", "terrainMaterialPreview('Terrain', materials=False, resolution=1024)"},
     });

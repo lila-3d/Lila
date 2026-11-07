@@ -389,7 +389,7 @@ json followUplift(const std::string& terrain, const std::string& mask)
 }
 
 /** The Sculpt Region bake: the proxy's surface against the terrain under it, as a patch stroke, plus what overhangs. */
-json finishRegion(Node& proxy, const json& info, bool keep, bool cancel)
+json finishRegion(Node& proxy, const json& info, bool keep, bool cancel, bool keepOverhangs)
 {
     LILA_ZONE();
 
@@ -407,6 +407,7 @@ json finishRegion(Node& proxy, const json& info, bool keep, bool cancel)
     int64_t changed = 0;
     double most = 0.0;
     json overhangs = json::array();
+    json overhangVolume;
     if (!cancel)
     {
         g.evaluate();
@@ -472,6 +473,42 @@ json finishRegion(Node& proxy, const json& info, bool keep, bool cancel)
             const float v = top.heights[k];
             flag[k] = !std::isnan(v) && std::isfinite(under[k]) && v - under[k] > float(cell * 0.25);
         }
+        // Under each overhang, the highest upward face below its underside: the ground its hollow stands on.
+        std::vector<float> floorUnder(delta.size(), -std::numeric_limits<float>::infinity());
+        if (keepOverhangs && std::find(flag.begin(), flag.end(), uint8_t(1)) != flag.end())
+            for (geo::Index f = 0; f < m.faceCapacity(); ++f)
+            {
+                if (!m.faceValid(f) || m.faceNormal(f).y < 0.1)
+                    continue;
+                const std::vector<geo::Index> pts = m.facePoints(f);
+                for (size_t k = 1; k + 1 < pts.size(); ++k)
+                {
+                    const glm::dvec3 a = m.position(pts[0]), b = m.position(pts[k]), c = m.position(pts[k + 1]);
+                    const double den = (b.z - c.z) * (a.x - c.x) + (c.x - b.x) * (a.z - c.z);
+                    if (std::abs(den) < 1e-12)
+                        continue;
+                    const int ix0 = std::max(0, int(std::ceil((std::min({a.x, b.x, c.x}) - origin.x) / cell)));
+                    const int ix1 = std::min(nx - 1, int(std::floor((std::max({a.x, b.x, c.x}) - origin.x) / cell)));
+                    const int iz0 = std::max(0, int(std::ceil((std::min({a.z, b.z, c.z}) - origin.y) / cell)));
+                    const int iz1 = std::min(nz - 1, int(std::floor((std::max({a.z, b.z, c.z}) - origin.y) / cell)));
+                    for (int iz = iz0; iz <= iz1; ++iz)
+                        for (int ix = ix0; ix <= ix1; ++ix)
+                        {
+                            const size_t k2 = size_t(iz) * size_t(nx) + size_t(ix);
+                            if (!flag[k2])
+                                continue;
+                            const double px = origin.x + ix * cell, pz = origin.y + iz * cell;
+                            const double wa = ((b.z - c.z) * (px - c.x) + (c.x - b.x) * (pz - c.z)) / den;
+                            const double wb = ((c.z - a.z) * (px - c.x) + (a.x - c.x) * (pz - c.z)) / den;
+                            const double wc = 1.0 - wa - wb;
+                            if (wa < -1e-9 || wb < -1e-9 || wc < -1e-9)
+                                continue;
+                            const float y = float(wa * a.y + wb * b.y + wc * c.y);
+                            if (y < under[k2] - float(cell * 0.05))
+                                floorUnder[k2] = std::max(floorUnder[k2], y);
+                        }
+                }
+            }
         std::vector<uint8_t> seen(delta.size(), 0);
         json volume = json::array();
         for (size_t s = 0; s < flag.size(); ++s)
@@ -533,6 +570,48 @@ json finishRegion(Node& proxy, const json& info, bool keep, bool cancel)
                                            {"patch", patch},
                                            {"stage", info.value("stage", std::string("final"))}});
         }
+        if (keepOverhangs && !volume.empty())
+        {
+            // The hollow under each overhang, cell by cell, carved from the terrain's volume so the overhang survives the
+            // bake as a volume piece. The mesh stays, hidden, because volume stamps follow their mesh.
+            json points = json::array(), faces = json::array();
+            int64_t boxes = 0;
+            for (size_t k = 0; k < flag.size(); ++k)
+            {
+                if (!flag[k])
+                    continue;
+                const int x = int(k % size_t(nx)), z = int(k / size_t(nx));
+                const double gx = origin.x + x * cell, gz = origin.y + z * cell;
+                const double roof = under[k];
+                double bottom = floorUnder[k];
+                if (!std::isfinite(bottom))
+                    bottom = std::min(double(t.h->at(std::min(t.h->nx - 1, x0 + x * step), std::min(t.h->nz - 1, z0 + z * step))), roof - cell);
+                if (roof - bottom < 1e-3)
+                    continue;
+                const double hx = cell * 0.5;
+                const size_t base = points.size();
+                for (const glm::dvec3& q : {glm::dvec3(gx - hx, bottom, gz - hx), glm::dvec3(gx + hx, bottom, gz - hx), glm::dvec3(gx + hx, bottom, gz + hx),
+                                            glm::dvec3(gx - hx, bottom, gz + hx), glm::dvec3(gx - hx, roof, gz - hx), glm::dvec3(gx + hx, roof, gz - hx),
+                                            glm::dvec3(gx + hx, roof, gz + hx), glm::dvec3(gx - hx, roof, gz + hx)})
+                {
+                    const glm::dvec3 w(t.world * glm::dvec4(q, 1.0));
+                    points.push_back({w.x, w.y, w.z});
+                }
+                static const size_t kBoxFaces[6][4] = {{0, 1, 2, 3}, {4, 7, 6, 5}, {0, 4, 5, 1}, {3, 2, 6, 7}, {0, 3, 7, 4}, {1, 5, 6, 2}};
+                for (const auto& f : kBoxFaces)
+                    faces.push_back({base + f[0], base + f[1], base + f[2], base + f[3]});
+                ++boxes;
+            }
+            if (boxes > 0)
+            {
+                const std::string terrainName = t.mesh ? t.mesh->name() : std::string("Terrain");
+                const json made = ops::execute("createMesh", {{"points", points}, {"faces", faces}, {"name", terrainName + "_overhangHollow"}});
+                const std::string hollow = made.is_string() ? made.get<std::string>() : made.at(0).get<std::string>();
+                ops::execute("setAttr", {{"args", {hollow + ".visibility", false}}});
+                const json stamped = ops::execute("terrainVolumeStamp", {{"args", {terrain}}, {"object", hollow}, {"mode", "subtract"}, {"id", hollow}});
+                overhangVolume = {{"mesh", hollow}, {"id", hollow}, {"cells", boxes}, {"volume", stamped.value("volume", json())}};
+            }
+        }
     }
     if (Node* tm = t.mesh)
         ops::execute("setAttr", {{"args", {tm->path() + ".visibility", info.value("terrainVisible", true)}}});
@@ -548,6 +627,8 @@ json finishRegion(Node& proxy, const json& info, bool keep, bool cancel)
     out["changedSamples"] = changed;
     out["largestChange"] = most;
     out["overhangs"] = overhangs;
+    if (!overhangVolume.is_null())
+        out["overhangVolume"] = overhangVolume;
     out["cancelled"] = cancel;
     return out;
 }
@@ -790,7 +871,9 @@ void registerLandformCommands(ext::Context& ctx)
                "sculpt mode on it (direct). Sculpt with any brush, then finish=True (or Exit Sculpt in the app) bakes it back: "
                "the change in height goes into a patch stroke in the terrain's sculpt layer (stage final by default, so after "
                "erosion), faded at the patch rim, and the proxy is deleted. Where the sculpt folds under itself (an overhang a "
-               "heightfield can't hold) the cells are listed in the result's overhangs and kept with the stroke for the volume. "
+               "heightfield can't hold) the cells are listed in the result's overhangs, and the hollow under them is carved from "
+               "the terrain's volume (a hidden <terrain>_overhangHollow mesh stamped with mode subtract, listed as overhangVolume) "
+               "so the overhang becomes a volume piece; keepOverhangs=False only lists them. "
                "cancel=True drops the proxy without baking. Returns the proxy and patch size, or on finish terrainInfo's stats "
                "with changedSamples, largestChange and overhangs.",
         .positionalDoc = "terrain mesh (or the region proxy, for finish and cancel)",
@@ -801,7 +884,8 @@ void registerLandformCommands(ext::Context& ctx)
                   {"enter", "e", T::Bool, true, "Enter sculpt mode on the proxy."},
                   {"finish", "f", T::Bool, false, "Bake the proxy back into the terrain."},
                   {"cancel", "cn", T::Bool, false, "Drop the proxy without baking."},
-                  {"keep", "k", T::Bool, false, "finish: keep the proxy mesh."}},
+                  {"keep", "k", T::Bool, false, "finish: keep the proxy mesh."},
+                  {"keepOverhangs", "ko", T::Bool, true, "finish: carve the hollow under each overhang into the terrain's volume, so it survives as a mesh piece."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
@@ -824,7 +908,7 @@ void registerLandformCommands(ext::Context& ctx)
                 }
                 if (info.is_null() || info.value("done", false))
                     throw CommandError(cmd + ": " + names[0] + " has no open sculpt region");
-                return finishRegion(*proxy, info, a.get<bool>("keep", false), a.get<bool>("cancel", false));
+                return finishRegion(*proxy, info, a.get<bool>("keep", false), a.get<bool>("cancel", false), a.get<bool>("keepOverhangs", true));
             }
             if (!a.has("center"))
                 throw CommandError(cmd + ": give center=");
