@@ -111,6 +111,14 @@ bool lzwDecode(const uint8_t* src, size_t n, std::vector<uint8_t>& out)
     return true;
 }
 
+uint64_t readUint(const uint8_t* p, int bytes, bool le)
+{
+    uint64_t v = 0;
+    for (int b = 0; b < bytes; ++b)
+        v |= uint64_t(p[le ? b : bytes - 1 - b]) << (8 * b);
+    return v;
+}
+
 struct Tiff
 {
     std::map<uint16_t, std::vector<double>> nums;
@@ -129,186 +137,177 @@ struct Tiff
     }
 };
 
+ByteRange memoryRange(std::shared_ptr<const std::vector<uint8_t>> d)
+{
+    return [d](uint64_t at, uint64_t n, std::vector<uint8_t>& out) {
+        out.clear();
+        if (at >= d->size())
+            return;
+        const uint64_t end = std::min<uint64_t>(d->size(), at + n);
+        out.assign(d->begin() + ptrdiff_t(at), d->begin() + ptrdiff_t(end));
+    };
+}
+
 Dem readGeoTiff(const fs::path& path)
 {
     LILA_ZONE();
 
-    const std::vector<uint8_t> d = readBytes(path);
-    if (d.size() < 16 || !((d[0] == 'I' && d[1] == 'I') || (d[0] == 'M' && d[1] == 'M')))
-        throw fail(path, "not a TIFF");
-    const bool le = d[0] == 'I';
-    auto need = [&](uint64_t at, uint64_t n) {
-        if (at + n > d.size() || at + n < at)
-            throw fail(path, "truncated");
+    auto d = std::make_shared<const std::vector<uint8_t>>(readBytes(path));
+    const GeoTiffWindowReader r(memoryRange(d), path.filename().string());
+    checkSize(path, r.info().width, r.info().height);
+    return r.window(0, 0, r.info().width, r.info().height);
+}
+} // namespace
+
+struct GeoTiffWindowReader::Layout
+{
+    bool le = true;
+    int w = 0;
+    int h = 0;
+    int bits = 8;
+    int format = 1;
+    int compression = 1;
+    int predictor = 1;
+    int chunkSpp = 1;
+    bool tiled = false;
+    int cw = 0;
+    int ch = 0;
+    int across = 1;
+    int down = 1;
+    std::vector<double> offsets;
+    std::vector<double> sizes;
+    double nodata = std::numeric_limits<double>::quiet_NaN();
+};
+
+ByteRange fileByteRange(const std::filesystem::path& path)
+{
+    return [path](uint64_t at, uint64_t n, std::vector<uint8_t>& out) {
+        out.clear();
+        std::ifstream f(path, std::ios::binary);
+        if (!f)
+            throw std::runtime_error("can't open " + path.string());
+        f.seekg(0, std::ios::end);
+        const uint64_t size = uint64_t(f.tellg());
+        if (at >= size)
+            return;
+        out.resize(size_t(std::min(n, size - at)));
+        f.seekg(std::streamoff(at));
+        f.read(reinterpret_cast<char*>(out.data()), std::streamsize(out.size()));
+        out.resize(size_t(f.gcount()));
     };
-    auto uint = [&](uint64_t at, int bytes) {
-        need(at, uint64_t(bytes));
-        uint64_t v = 0;
-        for (int b = 0; b < bytes; ++b)
-            v |= uint64_t(d[at + uint64_t(le ? b : bytes - 1 - b)]) << (8 * b);
-        return v;
+}
+
+GeoTiffWindowReader::GeoTiffWindowReader(ByteRange read, std::string name)
+    : mRead(std::move(read)), mName(std::move(name)), mLayout(std::make_shared<Layout>())
+{
+    LILA_ZONE();
+
+    auto fail = [&](const std::string& why) { return std::runtime_error(mName + ": " + why); };
+    // Cloud-optimised GeoTIFFs keep the header and its tag arrays at the front, so one read usually covers them.
+    std::vector<uint8_t> head;
+    mRead(0, 65536, head);
+    if (head.size() < 16 || !((head[0] == 'I' && head[1] == 'I') || (head[0] == 'M' && head[1] == 'M')))
+        throw fail("not a TIFF");
+    Layout& L = *mLayout;
+    const bool le = L.le = head[0] == 'I';
+    auto bytes = [&](uint64_t at, uint64_t n) {
+        if (at + n < at || n > (uint64_t(1) << 31))
+            throw fail("truncated");
+        if (at + n <= head.size())
+            return std::vector<uint8_t>(head.begin() + ptrdiff_t(at), head.begin() + ptrdiff_t(at + n));
+        std::vector<uint8_t> out;
+        mRead(at, n, out);
+        if (out.size() < n)
+            throw fail("truncated");
+        return out;
     };
-    const uint64_t version = uint(2, 2);
+    auto num = [le](const uint8_t* p, int n) { return readUint(p, n, le); };
+    const uint64_t version = num(&head[2], 2);
     if (version != 42 && version != 43)
-        throw fail(path, "not a TIFF");
+        throw fail("not a TIFF");
     const bool big = version == 43;
-    const uint64_t ifd = big ? uint(8, 8) : uint(4, 4);
-    const uint64_t count = uint(ifd, big ? 8 : 2);
+    const uint64_t ifd = big ? num(&head[8], 8) : num(&head[4], 4);
+    const uint64_t count = num(bytes(ifd, big ? 8 : 2).data(), big ? 8 : 2);
     const uint64_t entrySize = big ? 20 : 12, inlineSize = big ? 8 : 4;
+    if (count > 4096)
+        throw fail("bad header");
+    const std::vector<uint8_t> entries = bytes(ifd + (big ? 8 : 2), count * entrySize);
     Tiff t;
     for (uint64_t e = 0; e < count; ++e)
     {
-        const uint64_t p = ifd + (big ? 8 : 2) + e * entrySize;
-        const uint16_t tag = uint16_t(uint(p, 2)), type = uint16_t(uint(p + 2, 2));
-        const uint64_t n = big ? uint(p + 4, 8) : uint(p + 4, 4);
+        const uint8_t* p = &entries[size_t(e * entrySize)];
+        const uint16_t tag = uint16_t(num(p, 2)), type = uint16_t(num(p + 2, 2));
+        const uint64_t n = big ? num(p + 4, 8) : num(p + 4, 4);
         static constexpr int kSizes[] = {0, 1, 1, 2, 4, 8, 1, 1, 2, 4, 8, 4, 8, 0, 0, 0, 8, 8, 8};
         const int size = type < std::size(kSizes) ? kSizes[type] : 0;
         if (!size || n > (uint64_t(1) << 28))
             continue;
-        const uint64_t at = uint64_t(size) * n <= inlineSize ? p + (big ? 12 : 8) : uint(p + (big ? 12 : 8), int(inlineSize));
-        need(at, uint64_t(size) * n);
+        std::vector<uint8_t> outside;
+        const uint8_t* v = p + (big ? 12 : 8);
+        if (uint64_t(size) * n > inlineSize)
+        {
+            outside = bytes(num(v, int(inlineSize)), uint64_t(size) * n);
+            v = outside.data();
+        }
         if (type == 2)
         {
-            t.text[tag] = std::string(reinterpret_cast<const char*>(&d[at]), size_t(n));
+            t.text[tag] = std::string(reinterpret_cast<const char*>(v), size_t(n));
             continue;
         }
-        std::vector<double>& v = t.nums[tag];
-        v.resize(size_t(n));
+        std::vector<double>& out = t.nums[tag];
+        out.resize(size_t(n));
         for (uint64_t i = 0; i < n; ++i)
         {
-            const uint64_t q = at + i * uint64_t(size);
+            const uint8_t* q = v + i * uint64_t(size);
             switch (type)
             {
-            case 5: v[i] = double(uint(q, 4)) / std::max<double>(1.0, double(uint(q + 4, 4))); break;
-            case 6: v[i] = double(int8_t(d[q])); break;
-            case 8: v[i] = double(int16_t(uint(q, 2))); break;
-            case 9: v[i] = double(int32_t(uint(q, 4))); break;
-            case 10: v[i] = double(int32_t(uint(q, 4))) / std::max(1.0, double(int32_t(uint(q + 4, 4)))); break;
-            case 11: v[i] = double(std::bit_cast<float>(uint32_t(uint(q, 4)))); break;
-            case 12: v[i] = std::bit_cast<double>(uint(q, 8)); break;
-            case 17: v[i] = double(int64_t(uint(q, 8))); break;
-            default: v[i] = double(uint(q, size)); break;
+            case 5: out[i] = double(num(q, 4)) / std::max<double>(1.0, double(num(q + 4, 4))); break;
+            case 6: out[i] = double(int8_t(q[0])); break;
+            case 8: out[i] = double(int16_t(num(q, 2))); break;
+            case 9: out[i] = double(int32_t(num(q, 4))); break;
+            case 10: out[i] = double(int32_t(num(q, 4))) / std::max(1.0, double(int32_t(num(q + 4, 4)))); break;
+            case 11: out[i] = double(std::bit_cast<float>(uint32_t(num(q, 4)))); break;
+            case 12: out[i] = std::bit_cast<double>(num(q, 8)); break;
+            case 17: out[i] = double(int64_t(num(q, 8))); break;
+            default: out[i] = double(num(q, size)); break;
             }
         }
     }
 
-    const int w = int(t.one(256, 0)), h = int(t.one(257, 0));
-    checkSize(path, w, h);
-    const int spp = int(t.one(277, 1)), bits = int(t.one(258, 8)), format = int(t.one(339, 1));
-    const int compression = int(t.one(259, 1)), predictor = int(t.one(317, 1)), planar = int(t.one(284, 1));
-    if (bits != 8 && bits != 16 && bits != 32 && bits != 64)
-        throw fail(path, std::to_string(bits) + "-bit samples");
-    if (format == 3 && bits < 32)
-        throw fail(path, "half floats");
-    if (compression != 1 && compression != 5 && compression != 8 && compression != 32946)
-        throw fail(path, "compression " + std::to_string(compression) + " (uncompressed, LZW and deflate are read)");
-    const int bps = bits / 8;
+    L.w = int(t.one(256, 0));
+    L.h = int(t.one(257, 0));
+    if (L.w < 1 || L.h < 1)
+        throw fail("grid is " + std::to_string(L.w) + " x " + std::to_string(L.h));
+    const int spp = int(t.one(277, 1)), planar = int(t.one(284, 1));
+    L.bits = int(t.one(258, 8));
+    L.format = int(t.one(339, 1));
+    L.compression = int(t.one(259, 1));
+    L.predictor = int(t.one(317, 1));
+    if (L.bits != 8 && L.bits != 16 && L.bits != 32 && L.bits != 64)
+        throw fail(std::to_string(L.bits) + "-bit samples");
+    if (L.format == 3 && L.bits < 32)
+        throw fail("half floats");
+    if (L.compression != 1 && L.compression != 5 && L.compression != 8 && L.compression != 32946)
+        throw fail("compression " + std::to_string(L.compression) + " (uncompressed, LZW and deflate are read)");
     // Separate planes store band 1 first, so it reads as a one-sample image.
-    const int chunkSpp = planar == 2 ? 1 : spp;
-    const bool tiled = t.nums.contains(322);
-    const int cw = tiled ? int(t.one(322, 0)) : w;
-    const int ch = tiled ? int(t.one(323, 0)) : std::clamp(int(t.one(278, h)), 1, h);
-    const std::vector<double>& offsets = t.all(tiled ? 324 : 273);
-    const std::vector<double>& sizes = t.all(tiled ? 325 : 279);
-    if (cw <= 0 || ch <= 0)
-        throw fail(path, "bad tile size");
-    const int across = tiled ? (w + cw - 1) / cw : 1, down = (h + ch - 1) / ch;
-    if (offsets.size() < size_t(across) * size_t(down) || sizes.size() < offsets.size())
-        throw fail(path, "missing strips or tiles");
-
-    double nodata = std::numeric_limits<double>::quiet_NaN();
+    L.chunkSpp = planar == 2 ? 1 : spp;
+    L.tiled = t.nums.contains(322);
+    L.cw = L.tiled ? int(t.one(322, 0)) : L.w;
+    L.ch = L.tiled ? int(t.one(323, 0)) : std::clamp(int(t.one(278, L.h)), 1, L.h);
+    L.offsets = t.all(L.tiled ? 324 : 273);
+    L.sizes = t.all(L.tiled ? 325 : 279);
+    if (L.cw <= 0 || L.ch <= 0)
+        throw fail("bad tile size");
+    L.across = L.tiled ? (L.w + L.cw - 1) / L.cw : 1;
+    L.down = (L.h + L.ch - 1) / L.ch;
+    if (L.offsets.size() < size_t(L.across) * size_t(L.down) || L.sizes.size() < L.offsets.size())
+        throw fail("missing strips or tiles");
     if (auto it = t.text.find(42113); it != t.text.end())
-        nodata = std::strtod(it->second.c_str(), nullptr);
+        L.nodata = std::strtod(it->second.c_str(), nullptr);
 
-    Dem dem;
-    dem.width = w;
-    dem.height = h;
-    dem.metres.assign(size_t(w) * size_t(h), kVoid);
-    std::string error;
-    std::mutex errorLock;
-    auto failed = [&](const char* why) {
-        std::lock_guard lock(errorLock);
-        error = why;
-    };
-    tbb::parallel_for(0, across * down, [&](int c) {
-        const int cx = (c % across) * cw, cy = (c / across) * ch;
-        const int rows = tiled ? ch : std::min(ch, h - cy);
-        const size_t rowBytes = size_t(cw) * size_t(chunkSpp) * size_t(bps);
-        const size_t want = rowBytes * size_t(rows);
-        const uint64_t at = uint64_t(offsets[size_t(c)]), n = uint64_t(sizes[size_t(c)]);
-        if (at + n > d.size())
-        {
-            failed("truncated data");
-            return;
-        }
-        std::vector<uint8_t> raw;
-        if (compression == 1)
-            raw.assign(d.begin() + ptrdiff_t(at), d.begin() + ptrdiff_t(at + std::min<uint64_t>(n, want)));
-        else if (compression == 5)
-        {
-            raw.reserve(want);
-            if (!lzwDecode(&d[at], size_t(n), raw))
-                failed("bad LZW data");
-        }
-        else
-        {
-            raw.resize(want);
-            mz_ulong got = mz_ulong(want);
-            if (mz_uncompress(raw.data(), &got, &d[at], mz_ulong(n)) != MZ_OK)
-                failed("bad deflate data");
-            raw.resize(got);
-        }
-        raw.resize(want, 0);
-        std::vector<uint8_t> shuffled(predictor == 3 ? rowBytes : 0);
-        std::vector<uint64_t> s(size_t(cw) * size_t(chunkSpp));
-        const uint64_t mask = bits == 64 ? ~uint64_t(0) : (uint64_t(1) << bits) - 1;
-        for (int r = 0; r < rows; ++r)
-        {
-            uint8_t* row = raw.data() + size_t(r) * rowBytes;
-            bool sampleLe = le;
-            if (predictor == 3)
-            {
-                for (size_t k = size_t(chunkSpp); k < rowBytes; ++k)
-                    row[k] = uint8_t(row[k] + row[k - size_t(chunkSpp)]);
-                // Floating-point prediction stores each byte plane most significant first.
-                const size_t wc = s.size();
-                for (size_t i = 0; i < wc; ++i)
-                    for (int b = 0; b < bps; ++b)
-                        shuffled[i * size_t(bps) + size_t(b)] = row[size_t(b) * wc + i];
-                row = shuffled.data();
-                sampleLe = false;
-            }
-            for (size_t i = 0; i < s.size(); ++i)
-            {
-                uint64_t v = 0;
-                for (int b = 0; b < bps; ++b)
-                    v |= uint64_t(row[i * size_t(bps) + size_t(sampleLe ? b : bps - 1 - b)]) << (8 * b);
-                s[i] = v;
-            }
-            if (predictor == 2)
-                for (size_t i = size_t(chunkSpp); i < s.size(); ++i)
-                    s[i] = (s[i] + s[i - size_t(chunkSpp)]) & mask;
-            const int y = cy + r;
-            if (y >= h)
-                break;
-            for (int x = 0; x < cw && cx + x < w; ++x)
-            {
-                const uint64_t q = s[size_t(x) * size_t(chunkSpp)];
-                double v;
-                if (format == 3)
-                    v = bits == 32 ? double(std::bit_cast<float>(uint32_t(q))) : std::bit_cast<double>(q);
-                else if (format == 2)
-                    v = bits == 64 ? double(int64_t(q)) : double(int64_t(q << (64 - bits)) >> (64 - bits));
-                else
-                    v = double(q);
-                if (std::isfinite(v) && v != nodata && !(format == 3 && bits == 32 && float(v) == float(nodata)))
-                    dem.metres[size_t(y) * size_t(w) + size_t(cx + x)] = float(v);
-            }
-        }
-    });
-    if (!error.empty())
-        throw fail(path, error);
-
+    Dem& dem = mInfo;
+    dem.width = L.w;
+    dem.height = L.h;
     std::map<int, int> keys;
     if (const std::vector<double>& dir = t.all(34735); dir.size() >= 4)
         for (size_t k = 4; k + 3 < dir.size(); k += 4)
@@ -345,8 +344,152 @@ Dem readGeoTiff(const fs::path& path)
         dem.x0 *= unit;
         dem.y0 *= unit;
     }
+}
+
+GeoTiffWindowReader::~GeoTiffWindowReader() = default;
+
+Dem GeoTiffWindowReader::window(int x0, int y0, int x1, int y1) const
+{
+    LILA_ZONE();
+
+    const Layout& L = *mLayout;
+    x0 = std::clamp(x0, 0, L.w);
+    x1 = std::clamp(x1, x0, L.w);
+    y0 = std::clamp(y0, 0, L.h);
+    y1 = std::clamp(y1, y0, L.h);
+    const int ww = x1 - x0, wh = y1 - y0;
+    if (ww < 1 || wh < 1)
+        throw std::runtime_error(mName + ": the area is outside the image");
+    if (uint64_t(ww) * uint64_t(wh) > kMaxSamples)
+        throw std::runtime_error(mName + ": the area is " + std::to_string(ww) + " x " + std::to_string(wh) + " samples");
+    Dem dem = mInfo;
+    dem.width = ww;
+    dem.height = wh;
+    dem.x0 = mInfo.x0 + double(x0) * mInfo.dx;
+    dem.y0 = mInfo.y0 - double(y0) * mInfo.dy;
+    dem.metres.assign(size_t(ww) * size_t(wh), kVoid);
+
+    std::vector<int> chunks;
+    const int cx0 = x0 / L.cw, cx1 = (x1 - 1) / L.cw, cy0 = y0 / L.ch, cy1 = (y1 - 1) / L.ch;
+    for (int cy = cy0; cy <= cy1; ++cy)
+        for (int cx = cx0; cx <= cx1; ++cx)
+            if (L.sizes[size_t(cy * L.across + cx)] > 0)
+                chunks.push_back(cy * L.across + cx);
+    std::sort(chunks.begin(), chunks.end(), [&](int a, int b) { return L.offsets[size_t(a)] < L.offsets[size_t(b)]; });
+
+    // Chunks close together in the file are read at once: one request instead of many over HTTP.
+    struct Span
+    {
+        uint64_t at = 0;
+        uint64_t end = 0;
+        std::vector<uint8_t> data;
+    };
+    std::vector<Span> spans;
+    std::vector<size_t> spanOf(chunks.size());
+    constexpr uint64_t kJoinGap = 256 * 1024, kMaxSpan = 32 * 1024 * 1024;
+    for (size_t i = 0; i < chunks.size(); ++i)
+    {
+        const uint64_t at = uint64_t(L.offsets[size_t(chunks[i])]), end = at + uint64_t(L.sizes[size_t(chunks[i])]);
+        if (spans.empty() || at > spans.back().end + kJoinGap || end - spans.back().at > kMaxSpan)
+            spans.push_back({at, end, {}});
+        else
+            spans.back().end = std::max(spans.back().end, end);
+        spanOf[i] = spans.size() - 1;
+    }
+    for (Span& s : spans)
+        mRead(s.at, s.end - s.at, s.data);
+
+    const int bps = L.bits / 8;
+    std::string error;
+    std::mutex errorLock;
+    auto failed = [&](const char* why) {
+        std::lock_guard lock(errorLock);
+        error = why;
+    };
+    tbb::parallel_for(size_t(0), chunks.size(), [&](size_t i) {
+        const int c = chunks[i];
+        const int cx = (c % L.across) * L.cw, cy = (c / L.across) * L.ch;
+        const int rows = L.tiled ? L.ch : std::min(L.ch, L.h - cy);
+        const size_t rowBytes = size_t(L.cw) * size_t(L.chunkSpp) * size_t(bps);
+        const size_t want = rowBytes * size_t(rows);
+        const Span& s = spans[spanOf[i]];
+        const uint64_t at = uint64_t(L.offsets[size_t(c)]) - s.at, n = uint64_t(L.sizes[size_t(c)]);
+        if (at + n > s.data.size())
+        {
+            failed("truncated data");
+            return;
+        }
+        const uint8_t* src = s.data.data() + at;
+        std::vector<uint8_t> raw;
+        if (L.compression == 1)
+            raw.assign(src, src + std::min<uint64_t>(n, want));
+        else if (L.compression == 5)
+        {
+            raw.reserve(want);
+            if (!lzwDecode(src, size_t(n), raw))
+                failed("bad LZW data");
+        }
+        else
+        {
+            raw.resize(want);
+            mz_ulong got = mz_ulong(want);
+            if (mz_uncompress(raw.data(), &got, src, mz_ulong(n)) != MZ_OK)
+                failed("bad deflate data");
+            raw.resize(got);
+        }
+        raw.resize(want, 0);
+        std::vector<uint8_t> shuffled(L.predictor == 3 ? rowBytes : 0);
+        std::vector<uint64_t> smp(size_t(L.cw) * size_t(L.chunkSpp));
+        const uint64_t mask = L.bits == 64 ? ~uint64_t(0) : (uint64_t(1) << L.bits) - 1;
+        const int xa = std::max(cx, x0), xb = std::min({cx + L.cw, x1, L.w});
+        for (int r = 0; r < rows; ++r)
+        {
+            const int y = cy + r;
+            if (y >= y1)
+                break;
+            if (y < y0)
+                continue;
+            uint8_t* row = raw.data() + size_t(r) * rowBytes;
+            bool sampleLe = L.le;
+            if (L.predictor == 3)
+            {
+                for (size_t k = size_t(L.chunkSpp); k < rowBytes; ++k)
+                    row[k] = uint8_t(row[k] + row[k - size_t(L.chunkSpp)]);
+                // Floating-point prediction stores each byte plane most significant first.
+                const size_t wc = smp.size();
+                for (size_t j = 0; j < wc; ++j)
+                    for (int b = 0; b < bps; ++b)
+                        shuffled[j * size_t(bps) + size_t(b)] = row[size_t(b) * wc + j];
+                row = shuffled.data();
+                sampleLe = false;
+            }
+            for (size_t j = 0; j < smp.size(); ++j)
+                smp[j] = readUint(row + j * size_t(bps), bps, sampleLe);
+            if (L.predictor == 2)
+                for (size_t j = size_t(L.chunkSpp); j < smp.size(); ++j)
+                    smp[j] = (smp[j] + smp[j - size_t(L.chunkSpp)]) & mask;
+            for (int x = xa; x < xb; ++x)
+            {
+                const uint64_t q = smp[size_t(x - cx) * size_t(L.chunkSpp)];
+                double v;
+                if (L.format == 3)
+                    v = L.bits == 32 ? double(std::bit_cast<float>(uint32_t(q))) : std::bit_cast<double>(q);
+                else if (L.format == 2)
+                    v = L.bits == 64 ? double(int64_t(q)) : double(int64_t(q << (64 - L.bits)) >> (64 - L.bits));
+                else
+                    v = double(q);
+                if (std::isfinite(v) && v != L.nodata && !(L.format == 3 && L.bits == 32 && float(v) == float(L.nodata)))
+                    dem.metres[size_t(y - y0) * size_t(ww) + size_t(x - x0)] = float(v);
+            }
+        }
+    });
+    if (!error.empty())
+        throw std::runtime_error(mName + ": " + error);
     return dem;
 }
+
+namespace
+{
 
 // Other formats ---------------------------------------------------------------------------------------------------
 

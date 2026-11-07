@@ -5,6 +5,8 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -51,6 +53,35 @@ bool parseDemFormat(std::string_view name, DemFormat* out);
  * picks by extension (a .png is Terrarium). Throws std::runtime_error.
  */
 Dem readDem(const std::filesystem::path& path, DemFormat format = DemFormat::Auto);
+
+/** Reads count bytes at offset into out, fewer at the end of the data. Throws std::runtime_error. */
+using ByteRange = std::function<void(uint64_t offset, uint64_t count, std::vector<uint8_t>& out)>;
+
+ByteRange fileByteRange(const std::filesystem::path& path);
+
+/**
+ * A GeoTIFF read in parts: the header when made, then only the strips or tiles a window touches, so a cloud-optimised
+ * GeoTIFF over HTTP ranges or a huge local file costs only the area wanted. Reads what readDem reads.
+ */
+class GeoTiffWindowReader
+{
+public:
+    /** Throws std::runtime_error starting with name. */
+    GeoTiffWindowReader(ByteRange read, std::string name);
+    ~GeoTiffWindowReader();
+
+    /** The whole image's size, georeference and EPSG code, without samples. */
+    const Dem& info() const { return mInfo; }
+    /** Columns [x0, x1) and rows [y0, y1), clipped to the image; x0 and y0 of the result are its first sample's. */
+    Dem window(int x0, int y0, int x1, int y1) const;
+
+private:
+    struct Layout;
+    ByteRange mRead;
+    std::string mName;
+    std::shared_ptr<Layout> mLayout;
+    Dem mInfo;
+};
 
 /** Whether the file is elevation data rather than an image: .hgt, .asc, .xyz, or a TIFF with geographic tags. */
 bool looksLikeElevation(const std::filesystem::path& path);
