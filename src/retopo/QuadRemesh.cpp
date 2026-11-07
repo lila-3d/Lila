@@ -15,6 +15,7 @@
 #include <chrono>
 #include <climits>
 #include <cmath>
+#include <complex>
 #include <optional>
 #include <unordered_map>
 
@@ -1407,9 +1408,159 @@ std::vector<FieldSingularity> polesOnSurface(const Work& w, const std::vector<Po
     return out;
 }
 
+/**
+ * The cross field of a symmetric shape, solved over the whole shape (the half joined to its reflection) and the same
+ * either side by construction: the seam is held along the plane, so it can be a straight edge loop, and each vertex
+ * takes the mean of its own cross and its reflection's. Its poles are placed once: close opposite pairs cancel, and the
+ * rest move at least two quads off the seam and out of saddles (crotch, armpit, finger webs), mirrored pole for pole.
+ * Returns the field on the half's vertices; s's seam border loses the corners clipping made there.
+ */
+/** Saddle amount (saddleAmount at the field's spacing) above which a pole counts as in a joint. */
+constexpr double kPoleSaddle = 0.15;
+
+std::vector<glm::dvec3> symmetricField(Work& w, const QuadRemeshOptions& opts)
+{
+    LILA_ZONE();
+
+    Surface& s = w.s;
+    const geo::SymmetryPlane& plane = w.plane;
+    std::vector<Index> mirrorOf;
+    Surface whole = mirrorSurface(s, plane, mirrorOf);
+    whole.buildTopology();
+    whole.buildGeometry();
+    whole.detectFeatures(opts.sharpAngle, 75.0, 2.0 * w.h0);
+    const Index n = s.vertexCount(), nt = Index(s.tris.size());
+    if (const char* dump = std::getenv("LILA_WHOLE_DUMP"))
+        if (FILE* f = std::fopen(dump, "w"))
+        {
+            for (Index v = 0; v < whole.vertexCount(); ++v)
+                std::fprintf(f, "v %.9g %.9g %.9g\n", whole.pos[v].x, whole.pos[v].y, whole.pos[v].z);
+            for (const auto& t : whole.tris)
+                std::fprintf(f, "f %d %d %d\n", int(t[0] + 1), int(t[1] + 1), int(t[2] + 1));
+            for (Index v = 0; v < whole.vertexCount(); ++v)
+                if (whole.feature[v] != FeatureKind::None)
+                    std::fprintf(f, "# feature %d %d\n", int(v), int(whole.feature[v]));
+            std::fclose(f);
+        }
+    std::vector<double> scale(whole.vertexCount());
+    for (Index v = 0; v < n; ++v)
+        scale[v] = scale[mirrorOf[v]] = w.scale[v];
+
+    auto onSeam = [&](Index v) { return mirrorOf[v] == v; };
+    auto seamTangent = [&](Index v) { return glm::normalize(glm::cross(plane.normal, whole.normal[v])); };
+    FieldOptions fo = w.fo;
+    for (Index v = 0; v < n; ++v)
+        if (onSeam(v) && whole.feature[v] == FeatureKind::None)
+            fo.aligned.push_back({v, seamTangent(v)});
+
+    auto reflectDir = [&](const glm::dvec3& d) { return d - 2.0 * glm::dot(d, plane.normal) * plane.normal; };
+    auto symmetrize = [&](std::vector<glm::dvec3>& q) {
+        for (Index v = 0; v < n; ++v)
+        {
+            const glm::dvec3 nv = whole.normal[v], e1 = anyTangent(nv), e2 = glm::cross(nv, e1);
+            auto power = [&](glm::dvec3 d) {
+                d -= nv * glm::dot(nv, d);
+                return std::polar(1.0, 4.0 * std::atan2(glm::dot(d, e2), glm::dot(d, e1)));
+            };
+            const std::complex<double> z = power(q[v]) + power(reflectDir(q[mirrorOf[v]]));
+            if (std::abs(z) < 1e-12)
+                continue;
+            const double a = std::arg(z) / 4.0;
+            q[v] = std::cos(a) * e1 + std::sin(a) * e2;
+            q[mirrorOf[v]] = reflectDir(q[v]);
+        }
+    };
+    std::vector<glm::dvec3> q = solveCrossField(whole, fo);
+    symmetrize(q);
+
+    // Two quads off the seam (with pure quads the field's spacing is two quads) and out of saddles.
+    const std::vector<double> saddle = saddleAmount(whole, w.fo.scale);
+    auto centre = [&](Index t) { return (whole.pos[whole.tris[t][0]] + whole.pos[whole.tris[t][1]] + whole.pos[whole.tris[t][2]]) / 3.0; };
+    auto allowed = [&](Index t) {
+        const auto& tri = whole.tris[t];
+        const double cell = (scale[tri[0]] + scale[tri[1]] + scale[tri[2]]) / 3.0;
+        const double sad = std::max({saddle[tri[0]], saddle[tri[1]], saddle[tri[2]]});
+        return t < nt && plane.distance(centre(t)) >= 2.0 * cell / w.cf && sad < kPoleSaddle;
+    };
+    std::vector<FieldSingularity> half;
+    for (const FieldSingularity& p : fieldSingularities(whole, q))
+        if (p.tri < nt)
+            half.push_back(p);
+    const size_t found = half.size();
+    half = spreadPoles(whole, cancelClosePoles(whole, half, scale, 1.5), scale, 1.0, allowed);
+    std::vector<FieldSingularity> poles = half;
+    for (const FieldSingularity& p : half)
+        poles.push_back({p.tri + nt, p.index});
+    PrescribedTwist pt = prescribeSingularities(whole, poles);
+    if (pt.error.empty())
+    {
+        // Weaker pull to the curvature lets the field keep to the poles it is given instead of growing new ones beside them.
+        fo.curvatureWeight *= std::getenv("LILA_PRESCRIBED_ALIGN") ? std::atof(std::getenv("LILA_PRESCRIBED_ALIGN")) : 0.3;
+        fo.twist = std::move(pt.twist);
+        q = solveCrossField(whole, fo);
+        symmetrize(q);
+    }
+    else
+        Budget::note("pole placement: " + pt.error);
+    const size_t after = fieldSingularities(whole, q).size();
+    Budget::note(std::to_string(found) + " poles on the half, " + std::to_string(half.size()) + " placed, " + std::to_string(after) + " in the whole field");
+    if (std::getenv("LILA_POLE_DEBUG"))
+    {
+        std::fprintf(stderr, "symmetric field: %zu half poles found, %zu placed, %zu in the final whole field\n", found, half.size(), after);
+        std::unordered_map<Index, int> want;
+        for (const FieldSingularity& p : poles)
+            want[p.tri] += p.index;
+        for (const FieldSingularity& p : fieldSingularities(whole, q))
+        {
+            auto it = want.find(p.tri);
+            if (it != want.end() && it->second == p.index)
+            {
+                want.erase(it);
+                continue;
+            }
+            const auto& tri = whole.tris[p.tri];
+            int feat = 0;
+            for (Index v : tri)
+                feat = std::max(feat, int(whole.feature[v]) + (mirrorOf[v] == v ? 10 : 0));
+            const glm::dvec3 c = centre(p.tri);
+            std::fprintf(stderr, "  extra pole %+d at %.1f %.1f %.1f feature %d\n", p.index, c.x, c.y, c.z, feat);
+        }
+        for (Index v = 0; v < n; ++v)
+            if (onSeam(v) && whole.feature[v] != FeatureKind::None)
+                std::fprintf(stderr, "  seam feature %d at %.2f %.2f %.2f\n", int(whole.feature[v]), whole.pos[v].x, whole.pos[v].y, whole.pos[v].z);
+        for (const auto& [t, k] : want)
+            if (k != 0)
+            {
+                const glm::dvec3 c = centre(t);
+                std::fprintf(stderr, "  missing pole %+d at %.1f %.1f %.1f\n", k, c.x, c.y, c.z);
+            }
+    }
+
+    // The half's seam is its border: a line along the plane except where a crease of the whole crosses it.
+    for (Index v = 0; v < n; ++v)
+    {
+        if (!onSeam(v))
+            continue;
+        const glm::dvec3 t = seamTangent(v);
+        const bool crossing = whole.feature[v] == FeatureKind::Corner ||
+                              (whole.feature[v] == FeatureKind::Line && std::abs(glm::dot(whole.featureDir[v], t)) < 0.7);
+        if (crossing || s.pinned[v])
+            s.feature[v] = FeatureKind::Corner;
+        else
+        {
+            s.feature[v] = FeatureKind::Line;
+            s.featureDir[v] = t;
+        }
+    }
+    q.resize(n);
+    return q;
+}
+
 /** The cross field, turning exactly at opts.poles when given. */
 std::vector<glm::dvec3> crossField(Work& w, const QuadRemeshOptions& opts, std::string& error)
 {
+    if (w.symmetric && !opts.poles && !std::getenv("LILA_HALF_FIELD"))
+        return symmetricField(w, opts);
     if (opts.poles)
     {
         PrescribedTwist pt = prescribeSingularities(w.s, polesOnSurface(w, *opts.poles));
@@ -1622,7 +1773,7 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
     // The seamless layout puts every pole on a lattice point, so poles closer than a step or so fold it; a close pair of
     // opposite poles is only a kink in the flow, and the field without it is the one to lay out.
     std::vector<glm::dvec3> qSeam = q;
-    if (trySeamlessLayout && !opts.poles)
+    if (trySeamlessLayout && !opts.poles && !(symmetric && !std::getenv("LILA_HALF_FIELD")))
     {
         // Weaker pull to the curvature lets the field keep to the poles it is given instead of growing new ones beside them.
         FieldOptions budgeted = fo;

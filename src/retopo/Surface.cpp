@@ -795,6 +795,43 @@ void clipSurface(Surface& s, const geo::SymmetryPlane& plane, int axis)
     compactSurface(s);
 }
 
+Surface mirrorSurface(const Surface& half, const geo::SymmetryPlane& plane, std::vector<Index>& mirrorOf)
+{
+    LILA_ZONE();
+
+    Surface w;
+    const Index n = half.vertexCount();
+    const double eps = std::max(1e-9, half.meanEdgeLength() * 1e-6);
+    w.pos = half.pos;
+    w.density = half.density;
+    mirrorOf.assign(n, kInvalid);
+    for (Index v = 0; v < n; ++v)
+    {
+        if (std::abs(plane.distance(half.pos[v])) < eps)
+        {
+            mirrorOf[v] = v;
+            continue;
+        }
+        mirrorOf[v] = Index(w.pos.size());
+        w.pos.push_back(plane.reflect(half.pos[v]));
+        w.density.push_back(half.density[v]);
+    }
+    for (Index v = 0; v < n; ++v)
+        if (mirrorOf[v] >= n)
+            mirrorOf.push_back(v);
+    w.tris = half.tris;
+    for (const auto& t : half.tris)
+        w.tris.push_back({mirrorOf[t[0]], mirrorOf[t[2]], mirrorOf[t[1]]});
+    w.hard = half.hard;
+    for (uint64_t key : half.hard)
+        w.hard.insert(edgeKey(mirrorOf[key >> 32], mirrorOf[key & 0xffffffffu]));
+    w.pins = half.pins;
+    for (const glm::dvec3& p : half.pins)
+        if (std::abs(plane.distance(p)) >= eps)
+            w.pins.push_back(plane.reflect(p));
+    return w;
+}
+
 // FeatureLines
 
 std::array<int64_t, 3> FeatureLines::cell(const glm::dvec3& p) const

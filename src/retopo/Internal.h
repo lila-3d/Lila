@@ -173,6 +173,12 @@ LILA_SCENE_API void decimateSurface(Surface& s, Index targetTris);
 LILA_SCENE_API void smoothSurface(Surface& s, const geo::MeshBvh& source, int iterations);
 /** Keeps the part with plane.distance >= 0, cutting triangles; cut points land exactly on the plane. */
 LILA_SCENE_API void clipSurface(Surface& s, const geo::SymmetryPlane& plane, int axis);
+/**
+ * The whole shape from a half clipped at plane: the half's vertices and triangles first, then the reflections of those
+ * off the plane, winding reversed. mirrorOf maps each vertex to its reflection (plane vertices to themselves); triangle t
+ * of the half reflects to t + half.tris.size(). Needs buildTopology and the rest afterwards.
+ */
+LILA_SCENE_API Surface mirrorSurface(const Surface& half, const geo::SymmetryPlane& plane, std::vector<Index>& mirrorOf);
 /** Drops vertices no triangle uses. */
 LILA_SCENE_API void compactSurface(Surface& s);
 
@@ -184,6 +190,8 @@ struct FieldOptions
     double softCreaseAngle = 0.0; // edges bending at least this many degrees (short of features) pull the field along them; <= 0 off
     double jointStiffness = 30.0; // smoothness gain in saddles (crotch, armpit, finger webs), which keeps poles out of joints; 0 off
     std::vector<std::vector<glm::dvec3>> guides;
+    /** Vertices held to a direction like a feature line, without being one (a symmetry seam). */
+    std::vector<std::pair<Index, glm::dvec3>> aligned;
     /** Per surface edge, an angle (in the field's fourth power) added to its transport; from prescribeSingularities. */
     std::vector<double> twist;
 };
