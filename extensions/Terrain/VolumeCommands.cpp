@@ -918,9 +918,12 @@ json sendVolumeToUnreal(uint64_t modifier, const glm::dmat4& world, const json& 
         const fs::path file = dir / (name + ".fbx");
         writePiece(*p, world, centre, file, name);
         const json imported = call("importAsset", link::importParams(file, {{"contentPath", folder + "/" + name}, {"kind", "static"}}), link::importCallOptions());
+        // The import also lists the materials it made, in no set order; the mesh is the asset named after the piece.
         std::string asset = folder + "/" + name + "." + name;
-        if (const json made = imported.value("assets", json::array()); made.is_array() && !made.empty() && made[0].is_string())
-            asset = made[0].get<std::string>();
+        if (const json made = imported.value("assets", json::array()); made.is_array())
+            for (const json& m : made)
+                if (m.is_string() && m.get<std::string>().ends_with("/" + name + "." + name))
+                    asset = m.get<std::string>();
         const std::string group = id + "/volume/" + p->name;
         const math::Vector u = math::toUnreal(math::Vector(centre.x, centre.y, centre.z));
         call("placeInstances", {{"group", group},
