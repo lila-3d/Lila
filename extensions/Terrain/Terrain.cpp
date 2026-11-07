@@ -5,6 +5,7 @@
 #include "LandformCommands.h"
 #include "MaterialNodes.h"
 #include "Query.h"
+#include "Spec.h"
 #include "Terrain.h"
 #include "Volume.h"
 
@@ -24,5 +25,6 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(lila::ext::Context& ctx)
     if (!terrain::registerRoads(ctx))
         return 1;
     terrain::registerRegionRefs(ctx);
+    terrain::registerSpec(ctx);
     return 0;
 }

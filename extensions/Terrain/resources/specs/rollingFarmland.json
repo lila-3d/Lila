@@ -1,0 +1,18 @@
+{
+    "description": "Rolling farmland with a river: low hills, a broad meandering river across the middle and a farm road along it.",
+    "name": "RollingFarmland",
+    "size": [400000, 400000],
+    "resolution": 513,
+    "seed": 4,
+    "source": {"type": "noise", "amplitude": 6000, "featureSize": 140000, "ridged": 0.0, "roughness": 0.4, "warp": 0.3},
+    "constraints": [
+        {"id": "riverValley", "kind": "river", "path": [[-200000, -30000], [-60000, 10000], [60000, -15000], [200000, 20000]], "height": 600, "width": 30000}
+    ],
+    "erosion": {"preset": "hills", "age": 0.5},
+    "water": {
+        "rivers": [{"id": "river", "path": [[-200000, -30000], [-60000, 10000], [60000, -15000], [200000, 20000]], "meander": 1.5, "width": 1500, "depth": 250}]
+    },
+    "roads": [{"id": "farmRoad", "kind": "track", "path": [[-190000, 20000], [-60000, 45000], [60000, 25000], [190000, 55000]]}],
+    "biomes": {"climate": {"temperature": 14}},
+    "materials": true
+}

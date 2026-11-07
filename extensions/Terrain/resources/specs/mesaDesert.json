@@ -1,0 +1,15 @@
+{
+    "description": "Eroded mesa desert: flat-topped mesas and buttes in hard rock bands, terraced cliffs, scree aprons and dry washes.",
+    "name": "MesaDesert",
+    "size": [400000, 400000],
+    "resolution": 513,
+    "seed": 2,
+    "source": {"type": "noise", "amplitude": 30000, "featureSize": 90000, "ridged": 0.1, "roughness": 0.45},
+    "landforms": [
+        {"process": "strata", "stage": "base", "settings": {"thickness": 2500, "dip": 3, "strength": 0.6}},
+        {"process": "terrace", "settings": {"step": 2500, "sharpness": 0.8, "strength": 0.7}}
+    ],
+    "erosion": {"preset": "desert", "age": 0.7, "hardnessMask": "strata"},
+    "biomes": {"climate": {"temperature": 28, "rain": 0.15}},
+    "materials": true
+}

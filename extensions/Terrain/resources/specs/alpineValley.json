@@ -1,0 +1,19 @@
+{
+    "description": "Alpine valley with a glacial lake: ridged ranges either side of a deep valley, a tarn at its head and a river down its floor.",
+    "name": "AlpineValley",
+    "size": [400000, 400000],
+    "resolution": 513,
+    "seed": 1,
+    "source": {"type": "noise", "amplitude": 70000, "featureSize": 120000, "ridged": 0.8, "roughness": 0.5},
+    "constraints": [
+        {"id": "valley", "kind": "valley", "path": [[0, -190000], [12000, 0], [0, 190000]], "height": 40000, "width": 110000}
+    ],
+    "erosion": {"preset": "alpine", "age": 0.6},
+    "water": {
+        "lakes": [{"id": "glacialLake", "polygon": [[-22000, -150000], [20000, -152000], [26000, -122000], [0, -106000], [-24000, -120000]], "depth": 1500}],
+        "rivers": [{"id": "valleyRiver", "path": [[0, -104000], [12000, 0], [0, 190000]], "meander": 0.5}]
+    },
+    "regions": [{"name": "valley", "named": "valleyFloor", "minArea": 20000, "pick": 0}],
+    "biomes": true,
+    "materials": true
+}
