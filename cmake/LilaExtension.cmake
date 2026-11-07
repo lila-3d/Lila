@@ -36,8 +36,11 @@ function(lila_add_extension target)
         COMMENT "Packaging ${ARG_ID}.lilaext")
     if(ARG_RESOURCES)
         cmake_path(ABSOLUTE_PATH ARG_RESOURCES BASE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} OUTPUT_VARIABLE resources)
-        add_custom_command(TARGET ${target} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_directory ${resources} ${package}/resources)
+        # Its own target so resource edits redeploy without the library relinking.
+        add_custom_target(${target}_resources ALL
+            COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${resources} ${package}/resources
+            COMMENT "Deploying ${ARG_ID} resources")
+        add_dependencies(${target} ${target}_resources)
     endif()
 
     lila_check_extension_sources(${target} ${ARG_SOURCES})
@@ -65,7 +68,7 @@ function(lila_add_resource_extension target)
     add_custom_target(${target} ALL
         COMMAND ${CMAKE_COMMAND} -E make_directory ${package}
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${manifest} ${package}/extension.json
-        COMMAND ${CMAKE_COMMAND} -E copy_directory ${resources} ${package}/resources
+        COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${resources} ${package}/resources
         COMMENT "Packaging ${ARG_ID}.lilaext")
 endfunction()
 
