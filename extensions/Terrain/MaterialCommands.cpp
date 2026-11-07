@@ -1182,9 +1182,14 @@ json surfaceLandscapeParams(json& params, Node* modifier, bool rvt)
         return json();
     std::vector<std::string> warnings;
     json layers = json::array();
+    // Unreal layer names are FNames, which ignore case: Riverbed and riverBed would be one layer.
+    auto folded = [](std::string s) {
+        std::ranges::transform(s, s.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+        return s;
+    };
     std::set<std::string> taken;
     for (json& l : params["layers"])
-        taken.insert(l.value("name", std::string()));
+        taken.insert(folded(l.value("name", std::string())));
     for (const LayerRule& rule : rules->layers)
     {
         const SurfLook look = surfLookOf(rule, warnings);
@@ -1194,11 +1199,11 @@ json surfaceLandscapeParams(json& params, Node* modifier, bool rvt)
                 // The paint layer takes the layer's own name (Grass) unless a mask already uses it.
                 std::string ue = rule.name;
                 ue[0] = char(std::toupper(static_cast<unsigned char>(ue[0])));
-                if (!taken.count(ue))
+                if (!taken.count(folded(ue)))
                 {
-                    taken.erase(l.value("name", std::string()));
+                    taken.erase(folded(l.value("name", std::string())));
                     l["name"] = ue;
-                    taken.insert(ue);
+                    taken.insert(folded(ue));
                 }
                 l["weightBlend"] = true;
                 layers.push_back({{"name", l["name"]},
