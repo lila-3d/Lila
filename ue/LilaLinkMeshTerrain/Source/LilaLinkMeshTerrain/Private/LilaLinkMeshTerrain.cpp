@@ -854,6 +854,81 @@ TSharedPtr<FJsonValue> SetMeshTerrainRoads(const TSharedPtr<FJsonObject>& Params
 	return MakeShared<FJsonValueObject>(Out);
 }
 
+/** At each world [x, y], the base mesh vertex nearest it across the sent sections: its world position and channel weights. */
+TSharedPtr<FJsonValue> SampleMeshTerrain(const TSharedPtr<FJsonObject>& Params, FString& OutError)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMeshTerrain::SampleMeshTerrain);
+
+	FString Id;
+	const TArray<TSharedPtr<FJsonValue>>* Points = nullptr;
+	if (!Params->TryGetStringField(TEXT("id"), Id) || !Params->TryGetArrayField(TEXT("points"), Points))
+	{
+		OutError = TEXT("sampleMeshTerrain: give id and points [[x, y], ...]");
+		return nullptr;
+	}
+	UWorld* World = EditorWorld();
+	const TMap<FString, AActor*> Sections = World ? TaggedSections(World, TagFor(Id)) : TMap<FString, AActor*>();
+	if (Sections.IsEmpty())
+	{
+		OutError = TEXT("sampleMeshTerrain: no Mesh Terrain from this terrain");
+		return nullptr;
+	}
+	TArray<TSharedPtr<FJsonValue>> Out;
+	for (const TSharedPtr<FJsonValue>& Value : *Points)
+	{
+		const TArray<TSharedPtr<FJsonValue>>& XY = Value->AsArray();
+		if (XY.Num() < 2)
+		{
+			OutError = TEXT("sampleMeshTerrain: each point is [x, y]");
+			return nullptr;
+		}
+		const FVector2D At(XY[0]->AsNumber(), XY[1]->AsNumber());
+		double Best = TNumericLimits<double>::Max();
+		const UE::Geometry::FDynamicMesh3* BestMesh = nullptr;
+		int32 BestVertex = INDEX_NONE;
+		FVector BestPosition = FVector::ZeroVector;
+		for (const TPair<FString, AActor*>& S : Sections)
+		{
+			UMeshProviderModifier* Provider = S.Value->FindComponentByClass<UMeshProviderModifier>();
+			const UE::Geometry::FDynamicMesh3* Mesh = Provider ? Provider->GetMesh() : nullptr;
+			if (!Mesh)
+			{
+				continue;
+			}
+			const FTransform ToWorld = S.Value->GetActorTransform();
+			for (const int32 Vid : Mesh->VertexIndicesItr())
+			{
+				const FVector P = ToWorld.TransformPosition(Mesh->GetVertex(Vid));
+				const double D = FVector2D::DistSquared(FVector2D(P), At);
+				if (D < Best)
+				{
+					Best = D;
+					BestMesh = Mesh;
+					BestVertex = Vid;
+					BestPosition = P;
+				}
+			}
+		}
+		TSharedRef<FJsonObject> Sample = MakeShared<FJsonObject>();
+		Sample->SetArrayField(TEXT("position"), {MakeShared<FJsonValueNumber>(BestPosition.X), MakeShared<FJsonValueNumber>(BestPosition.Y),
+													MakeShared<FJsonValueNumber>(BestPosition.Z)});
+		TSharedRef<FJsonObject> Weights = MakeShared<FJsonObject>();
+		if (BestMesh && BestMesh->HasAttributes())
+		{
+			for (int32 Layer = 0; Layer < BestMesh->Attributes()->NumWeightLayers(); ++Layer)
+			{
+				const UE::Geometry::FDynamicMeshWeightAttribute* W = BestMesh->Attributes()->GetWeightLayer(Layer);
+				float V = 0.0f;
+				W->GetValue(BestVertex, &V);
+				Weights->SetNumberField(W->GetName().ToString(), V);
+			}
+		}
+		Sample->SetObjectField(TEXT("weights"), Weights);
+		Out.Add(MakeShared<FJsonValueObject>(Sample));
+	}
+	return MakeShared<FJsonValueArray>(Out);
+}
+
 TSharedPtr<FJsonValue> RemoveMeshTerrain(const TSharedPtr<FJsonObject>& Params, FString& OutError)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMeshTerrain::RemoveMeshTerrain);
@@ -894,5 +969,6 @@ void LilaLinkMeshTerrain::RegisterMethods()
 {
 	LilaLink::RegisterMethod(TEXT("setMeshTerrain"), &SetMeshTerrain, Feature);
 	LilaLink::RegisterMethod(TEXT("removeMeshTerrain"), &RemoveMeshTerrain, Feature);
+	LilaLink::RegisterMethod(TEXT("sampleMeshTerrain"), &SampleMeshTerrain, Feature);
 	LilaLink::RegisterMethod(TEXT("setMeshTerrainRoads"), &SetMeshTerrainRoads, TEXT("meshTerrainRoads"));
 }
