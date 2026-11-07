@@ -6,6 +6,7 @@
 #include "LandformGpu.h"
 #include "Shaping.h"
 
+#include "render/GpuCompute.h"
 #include "render/Renderer.h"
 
 #include <tbb/global_control.h>
@@ -500,7 +501,7 @@ TEST_CASE("landform: preset step timing at 2049 and 4097, CPU and GPU" * doctest
     }
 }
 
-TEST_CASE("landform gpu: erosion filter and material thermal match the CPU within tolerance")
+TEST_CASE("landform gpu: erosion filter matches the CPU within tolerance, material thermal exactly")
 {
     if (!startLandGpu())
         return;
@@ -517,6 +518,12 @@ TEST_CASE("landform gpu: erosion filter and material thermal match the CPU withi
     MESSAGE("filter gpu vs cpu: worst " << worst << " cm over a " << (r.y - r.x) << " cm range");
     CHECK(worst < (r.y - r.x) * 1e-3);
 
+    if (!lila::gpu::supportsFloat64())
+    {
+        Heightfield none = landRanges(17);
+        CHECK_FALSE(terrain::thermalMaterialGpu(none, std::vector<float>(none.size(), 30.0f), 1, &err));
+        return;
+    }
     Heightfield tc = landRanges(257, 4), tg = tc;
     tc.mask("hard") = std::vector<float>(tc.size(), 0.0f);
     for (size_t k = 0; k < tc.size(); k += 3)
@@ -529,7 +536,7 @@ TEST_CASE("landform gpu: erosion filter and material thermal match the CPU withi
     for (size_t k = 0; k < tc.size(); ++k)
         worst = std::max(worst, std::abs(double(tc.heights[k]) - double(tg.heights[k])));
     MESSAGE("thermal gpu vs cpu: worst " << worst << " cm");
-    CHECK(worst < 1.0);
+    CHECK(tc.heights == tg.heights);
 }
 
 TEST_CASE("landform gpu: GPU drainage matches drain(), so debris, deposition and the preset match the CPU")
@@ -591,12 +598,10 @@ TEST_CASE("landform gpu: GPU drainage matches drain(), so debris, deposition and
     p.gpu = true;
     terrain::PresetReport report;
     terrain::erodePreset(g, p, &report);
-    CHECK(report.fallbacks.empty());
-    // The drainage is exact; GPU thermal rounds differently and the rills after it can take other channels in places.
-    const glm::dvec2 pr = c.range();
-    const double mean = meanAbsChange(c, g);
-    MESSAGE("preset gpu vs cpu: mean " << mean << " cm, worst " << worstOf(c, g) << " cm over a " << (pr.y - pr.x) << " cm range");
-    CHECK(mean < (pr.y - pr.x) * 5e-3);
+    CHECK(report.fallbacks.empty() == lila::gpu::supportsFloat64());
+    // Drainage and thermal are exact, so the rills and deposition after them take the same channels.
+    MESSAGE("preset gpu vs cpu: worst " << worstOf(c, g) << " cm");
+    CHECK(c.heights == g.heights);
 }
 
 TEST_CASE("landform commands: terrainCreate's age, terrainErode presets, and terrainLandform steps")

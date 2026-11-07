@@ -109,8 +109,10 @@ bool runJob(const Heightfield& h, const LandScene& base, const std::function<voi
     std::lock_guard lock(run.mutex);
     return run.session.run(
         [&](gpu::Recorder& r) {
-            for (int k = 0; k < KernelCount; ++k)
-                r.kernel(k, "terrain_landform.spv", kEntries[k], sizeof(Push));
+            r.kernel(KFilter, "terrain_landform.spv", kEntries[KFilter], sizeof(Push));
+            if (gpu::supportsFloat64())
+                for (int k = KShed; k < KernelCount; ++k)
+                    r.kernel(k, "terrain_talus.spv", kEntries[k], sizeof(Push));
             const size_t bytes = h.size() * 4;
             LandScene s = base;
             for (int b = 0; b < BufCount; ++b)
@@ -182,6 +184,12 @@ bool thermalMaterialGpu(Heightfield& h, const std::vector<float>& angles, int it
     {
         if (err)
             *err = "one talus angle per sample is needed";
+        return false;
+    }
+    if (!gpu::supportsFloat64())
+    {
+        if (err)
+            *err = "the GPU has no 64-bit floats, which thermal needs to match the CPU exactly";
         return false;
     }
     const size_t n = h.size();

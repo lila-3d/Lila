@@ -520,7 +520,10 @@ void thermalMaterial(Heightfield& h, const std::vector<float>& angles, int itera
         const int nx = x + kDx[k], nz = z + kDz[k];
         if (nx < 0 || nz < 0 || nx >= h.nx || nz >= h.nz)
             return 0.0f;
-        return std::max(0.0f, float(h.heights[i] - h.heights[h.index(nx, nz)] - talus[i] * kDist[k]));
+        // Float throughout, in this order: terrain_talus.slang matches it bit for bit.
+        const float drop = h.heights[i] - h.heights[h.index(nx, nz)];
+        const float hold = talus[i] * float(kDist[k]);
+        return std::max(0.0f, drop - hold);
     };
     for (int it = 0; it < iterations; ++it)
     {

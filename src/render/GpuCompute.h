@@ -28,6 +28,8 @@ namespace lila::gpu
 {
 /** True while the renderer runs; nothing here works without it (batch runs have none). */
 LILA_UI_API bool available();
+/** True when kernels may use double (shaderFloat64); false when the renderer isn't running. */
+LILA_UI_API bool supportsFloat64();
 
 enum class BufferKind : uint8_t
 {

@@ -40,6 +40,12 @@ std::vector<std::weak_ptr<Session::Impl>>& liveSessions()
 
 bool available() { return Renderer::get().running(); }
 
+bool supportsFloat64()
+{
+    const VulkanContext* vk = available() ? Renderer::get().context() : nullptr;
+    return vk && vk->shaderFloat64;
+}
+
 struct Session::Impl
 {
     struct Buf
