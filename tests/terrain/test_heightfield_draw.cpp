@@ -360,6 +360,74 @@ TEST_CASE("heightfield draw: shades like the terrain's mesh, and draws its wire,
     CHECK(changed(layeredShot) > 0.2);
 }
 
+TEST_CASE("heightfield draw: casts into the shadow map like the terrain's mesh")
+{
+    auto& r = render::Renderer::get();
+    if (!r.running() && !r.start())
+    {
+        MESSAGE("no GPU for the heightfield shadow test");
+        return;
+    }
+    auto h = hills(257, 3000.0);
+    ui::Camera cam;
+    cam.distance = 30000.0;
+    cam.pitch = -55.0;
+    cam.nearClip = 100.0;
+    std::string err;
+    auto shoot = [&](render::FrameState s) {
+        Shot out;
+        REQUIRE_MESSAGE(r.renderOffscreen(std::move(s), out.w, out.h, out.bgra, &err), err);
+        return out;
+    };
+
+    // A low sun along +X, mapped over the whole terrain.
+    render::LightDraw sun;
+    sun.kind = render::LightDraw::Directional;
+    sun.direction = glm::normalize(glm::vec3(1.0f, -0.15f, 0.2f));
+    sun.radiance = glm::vec3(12.0f);
+    sun.shadows = true;
+    const double radius = 50.0 * 256.0 * 1.5;
+    const glm::dvec3 dir(sun.direction);
+    const glm::dmat4 view = glm::lookAt(-dir * radius * 2.0, glm::dvec3(0.0), glm::dvec3(0.0, 1.0, 0.0));
+    glm::dmat4 reverse(1.0);
+    reverse[2][2] = -1.0;
+    reverse[3][2] = 1.0;
+    sun.shadowViewProj = glm::mat4(reverse * glm::orthoRH_ZO(-radius, radius, -radius, radius, radius * 0.5, radius * 3.5) * view);
+    sun.shadowTexel = float(2.0 * radius / 2048.0);
+    sun.shadowDepth = glm::vec4(float(radius * 0.5), float(radius * 3.5), 0.005f, float(0.5 / radius));
+
+    geo::HeightfieldMeshOptions mo;
+    mo.masks = false;
+    scene::MeshPtr mesh = std::make_shared<geo::Mesh>(geo::heightfieldToMesh(*h, mo));
+    render::MeshDraw md;
+    md.mesh = ui::renderMeshFor(mesh);
+    REQUIRE(md.mesh);
+    auto lit = [&](bool shadows) {
+        render::FrameState s = shotState(cam, 1.6);
+        s.lighting = render::FrameState::Lighting::Studio;
+        s.lights.push_back(sun);
+        s.lights.back().shadows = shadows;
+        return s;
+    };
+    render::FrameState meshLit = lit(true);
+    meshLit.meshes.push_back(md);
+    const Shot meshShot = shoot(meshLit);
+    render::FrameState meshUnshadowed = lit(false);
+    meshUnshadowed.meshes.push_back(md);
+    const Shot meshPlain = shoot(meshUnshadowed);
+    render::FrameState hfLit = lit(true);
+    hfLit.heightfields.push_back(drawOf(h));
+    const Shot hfShot = shoot(hfLit);
+
+    const double shadowed = difference(meshShot, meshPlain).second;
+    const auto [mean, share] = difference(meshShot, hfShot);
+    MESSAGE("shadows change " << shadowed * 100.0 << "% of the mesh; heightfield vs mesh with shadows: mean " << mean << ", " << share * 100.0
+                              << "% off by more than 8");
+    REQUIRE(shadowed > 0.05);
+    CHECK(share < shadowed * 0.25);
+    CHECK(mean < 3.0);
+}
+
 TEST_CASE("terrain display commands: options and paint layers round trip, layers undo")
 {
     loadTerrain();

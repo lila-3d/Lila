@@ -303,7 +303,7 @@ HeightfieldSelection selectHeightfieldPatches(const HeightfieldDraw& d, const He
     const double cell = d.cell;
 
     HfSelector s{d, py, eye, {}, {}, maxPatches, sel.patches};
-    const glm::dmat4 m = view.viewProj * world;
+    const glm::dmat4 m = view.cull.value_or(view.viewProj) * world;
     const glm::dvec4 r0 = glm::row(m, 0), r1 = glm::row(m, 1), r2 = glm::row(m, 2), r3 = glm::row(m, 3);
     const glm::dvec4 planes[5] = {r3 + r0, r3 - r0, r3 + r1, r3 - r1, r3 - r2};
     for (int k = 0; k < 5; ++k)
@@ -393,9 +393,10 @@ VkDeviceAddress HeightfieldRenderer::mask(VulkanContext& vk, VkCommandBuffer cmd
 }
 
 void HeightfieldRenderer::prepare(VulkanContext& vk, VkCommandBuffer cmd, const void* frameKey, const FrameState& s, uint32_t heightPx, uint64_t frame,
-                                  const MapHandle& handle)
+                                  const MapHandle& handle, const std::vector<glm::mat4>& shadowViews)
 {
     mPrepared.clear();
+    mShadows.assign(shadowViews.size(), {});
     mPatches = 0;
     if (s.heightfields.empty())
         return;
@@ -425,12 +426,20 @@ void HeightfieldRenderer::prepare(VulkanContext& vk, VkCommandBuffer cmd, const 
         const size_t count = size_t(d.nx) * size_t(d.nz);
         HfGpuParams p{};
         HeightfieldSelection sel;
+        std::vector<HeightfieldSelection> shadowSel(d.flags & DrawShaded ? shadowViews.size() : 0);
         try
         {
             const Grid* g = heights(vk, cmd, f, d, frame);
             p.heights = g->buffer.address;
-            sel = selectHeightfieldPatches(d, g->pyramid, view, std::clamp(double(d.quadPixels), 1.0, 64.0));
-            if (sel.patches.empty())
+            const double quadPixels = std::clamp(double(d.quadPixels), 1.0, 64.0);
+            sel = selectHeightfieldPatches(d, g->pyramid, view, quadPixels);
+            for (size_t v = 0; v < shadowSel.size(); ++v)
+            {
+                HeightfieldView shadowView = view;
+                shadowView.cull = glm::dmat4(shadowViews[v]);
+                shadowSel[v] = selectHeightfieldPatches(d, g->pyramid, shadowView, quadPixels);
+            }
+            if (sel.patches.empty() && std::ranges::all_of(shadowSel, [](const HeightfieldSelection& h) { return h.patches.empty(); }))
                 continue;
             p.overlayMask = d.overlayOpacity > 0.0f ? mask(vk, cmd, f, d.overlay, count, true, frame) : 0;
             p.flowMask = d.flowArrows ? mask(vk, cmd, f, d.flow, count, false, frame) : 0;
@@ -480,10 +489,18 @@ void HeightfieldRenderer::prepare(VulkanContext& vk, VkCommandBuffer cmd, const 
         p.flow = glm::vec4(std::max(d.arrowSpacing, 8.0f), p.flowMask ? 1.0f : 0.0f, 0.9f, 0.0f);
         for (int k = 0; k < sel.levels && k < kHeightfieldMaxLods; ++k)
             p.lods[k] = glm::vec4(sel.morph[k], 0.0f, 0.0f);
-        firstPatch.push_back(patches.size());
-        patches.insert(patches.end(), sel.patches.begin(), sel.patches.end());
-        params.push_back(p);
-        mPrepared.push_back({&d, 0, uint32_t(sel.patches.size())});
+        // A copy of the parameters per view that sees patches of it: only the patches differ.
+        auto add = [&](const HeightfieldSelection& from, std::vector<Prepared>& into) {
+            into.push_back({&d, 0, uint32_t(from.patches.size()), params.size()});
+            if (from.patches.empty())
+                return;
+            firstPatch.push_back(patches.size());
+            patches.insert(patches.end(), from.patches.begin(), from.patches.end());
+            params.push_back(p);
+        };
+        add(sel, mPrepared);
+        for (size_t v = 0; v < mShadows.size(); ++v)
+            add(v < shadowSel.size() ? shadowSel[v] : HeightfieldSelection{}, mShadows[v]);
     }
     if (!f.staging.empty())
         compute::memoryBarrier(cmd, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
@@ -508,6 +525,7 @@ void HeightfieldRenderer::prepare(VulkanContext& vk, VkCommandBuffer cmd, const 
         {
             log::error("render: heightfields not drawn: {}", e.what());
             mPrepared.clear();
+            mShadows.assign(mShadows.size(), {});
             return;
         }
     }
@@ -526,24 +544,32 @@ void HeightfieldRenderer::prepare(VulkanContext& vk, VkCommandBuffer cmd, const 
     {
         log::error("render: heightfields not drawn: {}", e.what());
         mPrepared.clear();
+        mShadows.assign(mShadows.size(), {});
         return;
     }
     for (size_t i = 0; i < params.size(); ++i)
-    {
         params[i].patches = f.host.address + paramBytes + firstPatch[i] * sizeof(HeightfieldPatch);
-        mPrepared[i].params = f.host.address + i * sizeof(HfGpuParams);
-    }
+    auto place = [&](std::vector<Prepared>& list) {
+        for (Prepared& r : list)
+            r.params = r.patches ? f.host.address + r.slot * sizeof(HfGpuParams) : 0;
+    };
+    place(mPrepared);
+    for (std::vector<Prepared>& list : mShadows)
+        place(list);
     auto* out = static_cast<uint8_t*>(f.host.mapped);
     std::memcpy(out, params.data(), paramBytes);
     std::memcpy(out + paramBytes, patches.data(), patches.size() * sizeof(HeightfieldPatch));
     vmaFlushAllocation(vk.allocator, f.host.alloc, 0, bytes);
-    mPatches = patches.size();
+    for (const Prepared& r : mPrepared)
+        mPatches += r.patches;
     LILA_PLOT("Heightfield patches", int64_t(mPatches));
 }
 
-void HeightfieldRenderer::record(VkCommandBuffer cmd, VkPipelineLayout layout, size_t i, MeshPush p, const glm::mat4& viewProj) const
+void HeightfieldRenderer::record(VkCommandBuffer cmd, VkPipelineLayout layout, size_t i, MeshPush p, const glm::mat4& viewProj, int shadowView) const
 {
-    const Prepared& r = mPrepared[i];
+    const Prepared& r = shadowView < 0 ? mPrepared[i] : mShadows[size_t(shadowView)][i];
+    if (r.patches == 0)
+        return;
     p.viewProj = viewProj;
     p.instances = r.params;
     p.firstInstance = 0;
@@ -607,5 +633,6 @@ void HeightfieldRenderer::destroy(VulkanContext& vk)
     mMasks.clear();
     mFrames.clear();
     mPrepared.clear();
+    mShadows.clear();
 }
 } // namespace lila::render

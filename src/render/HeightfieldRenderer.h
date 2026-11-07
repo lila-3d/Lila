@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -47,6 +48,8 @@ struct HeightfieldView
     bool ortho = false;
     double focalPx = 1000.0;  // perspective: the view's focal length in device pixels
     double pixelWorld = 1.0;  // ortho: world size of a device pixel
+    /** Culls against this instead of viewProj while keeping the view's detail: a shadow view casting what the camera sees. */
+    std::optional<glm::dmat4> cull;
 };
 
 /** What a selection chose: the patches, and each level's morph start and 1 / morph length. */
@@ -77,25 +80,30 @@ public:
     VkPipeline shaded = VK_NULL_HANDLE;  // heightfieldPS, opaque
     VkPipeline wire = VK_NULL_HANDLE;    // heightfieldWirePS, blended, no depth write
     VkPipeline prepass = VK_NULL_HANDLE; // heightfieldPrepassPS, depth and normal
+    VkPipeline shadow = VK_NULL_HANDLE;  // depth only, into the shadow atlas
     bool bindless = false;
 
     /** A map's table handle in this frame (a normal map's when normal is set), 0xffff when it has none. */
     using MapHandle = std::function<uint32_t(const TexturePtr&, bool normal)>;
 
     /**
-     * Uploads the grids drawn for the first time, picks each heightfield's patches for this view and writes their
-     * parameters into frameKey's buffer (one per frame in flight: its last use has finished). Before rendering begins.
+     * Uploads the grids drawn for the first time, picks each heightfield's patches for this view (and for each of
+     * shadowViews, at the camera's detail) and writes their parameters into frameKey's buffer (one per frame in flight:
+     * its last use has finished). Before rendering begins.
      */
     void prepare(VulkanContext& vk, VkCommandBuffer cmd, const void* frameKey, const FrameState& s, uint32_t heightPx, uint64_t frame,
-                 const MapHandle& handle);
+                 const MapHandle& handle, const std::vector<glm::mat4>& shadowViews = {});
 
     size_t count() const { return mPrepared.size(); }
     const HeightfieldDraw& draw(size_t i) const { return *mPrepared[i].draw; }
     /** Patches and triangles prepared for this frame. */
     size_t patches() const { return mPatches; }
 
-    /** Records prepared draw i with whichever heightfield pipeline is bound; p holds its material's push constants. */
-    void record(VkCommandBuffer cmd, VkPipelineLayout layout, size_t i, MeshPush p, const glm::mat4& viewProj) const;
+    /**
+     * Records prepared draw i with whichever heightfield pipeline is bound; p holds its material's push constants.
+     * shadowView picks the patches prepared for that shadow view instead of the camera's.
+     */
+    void record(VkCommandBuffer cmd, VkPipelineLayout layout, size_t i, MeshPush p, const glm::mat4& viewProj, int shadowView = -1) const;
 
     /** Drops grids no frame has drawn for a while, and at once those nothing else holds. */
     void evict(VulkanContext& vk, uint64_t frame);
@@ -120,6 +128,7 @@ private:
         const HeightfieldDraw* draw = nullptr;
         VkDeviceAddress params = 0;
         uint32_t patches = 0;
+        size_t slot = 0; // its parameters' index in the frame's buffer while preparing
     };
 
     Grid* heights(VulkanContext& vk, VkCommandBuffer cmd, FrameData& f, const HeightfieldDraw& d, uint64_t frame);
@@ -129,6 +138,7 @@ private:
     std::map<std::pair<const void*, bool>, Grid> mMasks; // keyed by values and whether stretched to their range
     std::unordered_map<const void*, FrameData> mFrames;
     std::vector<Prepared> mPrepared;
+    std::vector<std::vector<Prepared>> mShadows; // per shadow view, indexed like mPrepared
     compute::Buffer mIndices; // one patch's triangles over its (kHeightfieldPatch + 1)-square vertex grid
     size_t mPatches = 0;
     bool mWarnedMaps = false;
