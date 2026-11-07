@@ -1254,6 +1254,16 @@ def blendInfo(*objects: Any, path: str | None = None) -> Any:
     """
 
 def blendKeys(*objects: Any, keys: Any | None = None, time: Any | None = None, mode: str | None = None, amount: float | None = None, k: Any | None = None, t: Any | None = None, m: str | None = None, a: float | None = None) -> Any:
+    """Blend picked keys' values towards their neighbours, an ease, the line between their neighbours, a smoothed value or the default. Each run of picked keys blends between the unpicked keys either side. Returns the number of keys changed.
+
+    Args:
+        objects: objects.
+        keys: Exact keys: [{curve: curve or plug name, times: [seconds], valuePivot, valueScale, valueOffset}], the last three overriding the call's for that channel. Without it, every key of the objects in time. Short form k.
+        time: Seconds or (start, end): the keys of the objects to use when keys is not given. Short form t.
+        mode: neighbour: towards the key before (< 0) or after (> 0). ease: onto an ease-in (< 0) or ease-out (> 0) curve between the neighbours. pushPull: away from (> 0) or onto (< 0) the line between them. smooth: towards the average of each key's neighbours. default: towards the attribute's default value. Short form m. One of 'neighbour', 'ease', 'pushPull', 'smooth', 'default'. Default 'neighbour'.
+        amount: -1 to 1. Short form a. Default 0.5.
+    """
+
 def blendOpen(*objects: Any, path: str | None = None, force: bool | None = None, namespace: str | None = None, collections: bool | None = None, materials: bool | None = None, skins: bool | None = None, morphs: bool | None = None, animation: bool | None = None, modifiers: bool | None = None, hidden: bool | None = None, evaluate: str | None = None, blenderPath: str | None = None, setPlayback: bool | None = None, textureDir: str | None = None, f: bool | None = None, ns: str | None = None, anim: bool | None = None) -> Any:
     """Open a Blender .blend file as a new, untitled scene (save it to keep it as .lila). Not undoable. Returns the import report.
 
@@ -1935,7 +1945,7 @@ def createGroom(*objects: Any, guides: str | None = None, count: int | None = No
         sides: Points around each lock.
     """
 
-def createMaterial(*objects: Any, baseColor: Sequence[float] | None = None, metallic: float | None = None, roughness: float | None = None, specular: float | None = None, emissive: Sequence[float] | None = None, emissiveIntensity: float | None = None, opacity: float | None = None, opacityMaskClipValue: float | None = None, blendMode: Any | None = None, twoSided: bool | None = None, uvSet: int | None = None, normalFormat: Any | None = None, flipGreen: bool | None = None, baseColorMap: str | None = None, metallicMap: str | None = None, roughnessMap: str | None = None, normalMap: str | None = None, ambientOcclusionMap: str | None = None, ormMap: str | None = None, packedLayout: Any | None = None, emissiveMap: str | None = None, shadingModel: Any | None = None, painterlyStrength: float | None = None, strokeNormal: float | None = None, strokeScale: float | None = None, strokeLayerRatio: float | None = None, strokeMapping: Any | None = None, strokeMap: str | None = None, paletteCount: int | None = None, paletteShadow: Sequence[float] | None = None, paletteLight: Sequence[float] | None = None, paletteAccent: Sequence[float] | None = None, paletteContrast: float | None = None, paletteSpread: float | None = None, specularTint: float | None = None, boil: bool | None = None, boilFps: float | None = None, toonShadowColor: Sequence[float] | None = None, toonLightTint: Sequence[float] | None = None, toonThreshold: float | None = None, toonSoftness: float | None = None, toonOuterOffset: float | None = None, toonOuterColor: Sequence[float] | None = None, rimColor: Sequence[float] | None = None, rimWidth: float | None = None, rimStrength: float | None = None, foliageBottomColor: Sequence[float] | None = None, foliageTopColor: Sequence[float] | None = None, foliageGradient: float | None = None, foliageBottomShadow: float | None = None, foliageTopHighlight: float | None = None, foliageTranslucency: float | None = None, foliageWrap: float | None = None, subsurfaceColor: Sequence[float] | None = None, subsurfaceAmount: float | None = None, sheenColor: Sequence[float] | None = None, sheenRoughness: float | None = None, clearcoat: float | None = None, clearcoatRoughness: float | None = None, anisotropy: float | None = None, anisotropyRotation: float | None = None, hairShift: float | None = None, irisRadius: float | None = None, irisDepth: float | None = None, limbalRing: float | None = None, bevelRadius: float | None = None, heightMap: str | None = None, normalFromHeight: bool | None = None, heightDepth: float | None = None, heightUvWidth: float | None = None, heightUvHeight: float | None = None, baseColorMapWrapU: Any | None = None, baseColorMapWrapV: Any | None = None, baseColorMapFilter: Any | None = None, metallicMapWrapU: Any | None = None, metallicMapWrapV: Any | None = None, metallicMapFilter: Any | None = None, roughnessMapWrapU: Any | None = None, roughnessMapWrapV: Any | None = None, roughnessMapFilter: Any | None = None, normalMapWrapU: Any | None = None, normalMapWrapV: Any | None = None, normalMapFilter: Any | None = None, ambientOcclusionMapWrapU: Any | None = None, ambientOcclusionMapWrapV: Any | None = None, ambientOcclusionMapFilter: Any | None = None, ormMapWrapU: Any | None = None, ormMapWrapV: Any | None = None, ormMapFilter: Any | None = None, emissiveMapWrapU: Any | None = None, emissiveMapWrapV: Any | None = None, emissiveMapFilter: Any | None = None, bc: Sequence[float] | None = None) -> Any:
+def createMaterial(*objects: Any, baseColor: Sequence[float] | None = None, metallic: float | None = None, roughness: float | None = None, specular: float | None = None, emissive: Sequence[float] | None = None, emissiveIntensity: float | None = None, opacity: float | None = None, opacityMaskClipValue: float | None = None, blendMode: Any | None = None, twoSided: bool | None = None, uvSet: int | None = None, normalFormat: Any | None = None, flipGreen: bool | None = None, baseColorMap: str | None = None, metallicMap: str | None = None, roughnessMap: str | None = None, normalMap: str | None = None, ambientOcclusionMap: str | None = None, ormMap: str | None = None, packedLayout: Any | None = None, emissiveMap: str | None = None, shadingModel: Any | None = None, painterlyStrength: float | None = None, strokeNormal: float | None = None, strokeScale: float | None = None, strokeLayerRatio: float | None = None, strokeMapping: Any | None = None, strokeMap: str | None = None, paletteCount: int | None = None, paletteShadow: Sequence[float] | None = None, paletteLight: Sequence[float] | None = None, paletteAccent: Sequence[float] | None = None, paletteContrast: float | None = None, paletteSpread: float | None = None, specularTint: float | None = None, boil: bool | None = None, boilFps: float | None = None, toonShadowColor: Sequence[float] | None = None, toonLightTint: Sequence[float] | None = None, toonThreshold: float | None = None, toonSoftness: float | None = None, toonOuterOffset: float | None = None, toonOuterColor: Sequence[float] | None = None, rimColor: Sequence[float] | None = None, rimWidth: float | None = None, rimStrength: float | None = None, foliageBottomColor: Sequence[float] | None = None, foliageTopColor: Sequence[float] | None = None, foliageGradient: float | None = None, foliageBottomShadow: float | None = None, foliageTopHighlight: float | None = None, foliageTranslucency: float | None = None, foliageWrap: float | None = None, subsurfaceColor: Sequence[float] | None = None, subsurfaceAmount: float | None = None, sheenColor: Sequence[float] | None = None, sheenRoughness: float | None = None, clearcoat: float | None = None, clearcoatRoughness: float | None = None, anisotropy: float | None = None, anisotropyRotation: float | None = None, hairShift: float | None = None, irisRadius: float | None = None, irisDepth: float | None = None, limbalRing: float | None = None, bevelRadius: float | None = None, heightMap: str | None = None, normalFromHeight: bool | None = None, heightDepth: float | None = None, heightUvWidth: float | None = None, heightUvHeight: float | None = None, baseColorMapWrapU: Any | None = None, baseColorMapWrapV: Any | None = None, baseColorMapFilter: Any | None = None, baseColorMapColorSpace: Any | None = None, metallicMapWrapU: Any | None = None, metallicMapWrapV: Any | None = None, metallicMapFilter: Any | None = None, metallicMapColorSpace: Any | None = None, roughnessMapWrapU: Any | None = None, roughnessMapWrapV: Any | None = None, roughnessMapFilter: Any | None = None, roughnessMapColorSpace: Any | None = None, normalMapWrapU: Any | None = None, normalMapWrapV: Any | None = None, normalMapFilter: Any | None = None, normalMapColorSpace: Any | None = None, ambientOcclusionMapWrapU: Any | None = None, ambientOcclusionMapWrapV: Any | None = None, ambientOcclusionMapFilter: Any | None = None, ambientOcclusionMapColorSpace: Any | None = None, ormMapWrapU: Any | None = None, ormMapWrapV: Any | None = None, ormMapFilter: Any | None = None, ormMapColorSpace: Any | None = None, emissiveMapWrapU: Any | None = None, emissiveMapWrapV: Any | None = None, emissiveMapFilter: Any | None = None, emissiveMapColorSpace: Any | None = None, bc: Sequence[float] | None = None) -> Any:
     """Create a material (Unreal default lit inputs). Faces use it through a slot of the same name. Returns its name.
 
     Args:
@@ -2014,24 +2024,31 @@ def createMaterial(*objects: Any, baseColor: Sequence[float] | None = None, meta
         baseColorMapWrapU: What baseColorMap shows past its edges along U: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
         baseColorMapWrapV: What baseColorMap shows past its edges along V: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
         baseColorMapFilter: How baseColorMap is filtered: linear (smooth, mipmapped) or nearest (hard texels, for pixel art).
+        baseColorMapColorSpace: How baseColorMap's 8- and 16-bit values are read: auto (sRGB, as a colour map), sRGB, or linear (raw data). EXR and HDR files are always linear.
         metallicMapWrapU: What metallicMap shows past its edges along U: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
         metallicMapWrapV: What metallicMap shows past its edges along V: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
         metallicMapFilter: How metallicMap is filtered: linear (smooth, mipmapped) or nearest (hard texels, for pixel art).
+        metallicMapColorSpace: How metallicMap's 8- and 16-bit values are read: auto (linear, as a data map), sRGB, or linear (raw data). EXR and HDR files are always linear.
         roughnessMapWrapU: What roughnessMap shows past its edges along U: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
         roughnessMapWrapV: What roughnessMap shows past its edges along V: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
         roughnessMapFilter: How roughnessMap is filtered: linear (smooth, mipmapped) or nearest (hard texels, for pixel art).
+        roughnessMapColorSpace: How roughnessMap's 8- and 16-bit values are read: auto (linear, as a data map), sRGB, or linear (raw data). EXR and HDR files are always linear.
         normalMapWrapU: What normalMap shows past its edges along U: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
         normalMapWrapV: What normalMap shows past its edges along V: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
         normalMapFilter: How normalMap is filtered: linear (smooth, mipmapped) or nearest (hard texels, for pixel art).
+        normalMapColorSpace: How normalMap's 8- and 16-bit values are read: auto (linear, as a data map), sRGB, or linear (raw data). EXR and HDR files are always linear.
         ambientOcclusionMapWrapU: What ambientOcclusionMap shows past its edges along U: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
         ambientOcclusionMapWrapV: What ambientOcclusionMap shows past its edges along V: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
         ambientOcclusionMapFilter: How ambientOcclusionMap is filtered: linear (smooth, mipmapped) or nearest (hard texels, for pixel art).
+        ambientOcclusionMapColorSpace: How ambientOcclusionMap's 8- and 16-bit values are read: auto (linear, as a data map), sRGB, or linear (raw data). EXR and HDR files are always linear.
         ormMapWrapU: What ormMap shows past its edges along U: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
         ormMapWrapV: What ormMap shows past its edges along V: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
         ormMapFilter: How ormMap is filtered: linear (smooth, mipmapped) or nearest (hard texels, for pixel art).
+        ormMapColorSpace: How ormMap's 8- and 16-bit values are read: auto (linear, as a data map), sRGB, or linear (raw data). EXR and HDR files are always linear.
         emissiveMapWrapU: What emissiveMap shows past its edges along U: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
         emissiveMapWrapV: What emissiveMap shows past its edges along V: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
         emissiveMapFilter: How emissiveMap is filtered: linear (smooth, mipmapped) or nearest (hard texels, for pixel art).
+        emissiveMapColorSpace: How emissiveMap's 8- and 16-bit values are read: auto (sRGB, as a colour map), sRGB, or linear (raw data). EXR and HDR files are always linear.
     """
 
 def createMesh(points: Sequence[Any] | None = None, faces: Sequence[Any] | None = None, uvs: Sequence[Any] | None = None, name: str | None = None, *, n: str | None = None) -> Any:
@@ -2139,10 +2156,11 @@ def currentTheme() -> Any:
     """The current interface theme's name."""
 
 def currentTime(*objects: Any, update: bool | None = None, u: bool | None = None) -> Any:
-    """Query or set the current time in seconds.
+    """Query or set the current time in seconds. update=False moves the time but holds the pose (animation keeps evaluating at the time it held), so keys set next copy that pose to the new time.
 
     Args:
         objects: seconds.
+        update: False holds the current pose while the time moves. Short form u. Default True.
     """
 
 def curve(points: Sequence[Any] | None = None, type: str | None = None, degree: int | None = None, closed: bool | None = None, editPoints: bool | None = None, knots: Sequence[Any] | None = None, weights: Sequence[Any] | None = None, handleL: Sequence[Any] | None = None, handleR: Sequence[Any] | None = None, handleType: str | None = None, tilt: Sequence[Any] | None = None, radius: Sequence[Any] | None = None, cornerRadius: Sequence[Any] | None = None, name: str | None = None, splines: Sequence[Any] | None = None, *, p: Sequence[Any] | None = None, t: str | None = None, d: int | None = None, c: bool | None = None, ep: bool | None = None, k: Sequence[Any] | None = None, w: Sequence[Any] | None = None, ht: str | None = None, n: str | None = None) -> Any:
@@ -2237,6 +2255,24 @@ def curveEP(points: Sequence[Any] | None = None, degree: int | None = None, clos
     """
 
 def curveModifier(*objects: Any, type: str | None = None, remove: bool | None = None, query: bool | None = None, amplitude: float | None = None, period: float | None = None, phase: float | None = None, seed: int | None = None, octaves: int | None = None, step: float | None = None, offset: float | None = None, min: float | None = None, max: float | None = None, typ: str | None = None, rm: bool | None = None, q: bool | None = None, amp: float | None = None, per: float | None = None, ph: float | None = None, sd: int | None = None, oct: int | None = None, st: float | None = None, of: float | None = None, mn: float | None = None, mx: float | None = None) -> Any:
+    """Add or edit a non-destructive modifier on curves (curves, plugs or nodes, default the selection's animated channels): noise, stepped or limits. A curve holds one of each type; giving a type again edits it. remove=True removes that type, or every modifier with no type. query=True returns [{curve, modifiers}].
+
+    Args:
+        objects: objects.
+        type: noise | stepped | limits. Short form typ. One of 'noise', 'stepped', 'limits'.
+        remove: Remove this type, or every modifier when no type is given. Short form rm. Default False.
+        query: Short form q. Default False.
+        amplitude: Noise: size of the wobble in the curve's units (degrees on rotations). Short form amp.
+        period: Noise: frames per wave. Short form per.
+        phase: Noise: frames the noise is shifted by. Short form ph.
+        seed: Noise: a different seed gives different noise. Short form sd.
+        octaves: Noise: layers of finer detail. Short form oct.
+        step: Stepped: frames each value holds for. Short form st.
+        offset: Stepped: frame the steps start from. Short form of.
+        min: Limits: lowest value. Short form mn.
+        max: Limits: highest value. Short form mx.
+    """
+
 def curveNetwork(*objects: Any, tolerance: float | None = None, spansU: int | None = None, spansV: int | None = None, uCurves: Sequence[Any] | None = None, vCurves: Sequence[Any] | None = None, flip: bool | None = None, constructionHistory: bool | None = None, name: str | None = None, tol: float | None = None, su: int | None = None, sv: int | None = None, ch: bool | None = None, n: str | None = None) -> Any:
     """Surface a network of crossing curves with quads, live: the curves sort into U and V families (or uCurves/vCurves say), become edge loops, and the surface stays smooth across them. Every U curve must cross every V curve; three-sided patches where one family meets at a point are fine. Returns [mesh, curveNetwork].
 
@@ -3346,6 +3382,19 @@ def filletCurve(*objects: Any, mode: str | None = None, radius: float | None = N
     """
 
 def filterCurve(*objects: Any, keys: Any | None = None, time: Any | None = None, filter: str | None = None, cutoff: float | None = None, width: float | None = None, tolerance: float | None = None, step: float | None = None, k: Any | None = None, t: Any | None = None, f: str | None = None, co: float | None = None, w: float | None = None, tol: float | None = None, st: float | None = None) -> Any:
+    """Filter curves between their first and last picked key (every key when one or none is picked): Butterworth low-pass, Gaussian smoothing, Simplify to the fewest keys within a tolerance, or Resample. Returns the number of keys after.
+
+    Args:
+        objects: objects.
+        keys: Exact keys: [{curve: curve or plug name, times: [seconds], valuePivot, valueScale, valueOffset}], the last three overriding the call's for that channel. Without it, every key of the objects in time. Short form k.
+        time: Seconds or (start, end): the keys of the objects to use when keys is not given. Short form t.
+        filter: butterworth: low-pass every frame (a key per frame). gaussian: smooth the keys' values, same keys. simplify: the fewest keys within tolerance. resample: a key every step frames. Short form f. One of 'butterworth', 'gaussian', 'simplify', 'resample'. Default 'butterworth'.
+        cutoff: Hz: Butterworth keeps motion slower than this. Short form co. Default 7.0.
+        width: Frames: Gaussian smoothing width. Short form w. Default 1.0.
+        tolerance: Simplify: largest change allowed, in the curve's units (degrees for rotations). Short form tol. Default 0.05.
+        step: Resample: frames between keys. Short form st. Default 1.0.
+    """
+
 def findComponents(*objects: Any, kind: str | None = None, normal: Sequence[float] | None = None, angle: float | None = None, side: str | None = None, box: Sequence[Any] | None = None, direction: Sequence[float] | None = None, near: Sequence[float] | None = None, radius: float | None = None, extreme: str | None = None, count: int | None = None, border: bool | None = None, shell: int | None = None, fromSelection: bool | None = None, tolerance: float | None = None, k: str | None = None, n: Sequence[float] | None = None, s: str | None = None, b: Sequence[Any] | None = None, dir: Sequence[float] | None = None, r: float | None = None, x: str | None = None, c: int | None = None, fs: bool | None = None, t: float | None = None) -> Any:
     """Ids of a mesh's vertices, edges or faces matching every predicate given (normal direction, side of the symmetry plane, box, distance, extreme along an axis, open border). Ids index the editable cage, like selectComponents. Changes nothing; see selectComponentsWhere to select them.
 
@@ -4650,6 +4699,7 @@ def keyTangent(*objects: Any, attribute: Any | None = None, time: Any | None = N
         inWeight: Handle length, 1 = a third of the segment. Short form iw.
         outWeight: Handle length, 1 = a third of the segment. Short form ow.
         weightedTangents: Make the curves weighted or not. Short form wt.
+        lock: True unifies each key's in and out handles (they move together), False breaks them. Short form l.
     """
 
 def keyframe(*objects: Any, attribute: Any | None = None, time: Any | None = None, query: bool | None = None, keyCount: bool | None = None, valueChange: Any | None = None, timeChange: Any | None = None, relative: bool | None = None, at: Any | None = None, t: Any | None = None, q: bool | None = None, kc: bool | None = None, vc: Any | None = None, tc: Any | None = None, r: bool | None = None) -> Any:
@@ -5860,6 +5910,13 @@ def polyBevel(offset: float | None = None, segments: int | None = None, profile:
         smoothingAngle: New edges sharper than this are hard. Default 30.0.
     """
 
+def polyBevelWeight(value: float | None = None, *, v: float | None = None) -> Any:
+    """Set the bevel weight of the selected edges, read by Auto Bevel in weight mode (it bevels edges above its weightThreshold).
+
+    Args:
+        value: Bevel weight, 0 to 1. Short form v. Default 1.0.
+    """
+
 def polyBoolean(*objects: Any, operation: str | None = None, keepCutters: bool | None = None, live: bool | None = None, cleanup: bool | None = None, snapDistance: float | None = None, splitNgons: bool | None = None, quadBand: bool | None = None, bandRings: int | None = None, timeout: float | None = None, filletWidth: float | None = None, filletSegments: int | None = None, hardAngle: float | None = None, weightedNormals: bool | None = None) -> Any:
     """Union, difference or intersection of meshes (Manifold: robust, watertight output), with the seam cleaned up: slivers welded, the n-gons along the cut split into quads that carry on the edge loops, an optional rounded fillet, and weighted normals. The first object keeps the result; the others are deleted unless keepCutters=True.
 
@@ -6022,6 +6079,13 @@ def polyConformToObject(target: str | None = None, mode: str | None = None, spac
 
 def polyConnect() -> Any:
     """Connect selected vertices that share a face with new edges, or the midpoints of selected edges across their faces."""
+
+def polyCrease(value: float | None = None, *, v: float | None = None) -> Any:
+    """Set the subdivision crease of the selected edges. Each subdivision level spends 1 of it, so 1 is sharp for one level and smooth after, and 10 stays sharp. 0 removes the crease.
+
+    Args:
+        value: Crease: levels the edge stays sharp for. Short form v. Default 10.0.
+    """
 
 def polyCube(name: str | None = None, position: Sequence[float] | None = None, rotation: Sequence[float] | None = None, normal: Sequence[float] | None = None, generator: bool | None = None, width: float | None = None, height: float | None = None, depth: float | None = None, subdivisionsX: int | None = None, subdivisionsY: int | None = None, subdivisionsZ: int | None = None, baseAtOrigin: bool | None = None, upAxis: str | None = None, *, n: str | None = None) -> Any:
     """Create a Cube mesh. Returns [mesh, generator] (generator is None with generator=False).
@@ -9655,6 +9719,22 @@ def transferSource(*objects: Any) -> Any:
     """
 
 def transformKeys(*objects: Any, keys: Any | None = None, time: Any | None = None, timeOffset: float | None = None, timeScale: float | None = None, timePivot: float | None = None, valueOffset: float | None = None, valueScale: float | None = None, valuePivot: float | None = None, falloff: float | None = None, snap: bool | None = None, k: Any | None = None, t: Any | None = None, to: float | None = None, ts: float | None = None, tp: float | None = None, vo: float | None = None, vs: float | None = None, vp: float | None = None, fo: float | None = None, sn: bool | None = None) -> Any:
+    """Move and scale keys in time and value about a pivot, optionally with neighbouring keys following the value change (falloff). Moved keys replace keys already at their new time. Returns the number of keys moved.
+
+    Args:
+        objects: objects.
+        keys: Exact keys: [{curve: curve or plug name, times: [seconds], valuePivot, valueScale, valueOffset}], the last three overriding the call's for that channel. Without it, every key of the objects in time. Short form k.
+        time: Seconds or (start, end): the keys of the objects to use when keys is not given. Short form t.
+        timeOffset: Seconds added to key times. Short form to. Default 0.0.
+        timeScale: Key times scale about timePivot (negative reverses). Short form ts. Default 1.0.
+        timePivot: Seconds. Short form tp. Default 0.0.
+        valueOffset: Added to key values. Short form vo. Default 0.0.
+        valueScale: Key values scale about valuePivot. Short form vs. Default 1.0.
+        valuePivot: Value the scale is about. Short form vp. Default 0.0.
+        falloff: Seconds: unpicked keys this close to a picked one follow the value change, less with distance. Short form fo. Default 0.0.
+        snap: Moved keys land on whole frames. Short form sn. Default False.
+    """
+
 def trimCurve(*objects: Any, point: Sequence[float] | None = None, parameter: float | None = None, spline: int | None = None, cutters: Sequence[Any] | None = None, tolerance: float | None = None, direction: Sequence[float] | None = None, p: Sequence[float] | None = None, u: float | None = None, tol: float | None = None, dir: Sequence[float] | None = None) -> Any:
     """Delete the stretch of a curve between the intersections around a point (or parameter): with other curves (cutters, default every other visible curve), in 3D or as seen along direction. A curve meeting nothing is deleted. Returns what is left.
 
