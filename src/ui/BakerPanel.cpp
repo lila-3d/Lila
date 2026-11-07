@@ -461,6 +461,7 @@ void BakerPanel::pollProgress()
             status = qs(s.title + (s.status.empty() ? "" : ": " + s.status));
         }
     mCancel->setEnabled(cancellable);
+    mAssign->setEnabled(fraction < 0.0);
     if (fraction < 0.0)
     {
         mProgress->setValue(0);
@@ -660,7 +661,7 @@ void BakerPanel::assignResult()
     {
         r = ops::execute("bakeAssign", {{"project", mProject}}, CallSource::UI);
     }
-    catch (const CommandError& e)
+    catch (const std::exception& e)
     {
         viewportToast::showActive(QString::fromStdString(e.what()), 4000, viewportToast::Kind::Error);
         return;

@@ -223,6 +223,7 @@ private:
     QTreeWidget* mSummary = nullptr;
     /** The summary and its clear button, above the thumbnails in a splitter. */
     QWidget* mSummaryBox = nullptr;
+    QToolButton* mAssign = nullptr;
     QListWidget* mThumbs = nullptr;
     /** The folder of the result shown, empty before one. */
     QString mResultFolder;

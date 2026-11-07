@@ -1062,16 +1062,16 @@ QWidget* BakerPanel::buildResults()
     row->addWidget(mSummary, 1);
     auto* buttons = new QVBoxLayout;
     buttons->setSpacing(1);
-    auto* assign = toolButton(mSummaryBox, "link", "Assign the maps to the lows' materials", "Assign");
-    assign->setObjectName("bakerAssign");
-    connect(assign, &QToolButton::clicked, this, [this] { assignResult(); });
-    buttons->addWidget(assign);
+    mAssign = toolButton(mSummaryBox, "link", "Assign the maps to the lows' materials", "Assign");
+    mAssign->setObjectName("bakerAssign");
+    connect(mAssign, &QToolButton::clicked, this, [this] { assignResult(); });
+    buttons->addWidget(mAssign);
     row->addLayout(buttons);
-    auto* openOutput = toolButton(mSummaryBox, "folder", "Open the output folder");
+    auto* openOutput = toolButton(mSummaryBox, "folder", "Open the output folder", "Open");
     openOutput->setObjectName("bakerOpenFolder");
     connect(openOutput, &QToolButton::clicked, this, [this] { openFolder(outputFolder()); });
     buttons->addWidget(openOutput);
-    auto* clear = toolButton(mSummaryBox, "x", "Clear the bake messages");
+    auto* clear = toolButton(mSummaryBox, "x", "Clear the bake messages", "Clear");
     clear->setObjectName("bakerClearSummary");
     connect(clear, &QToolButton::clicked, this, [this] {
         mSummary->clear();
@@ -1079,6 +1079,9 @@ QWidget* BakerPanel::buildResults()
     });
     buttons->addWidget(clear);
     buttons->addStretch(1);
+    // One column width, so the icons and labels line up.
+    for (QToolButton* b : {mAssign, openOutput, clear})
+        b->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     mThumbs = new ThumbList(split);
     mThumbs->setObjectName("bakerThumbs");
     mThumbs->setViewMode(QListView::IconMode);
