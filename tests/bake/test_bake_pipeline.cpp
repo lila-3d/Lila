@@ -365,6 +365,32 @@ TEST_CASE("assignTexture wires a file into the material on a face by its name, a
     CHECK_THROWS(ops::execute("assignTexture", {{"args", {"C:/tex/notes.png"}}, {"mesh", mesh}}));
 }
 
+TEST_CASE("assignOutputs gives each material's detail normal the depth of its own height")
+{
+    newScene();
+    ops::execute("createMaterial", {{"args", {"M_A"}}});
+    ops::execute("createMaterial", {{"args", {"M_B"}}});
+    auto out = [](const char* map, const char* mat, json meta) {
+        return json{{"map", map}, {"file", std::string("C:/bake/") + mat + "_" + map + ".png"}, {"materials", {mat}}, {"meta", meta}};
+    };
+    const json result = {{"outputs",
+                          {out("normal", "M_A", {}), out("detailNormal", "M_A", {{"uvSize", {200.0, 100.0}}}),
+                           out("height", "M_A", {{"heightRange", 1.5}}), out("detailNormal", "M_B", {{"uvSize", {50.0, 50.0}}}),
+                           out("height", "M_B", {{"heightRange", 4.0}})}}};
+    scene::Graph& g = scene::Graph::current();
+    const json a = bake::assignOutputs(g, result);
+    CHECK(a["assigned"].size() == 4);
+    const scene::Node* ma = scene::materials::find(g, "M_A");
+    const scene::Node* mb = scene::materials::find(g, "M_B");
+    REQUIRE(ma);
+    REQUIRE(mb);
+    CHECK(ma->as<bool>(scene::material::kNormalFromHeight));
+    CHECK(ma->as<double>(scene::material::kHeightDepth) == doctest::Approx(3.0));
+    CHECK(ma->as<double>(scene::material::kHeightUvWidth) == doctest::Approx(200.0));
+    CHECK(mb->as<double>(scene::material::kHeightDepth) == doctest::Approx(8.0));
+    CHECK(mb->as<double>(scene::material::kHeightUvWidth) == doctest::Approx(50.0));
+}
+
 TEST_CASE("bakeAssign wires outputs into the lows' materials and undoes")
 {
     newScene();

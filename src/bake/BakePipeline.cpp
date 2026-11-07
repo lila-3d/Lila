@@ -315,18 +315,20 @@ json assignOutputs(Graph& g, const json& result, bool create, const json& channe
     };
     std::map<std::string, Pick> picks;
     std::vector<std::string> order;
+    const json outputs = result.value("outputs", json::array());
     // A detail normal takes the normal input: the material rebuilds the rest from the height.
-    const json* detail = nullptr;
-    const json* height = nullptr;
-    for (const json& o : result.value("outputs", json::array()))
-    {
-        const std::string map = o.value("map", std::string());
-        if (map == "detailNormal" && o.value("layer", std::string()).empty() && !detail)
-            detail = &o;
-        if (map == "height" && o.value("layer", std::string()).empty() && !height)
-            height = &o;
-    }
-    for (const json& o : result.value("outputs", json::array()))
+    bool detail = false;
+    for (const json& o : outputs)
+        detail |= o.value("map", std::string()) == "detailNormal" && o.value("layer", std::string()).empty();
+    auto heightFor = [&](const std::string& material) -> const json* {
+        for (const json& o : outputs)
+            if (o.value("map", std::string()) == "height" && o.value("layer", std::string()).empty())
+                for (const json& mat : o.value("materials", json::array()))
+                    if (mat.is_string() && mat.get<std::string>() == material)
+                        return &o;
+        return nullptr;
+    };
+    for (const json& o : outputs)
     {
         const std::string map = o.value("map", std::string()), file = o.value("file", std::string());
         if (map == "normal" && detail && !(channels.is_object() && channels.contains(map)))
@@ -426,8 +428,9 @@ json assignOutputs(Graph& g, const json& result, bool create, const json& channe
             if (m->as<int64_t>(scene::material::kPackedLayout) != int64_t(layout))
                 g.setValue({m->id(), scene::material::kPackedLayout, -1}, int64_t(layout));
         }
-        if (map == "detailNormal" && height)
-            useHeightNormals(g, *m, *height, *detail);
+        if (map == "detailNormal")
+            if (const json* height = heightFor(pk.material))
+                useHeightNormals(g, *m, *height, pk.output);
         assigned.push_back({{"material", m->name()}, {"channel", pk.channel}, {"file", file}, {"map", map}});
     }
     return {{"assigned", assigned}, {"created", created}, {"skipped", skipped}};
