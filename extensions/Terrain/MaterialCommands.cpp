@@ -39,7 +39,7 @@ namespace
 {
 using scene::Graph;
 using scene::Node;
-using T = ArgType;
+using MT = ArgType;
 namespace fs = std::filesystem;
 
 constexpr const char* kBiomesNode = "Biomes";
@@ -408,7 +408,7 @@ std::pair<int, int> imageSize(const Heightfield& h, const Args& a)
     return h.nx >= h.nz ? std::pair{r, std::max(2, int(std::lround(r * aspect)))} : std::pair{std::max(2, int(std::lround(r / aspect))), r};
 }
 
-void writeGrayImage(const fs::path& path, int w, int h, const std::vector<float>& values, int bits)
+void writeLayerImage(const fs::path& path, int w, int h, const std::vector<float>& values, int bits)
 {
     image::Image img{w, h, std::vector<float>(size_t(w) * size_t(h) * 4)};
     for (size_t k = 0; k < values.size(); ++k)
@@ -575,13 +575,13 @@ void registerRuleCommands(ext::Context& ctx)
                "coverage (mean weight), area in m2 and where it dominates, the temperature and moisture ranges, and any inputs "
                "the rules named that the terrain lacks.",
         .positionalDoc = "terrain mesh or its modifier",
-        .flags = {{"biomes", "b", T::Any, nullptr, "[{name, when: {temperature: [lo, hi], moisture: [lo, hi], height, slope, <mask>}, paint}], or default."},
-                  {"climate", "cl", T::Any, nullptr,
+        .flags = {{"biomes", "b", MT::Any, nullptr, "[{name, when: {temperature: [lo, hi], moisture: [lo, hi], height, slope, <mask>}, paint}], or default."},
+                  {"climate", "cl", MT::Any, nullptr,
                    "{seaLevel, temperature (C at sea level), lapseRate, aspectEffect, sunAzimuth, rain, windAzimuth, rainShadow, "
                    "shadowDistance, orographic, groundWater}; keys left out keep their values."},
-                  {"sharpness", "sh", T::Float, nullptr, "How hard biome edges are (default 4).", {}, {}, 0.1, 64.0},
-                  {"landcover", "lc", T::Any, nullptr, "{mask, scale (255), weight, classes: {biome: [codes]}}: an imported landcover mask."},
-                  {"reset", "", T::Bool, false, "Start from the defaults instead of the terrain's current spec."}},
+                  {"sharpness", "sh", MT::Float, nullptr, "How hard biome edges are (default 4).", {}, {}, 0.1, 64.0},
+                  {"landcover", "lc", MT::Any, nullptr, "{mask, scale (255), weight, classes: {biome: [codes]}}: an imported landcover mask."},
+                  {"reset", "", MT::Bool, false, "Start from the defaults instead of the terrain's current spec."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
             const char* cmd = "terrainBiomes";
@@ -668,12 +668,12 @@ void registerRuleCommands(ext::Context& ctx)
                "error of the weight sum, and any inputs the rules named that the terrain lacks (those ranges read 0). The layers also "
                "become the heightfield draw's paint layers (terrainDisplayLayers), each layer_<name> in its colour, returned as displayLayers.",
         .positionalDoc = "terrain mesh or its modifier",
-        .flags = {{"layers", "l", T::Any, nullptr, "The layers, bottom first; 'default' for the defaults."},
-                  {"set", "s", T::Any, nullptr, "One layer to add or replace by name, keeping the others (new ones go on top)."},
-                  {"remove", "rm", T::List, nullptr, "Layer names to drop."},
-                  {"seed", "sd", T::Int, nullptr, "Moves the edge noise."},
-                  {"seaLevel", "sea", T::Float, nullptr, "Defaults: height of the sea, cm, for a sand layer at the shore."},
-                  {"query", "q", T::Bool, false, "Change nothing; return the current layers and coverage."}},
+        .flags = {{"layers", "l", MT::Any, nullptr, "The layers, bottom first; 'default' for the defaults."},
+                  {"set", "s", MT::Any, nullptr, "One layer to add or replace by name, keeping the others (new ones go on top)."},
+                  {"remove", "rm", MT::List, nullptr, "Layer names to drop."},
+                  {"seed", "sd", MT::Int, nullptr, "Moves the edge noise."},
+                  {"seaLevel", "sea", MT::Float, nullptr, "Defaults: height of the sea, cm, for a sand layer at the shore."},
+                  {"query", "q", MT::Bool, false, "Change nothing; return the current layers and coverage."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
             const char* cmd = "terrainMaterialRules";
@@ -767,11 +767,11 @@ void registerImageCommands(ext::Context& ctx)
                "mesh's uv set 0, as its texture sets read them; 'map' puts the -Z edge at the top. Returns {files: {mask: "
                "file}, resolution, layout}.",
         .positionalDoc = "terrain mesh or its modifier",
-        .flags = {{"masks", "m", T::List, nullptr, "Masks to write; default every one."},
-                  {"folder", "f", T::String, "", "Where; defaults to the bake folder's masks/."},
-                  {"layout", "lo", T::String, "uv", "uv or map.", {"uv", "map"}},
-                  {"resolution", "r", T::Int, int64_t(0), "Pixels along the longer side; 0 is one per sample.", {}, {}, 0.0, 16384.0},
-                  {"bits", "b", T::Int, int64_t(16), "8 or 16.", {}, {}, 8.0, 16.0}},
+        .flags = {{"masks", "m", MT::List, nullptr, "Masks to write; default every one."},
+                  {"folder", "f", MT::String, "", "Where; defaults to the bake folder's masks/."},
+                  {"layout", "lo", MT::String, "uv", "uv or map.", {"uv", "map"}},
+                  {"resolution", "r", MT::Int, int64_t(0), "Pixels along the longer side; 0 is one per sample.", {}, {}, 0.0, 16384.0},
+                  {"bits", "b", MT::Int, int64_t(16), "8 or 16.", {}, {}, 8.0, 16.0}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -800,7 +800,7 @@ void registerImageCommands(ext::Context& ctx)
                 if (!v || v->size() != h.size())
                     throw CommandError("terrainMaskImages: the terrain has no mask " + m);
                 const fs::path file = folder / (stem + "_" + m + ".png");
-                writeGrayImage(file, w, hgt, gridImage(h, *v, w, hgt, layout), bits);
+                writeLayerImage(file, w, hgt, gridImage(h, *v, w, hgt, layout), bits);
                 files[m] = file.generic_string();
             }
             return {{"files", files}, {"resolution", json::array({w, hgt})}, {"layout", layout == ImageLayout::Uv ? "uv" : "map"}};
@@ -815,10 +815,10 @@ void registerImageCommands(ext::Context& ctx)
                "distant views, minimaps and far LODs. shade= multiplies in soft light from the sun direction. Returns the file "
                "and each layer's colour and where it came from.",
         .positionalDoc = "terrain mesh or its modifier",
-        .flags = {{"file", "f", T::String, "", "PNG to write; defaults to <bake folder>/<terrain>_satmap.png."},
-                  {"resolution", "r", T::Int, int64_t(0), "Pixels along the longer side; 0 is one per sample.", {}, {}, 0.0, 16384.0},
-                  {"layout", "lo", T::String, "map", "map (-Z edge at the top) or uv (over the mesh's uv set 0).", {"map", "uv"}},
-                  {"shade", "sh", T::Float, 0.0, "0 to 1: how much hillshade to multiply in.", {}, {}, 0.0, 1.0}},
+        .flags = {{"file", "f", MT::String, "", "PNG to write; defaults to <bake folder>/<terrain>_satmap.png."},
+                  {"resolution", "r", MT::Int, int64_t(0), "Pixels along the longer side; 0 is one per sample.", {}, {}, 0.0, 16384.0},
+                  {"layout", "lo", MT::String, "map", "map (-Z edge at the top) or uv (over the mesh's uv set 0).", {"map", "uv"}},
+                  {"shade", "sh", MT::Float, 0.0, "0 to 1: how much hillshade to multiply in.", {}, {}, 0.0, 1.0}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -886,8 +886,8 @@ void registerImageCommands(ext::Context& ctx)
                "resolution/32 repeats so a texel stays visible (said in the result when it was). Returns the material, texture "
                "set and its layers.",
         .positionalDoc = "terrain mesh or its modifier",
-        .flags = {{"resolution", "r", T::Int, int64_t(2048), "Texture set size.", {}, {}, 64.0, 8192.0},
-                  {"materials", "m", T::Bool, true, "Library materials; False draws every layer in its colour."}},
+        .flags = {{"resolution", "r", MT::Int, int64_t(2048), "Texture set size.", {}, {}, 64.0, 8192.0},
+                  {"materials", "m", MT::Bool, true, "Library materials; False draws every layer in its colour."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
             const char* cmd = "terrainMaterialPreview";
@@ -971,7 +971,7 @@ void registerImageCommands(ext::Context& ctx)
                 if (i > 0)
                 {
                     const fs::path file = folder / (stem + "_" + l.name + "_stack.png");
-                    writeGrayImage(file, res, res, gridImage(h, stack, res, res, ImageLayout::Uv), 16);
+                    writeLayerImage(file, res, res, gridImage(h, stack, res, res, ImageLayout::Uv), 16);
                     ops::execute("texAddMask", {{"args", {setName, id, "paint"}}, {"image", file.generic_string()}});
                     layer["maskImage"] = file.generic_string();
                 }
@@ -1003,14 +1003,14 @@ void registerCoverCommand(ext::Context& ctx)
                "Returns the mesh, group and per rule the pieces placed, per hectare, those blocked by footprints, and the "
                "thinning when maxCount was reached.",
         .positionalDoc = "terrain mesh or its modifier",
-        .flags = {{"rules", "r", T::Any, nullptr, "The rules; 'default' (the default) for rocks, trees, debris and grass."},
-                  {"items", "it", T::Any, nullptr, "{item name: mesh} for the rules' items."},
-                  {"seed", "sd", T::Int, int64_t(1), "Another seed gives another scatter."},
-                  {"density", "d", T::Float, 1.0, "Multiplies every rule's density.", {}, {}, 0.0},
-                  {"maxCount", "mc", T::Int, int64_t(200000), "Most pieces; past it every rule thins by the same factor.", {}, {}, 0.0},
-                  {"settle", "st", T::Bool, false, "Drop the pieces with physics (Set Dressing's Settle Instances)."},
-                  {"sendToUnreal", "ue", T::Bool, false, "Then send it to Unreal as HISM instances."},
-                  {"name", "n", T::String, "", "The ground cover mesh; defaults to <terrain>_GroundCover."}},
+        .flags = {{"rules", "r", MT::Any, nullptr, "The rules; 'default' (the default) for rocks, trees, debris and grass."},
+                  {"items", "it", MT::Any, nullptr, "{item name: mesh} for the rules' items."},
+                  {"seed", "sd", MT::Int, int64_t(1), "Another seed gives another scatter."},
+                  {"density", "d", MT::Float, 1.0, "Multiplies every rule's density.", {}, {}, 0.0},
+                  {"maxCount", "mc", MT::Int, int64_t(200000), "Most pieces; past it every rule thins by the same factor.", {}, {}, 0.0},
+                  {"settle", "st", MT::Bool, false, "Drop the pieces with physics (Set Dressing's Settle Instances)."},
+                  {"sendToUnreal", "ue", MT::Bool, false, "Then send it to Unreal as HISM instances."},
+                  {"name", "n", MT::String, "", "The ground cover mesh; defaults to <terrain>_GroundCover."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
             const char* cmd = "terrainGroundCover";

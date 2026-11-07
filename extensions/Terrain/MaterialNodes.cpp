@@ -26,13 +26,13 @@ namespace
 {
 using gn::ExecContext;
 using gn::GeometryPtr;
-using Socket = gn::SocketType;
+using LayerSocket = gn::SocketType;
 
 constexpr const char* kSurfaceCategory = "Terrain";
 
-gn::SocketDecl surfaceGeo(std::string id, std::string doc = {}) { return {.id = std::move(id), .type = Socket::Geometry, .doc = std::move(doc)}; }
+gn::SocketDecl surfaceGeo(std::string id, std::string doc = {}) { return {.id = std::move(id), .type = LayerSocket::Geometry, .doc = std::move(doc)}; }
 
-gn::SocketDecl surfaceIn(std::string id, Socket t, json def, std::string doc, std::optional<double> lo = std::nullopt, std::optional<double> hi = std::nullopt)
+gn::SocketDecl surfaceIn(std::string id, LayerSocket t, json def, std::string doc, std::optional<double> lo = std::nullopt, std::optional<double> hi = std::nullopt)
 {
     return {.id = std::move(id), .type = t, .defaultValue = std::move(def), .doc = std::move(doc), .min = lo, .max = hi};
 }
@@ -144,8 +144,8 @@ gn::NodeDecl layersDecl()
                "up its edges. Writes layer_<name> per layer; the first layer is the base and the weights sum to 1 everywhere. "
                "Put it last, after erosion and stamps. terrainMaterialRules writes the rules.",
         .props = {surfaceProp("rules", "", "The rules, JSON: {seed, layers: [{name, material, color, when, noise, ...}]}, bottom first; empty uses the defaults.")},
-        .sockets = {.inputs = {surfaceGeo("heightfield"), surfaceIn("seed", Socket::Int, 0, "Moves the edge noise."),
-                               surfaceIn("material", Socket::String, "", "Material the terrain's mesh is drawn with; terrainMaterialPreview sets it.")},
+        .sockets = {.inputs = {surfaceGeo("heightfield"), surfaceIn("seed", LayerSocket::Int, 0, "Moves the edge noise."),
+                               surfaceIn("material", LayerSocket::String, "", "Material the terrain's mesh is drawn with; terrainMaterialPreview sets it.")},
                     .outputs = {surfaceGeo("heightfield")}},
         .exec =
             [](ExecContext& c) {
@@ -220,8 +220,8 @@ gn::NodeDecl coverDecl()
                "unrealPlaceInstances (HISM). terrainGroundCover builds the group.",
         .props = {surfaceProp("rules", "", "The rules, JSON: {seed, maxCount, rules: [{name, items, density, footprint, when, scale, align, turn, sink, solid}]}."),
                   surfaceProp("terrain", "Terrain", "The Object Info node reading the terrain.", "")},
-        .sockets = {.inputs = {surfaceIn("seed", Socket::Int, 0, "Another seed gives another scatter."),
-                               surfaceIn("density", Socket::Float, 1.0, "Multiplies every rule's density.", 0.0)},
+        .sockets = {.inputs = {surfaceIn("seed", LayerSocket::Int, 0, "Another seed gives another scatter."),
+                               surfaceIn("density", LayerSocket::Float, 1.0, "Multiplies every rule's density.", 0.0)},
                     .outputs = {surfaceGeo("instances", "The pieces, as instances.")}},
         .exec =
             [](ExecContext& c) {
