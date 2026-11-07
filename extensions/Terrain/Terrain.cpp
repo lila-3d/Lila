@@ -4,6 +4,7 @@
 #include "Roads.h"
 #include "LandformCommands.h"
 #include "MaterialNodes.h"
+#include "Query.h"
 #include "Terrain.h"
 #include "Volume.h"
 
@@ -12,7 +13,7 @@
 LILA_EXTENSION_EXPORT int lilaExtensionInit(lila::ext::Context& ctx)
 {
     if (!terrain::registerNodes(ctx) || !terrain::registerVolume(ctx) || !terrain::registerLandformNodes(ctx) || !terrain::registerInputs(ctx)
-        || !terrain::registerSurfaceNodes(ctx))
+        || !terrain::registerSurfaceNodes(ctx) || !terrain::registerQuery(ctx))
         return 1;
     terrain::registerCommands(ctx);
     terrain::registerSurfaceCommands(ctx);
@@ -22,5 +23,6 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(lila::ext::Context& ctx)
     terrain::registerSurfaceUi(ctx);
     if (!terrain::registerRoads(ctx))
         return 1;
+    terrain::registerRegionRefs(ctx);
     return 0;
 }

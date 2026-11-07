@@ -2657,6 +2657,7 @@ void registerCommands(ext::Context& ctx)
 TerrainRef findTerrainRef(const std::string& node, const std::string& cmd)
 {
     const Found f = findTerrain(Graph::current(), node, cmd);
-    return {f.local, f.frame.m, identifier(f.mesh ? f.mesh->name() : std::string("Terrain"))};
+    return {f.local, f.frame.m, identifier(f.mesh ? f.mesh->name() : std::string("Terrain")), f.mesh ? f.mesh->path() : std::string(),
+            f.modifier ? f.modifier->path() : std::string()};
 }
 } // namespace terrain

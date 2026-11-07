@@ -82,6 +82,9 @@ struct TerrainRef
     std::shared_ptr<const Heightfield> local;
     glm::dmat4 world{1.0};
     std::string name;
+    /** Paths of the mesh and the modifier making the heightfield; either may be empty. */
+    std::string mesh;
+    std::string modifier;
 };
 /** The terrain a mesh or its modifier makes; throws CommandError naming cmd. */
 TerrainRef findTerrainRef(const std::string& node, const std::string& cmd);

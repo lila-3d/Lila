@@ -1,5 +1,5 @@
 # The Terrain extension: its core compiled in directly, and the package driven through its commands.
-add_executable(lila_terrain_tests main.cpp test_terrain.cpp test_stamps.cpp test_contract.cpp test_export_engines.cpp test_water.cpp test_roads.cpp test_volume.cpp test_landform.cpp test_brushes.cpp test_materials.cpp test_heightfield_draw.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Core.cpp
+add_executable(lila_terrain_tests main.cpp test_terrain.cpp test_stamps.cpp test_contract.cpp test_export_engines.cpp test_water.cpp test_roads.cpp test_volume.cpp test_landform.cpp test_brushes.cpp test_materials.cpp test_heightfield_draw.cpp test_agents.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Core.cpp
     ${CMAKE_SOURCE_DIR}/extensions/Terrain/Export.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/ExportEngines.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Erosion.cpp
     ${CMAKE_SOURCE_DIR}/extensions/Terrain/ErosionGpu.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Inputs.cpp
     ${CMAKE_SOURCE_DIR}/extensions/Terrain/Stamps.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Analysis.cpp
