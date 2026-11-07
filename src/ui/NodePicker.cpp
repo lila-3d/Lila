@@ -278,12 +278,13 @@ QString NodePicker::pluralText() const
 
 void NodePicker::setPlaceholder(const QString& text) { mLine->setPlaceholderText(text); }
 
-void NodePicker::changeEvent(QEvent* e)
+bool NodePicker::event(QEvent* e)
 {
     // The line's middle-click reset filter shows the line's own tooltip, so it carries the picker's.
+    // ToolTipChange never reaches changeEvent.
     if (e->type() == QEvent::ToolTipChange)
         mLine->setToolTip(toolTip());
-    QWidget::changeEvent(e);
+    return QWidget::event(e);
 }
 
 bool NodePicker::accepts(scene::NodeId id) const
