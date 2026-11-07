@@ -146,7 +146,8 @@ constexpr Doc kDocs[] = {
      "Dressing scenes with props: library search and placement, physics settle/push/drop, shelf fills, scatters and piles, "
      "modular kit snapping, and dressCheck to verify. Read before placing or arranging props."},
     {"lila://guide/terrain", "guide-terrain.md", "Terrain guide",
-     "Building terrain from code: create, import and erode, sample and route, sculpt strokes, building pads and plaza stamps "
+     "Building terrain from code: recipes first, one-JSON specs and presets, named places (terrainQuery, region:<name>), wedges, "
+     "create, import and erode, sample and route, sculpt strokes, building pads and plaza stamps "
      "(cut and fill, walls, piles), and sending the landscape with its paint layers to Unreal. Read before any terrain work."},
     {"lila://examples/low-poly-dog", "examples/low_poly_dog.py", "Example: low-poly dog",
      "A complete script: a very low-poly dog as one closed symmetric mesh (legs, head, snout, nose, eyes, floppy ears, tail "
