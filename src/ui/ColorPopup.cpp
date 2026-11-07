@@ -1810,7 +1810,92 @@ QToolButton* eyedropperButton(QWidget* parent, std::function<void(const glm::dve
     return b;
 }
 
-QWidget* withEyedropper(QWidget* swatch, std::function<void(const glm::dvec3&)> picked)
+namespace
+{
+double brightest(const glm::dvec3& c) { return std::max({c.x, c.y, c.z}); }
+} // namespace
+
+ValueSlider::ValueSlider(QWidget* parent) : QWidget(parent)
+{
+    setFixedHeight(14);
+    setMinimumWidth(48);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    setCursor(Qt::PointingHandCursor);
+    setToolTip("Brightness");
+}
+
+void ValueSlider::setColor(const glm::dvec3& linear)
+{
+    if (mDragging || linear == mColor)
+        return;
+    mColor = linear;
+    update();
+}
+
+QRectF ValueSlider::track() const { return rect().toRectF().adjusted(3, 2, -3, -2); }
+
+glm::dvec3 ValueSlider::colorAt(double x) const
+{
+    const QRectF r = track();
+    const double target = toLinear(std::clamp((x - r.left()) / r.width(), 0.0, 1.0));
+    const double from = brightest(mStart);
+    return from > 1e-9 ? mStart * (target / from) : glm::dvec3(target);
+}
+
+void ValueSlider::paintEvent(QPaintEvent*)
+{
+    QPainter p(this);
+    if (!isEnabled())
+        p.setOpacity(0.4);
+    const QRectF r = track();
+    // Hue from the press colour while dragging, so the track keeps it after a pass through black.
+    const glm::dvec3 hue = mDragging ? mStart : mColor;
+    const double top = brightest(hue);
+    const glm::dvec3 full = top > 1e-9 ? hue / top : glm::dvec3(1.0);
+    QLinearGradient g(r.topLeft(), r.topRight());
+    for (int i = 0; i <= 12; ++i)
+        g.setColorAt(i / 12.0, display(full * toLinear(i / 12.0)));
+    p.fillRect(r, g);
+    const double t = std::clamp(toSrgb(brightest(mColor)), 0.0, 1.0);
+    const double x = r.left() + t * r.width();
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setBrush(Qt::NoBrush);
+    p.setPen(QPen(Qt::black, 3));
+    p.drawRoundedRect(QRectF(x - 2.5, 0.5, 5, height() - 1), 1.5, 1.5);
+    p.setPen(QPen(Qt::white, 1.2));
+    p.drawRoundedRect(QRectF(x - 2.5, 0.5, 5, height() - 1), 1.5, 1.5);
+}
+
+void ValueSlider::mousePressEvent(QMouseEvent* e)
+{
+    if (e->button() != Qt::LeftButton)
+        return;
+    mDragging = true;
+    mStart = mColor;
+    mouseMoveEvent(e);
+}
+
+void ValueSlider::mouseMoveEvent(QMouseEvent* e)
+{
+    if (!mDragging)
+        return;
+    mColor = colorAt(e->position().x());
+    update();
+    if (dragged)
+        dragged(mColor);
+}
+
+void ValueSlider::mouseReleaseEvent(QMouseEvent* e)
+{
+    if (!mDragging || e->button() != Qt::LeftButton)
+        return;
+    mDragging = false;
+    update();
+    if (released)
+        released(mStart, mColor);
+}
+
+QWidget* withEyedropper(QWidget* swatch, std::function<void(const glm::dvec3&)> picked, ValueSlider* slider)
 {
     auto* box = new QWidget(swatch->parentWidget());
     auto* h = new QHBoxLayout(box);
@@ -1818,6 +1903,11 @@ QWidget* withEyedropper(QWidget* swatch, std::function<void(const glm::dvec3&)> 
     h->setSpacing(2);
     h->addWidget(swatch);
     h->addWidget(eyedropperButton(box, std::move(picked)));
+    if (slider)
+    {
+        h->addSpacing(4);
+        h->addWidget(slider, 1);
+    }
     return box;
 }
 

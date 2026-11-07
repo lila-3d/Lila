@@ -6,7 +6,9 @@
 
 #include <QColor>
 #include <QPoint>
+#include <QRectF>
 #include <QString>
+#include <QWidget>
 
 #include <filesystem>
 #include <functional>
@@ -14,6 +16,8 @@
 #include <string>
 #include <vector>
 
+class QMouseEvent;
+class QPaintEvent;
 class QToolButton;
 class QWidget;
 
@@ -67,8 +71,45 @@ LILA_UI_API void pickFromScreen(std::function<void(std::optional<glm::dvec3> lin
 /** An eyedropper icon button that samples the screen and hands over the linear colour. */
 LILA_UI_API QToolButton* eyedropperButton(QWidget* parent, std::function<void(const glm::dvec3& linear)> picked);
 
-/** The swatch with an eyedropper button beside it, as one widget to put where the swatch went. */
-LILA_UI_API QWidget* withEyedropper(QWidget* swatch, std::function<void(const glm::dvec3& linear)> picked);
+/**
+ * A brightness slider for a colour row. A drag scales the colour it had at the press, so hue and saturation survive a
+ * pass through black, and a colour above 1 pins the handle at the end without being clamped. The track runs from black
+ * to the colour at full brightness, spaced in sRGB.
+ */
+class LILA_UI_API ValueSlider final : public QWidget
+{
+public:
+    explicit ValueSlider(QWidget* parent = nullptr);
+
+    /** Shows a linear colour; ignored while a drag is under way. */
+    void setColor(const glm::dvec3& linear);
+
+    /** Each move of a drag, with the colour it makes. */
+    std::function<void(const glm::dvec3& linear)> dragged;
+    /** The end of a drag: the colour at the press and the one it ended on. */
+    std::function<void(const glm::dvec3& start, const glm::dvec3& result)> released;
+
+protected:
+    void paintEvent(QPaintEvent*) override;
+    void mousePressEvent(QMouseEvent* e) override;
+    void mouseMoveEvent(QMouseEvent* e) override;
+    void mouseReleaseEvent(QMouseEvent* e) override;
+
+private:
+    QRectF track() const;
+    glm::dvec3 colorAt(double x) const;
+
+    glm::dvec3 mColor{0.0};
+    glm::dvec3 mStart{0.0};
+    bool mDragging = false;
+};
+
+/**
+ * The swatch with an eyedropper button beside it, as one widget to put where the swatch went. A value slider, when
+ * given, follows and takes the row's spare width.
+ */
+LILA_UI_API QWidget* withEyedropper(QWidget* swatch, std::function<void(const glm::dvec3& linear)> picked,
+                                    ValueSlider* slider = nullptr);
 
 /** Where a popup opened from anchor goes: under it for a button-sized widget, otherwise beside the cursor. */
 LILA_UI_API QPoint placeFor(QWidget* anchor);

@@ -109,7 +109,9 @@ QWidget* colorSwatch(QWidget* parent, const json& value, std::function<void(cons
     auto* b = new QToolButton(parent);
     b->setMinimumWidth(60);
     auto rgba = std::make_shared<Rgba>(rgbaOf(value));
-    auto paint = [b, rgba] {
+    auto* bright = new colorPopup::ValueSlider(parent);
+    auto paint = [b, rgba, bright] {
+        bright->setColor({(*rgba)[0], (*rgba)[1], (*rgba)[2]});
         b->setStyleSheet(QString("QToolButton { background: %1; border: 1px solid rgb(20,20,20); min-height: 16px; }").arg(display(*rgba).name()));
         b->setToolTip(QString("Linear %1, %2, %3, alpha %4").arg((*rgba)[0], 0, 'f', 3).arg((*rgba)[1], 0, 'f', 3).arg((*rgba)[2], 0, 'f', 3).arg((*rgba)[3], 0, 'f', 3));
     };
@@ -124,11 +126,19 @@ QWidget* colorSwatch(QWidget* parent, const json& value, std::function<void(cons
         paint();
         changed(jsonOf(*rgba));
     });
+    bright->dragged = [rgba, paint](const glm::dvec3& c) {
+        *rgba = {float(c.x), float(c.y), float(c.z), (*rgba)[3]};
+        paint();
+    };
+    bright->released = [changed, rgba](const glm::dvec3& start, const glm::dvec3& c) {
+        if (c != start)
+            changed(jsonOf(*rgba));
+    };
     return colorPopup::withEyedropper(b, [rgba, paint, changed](const glm::dvec3& c) {
         *rgba = {float(c.x), float(c.y), float(c.z), (*rgba)[3]};
         paint();
         changed(jsonOf(*rgba));
-    });
+    }, bright);
 }
 
 struct Stop

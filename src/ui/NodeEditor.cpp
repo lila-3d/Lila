@@ -247,7 +247,9 @@ QWidget* colorEditor(QWidget* parent, const json& value, std::function<void(json
             (*rgba)[k] = value[k].is_number() ? value[k].get<double>() : 0.0;
     else if (value.is_number())
         (*rgba)[0] = (*rgba)[1] = (*rgba)[2] = value.get<double>();
-    auto paint = [b, rgba] {
+    auto* bright = new colorPopup::ValueSlider(parent);
+    auto paint = [b, rgba, bright] {
+        bright->setColor({(*rgba)[0], (*rgba)[1], (*rgba)[2]});
         QColor c = QColor::fromRgbF(float(linearToSrgb((*rgba)[0])), float(linearToSrgb((*rgba)[1])), float(linearToSrgb((*rgba)[2])));
         b->setStyleSheet(QString("QToolButton { background: %1; border: 1px solid rgb(20,20,20); min-height: 16px; }").arg(c.name()));
         b->setToolTip(QString("Linear %1, %2, %3, alpha %4").arg((*rgba)[0], 0, 'f', 3).arg((*rgba)[1], 0, 'f', 3).arg((*rgba)[2], 0, 'f', 3).arg((*rgba)[3], 0, 'f', 3));
@@ -262,11 +264,19 @@ QWidget* colorEditor(QWidget* parent, const json& value, std::function<void(json
         paint();
         set(json::array({(*rgba)[0], (*rgba)[1], (*rgba)[2], (*rgba)[3]}));
     });
+    bright->dragged = [rgba, paint](const glm::dvec3& c) {
+        *rgba = {c.x, c.y, c.z, (*rgba)[3]};
+        paint();
+    };
+    bright->released = [set, rgba](const glm::dvec3& start, const glm::dvec3& c) {
+        if (c != start)
+            set(json::array({(*rgba)[0], (*rgba)[1], (*rgba)[2], (*rgba)[3]}));
+    };
     return colorPopup::withEyedropper(b, [rgba, paint, set](const glm::dvec3& c) {
         *rgba = {c.x, c.y, c.z, (*rgba)[3]};
         paint();
         set(json::array({(*rgba)[0], (*rgba)[1], (*rgba)[2], (*rgba)[3]}));
-    });
+    }, bright);
 }
 
 /** A string's editor named by a decl's editor ("multiline", "code", "font"); null for a one-line box. */

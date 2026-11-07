@@ -711,8 +711,30 @@ void MaterialEditor::rebuild()
         auto* b = new QToolButton(mBody);
         b->setIconSize(QSize(36, 18));
         resettable(l, attr, b);
-        grid->addWidget(colorPopup::withEyedropper(b, [this, attr](const glm::dvec3& c) { setAttr(attr, json::array({c.x, c.y, c.z})); }), row++,
-                        1, 1, 2, Qt::AlignLeft);
+        auto* value = new colorPopup::ValueSlider(mBody);
+        value->dragged = [this, attr](const glm::dvec3& c) {
+            mDragging = true;
+            if (scene::Node* m = current())
+            {
+                UndoStack::get().setEnabled(false);
+                scene::Graph::current().setValue({m->id(), attr, -1}, c);
+                UndoStack::get().setEnabled(true);
+            }
+        };
+        value->released = [this, attr](const glm::dvec3& start, const glm::dvec3& c) {
+            mDragging = false;
+            if (scene::Node* m = current())
+            {
+                UndoStack::get().setEnabled(false);
+                scene::Graph::current().setValue({m->id(), attr, -1}, start);
+                UndoStack::get().setEnabled(true);
+                if (c != start)
+                    setAttr(attr, json::array({c.x, c.y, c.z}));
+            }
+        };
+        // Column 1 only, so the slider ends where the number sliders' tracks do.
+        grid->addWidget(colorPopup::withEyedropper(b, [this, attr](const glm::dvec3& c) { setAttr(attr, json::array({c.x, c.y, c.z})); }, value),
+                        row++, 1);
         connect(b, &QToolButton::clicked, this, [this, b, attr, text] {
             scene::Node* m = current();
             if (!m)
@@ -737,9 +759,13 @@ void MaterialEditor::rebuild()
             if (picked && current() && current()->id() == id && picked->color != start)
                 setAttr(attr, json::array({picked->color.x, picked->color.y, picked->color.z}));
         });
-        mUpdaters.push_back([this, b, attr] {
+        mUpdaters.push_back([this, b, value, attr] {
             if (scene::Node* m = current())
-                b->setIcon(swatchIcon(displayColor(m->as<glm::dvec3>(attr))));
+            {
+                const glm::dvec3 c = m->as<glm::dvec3>(attr);
+                b->setIcon(swatchIcon(displayColor(c)));
+                value->setColor(c);
+            }
         });
     };
 
