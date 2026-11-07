@@ -18,6 +18,8 @@ class LILA_UI_API VulkanContext
 public:
     bool init(bool validation);
     void shutdown();
+    /** Writes the pipeline cache to disk, so the next launch skips compiling the pipelines built so far. */
+    void savePipelineCache();
 
     VkInstance instance = VK_NULL_HANDLE;
     VkPhysicalDevice physical = VK_NULL_HANDLE;
@@ -25,6 +27,8 @@ public:
     VkQueue queue = VK_NULL_HANDLE;
     uint32_t queueFamily = 0;
     VmaAllocator allocator = VK_NULL_HANDLE;
+    /** Every pipeline goes through it; persisted under <userConfigDir>/cache, since the driver's own cache can evict them. */
+    VkPipelineCache pipelineCache = VK_NULL_HANDLE;
     VkPhysicalDeviceProperties properties{};
     VkSampleCountFlagBits msaa = VK_SAMPLE_COUNT_4_BIT; // what the viewport targets and pipelines use right now
     VkSampleCountFlags msaaSupported = VK_SAMPLE_COUNT_1_BIT;

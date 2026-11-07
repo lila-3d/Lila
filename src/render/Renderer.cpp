@@ -19,6 +19,7 @@
 
 #include <glm/gtc/packing.hpp>
 #include <tbb/parallel_for.h>
+#include <tbb/task_group.h>
 
 #include <algorithm>
 #include <set>
@@ -942,6 +943,21 @@ struct Renderer::Impl
         return true;
     }
 
+    std::optional<VkSurfaceFormatKHR> surfaceFormat(VkSurfaceKHR surface) const
+    {
+        uint32_t fn = 0;
+        vkGetPhysicalDeviceSurfaceFormatsKHR(vk.physical, surface, &fn, nullptr);
+        if (fn == 0)
+            return std::nullopt;
+        std::vector<VkSurfaceFormatKHR> formats(fn);
+        vkGetPhysicalDeviceSurfaceFormatsKHR(vk.physical, surface, &fn, formats.data());
+        VkSurfaceFormatKHR chosen = formats[0];
+        for (auto& f : formats)
+            if (f.format == VK_FORMAT_B8G8R8A8_SRGB && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+                chosen = f;
+        return chosen;
+    }
+
     bool createSwapchain(Viewport& v)
     {
         LILA_ZONE();
@@ -959,19 +975,13 @@ struct Renderer::Impl
         if (extent.width == 0 || extent.height == 0)
             return false;
 
-        uint32_t fn = 0;
-        vkGetPhysicalDeviceSurfaceFormatsKHR(vk.physical, v.surface, &fn, nullptr);
-        if (fn == 0)
+        const std::optional<VkSurfaceFormatKHR> found = surfaceFormat(v.surface);
+        if (!found)
         {
             log::error("render: the window surface offers no formats");
             return false;
         }
-        std::vector<VkSurfaceFormatKHR> formats(fn);
-        vkGetPhysicalDeviceSurfaceFormatsKHR(vk.physical, v.surface, &fn, formats.data());
-        VkSurfaceFormatKHR chosen = formats[0];
-        for (auto& f : formats)
-            if (f.format == VK_FORMAT_B8G8R8A8_SRGB && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
-                chosen = f;
+        const VkSurfaceFormatKHR chosen = *found;
 
         VkSwapchainKHR old = v.swapchain;
         destroySwapchain(v);
@@ -3890,7 +3900,7 @@ struct Renderer::Impl
         pci.pDynamicState = &dy;
         pci.layout = layout;
         VkPipeline p = VK_NULL_HANDLE;
-        if (vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pci, nullptr, &p) != VK_SUCCESS)
+        if (vkCreateGraphicsPipelines(vk.device, vk.pipelineCache, 1, &pci, nullptr, &p) != VK_SUCCESS)
             log::error("render: pipeline creation failed ({} / {})", vs, ps);
         return p;
     }
@@ -3971,49 +3981,73 @@ struct Renderer::Impl
             meshLayout = compute::pipelineLayout(vk, sizeof(MeshPush), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sets);
         }
         wireLayout = layoutFor(sizeof(WirePush), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
-        if (VkShaderModule mesh = module(loadSpirv(bindless ? "mesh_bindless.spv" : "mesh.spv")))
+        // The mesh and heightfield shaders take about a second each to compile cold, so they build on workers while the rest builds here.
+        tbb::task_group heavy;
+        VkShaderModule mesh = module(loadSpirv(bindless ? "mesh_bindless.spv" : "mesh.spv"));
+        VkShaderModule wired = mesh && vk.fragmentBarycentric ? module(loadSpirv(bindless ? "mesh_bindless_wire.spv" : "mesh_wire.spv")) : VK_NULL_HANDLE;
+        VkShaderModule hf = module(loadSpirv(bindless ? "heightfield_bindless.spv" : "heightfield.spv"));
+        VkVertexInputBindingDescription mb{0, sizeof(MeshVertex), VK_VERTEX_INPUT_RATE_VERTEX};
+        VkVertexInputAttributeDescription ma[6] = {
+            {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, pos)},
+            {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, normal)},
+            {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshVertex, tangent)},
+            {3, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(MeshVertex, uv)},
+            {4, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(MeshVertex, uv1)},
+            {5, 0, VK_FORMAT_R16G16B16A16_SFLOAT, offsetof(MeshVertex, color)},
+        };
+        VkPipelineVertexInputStateCreateInfo mvin{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+        mvin.vertexBindingDescriptionCount = 1;
+        mvin.pVertexBindingDescriptions = &mb;
+        mvin.vertexAttributeDescriptionCount = 6;
+        mvin.pVertexAttributeDescriptions = ma;
+        const VkBool32 lean = VK_TRUE;
+        const VkSpecializationMapEntry leanEntry{0, 0, sizeof(lean)};
+        const VkSpecializationInfo leanSpec{1, &leanEntry, sizeof(lean), &lean};
+        constexpr auto tris = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        if (mesh)
         {
-            VkVertexInputBindingDescription mb{0, sizeof(MeshVertex), VK_VERTEX_INPUT_RATE_VERTEX};
-            VkVertexInputAttributeDescription ma[6] = {
-                {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, pos)},
-                {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, normal)},
-                {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshVertex, tangent)},
-                {3, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(MeshVertex, uv)},
-                {4, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(MeshVertex, uv1)},
-                {5, 0, VK_FORMAT_R16G16B16A16_SFLOAT, offsetof(MeshVertex, color)},
-            };
-            VkPipelineVertexInputStateCreateInfo mvin{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-            mvin.vertexBindingDescriptionCount = 1;
-            mvin.pVertexBindingDescriptions = &mb;
-            mvin.vertexAttributeDescriptionCount = 6;
-            mvin.pVertexAttributeDescriptions = ma;
-            meshPipeline =
-                buildPipeline(meshLayout, mesh, "meshVS", "meshPS", sceneFormat, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, mvin, true, false, true, 0.0f, true);
-            const VkBool32 lean = VK_TRUE;
-            const VkSpecializationMapEntry leanEntry{0, 0, sizeof(lean)};
-            const VkSpecializationInfo leanSpec{1, &leanEntry, sizeof(lean), &lean};
-            meshLeanPipeline = buildPipeline(meshLayout, mesh, "meshVS", "meshPS", sceneFormat, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, mvin, true, false,
-                                             true, 0.0f, true, false, false, nullptr, true, true, &leanSpec);
-            meshBlendPipeline =
-                buildPipeline(meshLayout, mesh, "meshVS", "meshPS", sceneFormat, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, mvin, false, true, true, 0.0f, true);
-            prepassPipeline = buildPipeline(meshLayout, mesh, "meshVS", "prepassPS", kAoNormalFormat, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, mvin, true,
-                                            false, true, 0.0f, true, true);
-            shadowPipeline = buildPipeline(meshLayout, mesh, "meshVS", "prepassPS", VK_FORMAT_UNDEFINED, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, mvin, true,
-                                           false, true, 0.0f, true, true, false, nullptr, true, false);
-            if (vk.fragmentBarycentric)
-                if (VkShaderModule wired = module(loadSpirv(bindless ? "mesh_bindless_wire.spv" : "mesh_wire.spv")))
-                {
-                    meshWirePipeline = buildPipeline(meshLayout, wired, "meshVS", "meshWirePS", sceneFormat, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, mvin, true,
-                                                     false, true, 0.0f, true);
-                    meshWireLeanPipeline = buildPipeline(meshLayout, wired, "meshVS", "meshWirePS", sceneFormat, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, mvin,
-                                                         true, false, true, 0.0f, true, false, false, nullptr, true, true, &leanSpec);
-                    meshWireBlendPipeline = buildPipeline(meshLayout, wired, "meshVS", "meshWirePS", sceneFormat, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, mvin,
-                                                          false, true, true, 0.0f, true);
-                    vkDestroyShaderModule(vk.device, wired, nullptr);
-                }
-            backgroundPipeline = buildPipeline(meshLayout, mesh, "backgroundVS", "backgroundPS", sceneFormat, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
-                                               none, false, false, false);
-            vkDestroyShaderModule(vk.device, mesh, nullptr);
+            heavy.run([&] { meshPipeline = buildPipeline(meshLayout, mesh, "meshVS", "meshPS", sceneFormat, tris, mvin, true, false, true, 0.0f, true); });
+            heavy.run([&] {
+                meshLeanPipeline = buildPipeline(meshLayout, mesh, "meshVS", "meshPS", sceneFormat, tris, mvin, true, false, true, 0.0f, true, false, false,
+                                                 nullptr, true, true, &leanSpec);
+            });
+            heavy.run([&] { meshBlendPipeline = buildPipeline(meshLayout, mesh, "meshVS", "meshPS", sceneFormat, tris, mvin, false, true, true, 0.0f, true); });
+            heavy.run([&] {
+                prepassPipeline = buildPipeline(meshLayout, mesh, "meshVS", "prepassPS", kAoNormalFormat, tris, mvin, true, false, true, 0.0f, true, true);
+            });
+            heavy.run([&] {
+                shadowPipeline = buildPipeline(meshLayout, mesh, "meshVS", "prepassPS", VK_FORMAT_UNDEFINED, tris, mvin, true, false, true, 0.0f, true, true,
+                                               false, nullptr, true, false);
+            });
+            backgroundPipeline = buildPipeline(meshLayout, mesh, "backgroundVS", "backgroundPS", sceneFormat, tris, none, false, false, false);
+        }
+        if (wired)
+        {
+            heavy.run([&] { meshWirePipeline = buildPipeline(meshLayout, wired, "meshVS", "meshWirePS", sceneFormat, tris, mvin, true, false, true, 0.0f, true); });
+            heavy.run([&] {
+                meshWireLeanPipeline = buildPipeline(meshLayout, wired, "meshVS", "meshWirePS", sceneFormat, tris, mvin, true, false, true, 0.0f, true, false,
+                                                     false, nullptr, true, true, &leanSpec);
+            });
+            heavy.run([&] {
+                meshWireBlendPipeline = buildPipeline(meshLayout, wired, "meshVS", "meshWirePS", sceneFormat, tris, mvin, false, true, true, 0.0f, true);
+            });
+        }
+        if (hf)
+        {
+            heavy.run([&] {
+                heightfields.shaded = buildPipeline(meshLayout, hf, "heightfieldVS", "heightfieldPS", sceneFormat, tris, none, true, false, true, 0.0f, true);
+            });
+            heavy.run([&] {
+                heightfields.wire = buildPipeline(meshLayout, hf, "heightfieldVS", "heightfieldWirePS", sceneFormat, tris, none, false, true, true, 0.0f, true);
+            });
+            heavy.run([&] {
+                heightfields.prepass = buildPipeline(meshLayout, hf, "heightfieldVS", "heightfieldPrepassPS", kAoNormalFormat, tris, none, true, false, true,
+                                                     0.0f, true, true);
+            });
+            heavy.run([&] {
+                heightfields.shadow = buildPipeline(meshLayout, hf, "heightfieldVS", "heightfieldPrepassPS", VK_FORMAT_UNDEFINED, tris, none, true, false,
+                                                    true, 0.0f, true, true, false, nullptr, true, false);
+            });
         }
         aoLayout = layoutFor(sizeof(AoPush), VK_SHADER_STAGE_COMPUTE_BIT, aoComputeLayout);
         if (rtaoSetLayout)
@@ -4165,17 +4199,6 @@ struct Renderer::Impl
             imageBehindPipeline = build(false, true);
             vkDestroyShaderModule(vk.device, plane, nullptr);
         }
-        if (VkShaderModule hf = module(loadSpirv(bindless ? "heightfield_bindless.spv" : "heightfield.spv")))
-        {
-            const auto topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-            heightfields.shaded = buildPipeline(meshLayout, hf, "heightfieldVS", "heightfieldPS", sceneFormat, topology, none, true, false, true, 0.0f, true);
-            heightfields.wire = buildPipeline(meshLayout, hf, "heightfieldVS", "heightfieldWirePS", sceneFormat, topology, none, false, true, true, 0.0f, true);
-            heightfields.prepass = buildPipeline(meshLayout, hf, "heightfieldVS", "heightfieldPrepassPS", kAoNormalFormat, topology, none, true, false, true,
-                                                 0.0f, true, true);
-            heightfields.shadow = buildPipeline(meshLayout, hf, "heightfieldVS", "heightfieldPrepassPS", VK_FORMAT_UNDEFINED, topology, none, true, false,
-                                                true, 0.0f, true, true, false, nullptr, true, false);
-            vkDestroyShaderModule(vk.device, hf, nullptr);
-        }
         externalLayout = layoutFor(sizeof(ExternalPush), VK_SHADER_STAGE_FRAGMENT_BIT, materialSetLayout);
         if (VkShaderModule external = module(loadSpirv("external.spv")))
         {
@@ -4187,10 +4210,11 @@ struct Renderer::Impl
             vkDestroyShaderModule(vk.device, external, nullptr);
         }
 
-        if (grid)
-            vkDestroyShaderModule(vk.device, grid, nullptr);
-        if (lines)
-            vkDestroyShaderModule(vk.device, lines, nullptr);
+        heavy.wait();
+        for (VkShaderModule shader : {mesh, wired, hf, grid, lines})
+            if (shader)
+                vkDestroyShaderModule(vk.device, shader, nullptr);
+        vk.savePipelineCache();
     }
 
     void destroyPipelines()
@@ -6287,7 +6311,17 @@ struct Renderer::Impl
                 std::unique_ptr<EnvironmentData> env = pollEnvironment(v.state.envPath);
                 // Until the first environment arrives there is nothing to light with; the worker re-queues every viewport.
                 if (!env && !envLoaded)
+                {
+                    // The pipelines build meanwhile, so the first frame waits on whichever takes longer, not both.
+                    if (pipelineFormat == VK_FORMAT_UNDEFINED)
+                        if (const std::optional<VkSurfaceFormatKHR> f = surfaceFormat(v.surface))
+                        {
+                            lock.unlock();
+                            createPipelines(f->format);
+                            lock.lock();
+                        }
                     continue;
+                }
                 FrameState s = v.state;
                 v.renderingSerial = v.submitted;
                 lock.unlock();

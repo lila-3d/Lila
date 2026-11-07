@@ -5,17 +5,29 @@
 
 #include "core/CrashHandler.h"
 #include "core/Log.h"
+#include "core/Paths.h"
 #include "core/Profile.h"
 
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <format>
+#include <fstream>
+#include <iterator>
 
 namespace lila::render
 {
 namespace
+{/** One file per device; the driver rejects data from another device or driver version itself. */
+std::filesystem::path pipelineCachePath(const VkPhysicalDeviceProperties& p)
 {
+    return paths::userConfigDir() / "cache" / "vkpipelines" / std::format("{:04x}_{:04x}.bin", p.vendorID, p.deviceID);
+}
+
+/** Past this the file is dropped and rebuilt: old shader builds accumulate in it. */
+constexpr size_t kMaxPipelineCacheBytes = size_t(256) << 20;
+
 std::string vkVersion(uint32_t v)
 {
     return std::to_string(VK_API_VERSION_MAJOR(v)) + "." + std::to_string(VK_API_VERSION_MINOR(v)) + "." + std::to_string(VK_API_VERSION_PATCH(v));
@@ -363,14 +375,63 @@ bool VulkanContext::init(bool validation)
     aci.pVulkanFunctions = &fns;
     vmaCreateAllocator(&aci, &allocator);
 
+    {
+        std::vector<char> data;
+        if (std::ifstream in(pipelineCachePath(properties), std::ios::binary); in)
+            data.assign(std::istreambuf_iterator<char>(in), {});
+        if (data.size() > kMaxPipelineCacheBytes)
+            data.clear();
+        VkPipelineCacheCreateInfo pc{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+        pc.initialDataSize = data.size();
+        pc.pInitialData = data.empty() ? nullptr : data.data();
+        if (vkCreatePipelineCache(device, &pc, nullptr, &pipelineCache) != VK_SUCCESS)
+        {
+            pc.initialDataSize = 0;
+            pc.pInitialData = nullptr;
+            vkCreatePipelineCache(device, &pc, nullptr, &pipelineCache);
+        }
+    }
+
     log::info("vulkan: {} ({}x MSAA{}{})", deviceName, int(msaa), rayQuery ? ", ray query" : "", validation ? ", validation on" : "");
     return true;
+}
+
+void VulkanContext::savePipelineCache()
+{
+    LILA_ZONE();
+    size_t size = 0;
+    if (!pipelineCache || vkGetPipelineCacheData(device, pipelineCache, &size, nullptr) != VK_SUCCESS || size == 0)
+        return;
+    std::vector<char> data(size);
+    if (vkGetPipelineCacheData(device, pipelineCache, &size, data.data()) != VK_SUCCESS)
+        return;
+    const std::filesystem::path path = pipelineCachePath(properties);
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+    // Another Lila process may be writing the same file.
+    std::filesystem::path tmp = path;
+    tmp += std::format(".{}.tmp", reinterpret_cast<uintptr_t>(this));
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        out.write(data.data(), std::streamsize(size));
+        if (!out)
+            return;
+    }
+    std::filesystem::rename(tmp, path, ec);
+    if (ec)
+        std::filesystem::remove(tmp, ec);
 }
 
 void VulkanContext::shutdown()
 {
     if (device)
         vkDeviceWaitIdle(device);
+    if (pipelineCache)
+    {
+        savePipelineCache();
+        vkDestroyPipelineCache(device, pipelineCache, nullptr);
+        pipelineCache = VK_NULL_HANDLE;
+    }
     if (allocator)
         vmaDestroyAllocator(allocator);
     if (device)
