@@ -2,11 +2,14 @@
 
 #include "core/ImageIO.h"
 #include "scene/Graph.h"
+#include "scene/MeshNodes.h"
+#include "sculpt/SculptSession.h"
 #include "render/HeightfieldRenderer.h"
 #include "ui/HeightfieldDisplay.h"
 
 #include <cmath>
 #include <filesystem>
+#include <map>
 #include <set>
 
 using namespace terraintest;
@@ -224,5 +227,88 @@ TEST_CASE("agents: material rules set the heightfield draw's paint layers, one p
     // A rule change reaches the draw again.
     run("terrainMaterialRules", {{"args", {"Painted"}}, {"remove", {"moss"}}});
     CHECK(run("terrainDisplayLayers", {{"args", {"Painted"}}})["layers"].size() == count - 1);
+    run("newScene");
+}
+
+TEST_CASE("agents: a sculpted overhang becomes a volume piece unless keepOverhangs is off")
+{
+    loadTerrain();
+    if (!ops::find("sculptEnter"))
+        sculpt::registerCommands();
+    auto sculptShelf = [](const std::string& name, bool keep) {
+        run("terrainCreate", {{"size", {40000.0, 40000.0}}, {"resolution", 129}, {"flat", true}, {"name", name}});
+        json r = run("terrainSculptRegion", {{"args", {name}}, {"center", {0.0, 0.0}}, {"size", 10000.0}});
+        run("sculptCancel");
+        scene::Graph& g = scene::Graph::current();
+        scene::Node* proxy = g.find(r["mesh"].get<std::string>());
+        REQUIRE(proxy);
+        g.evaluate();
+        geo::Mesh m = *proxy->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+        // A slab floating 300 to 900 cm over one corner of the patch: rock with air under it.
+        const double y0 = 300.0, y1 = 900.0, a0 = 3000.0, a1 = 4500.0;
+        const geo::Index base = m.addPoint({a0, y0, a0});
+        for (const glm::dvec3& q : {glm::dvec3(a1, y0, a0), glm::dvec3(a1, y0, a1), glm::dvec3(a0, y0, a1), glm::dvec3(a0, y1, a0), glm::dvec3(a1, y1, a0),
+                                    glm::dvec3(a1, y1, a1), glm::dvec3(a0, y1, a1)})
+            m.addPoint(q);
+        m.addFace({base + 0, base + 1, base + 2, base + 3});
+        m.addFace({base + 4, base + 7, base + 6, base + 5});
+        g.setValue({proxy->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
+        return run("terrainSculptRegion", {{"args", {name}}, {"finish", true}, {"keepOverhangs", keep}});
+    };
+    run("newScene");
+    json f = sculptShelf("Shelf", true);
+    REQUIRE(f["overhangs"].size() == 1);
+    REQUIRE(f.contains("overhangVolume"));
+    const json ov = f["overhangVolume"];
+    CHECK(ov["cells"].get<int64_t>() > 4);
+    const json vol = run("terrainVolume", {{"args", {"Shelf"}}});
+    REQUIRE(vol["ops"].size() == 1);
+    CHECK(vol["ops"][0]["id"] == ov["id"]);
+    REQUIRE(vol["volume"]["pieces"].size() >= 1);
+    // The piece covers the slab: over the corner, from its underside to its top.
+    bool covers = false;
+    for (const json& p : vol["volume"]["pieces"])
+    {
+        const json b = p["bounds"];
+        covers = covers || (b["min"][0].get<double>() <= 3500.0 && b["max"][0].get<double>() >= 4000.0 && b["max"][1].get<double>() >= 850.0);
+    }
+    CHECK(covers);
+    CHECK(run("getAttr", {{"args", {ov["mesh"].get<std::string>() + ".visibility"}}}) == false);
+
+    json off = sculptShelf("ShelfFlat", false);
+    CHECK(off["overhangs"].size() == 1);
+    CHECK_FALSE(off.contains("overhangVolume"));
+    CHECK(run("terrainVolume", {{"args", {"ShelfFlat"}}})["ops"].empty());
+    run("newScene");
+}
+
+TEST_CASE("agents: terrainCheck flags roads over their grade or over water unbridged, and lakes with no outlet")
+{
+    loadTerrain();
+    run("newScene");
+    run("terrainCreate", {{"size", {60000.0, 60000.0}}, {"resolution", 129}, {"flat", true}, {"name", "Checked"}});
+    run("terrainAddRiver", {{"args", {"Checked"}}, {"id", "river"}, {"path", {{-30000.0, 0.0}, {30000.0, 0.0}}}, {"width", 800.0}, {"depth", 200.0}});
+    json clean = run("terrainCheck", {{"args", {"Checked"}}});
+    INFO(clean.dump().substr(0, 1500));
+    for (const json& i : clean["issues"])
+        CHECK(i["type"] != "riverUphill");
+
+    run("terrainAddRoad", {{"args", {"Checked"}}, {"id", "ford"}, {"path", {{0.0, -20000.0}, {0.0, 20000.0}}}, {"bridgeHeight", 0.0}});
+    run("terrainAddRoad", {{"args", {"Checked"}}, {"id", "ramp"}, {"path", {{-20000.0, 15000.0}, {20000.0, 15000.0}}}, {"maxGrade", 6.0},
+                           {"keys", {{-20000.0, 0.0, 15000.0}, {20000.0, 8000.0, 15000.0}}}});
+    json lake = run("terrainAddLake", {{"args", {"Checked"}}, {"id", "sink"}, {"polygon", {{12000.0, -18000.0}, {18000.0, -18000.0}, {18000.0, -12000.0}, {12000.0, -12000.0}}},
+                                       {"level", -300.0}, {"depth", 200.0}});
+    INFO(lake["lakes"].dump());
+
+    json c = run("terrainCheck", {{"args", {"Checked"}}});
+    INFO(c.dump().substr(0, 3000));
+    std::map<std::string, std::string> found;
+    for (const json& i : c["issues"])
+        found[i["type"].get<std::string>()] = i["about"].get<std::string>();
+    CHECK(c["ok"] == false);
+    CHECK(found["roadWater"] == "Roads/ford");
+    CHECK(found["roadGrade"] == "Roads/ramp");
+    CHECK(found["lakeNoOutlet"] == "sink");
+    CHECK_FALSE(found.count("riverUphill"));
     run("newScene");
 }
