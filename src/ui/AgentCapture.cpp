@@ -349,7 +349,10 @@ QImage render(const Options& o, Timing* timing, int repeat)
     const std::unordered_set<scene::NodeId> selected(g.selection().begin(), g.selection().end());
     for (scene::NodeId id : nodes)
     {
+        // Waiting for maps runs queued work, which can delete nodes gathered before it.
         scene::Node* n = g.node(id);
+        if (!n)
+            continue;
         if (terrain.drawsHeightfields())
             if (std::optional<render::HeightfieldDraw> hd = heightfieldDisplay::drawFor(g, id, terrain, showMaterials))
             {
