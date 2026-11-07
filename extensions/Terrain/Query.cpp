@@ -374,7 +374,18 @@ public:
             return it->second;
         const Heightfield& h = *mT.ref.local;
         std::vector<float> v(h.size(), 0.0f);
-        if (key == "height" || key == "relativeHeight")
+        if (key == "x" || (key == "z" && !zUpScene()) || (key == "y" && zUpScene()))
+        {
+            // Ground coordinates: x and z on a Y-up scene, x and y on a Z-up one.
+            for (int z = 0; z < h.nz; ++z)
+                for (int x = 0; x < h.nx; ++x)
+                {
+                    const glm::dvec2 sp = h.samplePos(x, z);
+                    const glm::dvec2 g = ground(mT.world(sp.x, h.at(x, z), sp.y));
+                    v[h.index(x, z)] = float(key == "x" ? g.x : g.y);
+                }
+        }
+        else if (key == "height" || key == "relativeHeight")
         {
             double lo = 1e300, hi = -1e300;
             for (int z = 0; z < h.nz; ++z)
@@ -423,7 +434,7 @@ public:
             v = mAn->field(key);
         else
         {
-            std::string known = "height, relativeHeight, distanceToRoads, water";
+            std::string known = "x, z, height, relativeHeight, distanceToRoads, water";
             for (const std::string& f : Analysis::fieldNames())
                 known += ", " + f;
             for (const auto& [name, values] : h.masks)
@@ -762,45 +773,8 @@ json runQuery(const Args& a)
     std::vector<uint8_t> set(h.size(), 1);
     const size_t maxRegions = size_t(std::max<int64_t>(1, a.get<int64_t>("maxRegions", 8)));
 
-    if (named == "highestPeak" || named == "lowestPoint")
+    if (named == "highestPeak" || named == "lowestPoint" || named == "passes")
     {
-        const std::vector<float>& height = fields.get("height", cmd, warnings);
-        const bool top = named == "highestPeak";
-        size_t best = 0;
-        for (size_t i = 1; i < height.size(); ++i)
-            if (top ? height[i] > height[best] : height[i] < height[best])
-                best = i;
-        points.push_back(best);
-        // The region around it: ground within 3 % of the range of it, joined to it.
-        const glm::dvec2 r = h.range();
-        const float band = float(0.03 * (r.y - r.x));
-        for (size_t i = 0; i < set.size(); ++i)
-            set[i] = top ? h.heights[i] >= h.heights[best] - band : h.heights[i] <= h.heights[best] + band;
-        std::vector<int32_t> label;
-        components(set, h.nx, h.nz, label);
-        for (size_t i = 0; i < set.size(); ++i)
-            set[i] = label[i] == label[best];
-    }
-    else if (named == "passes")
-    {
-        std::fill(set.begin(), set.end(), 0);
-        for (const auto& [i, s] : findPasses(h))
-        {
-            if (points.size() >= maxRegions)
-                break;
-            points.push_back(i);
-        }
-        // A disc of three samples round each pass, so it has an outline to stamp and route to.
-        for (size_t p : points)
-        {
-            const int px = int(p % size_t(h.nx)), pz = int(p / size_t(h.nx));
-            for (int dz = -3; dz <= 3; ++dz)
-                for (int dx = -3; dx <= 3; ++dx)
-                    if (dx * dx + dz * dz <= 9 && px + dx >= 0 && pz + dz >= 0 && px + dx < h.nx && pz + dz < h.nz)
-                        set[h.index(px + dx, pz + dz)] = 1;
-        }
-        if (points.empty())
-            warnings.push_back("no saddle between higher ground was found; the terrain has no pass");
     }
     else if (named == "rivers" || named == "lakes")
     {
@@ -839,6 +813,54 @@ json runQuery(const Args& a)
         for (size_t i = 0; i < set.size(); ++i)
             if (set[i] && !passes(p, v[i]))
                 set[i] = 0;
+    }
+
+    // Point shortcuts pick among the samples the predicates left.
+    if (named == "highestPeak" || named == "lowestPoint")
+    {
+        const std::vector<float>& height = fields.get("height", cmd, warnings);
+        const bool top = named == "highestPeak";
+        size_t best = h.size();
+        for (size_t i = 0; i < height.size(); ++i)
+            if (set[i] && (best == h.size() || (top ? height[i] > height[best] : height[i] < height[best])))
+                best = i;
+        std::fill(set.begin(), set.end(), 0);
+        if (best < h.size())
+        {
+            points.push_back(best);
+            // The region around it: ground within 3 % of the range of it, joined to it.
+            const glm::dvec2 r = h.range();
+            const float band = float(0.03 * (r.y - r.x));
+            for (size_t i = 0; i < set.size(); ++i)
+                set[i] = top ? h.heights[i] >= h.heights[best] - band : h.heights[i] <= h.heights[best] + band;
+            std::vector<int32_t> label;
+            components(set, h.nx, h.nz, label);
+            for (size_t i = 0; i < set.size(); ++i)
+                set[i] = label[i] == label[best];
+        }
+    }
+    else if (named == "passes")
+    {
+        const std::vector<uint8_t> allowed = set;
+        std::fill(set.begin(), set.end(), 0);
+        for (const auto& [i, s] : findPasses(h))
+        {
+            if (points.size() >= maxRegions)
+                break;
+            if (allowed[i])
+                points.push_back(i);
+        }
+        // A disc of three samples round each pass, so it has an outline to stamp and route to.
+        for (size_t p : points)
+        {
+            const int px = int(p % size_t(h.nx)), pz = int(p / size_t(h.nx));
+            for (int dz = -3; dz <= 3; ++dz)
+                for (int dx = -3; dx <= 3; ++dx)
+                    if (dx * dx + dz * dz <= 9 && px + dx >= 0 && pz + dz >= 0 && px + dx < h.nx && pz + dz < h.nz)
+                        set[h.index(px + dx, pz + dz)] = 1;
+        }
+        if (points.empty())
+            warnings.push_back("no saddle between higher ground was found where asked; the terrain has no pass there");
     }
 
     const double cellM2 = t.cellAreaM2();
@@ -1038,13 +1060,13 @@ bool registerQuery(ext::Context& ctx)
                "slope stats, largest first. store= keeps the result as a named region (mask region_<name>, kept in a Terrain "
                "Regions node) that other terrain commands take as 'region:<name>' (or 'region:<name>/<k>' for its k-th part) "
                "wherever they take a point, path point or polygon.\n\n"
-               "where keys: height (cm along the up axis), relativeHeight (0 lowest to 1 highest), slope and aspect (degrees; "
+               "where keys: x and z (ground coordinates, cm; x and y on a Z-up scene), height (cm along the up axis), relativeHeight (0 lowest to 1 highest), slope and aspect (degrees; "
                "aspect also 'north', 'southwest', ... as a 90 degree sector of the downhill direction), curvature (per m, "
                "positive on ridges), flow (0 to 1), distanceToWater and distanceToRoads (cm), water, region (inside a stored "
                "region), every terrainField field (hand, prominence, buildability, ...) and every mask. A value is [min, max] "
                "(None for open), a number (at least), or {above, below}.\n\n"
-               "named: " + shortcuts + ". highestPeak, lowestPoint and passes are points (passes: saddles ranked by how high "
-               "the ridge rises either side). list=True lists stored regions; remove=<name> drops one.",
+               "named: " + shortcuts + ". highestPeak, lowestPoint and passes are points among the "
+               "samples where holds (passes: saddles ranked by how high the ridge rises either side). list=True lists stored regions; remove=<name> drops one.",
         .positionalDoc = "terrain mesh or its modifier",
         .flags = {{"where", "w", T::Any, nullptr, "{field or mask: [min, max]}, all must hold."},
                   {"named", "nm", T::String, "", "A shortcut: " + shortcuts + "."},

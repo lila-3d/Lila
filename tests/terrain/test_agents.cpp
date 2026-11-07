@@ -1,6 +1,8 @@
 #include "TestUtil.h"
 
 #include "core/ImageIO.h"
+#include "core/MainQueue.h"
+#include "mcp/McpServer.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "sculpt/SculptSession.h"
@@ -9,10 +11,12 @@
 
 #include <cmath>
 #include <filesystem>
+#include <future>
 #include <map>
 #include <set>
 
 using namespace terraintest;
+namespace fs = std::filesystem;
 
 namespace
 {
@@ -310,5 +314,121 @@ TEST_CASE("agents: terrainCheck flags roads over their grade or over water unbri
     CHECK(found["roadGrade"] == "Roads/ramp");
     CHECK(found["lakeNoOutlet"] == "sink");
     CHECK_FALSE(found.count("riverUphill"));
+    run("newScene");
+}
+
+namespace
+{
+/** A tools/call, resources/read or prompts/get through the MCP endpoint, answered on a worker while this thread runs it. */
+json mcpCall(const std::string& method, const json& params)
+{
+    const json request = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", method}, {"params", params}};
+    auto fut = std::async(std::launch::async, [request] { return mcp::Server::get().handle(request); });
+    while (fut.wait_for(std::chrono::milliseconds(5)) != std::future_status::ready)
+        mainq::drain();
+    const json reply = fut.get();
+    REQUIRE(reply.contains("result"));
+    return reply["result"];
+}
+
+json commandOverMcp(const std::string& name, const json& args)
+{
+    const json r = mcpCall("tools/call", {{"name", "run_command"}, {"arguments", {{"name", name}, {"args", args}}}});
+    REQUIRE_FALSE(r.value("isError", false));
+    return json::parse(r["content"][0]["text"].get<std::string>());
+}
+
+const char* kValleySpec = R"({
+  "name": "RiverValley",
+  "description": "A river valley between two ranges with a road over the pass and a cave in the cliff.",
+  "size": [200000, 200000],
+  "resolution": 257,
+  "seed": 3,
+  "source": {"type": "noise", "amplitude": 4000, "featureSize": 40000, "ridged": 0.3},
+  "constraints": [
+    {"id": "northRange", "kind": "ridge", "path": [[-100000, 60000], [100000, 60000]], "height": 16000, "width": 70000},
+    {"id": "southRange", "kind": "ridge", "path": [[-100000, -60000], [100000, -60000]], "height": 18000, "width": 70000},
+    {"id": "notch", "kind": "valley", "path": [[10000, 35000], [10000, 85000]], "height": 9000, "width": 30000},
+    {"id": "riverBed", "kind": "river", "path": [[-100000, 2000], [100000, -2000]], "height": 800, "width": 16000}
+  ],
+  "erosion": {"preset": "natural", "age": 0.4},
+  "landforms": [{"process": "cliff", "settings": {"threshold": 28, "step": 1200, "strength": 0.7}}],
+  "water": {"rivers": [{"id": "valleyRiver", "path": [[-100000, 2000], [100000, -2000]], "width": 1200, "depth": 200}]},
+  "regions": [
+    {"name": "pass", "named": "passes", "where": {"z": [35000, 85000], "x": [-15000, 35000]}, "pick": 0},
+    {"name": "cliff", "named": "steepSlopes", "where": {"z": [-50000, -20000], "aspect": "south"}, "minArea": 2000, "pick": 0}
+  ],
+  "roads": [
+    {"id": "passUp", "kind": "road", "route": {"start": [10000, 14000], "end": "region:pass", "maxGrade": 10}},
+    {"id": "passDown", "kind": "road", "route": {"start": "region:pass", "end": [10000, 98000], "maxGrade": 10}}
+  ],
+  "volume": [{"op": "cave", "id": "cliffCave", "path": ["region:cliff", [0, -60000]], "radius": 500, "chambers": 1}],
+  "materials": true,
+  "export": {"target": "unreal"}
+})";
+} // namespace
+
+TEST_CASE("agents: over MCP, one spec builds a river valley between two ranges with a road over the pass and a cave in the cliff, passes terrainCheck and exports for Unreal")
+{
+    loadTerrain();
+    mcp::registerBuiltins();
+    run("newScene");
+
+    // What an agent reads first: the schema resource and the make_terrain prompt.
+    const json schema = json::parse(mcpCall("resources/read", {{"uri", "lila://schema/terrain-spec"}})["contents"][0]["text"].get<std::string>());
+    CHECK(schema["properties"].contains("roads"));
+    CHECK(schema["properties"].contains("regions"));
+    const json prompt = mcpCall("prompts/get", {{"name", "make_terrain"}, {"arguments", {{"description", "a river valley between two ranges"}, {"target", "unreal"}}}});
+    const std::string promptText = prompt["messages"][0]["content"]["text"];
+    CHECK(promptText.find("a river valley between two ranges") != std::string::npos);
+    CHECK(promptText.find("lila://schema/terrain-spec") != std::string::npos);
+
+    json spec = json::parse(kValleySpec);
+    const fs::path folder = fs::temp_directory_path() / "lila_terrain_tests_valley";
+    fs::remove_all(folder);
+    spec["export"]["folder"] = folder.string();
+    const json r = commandOverMcp("terrainSpec", {{"spec", spec}});
+    INFO(r.dump().substr(0, 4000));
+    for (const json& s : r["steps"])
+        CHECK(s["ok"] == true);
+    CHECK(r["check"]["ok"] == true);
+    CHECK(r["ok"] == true);
+
+    // The pass is a notch in the north range, lower than the range's crest away from it.
+    const json regions = commandOverMcp("terrainQuery", {{"args", {"RiverValley"}}, {"list", true}})["regions"];
+    const json pass = regions["pass"]["point"];
+    CHECK(pass[2].get<double>() > 35000.0);
+    CHECK(pass[2].get<double>() < 85000.0);
+    const double crest = commandOverMcp("terrainSample", {{"args", {"RiverValley"}}, {"points", {{-70000.0, 60000.0}}}})[0]["height"];
+    CHECK(pass[1].get<double>() < crest - 2000.0);
+    // The river runs the valley between the ranges.
+    const json water = commandOverMcp("terrainWater", {{"args", {"RiverValley"}}});
+    REQUIRE(water["rivers"].size() == 1);
+    CHECK(water["rivers"][0]["length"].get<double>() > 150000.0);
+    // Both roads reach the pass within their grade.
+    const json roads = commandOverMcp("terrainRoads", {{"args", {"RiverValley"}}})["layers"]["Roads"];
+    REQUIRE(roads.size() == 2);
+    for (const json& road : roads)
+    {
+        CHECK(road["maxGrade"].get<double>() <= road["design"]["maxGrade"].get<double>() + 0.05);
+        const json& line = road["centreline"];
+        const json& end = road["id"] == "passUp" ? line.back() : line.front();
+        CHECK(std::hypot(end[0].get<double>() - pass[0].get<double>(), end[2].get<double>() - pass[2].get<double>()) < 3000.0);
+    }
+    // The cave is a volume piece in the south range's cliff.
+    const json vol = commandOverMcp("terrainVolume", {{"args", {"RiverValley"}}});
+    REQUIRE(vol["ops"].size() == 1);
+    CHECK(vol["volume"]["pieces"].size() >= 1);
+    CHECK(regions["cliff"]["point"][2].get<double>() < -20000.0);
+    // Shipped for Unreal: heights, settings and the cave piece on disk.
+    REQUIRE(r["exports"].size() == 1);
+    const json files = r["exports"][0]["files"];
+    INFO(files.dump());
+    CHECK(fs::exists(files["height"].get<std::string>()));
+    CHECK(fs::exists(files["settings"].get<std::string>()));
+    bool piece = false;
+    for (const auto& e : fs::directory_iterator(folder))
+        piece = piece || e.path().extension() == ".fbx";
+    CHECK(piece);
     run("newScene");
 }
