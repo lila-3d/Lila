@@ -14,11 +14,13 @@
 #include "ui/Outliner.h"
 #include "ui/OutlinerFilter.h"
 #include "ui/OutlinerLogic.h"
+#include "ui/Panels.h"
 #include "ui/TearOff.h"
 #include "ui/Theme.h"
 #include "ui/TokenCompleter.h"
 
 #include <QApplication>
+#include <QDockWidget>
 #include <QHeaderView>
 #include <QKeyEvent>
 #include <QLabel>
@@ -57,6 +59,11 @@ QStringList keywordsOf(const QAction* a)
     if (const Action* action = actions::find(a->data().toString().toStdString()))
         for (const std::string& k : action->keywords)
             out << QString::fromStdString(k);
+    // The Windows menu lists each dock's own toggle action, which carries no action id.
+    if (auto* dock = qobject_cast<QDockWidget*>(a->parent()); dock && a == dock->toggleViewAction())
+        if (const panels::Panel* p = panels::registry().find(dock->objectName().toStdString()))
+            for (const std::string& k : p->keywords)
+                out << QString::fromStdString(k);
     return out;
 }
 
