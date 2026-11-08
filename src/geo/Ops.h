@@ -9,7 +9,9 @@
 
 #include <array>
 #include <functional>
+#include <memory>
 #include <span>
+#include <string>
 #include <vector>
 
 /**
@@ -310,6 +312,65 @@ struct SubdivideMap
  * the islands of uv set <set>) as opts.uvs says; colours are interpolated linearly per face.
  */
 LILA_SCENE_API Mesh subdivide(const Mesh& mesh, const SubdivideOptions& opts = {}, SubdivideMap* map = nullptr);
+
+/** One uv island's Fit Surface fill: its interior groups' values as a fixed linear map of its border groups' values. */
+class LILA_SCENE_API FitFill
+{
+public:
+    struct Impl;
+    explicit FitFill(std::shared_ptr<const Impl> impl);
+    ~FitFill();
+
+    size_t borderCount() const;
+    size_t interiorCount() const;
+    /**
+     * Interior values from border values, column-major with the given column count: border is borderCount() x columns,
+     * interior interiorCount() x columns.
+     */
+    void solve(std::span<const double> border, std::span<double> interior, size_t columns) const;
+    /** The transpose: per border group, the sum over interior groups of the map's weight times g. */
+    void solveTransposed(std::span<const double> g, std::span<double> border, size_t columns) const;
+
+private:
+    std::shared_ptr<const Impl> mImpl;
+};
+
+/** A uv island of a Fit Surface subdivision as uv tools read it: groups are an island's corners sharing one point. */
+struct FitIslandRecord
+{
+    std::vector<std::vector<Index>> groups;
+    /** Groups the fill reads, and each one's value as a blend of groups' values before the fit (respaced borders). */
+    std::vector<Index> border;
+    std::vector<std::vector<std::pair<Index, double>>> borderFrom;
+    /** Groups the fill writes, in the fill's order. */
+    std::vector<Index> interior;
+    std::shared_ptr<const FitFill> fill;
+};
+
+struct FitRecord
+{
+    std::string islandLayer;
+    Index cornerCapacity = 0;
+    std::vector<FitIslandRecord> islands;
+};
+
+/**
+ * While alive, Fit Surface subdivisions on this thread record their fills here and leave the uvs as Blend gives them, so
+ * a probe sees only ring-local blends and composes the fill itself.
+ */
+class LILA_SCENE_API FitRecorder
+{
+public:
+    FitRecorder();
+    ~FitRecorder();
+    FitRecorder(const FitRecorder&) = delete;
+    FitRecorder& operator=(const FitRecorder&) = delete;
+
+    std::vector<FitRecord> records;
+
+private:
+    FitRecorder* mOuter = nullptr;
+};
 
 /** Sparse linear map between point sets: out row i = sum of weights[k] * in point cols[k], k in [offsets[i], offsets[i+1]). */
 struct LILA_SCENE_API PointStencil

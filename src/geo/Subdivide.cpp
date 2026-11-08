@@ -1030,6 +1030,83 @@ std::vector<CornerApex> openCorners(const Mesh& m, const Islands& is, Index isla
     return out;
 }
 
+} // namespace fit
+} // namespace
+
+struct FitFill::Impl
+{
+    fit::SpMat b; // interior x border
+    std::shared_ptr<const fit::Factor> factor;
+};
+
+namespace
+{
+namespace fit
+{
+thread_local FitRecorder* tRecorder = nullptr;
+
+/** The island's record for uv tools: its groups, its border groups as blends of the values before the fit, its fill. */
+FitIslandRecord recordIsland(const Islands& is, std::span<const BorderBlend> blends, std::span<const CornerApex> apexes, const System& s,
+                             std::shared_ptr<const Factor> factor)
+{
+    FitIslandRecord r;
+    std::unordered_map<Index, Index> local;
+    auto id = [&](Index g) {
+        auto [it, added] = local.emplace(g, Index(r.groups.size()));
+        if (added)
+            r.groups.push_back(is.groupCorners[g]);
+        return it->second;
+    };
+    for (Index g : s.border)
+        id(g);
+    for (Index g : s.interior)
+        id(g);
+    // Respacing reads the values before it, the corners read respaced ones.
+    std::unordered_map<Index, std::vector<std::pair<Index, double>>> from;
+    auto value = [&](Index g) {
+        auto it = from.find(g);
+        return it != from.end() ? it->second : std::vector<std::pair<Index, double>>{{id(g), 1.0}};
+    };
+    std::vector<std::pair<Index, std::vector<std::pair<Index, double>>>> moved;
+    for (const BorderBlend& b : blends)
+        moved.push_back({b.group, {{id(b.a), 1.0 - b.t}, {id(b.b), b.t}}});
+    for (auto& [g, v] : moved)
+        from[g] = std::move(v);
+    moved.clear();
+    for (const CornerApex& x : apexes)
+    {
+        std::vector<std::pair<Index, double>> v;
+        for (auto [g, w] : {std::pair{x.a, x.wa}, std::pair{x.b, x.wb}, std::pair{x.d, x.wd}})
+            for (auto [q, wq] : value(g))
+                v.push_back({q, w * wq});
+        moved.push_back({x.group, std::move(v)});
+    }
+    for (auto& [g, v] : moved)
+        from[g] = std::move(v);
+    for (Index g : s.border)
+    {
+        r.border.push_back(id(g));
+        r.borderFrom.push_back(value(g));
+    }
+    // An island with no interior lists no border groups in its system, but its moved groups still move.
+    for (const auto& [g, v] : from)
+        if (std::find(s.border.begin(), s.border.end(), g) == s.border.end())
+        {
+            r.border.push_back(id(g));
+            r.borderFrom.push_back(v);
+        }
+    if (factor && !s.interior.empty())
+    {
+        for (Index g : s.interior)
+            r.interior.push_back(id(g));
+        auto impl = std::make_shared<FitFill::Impl>();
+        impl->b = s.b;
+        impl->factor = std::move(factor);
+        r.fill = std::make_shared<const FitFill>(std::move(impl));
+    }
+    return r;
+}
+
 /** Replaces each uv island's interior with the harmonic fill of its border, in every layer using those islands. */
 void fitSurface(Mesh& m)
 {
@@ -1046,19 +1123,52 @@ void fitSurface(Mesh& m)
         for (const std::string& l : layers)
             spans.push_back(m.cornerAttrs().get<glm::vec2>(l));
         const std::span<const glm::vec2> set = m.cornerAttrs().find(islandName)->values<glm::vec2>();
+        FitRecord* record = nullptr;
+        if (tRecorder)
+        {
+            record = &tRecorder->records.emplace_back();
+            record->islandLayer = islandName;
+            record->cornerCapacity = m.cornerCapacity();
+            record->islands.resize(is.faces.size());
+        }
         // Islands share no corners, so each writes only its own groups while the others read theirs.
         tbb::parallel_for(Index(0), Index(is.faces.size()), [&](Index island) {
             const std::vector<BorderBlend> blends = respaceBorder(m, is, island, set);
             std::vector<glm::vec2> moved(blends.size());
-            for (std::span<glm::vec2> uv : spans)
+            // Recording leaves the uvs alone, so corners are found on a respaced copy of the island layer.
+            std::vector<glm::vec2> respacedSet;
+            std::span<const glm::vec2> cornerSet = set;
+            if (record && !blends.empty())
             {
-                for (size_t k = 0; k < blends.size(); ++k)
-                    moved[k] = glm::vec2(glm::mix(groupValue(uv, is.groupCorners[blends[k].a]), groupValue(uv, is.groupCorners[blends[k].b]), blends[k].t));
-                for (size_t k = 0; k < blends.size(); ++k)
-                    for (Index c : is.groupCorners[blends[k].group])
-                        uv[c] = moved[k];
+                respacedSet.assign(set.begin(), set.end());
+                for (const BorderBlend& b : blends)
+                {
+                    const glm::vec2 v(glm::mix(groupValue(set, is.groupCorners[b.a]), groupValue(set, is.groupCorners[b.b]), b.t));
+                    for (Index c : is.groupCorners[b.group])
+                        respacedSet[c] = v;
+                }
+                cornerSet = respacedSet;
             }
-            const std::vector<CornerApex> apexes = openCorners(m, is, island, set);
+            if (!record)
+                for (std::span<glm::vec2> uv : spans)
+                {
+                    for (size_t k = 0; k < blends.size(); ++k)
+                        moved[k] = glm::vec2(glm::mix(groupValue(uv, is.groupCorners[blends[k].a]), groupValue(uv, is.groupCorners[blends[k].b]), blends[k].t));
+                    for (size_t k = 0; k < blends.size(); ++k)
+                        for (Index c : is.groupCorners[blends[k].group])
+                            uv[c] = moved[k];
+                }
+            const std::vector<CornerApex> apexes = openCorners(m, is, island, cornerSet);
+            const System s = systemOf(m, is, island);
+            std::shared_ptr<const Factor> f;
+            if (!s.interior.empty() && !s.border.empty())
+                if (f = factorCache().get(s.a); !f->ok)
+                    f.reset();
+            if (record)
+            {
+                record->islands[island] = recordIsland(is, blends, apexes, s, f);
+                return;
+            }
             moved.resize(apexes.size());
             for (std::span<glm::vec2> uv : spans)
             {
@@ -1072,11 +1182,7 @@ void fitSurface(Mesh& m)
                     for (Index c : is.groupCorners[apexes[k].group])
                         uv[c] = moved[k];
             }
-            const System s = systemOf(m, is, island);
-            if (s.interior.empty() || s.border.empty())
-                return;
-            const std::shared_ptr<const Factor> f = factorCache().get(s.a);
-            if (!f->ok)
+            if (!f)
                 return;
             const auto nb = Eigen::Index(s.border.size()), cols = Eigen::Index(spans.size()) * 2;
             Eigen::MatrixXd xb(nb, cols);
@@ -1104,6 +1210,46 @@ void fitSurface(Mesh& m)
 }
 } // namespace fit
 } // namespace
+
+FitFill::FitFill(std::shared_ptr<const Impl> impl) : mImpl(std::move(impl)) {}
+FitFill::~FitFill() = default;
+
+size_t FitFill::borderCount() const
+{
+    return size_t(mImpl->b.cols());
+}
+
+size_t FitFill::interiorCount() const
+{
+    return size_t(mImpl->b.rows());
+}
+
+void FitFill::solve(std::span<const double> border, std::span<double> interior, size_t columns) const
+{
+    const auto nb = mImpl->b.cols(), ni = mImpl->b.rows(), k = Eigen::Index(columns);
+    const Eigen::Map<const Eigen::MatrixXd> x(border.data(), nb, k);
+    Eigen::Map<Eigen::MatrixXd> y(interior.data(), ni, k);
+    y = mImpl->factor->ldlt.solve(mImpl->b * x);
+}
+
+void FitFill::solveTransposed(std::span<const double> g, std::span<double> border, size_t columns) const
+{
+    const auto nb = mImpl->b.cols(), ni = mImpl->b.rows(), k = Eigen::Index(columns);
+    const Eigen::Map<const Eigen::MatrixXd> x(g.data(), ni, k);
+    Eigen::Map<Eigen::MatrixXd> y(border.data(), nb, k);
+    // The system is symmetric, so the transpose of A^-1 B is B^T A^-1.
+    y = mImpl->b.transpose() * mImpl->factor->ldlt.solve(x);
+}
+
+FitRecorder::FitRecorder() : mOuter(fit::tRecorder)
+{
+    fit::tRecorder = this;
+}
+
+FitRecorder::~FitRecorder()
+{
+    fit::tRecorder = mOuter;
+}
 
 Mesh subdivide(const Mesh& mesh, const SubdivideOptions& opts, SubdivideMap* map)
 {

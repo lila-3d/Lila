@@ -17,6 +17,11 @@
 
 namespace lila::uv
 {
+namespace detail
+{
+class FinalOperator;
+}
+
 struct LiveOptions
 {
     /**
@@ -186,6 +191,7 @@ private:
     std::shared_ptr<const FinalIsland> mFinal;
     std::vector<Frame> mFinalFrames;
     std::shared_ptr<const UninfluencedFill> mFinalFill;
+    std::shared_ptr<const detail::FinalOperator> mFinalOp;
     std::vector<float> mStiff;
     std::vector<glm::dvec2> mX;
     std::vector<glm::dvec2> mPinAt;

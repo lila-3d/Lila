@@ -1,6 +1,7 @@
 #include "uv/LiveSolver.h"
 
 #include "core/Profile.h"
+#include "uv/FinalOperator.h"
 #include "uv/OptimizeMath.h"
 #include "uv/Unwrap.h"
 
@@ -68,8 +69,8 @@ struct LiveIsland::Factor
     double mean = 1.0;         // mean diagonal of the elastic part
     double prox = 0.0;
     bool ok = false;
-    // Exported-mesh mode: chart vertices to exported corners, and the exported corners' stiffness matrix.
-    SpMat r, rt, s;
+    // Exported-mesh mode: the exported corners' stiffness matrix.
+    SpMat s;
 };
 
 std::string_view liveBrushName(LiveBrush b)
@@ -235,6 +236,7 @@ void LiveIsland::setFinal(std::shared_ptr<const FinalIsland> island)
     mFinal = island && !island->tris.empty() ? std::move(island) : nullptr;
     mFinalFrames.clear();
     mFinalFill.reset();
+    mFinalOp.reset();
     if (mFinal)
         prepareFinal();
     mFactor.reset();
@@ -251,6 +253,7 @@ void LiveIsland::prepareFinal()
         mFinalFill = std::move(fill);
     }
     const FinalIsland& isl = *mFinal;
+    mFinalOp = std::make_shared<const detail::FinalOperator>(isl, size_t(vertexCount()));
     mFinalFrames.assign(isl.tris.size(), {});
     for (size_t i = 0; i < isl.tris.size(); ++i)
     {
@@ -268,15 +271,8 @@ void LiveIsland::prepareFinal()
 
 std::vector<glm::dvec2> LiveIsland::finalUvs(const std::vector<glm::dvec2>& x, bool offsets) const
 {
-    const FinalIsland& isl = *mFinal;
-    std::vector<glm::dvec2> y(isl.pos.size());
-    for (size_t c = 0; c < y.size(); ++c)
-    {
-        glm::dvec2 s = offsets ? toInternal(isl.offset[c]) : glm::dvec2(0.0);
-        for (Index k = isl.rowStart[c]; k < isl.rowStart[c + 1]; ++k)
-            s += isl.weights[k] * x[isl.cols[k]];
-        y[c] = s;
-    }
+    std::vector<glm::dvec2> y(mFinalOp->corners());
+    mFinalOp->apply(x, y, offsets ? glm::dvec2(mSign, 1.0) : glm::dvec2(0.0));
     return y;
 }
 
@@ -289,24 +285,18 @@ void LiveIsland::factorFinal()
     const size_t C = isl.pos.size();
     auto f = std::make_shared<Factor>();
     std::vector<Triplet> trips;
-    trips.reserve(isl.cols.size());
     std::vector<double> cornerStiff(C, 1.0);
     for (size_t c = 0; c < C; ++c)
     {
         double w = 0.0, k = 0.0;
         for (Index e = isl.rowStart[c]; e < isl.rowStart[c + 1]; ++e)
         {
-            trips.emplace_back(int(c), int(isl.cols[e]), isl.weights[e]);
             w += std::abs(isl.weights[e]);
             k += std::abs(isl.weights[e]) * mStiff[isl.cols[e]];
         }
         if (w > 0.0)
             cornerStiff[c] = k / w;
     }
-    f->r.resize(Eigen::Index(C), Eigen::Index(V));
-    f->r.setFromTriplets(trips.begin(), trips.end());
-    f->rt = f->r.transpose();
-    trips.clear();
     for (size_t i = 0; i < isl.tris.size(); ++i)
     {
         const Frame& fr = mFinalFrames[i];
@@ -320,7 +310,7 @@ void LiveIsland::factorFinal()
     }
     f->s.resize(Eigen::Index(C), Eigen::Index(C));
     f->s.setFromTriplets(trips.begin(), trips.end());
-    const SpMat k = (f->rt * (f->s * f->r)).pruned();
+    const SpMat k = mFinalOp->gram(f->s);
     double trace = 0.0;
     for (Index v = 0; v < V; ++v)
         trace += k.coeff(v, v);
@@ -417,15 +407,24 @@ double LiveIsland::finalStep(std::vector<double>& bu, std::vector<double>& bv) c
         }
         energy += triEnergy[i];
     }
+    const std::vector<glm::dvec2> o = finalUvs(std::vector<glm::dvec2>(mX.size(), glm::dvec2(0.0)), true);
     for (size_t c = 0; c < C; ++c)
     {
-        const glm::dvec2 o = toInternal(isl.offset[c]);
-        ou[Eigen::Index(c)] = o.x;
-        ov[Eigen::Index(c)] = o.y;
+        ou[Eigen::Index(c)] = o[c].x;
+        ov[Eigen::Index(c)] = o[c].y;
     }
-    const Eigen::VectorXd ru = f.rt * (eu - f.s * ou), rv = f.rt * (ev - f.s * ov);
-    bu.assign(ru.data(), ru.data() + ru.size());
-    bv.assign(rv.data(), rv.data() + rv.size());
+    const Eigen::VectorXd gu = eu - f.s * ou, gv = ev - f.s * ov;
+    std::vector<glm::dvec2> g(C), r(mX.size());
+    for (size_t c = 0; c < C; ++c)
+        g[c] = glm::dvec2(gu[Eigen::Index(c)], gv[Eigen::Index(c)]);
+    mFinalOp->applyTransposed(g, r);
+    bu.resize(r.size());
+    bv.resize(r.size());
+    for (size_t v = 0; v < r.size(); ++v)
+    {
+        bu[v] = r[v].x;
+        bv[v] = r[v].y;
+    }
     return energy;
 }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Export.h"
+#include "geo/Ops.h"
 #include "uv/Chart.h"
 #include "uv/Optimize.h"
 
@@ -29,9 +30,24 @@ enum class FinalMethod : uint8_t
 };
 
 /**
+ * A Fit Surface subdivision's fill of one exported uv island: its interior corners' uvs as the island's harmonic fill of
+ * its border groups' uvs. Indices are corners of whatever the fill sits in (the exported mesh, or a FinalIsland).
+ */
+struct FinalFill
+{
+    std::shared_ptr<const geo::FitFill> fill;
+    /** Per border group, a corner whose row holds the group's uv. */
+    std::vector<Index> border;
+    /** Per interior group (in the fill's order), its corners: interiorStart into interiorCorners, one extra at the end. */
+    std::vector<Index> interiorStart;
+    std::vector<Index> interiorCorners;
+};
+
+/**
  * The exported mesh's corner uvs as a sparse linear map of the cage's: exported uv = sum of weight * cage uv over the
  * row's cage corners. Holds for any stack whose modifiers only blend corner uvs (bevel, subdivision, mirror...), for a
- * fixed cage topology and seam layout. Columns are cage corners standing for their whole uv wedge.
+ * fixed cage topology and seam layout. Columns are cage corners standing for their whole uv wedge. The interior corners
+ * of a Fit Surface fill have empty rows: their uvs come from the fill.
  */
 struct LILA_SCENE_API FinalMap
 {
@@ -44,6 +60,7 @@ struct LILA_SCENE_API FinalMap
     std::vector<Index> rowStart;
     std::vector<Index> cols;
     std::vector<double> weights;
+    std::vector<FinalFill> fills;
     /** Per exported face (capacity), the cage face it came from. */
     std::vector<Index> sourceFace;
     /** Face rings around an exported corner's cage face that held its whole row. */
@@ -74,7 +91,13 @@ LILA_SCENE_API geo::Mesh runStack(const geo::Mesh& mesh, const Stack& stack);
 /** Measures the map. Cage (with no warning) when the stack leaves the surface unchanged. */
 LILA_SCENE_API FinalMap buildFinalMap(const geo::Mesh& cage, std::string_view uvSet, const Stack& stack);
 
-/** The exported triangles of one chart, with their uvs as a map of the chart's vertices. */
+/** The map's exported uv per corner (capacity) for the cage's uvs in the set. */
+LILA_SCENE_API std::vector<glm::dvec2> exportedUvs(const FinalMap& map, const geo::Mesh& cage, std::string_view uvSet);
+
+/**
+ * The exported triangles of one chart, with their uvs as a map of the chart's vertices. Fills read local corners; a
+ * border group whose corners lie in another chart's faces gets a local corner of its own that no triangle uses.
+ */
 struct LILA_SCENE_API FinalIsland
 {
     std::vector<glm::dvec3> pos;    // per local corner
@@ -84,6 +107,7 @@ struct LILA_SCENE_API FinalIsland
     std::vector<double> weights;
     std::vector<std::array<Index, 3>> tris; // local corners
     std::vector<Index> triFace;             // exported face per triangle
+    std::vector<FinalFill> fills;
 
     double area3d() const;
     /** Exported uv per local corner for the chart's current uvs. */

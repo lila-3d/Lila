@@ -183,6 +183,18 @@ double exportUnwrapAngle(const geo::Mesh& exported)
 }
 } // namespace
 
+/** Largest distance between the map's exported uvs and the exported mesh's own. */
+double worstMiss(const uv::FinalMap& map, const geo::Mesh& cage)
+{
+    const std::vector<glm::dvec2> uv = uv::exportedUvs(map, cage, "uv0");
+    const std::span<const glm::vec2> exUv = map.exported->cornerAttrs().get<glm::vec2>("uv0");
+    double worst = 0.0;
+    for (Index f = 0; f < map.exported->faceCapacity(); ++f)
+        if (map.exported->faceValid(f))
+            map.exported->forEachFaceCorner(f, [&](Index c) { worst = std::max(worst, glm::length(uv[c] - glm::dvec2(exUv[c]))); });
+    return worst;
+}
+
 TEST_CASE("final mesh: the map reproduces the exported uvs")
 {
     geo::Mesh m = plate();
@@ -191,18 +203,7 @@ TEST_CASE("final mesh: the map reproduces the exported uvs")
     REQUIRE(map.active());
     CHECK(map.warning.empty());
     CHECK(map.rings >= 2);
-    const std::span<const glm::vec2> cageUv = m.cornerAttrs().get<glm::vec2>("uv0");
-    const std::span<const glm::vec2> exUv = map.exported->cornerAttrs().get<glm::vec2>("uv0");
-    double worst = 0.0;
-    for (Index f = 0; f < map.exported->faceCapacity(); ++f)
-        if (map.exported->faceValid(f))
-            map.exported->forEachFaceCorner(f, [&](Index c) {
-                glm::dvec2 s(0.0);
-                for (Index k = map.rowStart[c]; k < map.rowStart[c + 1]; ++k)
-                    s += map.weights[k] * glm::dvec2(cageUv[map.cols[k]]);
-                worst = std::max(worst, glm::length(s - glm::dvec2(exUv[c])));
-            });
-    CHECK(worst < 1e-4);
+    CHECK(worstMiss(map, m) < 1e-4);
 }
 
 TEST_CASE("final mesh: a dragged rim island is re-solved until nothing collapses")
@@ -303,28 +304,34 @@ TEST_CASE("final mesh: respaced borders ease into the spacing beside them")
 
 TEST_CASE("final mesh: a fit surface map reaches across whole islands")
 {
-    // Islands far wider than the probe rings: every interior uv of the export reads the whole island border.
+    // Islands far wider than the probe rings: every interior uv of the export reads the whole island border, through the
+    // fill the subdivision recorded rather than rows of their own.
     geo::Mesh m = plate(0.4, 24);
     const uv::Stack stack = bevelSubdivStack();
     uv::FinalMap map = uv::buildFinalMap(m, "uv0", stack);
     INFO(map.warning);
     REQUIRE(map.active());
-    const std::span<const glm::vec2> cageUv = m.cornerAttrs().get<glm::vec2>("uv0");
-    const std::span<const glm::vec2> exUv = map.exported->cornerAttrs().get<glm::vec2>("uv0");
-    double worst = 0.0;
-    for (Index f = 0; f < map.exported->faceCapacity(); ++f)
-        if (map.exported->faceValid(f))
-            map.exported->forEachFaceCorner(f, [&](Index c) {
-                glm::dvec2 s(0.0);
-                for (Index k = map.rowStart[c]; k < map.rowStart[c + 1]; ++k)
-                    s += map.weights[k] * glm::dvec2(cageUv[map.cols[k]]);
-                worst = std::max(worst, glm::length(s - glm::dvec2(exUv[c])));
-            });
-    MESSAGE("runs " << map.runs << ", rings " << map.rings << ", entries " << map.cols.size() << ", worst " << worst);
+    const double worst = worstMiss(map, m);
+    MESSAGE("runs " << map.runs << ", rings " << map.rings << ", entries " << map.cols.size() << ", fills " << map.fills.size() << ", worst " << worst);
     CHECK(worst < 1e-3);
+    CHECK(!map.fills.empty());
+    CHECK(map.cols.size() < 20 * map.exported->numCorners());
     const uv::FinalRefineResult r = uv::refineFinal(m, {}, "uv0", stack);
     MESSAGE("collapsed " << r.collapsedBefore << " -> " << r.collapsedAfter << ", angle " << r.distortionBefore << " -> " << r.distortionAfter);
     CHECK(r.collapsedAfter == 0);
+    CHECK(r.distortionAfter < r.distortionBefore);
+}
+
+TEST_CASE("final mesh: a fill the stack changes after the subdivision is probed over whole islands")
+{
+    geo::Mesh m = plate(0.4, 6);
+    uv::Stack stack = bevelSubdivStack(0.13, 1, 1);
+    stack.push_back({"smooth", [](const geo::Mesh& in) { return geo::subdivide(in, {.levels = 1, .uvs = geo::SubdivideUvs::Blend}); }});
+    const uv::FinalMap map = uv::buildFinalMap(m, "uv0", stack);
+    INFO(map.warning);
+    REQUIRE(map.active());
+    CHECK(map.fills.empty());
+    CHECK(worstMiss(map, m) < 1e-3);
 }
 
 TEST_CASE("final mesh: islands stay where they were")

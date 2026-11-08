@@ -2,6 +2,7 @@
 
 #include "core/Profile.h"
 #include "geo/Triangulate.h"
+#include "uv/FinalOperator.h"
 #include "uv/OptimizeMath.h"
 
 #include <Eigen/Sparse>
@@ -12,6 +13,7 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 
 namespace lila::uv
@@ -36,6 +38,7 @@ constexpr double kMinIslandWeight = 1e-6;
 constexpr int kLayersPerRun = 16;
 /** Probe layers per run when whole islands are probed at once, which takes many more colours. */
 constexpr int kIslandLayersPerRun = 64;
+constexpr const char* kNotABlend = "its uvs are not a blend of the cage's";
 
 /** Wedge (chart vertex over the whole mesh, from uv agreement) of every corner, and a representative corner per wedge. */
 struct Wedges
@@ -316,16 +319,98 @@ std::vector<int> sourceFaces(const geo::Mesh& cage, const geo::Mesh& res, std::s
     return src;
 }
 
+using Row = std::vector<std::pair<Index, double>>;
+
+/** Sorts a row by column and sums repeated columns. */
+void mergeRow(Row& r)
+{
+    std::sort(r.begin(), r.end());
+    size_t n = 0;
+    for (size_t k = 0; k < r.size(); ++k)
+        if (n > 0 && r[n - 1].first == r[k].first)
+            r[n - 1].second += r[k].second;
+        else
+            r[n++] = r[k];
+    r.resize(n);
+}
+
+/** Rewrites interior uvs of y (indexed like the fills' corners) from its border uvs, fill by fill. */
+void applyFills(std::span<const FinalFill> fills, std::span<glm::dvec2> y)
+{
+    std::vector<double> b, in;
+    for (const FinalFill& f : fills)
+    {
+        const size_t nb = f.border.size(), ni = f.interiorStart.size() - 1;
+        b.resize(2 * nb);
+        in.resize(2 * ni);
+        for (size_t k = 0; k < nb; ++k)
+        {
+            b[k] = y[f.border[k]].x;
+            b[nb + k] = y[f.border[k]].y;
+        }
+        f.fill->solve(b, in, 2);
+        for (size_t g = 0; g < ni; ++g)
+            for (Index k = f.interiorStart[g]; k < f.interiorStart[g + 1]; ++k)
+                y[f.interiorCorners[k]] = glm::dvec2(in[g], in[ni + g]);
+    }
+}
+
+/**
+ * The probe's rows made exported: each recorded island's border groups take their blends of the probed (Blend) rows,
+ * and its interior groups leave the rows for a fill. Rows are per corner of the subdivided (exported) mesh.
+ */
+std::vector<FinalFill> composeRecord(const geo::FitRecord& record, std::vector<Row>& entries)
+{
+    std::vector<FinalFill> fills;
+    std::vector<Row> rows;
+    for (const geo::FitIslandRecord& isl : record.islands)
+    {
+        if (isl.groups.empty())
+            continue;
+        rows.assign(isl.border.size(), {});
+        for (size_t k = 0; k < isl.border.size(); ++k)
+        {
+            for (auto [g, w] : isl.borderFrom[k])
+                for (auto [col, x] : entries[isl.groups[g].front()])
+                    rows[k].push_back({col, w * x});
+            mergeRow(rows[k]);
+        }
+        for (size_t k = 0; k < isl.border.size(); ++k)
+            for (Index c : isl.groups[isl.border[k]])
+                entries[c] = rows[k];
+        if (!isl.fill)
+            continue;
+        FinalFill& f = fills.emplace_back();
+        f.fill = isl.fill;
+        for (size_t k = 0; k < isl.fill->borderCount(); ++k)
+            f.border.push_back(isl.groups[isl.border[k]].front());
+        f.interiorStart.push_back(0);
+        for (Index g : isl.interior)
+        {
+            for (Index c : isl.groups[g])
+            {
+                entries[c].clear();
+                f.interiorCorners.push_back(c);
+            }
+            f.interiorStart.push_back(Index(f.interiorCorners.size()));
+        }
+    }
+    return fills;
+}
+
 /**
  * One attempt at the map with the given ring count. Whole islands also probes every wedge of a face's uv island, for
  * stacks that spread a uv over its whole island (a Fit Surface subdivision fills each island's inside from its border).
- * Empty error on success.
+ * composeFit runs the stack with Fit Surface fills recorded instead of applied and composes them into the map, failing
+ * with "no fit" when the recording doesn't match the exported mesh. Empty error on success.
  */
 std::string probe(const geo::Mesh& cage, std::string_view uvSet, const Stack& stack, const geo::Mesh& real, int rings, bool wholeIslands,
-                  FinalMap& out)
+                  bool composeFit, FinalMap& out)
 {
     LILA_ZONE();
 
+    out.fills.clear();
+    std::optional<geo::FitRecord> fit;
     const Wedges w = wedgesOf(cage, uvSet);
     std::vector<std::vector<Index>> hoods = neighbourhoods(cage, w, rings);
     // Per face, the hood its responses are looked up in: its own, or its island's: its faces' hoods and every wedge of
@@ -402,7 +487,7 @@ std::string probe(const geo::Mesh& cage, std::string_view uvSet, const Stack& st
     const std::span<const glm::vec2> cageUv = cage.cornerAttrs().get<glm::vec2>(uvSet);
 
     const Index rows = real.cornerCapacity();
-    std::vector<std::vector<std::pair<Index, double>>> entries(rows);
+    std::vector<Row> entries(rows);
     std::vector<double> unattributed(rows, 0.0);
     std::vector<int> sourceFace;
     out.runs = 0;
@@ -427,7 +512,21 @@ std::string probe(const geo::Mesh& cage, std::string_view uvSet, const Stack& st
                 p[c] = glm::vec2(v);
             }
         }
-        geo::Mesh res = runStack(in, stack);
+        geo::Mesh res;
+        {
+            std::unique_ptr<geo::FitRecorder> recorder = composeFit ? std::make_unique<geo::FitRecorder>() : nullptr;
+            res = runStack(in, stack);
+            // The first run's recording stands for all: the island layer, and so the fills, are the same in each.
+            if (recorder && first == 0)
+            {
+                if (recorder->records.size() > 1 ||
+                    (recorder->records.size() == 1 &&
+                     (recorder->records[0].islandLayer != uvSet || recorder->records[0].cornerCapacity != real.cornerCapacity())))
+                    return "no fit";
+                if (recorder->records.size() == 1)
+                    fit = std::move(recorder->records[0]);
+            }
+        }
         ++out.runs;
         if (!sameTopology(res, real))
             return "its topology changes with the uvs";
@@ -477,6 +576,9 @@ std::string probe(const geo::Mesh& cage, std::string_view uvSet, const Stack& st
             return "reach";
     }
 
+    if (fit)
+        out.fills = composeRecord(*fit, entries);
+
     // Check: every response found its wedge, and the map reproduces the exported uvs.
     const std::span<const glm::vec2> realUv = real.cornerAttrs().get<glm::vec2>(uvSet);
     glm::dvec2 lo(1e300), hi(-1e300);
@@ -487,20 +589,22 @@ std::string probe(const geo::Mesh& cage, std::string_view uvSet, const Stack& st
             hi = glm::max(hi, glm::dvec2(cageUv[c]));
         }
     const double tol = 1e-3 * std::max(1.0, glm::length(hi - lo));
+    std::vector<glm::dvec2> mapped(rows, glm::dvec2(0.0));
+    for (Index c = 0; c < rows; ++c)
+        for (auto [wd, wt] : entries[c])
+            mapped[c] += wt * glm::dvec2(cageUv[w.rep[wd]]);
+    applyFills(out.fills, mapped);
     double worstMiss = 0.0, worstFit = 0.0;
     for (Index f = 0; f < real.faceCapacity(); ++f)
         if (real.faceValid(f))
             real.forEachFaceCorner(f, [&](Index c) {
                 worstMiss = std::max(worstMiss, unattributed[c]);
-                glm::dvec2 s(0.0);
-                for (auto [wd, wt] : entries[c])
-                    s += wt * glm::dvec2(cageUv[w.rep[wd]]);
-                worstFit = std::max(worstFit, glm::length(s - glm::dvec2(realUv[c])));
+                worstFit = std::max(worstFit, glm::length(mapped[c] - glm::dvec2(realUv[c])));
             });
     if (worstMiss > 1e-3)
         return "reach";
     if (worstFit > tol)
-        return "its uvs are not a blend of the cage's";
+        return kNotABlend;
 
     out.rowStart.assign(size_t(rows) + 1, 0);
     for (Index c = 0; c < rows; ++c)
@@ -678,12 +782,18 @@ FinalMap buildFinalMap(const geo::Mesh& cage, std::string_view uvSet, const Stac
         return map;
     }
     std::string why;
-    // Ring-local probes first; whole islands for stacks that spread uvs over them.
-    for (auto [rings, wholeIslands] : {std::pair{3, false}, std::pair{3, true}, std::pair{6, false}, std::pair{6, true}, std::pair{12, false}})
+    // Ring-local probes with Fit Surface fills composed in first; whole islands for stacks that spread uvs over them
+    // some other way.
+    struct Attempt
+    {
+        int rings;
+        bool wholeIslands, composeFit;
+    };
+    for (const Attempt a : {Attempt{3, false, true}, Attempt{3, true, false}, Attempt{6, false, false}, Attempt{6, true, false}, Attempt{12, false, false}})
     {
         try
         {
-            why = probe(cage, uvSet, stack, *exported, rings, wholeIslands, map);
+            why = probe(cage, uvSet, stack, *exported, a.rings, a.wholeIslands, a.composeFit, map);
         }
         catch (const std::exception& e)
         {
@@ -694,7 +804,8 @@ FinalMap buildFinalMap(const geo::Mesh& cage, std::string_view uvSet, const Stac
             map.method = FinalMethod::Probed;
             return map;
         }
-        if (why != "reach")
+        // A composed map that misses falls back to probing whole islands.
+        if (why != "reach" && !(a.composeFit && (why == "no fit" || why == kNotABlend)))
             break;
     }
     if (why == "reach")
@@ -710,7 +821,7 @@ FinalMap buildFinalMap(const geo::Mesh& cage, std::string_view uvSet, const Stac
             geo::Mesh r = runStack(cage, prefix);
             if (!changesSurface(cage, r))
                 continue;
-            if (r.cornerAttrs().get<glm::vec2>(uvSet).empty() || (!probe(cage, uvSet, prefix, r, 12, false, trial).empty() && !probe(cage, uvSet, prefix, r, 6, true, trial).empty()))
+            if (r.cornerAttrs().get<glm::vec2>(uvSet).empty() || (!probe(cage, uvSet, prefix, r, 12, false, false, trial).empty() && !probe(cage, uvSet, prefix, r, 6, true, false, trial).empty()))
                 culprit = stack[n - 1].name;
         }
         catch (const std::exception&)
@@ -722,10 +833,25 @@ FinalMap buildFinalMap(const geo::Mesh& cage, std::string_view uvSet, const Stac
         culprit = stack.size() == 1 ? stack.front().name : "the modifier stack";
     map.warning = culprit + " changes uvs in a way uv tools can't follow (" + why + "); solved on the cage";
     map.rowStart.clear();
+    map.fills.clear();
     map.sourceFace.clear();
     map.cols.clear();
     map.weights.clear();
     return map;
+}
+
+std::vector<glm::dvec2> exportedUvs(const FinalMap& map, const geo::Mesh& cage, std::string_view uvSet)
+{
+    std::vector<glm::dvec2> out;
+    if (!map.active() || !map.exported)
+        return out;
+    const std::span<const glm::vec2> cageUv = cage.cornerAttrs().get<glm::vec2>(uvSet);
+    out.assign(map.exported->cornerCapacity(), glm::dvec2(0.0));
+    for (size_t c = 0; c + 1 < map.rowStart.size(); ++c)
+        for (Index k = map.rowStart[c]; k < map.rowStart[c + 1]; ++k)
+            out[c] += map.weights[k] * glm::dvec2(cageUv[map.cols[k]]);
+    applyFills(map.fills, out);
+    return out;
 }
 
 double FinalIsland::area3d() const
@@ -746,6 +872,7 @@ std::vector<glm::dvec2> FinalIsland::uvs(const Chart& chart) const
             s += weights[k] * chart.uv[cols[k]];
         out[c] = s;
     }
+    applyFills(fills, out);
     return out;
 }
 
@@ -774,6 +901,33 @@ std::vector<FinalIsland> finalIslands(const FinalMap& map, const geo::Mesh& cage
             cornerVertex[charts[i].corners[k]] = charts[i].cornerVertex[k];
         }
     const std::span<const glm::vec2> cageUv = cage.cornerAttrs().get<glm::vec2>(uvSet);
+    auto tallyRow = [&](Index c, std::vector<std::pair<Index, double>>& tally, double scale) {
+        for (Index k = map.rowStart[c]; k < map.rowStart[c + 1]; ++k)
+        {
+            const Index ch = cornerChart[map.cols[k]];
+            if (ch == kInvalid)
+                continue;
+            auto it = std::find_if(tally.begin(), tally.end(), [&](const auto& t) { return t.first == ch; });
+            if (it == tally.end())
+                tally.push_back({ch, scale * std::abs(map.weights[k])});
+            else
+                it->second += scale * std::abs(map.weights[k]);
+        }
+    };
+    auto most = [](const std::vector<std::pair<Index, double>>& tally) {
+        return tally.empty() ? kInvalid : std::max_element(tally.begin(), tally.end(), [](const auto& a, const auto& b) { return a.second < b.second; })->first;
+    };
+    // A fill's interior corners have no rows; they count for the chart its border reads most.
+    std::vector<Index> cornerFill(ex.cornerCapacity(), kInvalid), fillChart(map.fills.size(), kInvalid);
+    for (size_t f = 0; f < map.fills.size(); ++f)
+    {
+        for (Index c : map.fills[f].interiorCorners)
+            cornerFill[c] = Index(f);
+        std::vector<std::pair<Index, double>> tally;
+        for (Index c : map.fills[f].border)
+            tallyRow(c, tally, 1.0);
+        fillChart[f] = most(tally);
+    }
     // Each exported face goes to the chart with most of its weight.
     std::vector<Index> faceChart(ex.faceCapacity(), kInvalid);
     tbb::parallel_for(tbb::blocked_range<Index>(0, ex.faceCapacity(), 512), [&](const tbb::blocked_range<Index>& r) {
@@ -784,58 +938,63 @@ std::vector<FinalIsland> finalIslands(const FinalMap& map, const geo::Mesh& cage
                 continue;
             tally.clear();
             ex.forEachFaceCorner(f, [&](Index c) {
-                for (Index k = map.rowStart[c]; k < map.rowStart[c + 1]; ++k)
+                tallyRow(c, tally, 1.0);
+                if (const Index fl = cornerFill[c]; fl != kInvalid && fillChart[fl] != kInvalid)
                 {
-                    const Index ch = cornerChart[map.cols[k]];
-                    if (ch == kInvalid)
-                        continue;
-                    auto it = std::find_if(tally.begin(), tally.end(), [&](const auto& t) { return t.first == ch; });
+                    auto it = std::find_if(tally.begin(), tally.end(), [&](const auto& t) { return t.first == fillChart[fl]; });
                     if (it == tally.end())
-                        tally.push_back({ch, std::abs(map.weights[k])});
+                        tally.push_back({fillChart[fl], 1.0});
                     else
-                        it->second += std::abs(map.weights[k]);
+                        it->second += 1.0;
                 }
             });
-            if (tally.empty())
-                continue;
-            faceChart[f] = std::max_element(tally.begin(), tally.end(), [](const auto& a, const auto& b) { return a.second < b.second; })->first;
+            faceChart[f] = most(tally);
         }
     });
-    std::vector<Index> local(ex.cornerCapacity(), kInvalid), tri;
+    std::vector<Index> local(ex.cornerCapacity(), kInvalid), cornerIsland(ex.cornerCapacity(), kInvalid), tri;
     std::vector<std::pair<Index, double>> row;
+    // A corner of the island's faces, or (not own) one only a fill of the island reads.
+    auto addCorner = [&](Index ci, Index c, bool own) {
+        FinalIsland& isl = out[ci];
+        if (isl.rowStart.empty())
+            isl.rowStart.push_back(0);
+        const Index at = Index(isl.pos.size());
+        if (own)
+        {
+            local[c] = at;
+            cornerIsland[c] = ci;
+        }
+        isl.pos.push_back(ex.position(ex.cornerPoint(c)));
+        glm::dvec2 off(0.0);
+        row.clear();
+        for (Index k = map.rowStart[c]; k < map.rowStart[c + 1]; ++k)
+        {
+            const Index col = map.cols[k];
+            if (cornerChart[col] == ci)
+                row.push_back({cornerVertex[col], map.weights[k]});
+            else if (col < cageUv.size())
+                off += map.weights[k] * glm::dvec2(cageUv[col]);
+        }
+        std::sort(row.begin(), row.end());
+        for (size_t k = 0; k < row.size(); ++k)
+            if (!isl.cols.empty() && isl.cols.size() > isl.rowStart.back() && isl.cols.back() == row[k].first)
+                isl.weights.back() += row[k].second;
+            else
+            {
+                isl.cols.push_back(row[k].first);
+                isl.weights.push_back(row[k].second);
+            }
+        isl.rowStart.push_back(Index(isl.cols.size()));
+        isl.offset.push_back(off);
+        return at;
+    };
     for (Index f = 0; f < ex.faceCapacity(); ++f)
     {
         const Index ci = faceChart[f];
         if (ci == kInvalid)
             continue;
+        ex.forEachFaceCorner(f, [&](Index c) { addCorner(ci, c, true); });
         FinalIsland& isl = out[ci];
-        if (isl.rowStart.empty())
-            isl.rowStart.push_back(0);
-        ex.forEachFaceCorner(f, [&](Index c) {
-            local[c] = Index(isl.pos.size());
-            isl.pos.push_back(ex.position(ex.cornerPoint(c)));
-            glm::dvec2 off(0.0);
-            row.clear();
-            for (Index k = map.rowStart[c]; k < map.rowStart[c + 1]; ++k)
-            {
-                const Index col = map.cols[k];
-                if (cornerChart[col] == ci)
-                    row.push_back({cornerVertex[col], map.weights[k]});
-                else if (col < cageUv.size())
-                    off += map.weights[k] * glm::dvec2(cageUv[col]);
-            }
-            std::sort(row.begin(), row.end());
-            for (size_t k = 0; k < row.size(); ++k)
-                if (!isl.cols.empty() && isl.cols.size() > isl.rowStart.back() && isl.cols.back() == row[k].first)
-                    isl.weights.back() += row[k].second;
-                else
-                {
-                    isl.cols.push_back(row[k].first);
-                    isl.weights.push_back(row[k].second);
-                }
-            isl.rowStart.push_back(Index(isl.cols.size()));
-            isl.offset.push_back(off);
-        });
         tri.clear();
         geo::triangulateFace(ex, f, tri);
         for (size_t i = 0; i + 2 < tri.size(); i += 3)
@@ -844,7 +1003,171 @@ std::vector<FinalIsland> finalIslands(const FinalMap& map, const geo::Mesh& cage
             isl.triFace.push_back(f);
         }
     }
+    // Each island holding a fill's interior corners gets the fill, reading local corners; border groups whose corners
+    // went to another island get one of their own.
+    std::vector<Index> islandsOfFill;
+    for (const FinalFill& mf : map.fills)
+    {
+        islandsOfFill.clear();
+        for (Index c : mf.interiorCorners)
+            if (cornerIsland[c] != kInvalid && std::find(islandsOfFill.begin(), islandsOfFill.end(), cornerIsland[c]) == islandsOfFill.end())
+                islandsOfFill.push_back(cornerIsland[c]);
+        for (Index ci : islandsOfFill)
+        {
+            FinalFill lf;
+            lf.fill = mf.fill;
+            for (Index c : mf.border)
+                lf.border.push_back(cornerIsland[c] == ci ? local[c] : addCorner(ci, c, false));
+            lf.interiorStart.push_back(0);
+            for (size_t g = 0; g + 1 < mf.interiorStart.size(); ++g)
+            {
+                for (Index k = mf.interiorStart[g]; k < mf.interiorStart[g + 1]; ++k)
+                    if (const Index c = mf.interiorCorners[k]; cornerIsland[c] == ci)
+                        lf.interiorCorners.push_back(local[c]);
+                lf.interiorStart.push_back(Index(lf.interiorCorners.size()));
+            }
+            out[ci].fills.push_back(std::move(lf));
+        }
+    }
     return out;
+}
+
+detail::FinalOperator::FinalOperator(const FinalIsland& isl, size_t vertexCount) : mIsl(isl), mCorners(isl.pos.size()), mVertices(vertexCount)
+{
+    LILA_ZONE();
+
+    const auto C = Eigen::Index(mCorners), V = Eigen::Index(mVertices);
+    std::vector<Triplet> trips;
+    trips.reserve(isl.cols.size());
+    for (size_t c = 0; c < mCorners; ++c)
+        for (Index k = isl.rowStart[c]; k < isl.rowStart[c + 1]; ++k)
+            trips.emplace_back(int(c), int(isl.cols[k]), isl.weights[k]);
+    mR.resize(C, V);
+    mR.setFromTriplets(trips.begin(), trips.end());
+    mRt = mR.transpose();
+    std::vector<int> at(mVertices, -1);
+    for (const FinalFill& f : isl.fills)
+    {
+        Block b;
+        for (Index c : f.border)
+            for (Index k = isl.rowStart[c]; k < isl.rowStart[c + 1]; ++k)
+                b.cols.push_back(isl.cols[k]);
+        std::sort(b.cols.begin(), b.cols.end());
+        b.cols.erase(std::unique(b.cols.begin(), b.cols.end()), b.cols.end());
+        for (size_t j = 0; j < b.cols.size(); ++j)
+            at[b.cols[j]] = int(j);
+        const auto nb = Eigen::Index(f.border.size()), m = Eigen::Index(b.cols.size()), ni = Eigen::Index(f.fill->interiorCount());
+        // The border's rows over the fill's columns.
+        Eigen::MatrixXd rows = Eigen::MatrixXd::Zero(nb, m);
+        for (Eigen::Index k = 0; k < nb; ++k)
+        {
+            const Index c = f.border[size_t(k)];
+            for (Index e = isl.rowStart[c]; e < isl.rowStart[c + 1]; ++e)
+                rows(k, at[isl.cols[e]]) += isl.weights[e];
+        }
+        for (Index v : b.cols)
+            at[v] = -1;
+        b.d.resize(ni, m);
+        f.fill->solve(std::span<const double>(rows.data(), size_t(rows.size())), std::span<double>(b.d.data(), size_t(b.d.size())), size_t(m));
+        b.start = f.interiorStart;
+        b.corners = f.interiorCorners;
+        mBlocks.push_back(std::move(b));
+    }
+}
+
+void detail::FinalOperator::apply(std::span<const glm::dvec2> x, std::span<glm::dvec2> y, glm::dvec2 offsetScale) const
+{
+    for (size_t c = 0; c < mCorners; ++c)
+    {
+        glm::dvec2 s = mIsl.offset[c] * offsetScale;
+        for (Index k = mIsl.rowStart[c]; k < mIsl.rowStart[c + 1]; ++k)
+            s += mIsl.weights[k] * x[mIsl.cols[k]];
+        y[c] = s;
+    }
+    // A solve reads far less memory than the dense blocks.
+    applyFills(mIsl.fills, y);
+}
+
+void detail::FinalOperator::applyTransposed(std::span<const glm::dvec2> g, std::span<glm::dvec2> out) const
+{
+    std::fill(out.begin(), out.end(), glm::dvec2(0.0));
+    for (size_t c = 0; c < mCorners; ++c)
+        for (Index k = mIsl.rowStart[c]; k < mIsl.rowStart[c + 1]; ++k)
+            out[mIsl.cols[k]] += mIsl.weights[k] * g[c];
+    std::vector<double> gi, gb;
+    for (const FinalFill& f : mIsl.fills)
+    {
+        const size_t nb = f.border.size(), ni = f.interiorStart.size() - 1;
+        gi.assign(2 * ni, 0.0);
+        gb.resize(2 * nb);
+        for (size_t q = 0; q < ni; ++q)
+            for (Index k = f.interiorStart[q]; k < f.interiorStart[q + 1]; ++k)
+            {
+                gi[q] += g[f.interiorCorners[k]].x;
+                gi[ni + q] += g[f.interiorCorners[k]].y;
+            }
+        f.fill->solveTransposed(gi, gb, 2);
+        for (size_t k = 0; k < nb; ++k)
+        {
+            const Index c = f.border[k];
+            for (Index e = mIsl.rowStart[c]; e < mIsl.rowStart[c + 1]; ++e)
+                out[mIsl.cols[e]] += mIsl.weights[e] * glm::dvec2(gb[k], gb[nb + k]);
+        }
+    }
+}
+
+SpMat detail::FinalOperator::gram(const SpMat& s) const
+{
+    LILA_ZONE();
+
+    SpMat k = (mRt * (s * mR)).pruned();
+    if (mBlocks.empty())
+        return k;
+    std::vector<Triplet> extra;
+    for (const Block& b : mBlocks)
+    {
+        const auto ni = Eigen::Index(b.start.size() - 1), m = Eigen::Index(b.cols.size());
+        std::vector<Triplet> e;
+        for (Eigen::Index q = 0; q < ni; ++q)
+            for (Index c = b.start[size_t(q)]; c < b.start[size_t(q) + 1]; ++c)
+                e.emplace_back(int(b.corners[c]), int(q), 1.0);
+        SpMat E(Eigen::Index(mCorners), ni);
+        E.setFromTriplets(e.begin(), e.end());
+        // Interior groups against themselves through the block, and against the rows they share triangles with.
+        const SpMat zt = SpMat(E.transpose()) * s;
+        const SpMat g = zt * E;
+        const Eigen::MatrixXd dgd = b.d.transpose() * (g * b.d);
+        for (Eigen::Index i = 0; i < m; ++i)
+            for (Eigen::Index j = 0; j < m; ++j)
+                extra.emplace_back(int(b.cols[size_t(i)]), int(b.cols[size_t(j)]), dgd(i, j));
+        const SpMat x = zt * mR;
+        for (int col = 0; col < x.outerSize(); ++col)
+            for (SpMat::InnerIterator it(x, col); it; ++it)
+                for (Eigen::Index i = 0; i < m; ++i)
+                {
+                    const double v = b.d(it.row(), i) * it.value();
+                    extra.emplace_back(int(b.cols[size_t(i)]), col, v);
+                    extra.emplace_back(col, int(b.cols[size_t(i)]), v);
+                }
+    }
+    SpMat add(k.rows(), k.cols());
+    add.setFromTriplets(extra.begin(), extra.end());
+    return k + add;
+}
+
+std::vector<double> detail::FinalOperator::columnWeight() const
+{
+    std::vector<double> w(mVertices, 0.0);
+    for (size_t k = 0; k < mIsl.cols.size(); ++k)
+        w[mIsl.cols[k]] += std::abs(mIsl.weights[k]);
+    for (const Block& b : mBlocks)
+        for (size_t q = 0; q + 1 < b.start.size(); ++q)
+        {
+            const double n = double(b.start[q + 1] - b.start[q]);
+            for (size_t j = 0; j < b.cols.size(); ++j)
+                w[b.cols[j]] += n * std::abs(b.d(Eigen::Index(q), Eigen::Index(j)));
+        }
+    return w;
 }
 
 struct UninfluencedFill::Solver
@@ -1099,10 +1422,8 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
         return r;
     const bool mirror = cageUv < 0.0 && pins < 2;
     const double sx = mirror ? -1.0 : 1.0;
-    std::vector<glm::dvec2> x(ch.uv.begin(), ch.uv.end()), off(isl.offset);
+    std::vector<glm::dvec2> x(ch.uv.begin(), ch.uv.end());
     for (glm::dvec2& p : x)
-        p.x *= sx;
-    for (glm::dvec2& p : off)
         p.x *= sx;
 
     // Exported triangles at the island's density on the cage, so 1 means "as dense as the island is now".
@@ -1115,16 +1436,10 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
     }
 
     // y = R x + off: exported corner uvs from chart vertex uvs.
-    SpMat R(static_cast<Eigen::Index>(C), static_cast<Eigen::Index>(V));
-    {
-        std::vector<Triplet> trips;
-        trips.reserve(isl.cols.size());
-        for (size_t c = 0; c < C; ++c)
-            for (Index k = isl.rowStart[c]; k < isl.rowStart[c + 1]; ++k)
-                trips.push_back(Triplet(int(c), int(isl.cols[k]), isl.weights[k]));
-        R.setFromTriplets(trips.begin(), trips.end());
-    }
-    const SpMat Rt = R.transpose();
+    const FinalOperator op(isl, V);
+    const glm::dvec2 offScale(sx, 1.0);
+    std::vector<glm::dvec2> off(C);
+    op.apply(std::vector<glm::dvec2>(V, glm::dvec2(0.0)), off, offScale);
 
     std::vector<int> freeIdx(V, -1);
     int nFree = 0;
@@ -1135,13 +1450,8 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
     else
     {
         // Pin the vertex with the most weight so the system has a fixed point.
-        Eigen::VectorXd colWeight = Eigen::VectorXd::Zero(static_cast<Eigen::Index>(V));
-        for (int k = 0; k < R.outerSize(); ++k)
-            for (SpMat::InnerIterator it(R, k); it; ++it)
-                colWeight[it.col()] += std::abs(it.value());
-        Eigen::Index best = 0;
-        colWeight.maxCoeff(&best);
-        fixed[size_t(best)] = 1;
+        const std::vector<double> colWeight = op.columnWeight();
+        fixed[size_t(std::max_element(colWeight.begin(), colWeight.end()) - colWeight.begin())] = 1;
     }
     for (size_t v = 0; v < V; ++v)
         fixed[v] |= !fill.solved()[v];
@@ -1173,7 +1483,7 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
                     trips.push_back(Triplet(int(isl.tris[i][p]), int(isl.tris[i][q]), a * glm::dot(fr[i].g[p], fr[i].g[q])));
         }
         S.setFromTriplets(trips.begin(), trips.end());
-        const SpMat K = (Rt * (S * R)).pruned();
+        const SpMat K = op.gram(S);
         std::vector<Triplet> kff;
         kfc.clear();
         double diag = 0.0;
@@ -1203,14 +1513,8 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
     };
 
     auto exportUv = [&](const std::vector<glm::dvec2>& xs, std::vector<glm::dvec2>& y) {
-        y.assign(C, glm::dvec2(0.0));
-        for (size_t c = 0; c < C; ++c)
-        {
-            glm::dvec2 s = off[c];
-            for (Index k = isl.rowStart[c]; k < isl.rowStart[c + 1]; ++k)
-                s += isl.weights[k] * xs[isl.cols[k]];
-            y[c] = s;
-        }
+        y.resize(C);
+        op.apply(xs, y, offScale);
     };
     // The reweighted rounds pull towards each triangle's own shape whatever the mode: the other modes let slivers stay small.
     bool isometric = o.mode == OptimizeMode::Isometric;
@@ -1312,7 +1616,7 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
     };
 
     Eigen::VectorXd bu(nFree), bv(nFree);
-    std::vector<glm::dvec2> be(C), trial(V), dir(V), ty;
+    std::vector<glm::dvec2> be(C), trial(V), dir(V), ty, gc(C), fuv(V);
     std::vector<Jac2> target(T);
     // Local/global iterations with the current weights; true when they ran to a settled energy.
     auto iterate = [&](int maxIt, int& ran) {
@@ -1349,12 +1653,15 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
                 ou[Eigen::Index(c)] = off[c].x;
                 ov[Eigen::Index(c)] = off[c].y;
             }
-            const Eigen::VectorXd fu = Rt * (eu - S * ou), fv = Rt * (ev - S * ov);
+            const Eigen::VectorXd gu = eu - S * ou, gv = ev - S * ov;
+            for (size_t c = 0; c < C; ++c)
+                gc[c] = glm::dvec2(gu[Eigen::Index(c)], gv[Eigen::Index(c)]);
+            op.applyTransposed(gc, fuv);
             for (size_t v = 0; v < V; ++v)
                 if (freeIdx[v] >= 0)
                 {
-                    bu[freeIdx[v]] = fu[Eigen::Index(v)];
-                    bv[freeIdx[v]] = fv[Eigen::Index(v)];
+                    bu[freeIdx[v]] = fuv[v].x;
+                    bv[freeIdx[v]] = fuv[v].y;
                 }
             for (const Coupling& cp : kfc)
             {
