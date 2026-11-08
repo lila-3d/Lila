@@ -9,6 +9,7 @@
 #include <glm/gtc/constants.hpp>
 
 #include <algorithm>
+#include <limits>
 #include <cmath>
 #include <map>
 #include <optional>
@@ -77,24 +78,6 @@ struct Mix
         mesh.cornerAttrs().mix(c, s, ws);
     }
 };
-
-/** d turned by the rotation taking unit normal from onto to, about the hinge when they are opposite. */
-glm::dvec3 unfold(const glm::dvec3& d, const glm::dvec3& from, const glm::dvec3& to, const glm::dvec3& hinge)
-{
-    glm::dvec3 k = glm::cross(from, to);
-    double s = glm::length(k), c = glm::dot(from, to);
-    if (s < 1e-9)
-    {
-        if (c > 0.0 || glm::length(hinge) <= 0.0)
-            return d;
-        k = glm::normalize(hinge);
-        s = 0.0;
-        c = -1.0;
-    }
-    else
-        k /= s;
-    return d * c + glm::cross(k, d) * s + k * glm::dot(k, d) * (1.0 - c);
-}
 
 enum class ChainKind : uint8_t
 {
@@ -881,12 +864,15 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
             se = {a.point, b.point, a.mix, b.mix, wedge[vi][i]};
             if (stripSeam[e])
             {
-                // The far side continues the owner's uvs, its face unfolded about the edge into the owner's plane.
+                // The strip takes the band of the owner's island the bevel cut away: its far side lands on the
+                // original edge, the island's border, so the strip never spills past the island.
                 const bool ownA = fans[vi][j].face < fans[vi][i].face;
                 const FanFrame& own = fans[vi][ownA ? j : i];
-                const FanFrame& opp = fans[vi][ownA ? i : j];
                 const Index p = ownA ? b.point : a.point;
-                const glm::dvec3 q = own.tri.o + unfold(mesh.position(p) - own.tri.o, opp.n, own.n, profiles[v.profileAt[i]].axis);
+                const glm::dvec3 axis = profiles[v.profileAt[i]].axis;
+                const double len = glm::length(axis);
+                const glm::dvec3 d = mesh.position(p) - own.tri.o;
+                const glm::dvec3 q = len > 0.0 ? own.tri.o + axis * (glm::dot(d, axis) / (len * len)) : own.tri.o;
                 (ownA ? se.mb : se.ma) = own.tri.mix(q);
                 se.label = wedge[vi][ownA ? j : i];
             }
@@ -1309,6 +1295,34 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
             auto has = [&](Index p) { return se && (se->a == p || se->b == p); };
             return se && se->label == W && has(a) && has(b) ? se : nullptr;
         };
+        // A point no strip or face of the wedge places: the nearest point of the corner the bevel cut from one of the
+        // wedge's faces, so the patch stays inside its island however the walls around it fold.
+        auto inWedge = [&](const glm::dvec3& pos) {
+            const FanFrame* best = &rf;
+            glm::dvec3 bestQ = rf.tri.o;
+            double bestD = std::numeric_limits<double>::max();
+            for (size_t f = 0; f < fans[vi].size(); ++f)
+            {
+                if (wedge[vi][f] != W)
+                    continue;
+                const CornerTri& t = fans[vi][f].tri;
+                const glm::dvec3 d = pos - t.o;
+                const double aa = glm::dot(t.a, t.a), ab = glm::dot(t.a, t.b), bb = glm::dot(t.b, t.b);
+                const double det = aa * bb - ab * ab;
+                if (std::abs(det) <= 1e-12 * aa * bb)
+                    continue;
+                const double al = std::max(0.0, (bb * glm::dot(t.a, d) - ab * glm::dot(t.b, d)) / det);
+                const double be = std::max(0.0, (aa * glm::dot(t.b, d) - ab * glm::dot(t.a, d)) / det);
+                const glm::dvec3 q = t.o + t.a * al + t.b * be;
+                if (const double dist = glm::length(pos - q); dist < bestD)
+                {
+                    bestD = dist;
+                    bestQ = q;
+                    best = &fans[vi][f];
+                }
+            }
+            return best->tri.mix(bestQ);
+        };
         std::vector<Mix> nodeVal(K);
         for (size_t k = 0; k < K; ++k)
         {
@@ -1331,8 +1345,7 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
                     continue;
                 }
             }
-            const glm::dvec3 n = chained ? fans[vi][it->second.front().first].n : rf.n;
-            nodeVal[k] = rf.tri.mix(rf.tri.o + unfold(mesh.position(p) - rf.tri.o, n, rf.n, glm::dvec3(0.0)));
+            nodeVal[k] = inWedge(mesh.position(p));
         }
         auto sideMixAt = [&](size_t k, double t) {
             const Index a = h.nodes[k], b = h.nodes[(k + 1) % K];
@@ -1355,7 +1368,7 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
             for (Index p : pts)
             {
                 auto it = pm.find(p);
-                m.push_back(it != pm.end() ? it->second : rf.tri.mix(mesh.position(p)));
+                m.push_back(it != pm.end() ? it->second : inWedge(mesh.position(p)));
             }
             std::vector<int> lab(pts.size(), W);
             emit(pts, srcFace, m, lab);

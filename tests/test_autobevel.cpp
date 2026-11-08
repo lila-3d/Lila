@@ -58,6 +58,73 @@ Index edgeAt(const geo::Mesh& m, glm::dvec3 a, glm::dvec3 b)
     return geo::kInvalid;
 }
 
+/** The bracket with every face its own uv island in its own cell, laid flat along its dominant axis, so every edge is a seam. */
+geo::Mesh islandBracket(std::vector<std::pair<glm::vec2, glm::vec2>>& islands)
+{
+    geo::Mesh m = lBracket();
+    std::span<glm::vec2> uv = m.cornerAttrs().add("uv0", geo::AttrType::Float2).values<glm::vec2>();
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+    {
+        if (!m.faceValid(f))
+            continue;
+        const glm::dvec3 n = glm::abs(m.faceNormal(f));
+        const int drop = n.x >= n.y && n.x >= n.z ? 0 : n.y >= n.z ? 1 : 2;
+        const glm::vec2 cell(float(f % 3) / 3.0f, float(f / 3) / 3.0f);
+        glm::vec2 lo(1e9f), hi(-1e9f);
+        for (Index c : m.faceCorners(f))
+        {
+            const glm::dvec3 q = m.position(m.cornerPoint(c)) / 40.0;
+            uv[c] = cell + (drop == 0 ? glm::vec2(q.y, q.z) : drop == 1 ? glm::vec2(q.x, q.z) : glm::vec2(q.x, q.y));
+            lo = glm::min(lo, uv[c]);
+            hi = glm::max(hi, uv[c]);
+        }
+        islands.push_back({lo, hi});
+    }
+    return m;
+}
+
+/** Faces with a corner outside every island, and triangles squeezed under 2% of the uv area the mesh's density gives them. */
+std::pair<size_t, size_t> uvFaults(const geo::Mesh& m, std::span<const std::pair<glm::vec2, glm::vec2>> islands)
+{
+    const std::span<const glm::vec2> uv = m.cornerAttrs().get<glm::vec2>("uv0");
+    size_t outside = 0, collapsed = 0;
+    double uvAll = 0.0, worldAll = 0.0;
+    std::vector<std::pair<double, double>> areas;
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+    {
+        if (!m.faceValid(f))
+            continue;
+        const std::vector<Index> cs = m.faceCorners(f);
+        outside += std::ranges::none_of(islands, [&](const auto& isl) {
+            return std::ranges::all_of(cs, [&](Index c) {
+                return glm::all(glm::greaterThanEqual(uv[c], isl.first - 1e-5f)) && glm::all(glm::lessThanEqual(uv[c], isl.second + 1e-5f));
+            });
+        });
+        for (size_t k = 1; k + 1 < cs.size(); ++k)
+        {
+            const glm::dvec2 a = uv[cs[0]], b = uv[cs[k]], c = uv[cs[k + 1]];
+            const glm::dvec3 p = m.position(m.cornerPoint(cs[0])), q = m.position(m.cornerPoint(cs[k])), r = m.position(m.cornerPoint(cs[k + 1]));
+            areas.push_back({0.5 * std::abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)), 0.5 * glm::length(glm::cross(q - p, r - p))});
+            uvAll += areas.back().first;
+            worldAll += areas.back().second;
+        }
+    }
+    for (const auto& [u, w] : areas)
+        if (w > 1e-4 && u < 0.02 * w * uvAll / worldAll)
+            ++collapsed;
+    return {outside, collapsed};
+}
+
+/** Every edge of the mesh. */
+std::vector<Index> allEdges(const geo::Mesh& m)
+{
+    std::vector<Index> out;
+    for (Index e = 0; e < m.edgeCapacity(); ++e)
+        if (m.edgeValid(e))
+            out.push_back(e);
+    return out;
+}
+
 /** The long (z) edge of the bracket at profile point (x, y). */
 Index longEdge(const geo::Mesh& m, double x, double y) { return edgeAt(m, {x, y, 0}, {x, y, 10}); }
 } // namespace
@@ -220,6 +287,16 @@ bool sameEdge(std::pair<glm::dvec3, glm::dvec3> e, glm::dvec3 a, glm::dvec3 b)
     return (near(e.first, a) && near(e.second, b)) || (near(e.first, b) && near(e.second, a));
 }
 } // namespace
+
+TEST_CASE("bevel keeps every face's UVs inside its island across seams and at concave corners")
+{
+    std::vector<std::pair<glm::vec2, glm::vec2>> islands;
+    geo::Mesh m = islandBracket(islands);
+    geo::bevelEdges(m, allEdges(m), {.offset = 0.3, .segments = 2});
+    const auto [outside, collapsed] = uvFaults(m, islands);
+    CHECK(outside == 0);
+    CHECK(collapsed == 0);
+}
 
 TEST_CASE("autoBevel modifier bevels folds and stays live")
 {
