@@ -95,9 +95,9 @@ AttrDef rotationInterpolationAttr(int64_t def)
     return {.name = "rotationInterpolation", .shortName = "rin", .type = PlugType::Enum, .defaultValue = def,
             .flags = AttrInput | AttrStorable, .enumNames = {"euler", "slerp", "smooth"},
             .enumDocs = {"Three curves, one per axis. Can flip near gimbal lock.",
-                         "One rotation curve: constant speed along the shortest arc between keys.",
+                         "One rotation curve, quaternion: constant speed along the shortest arc between keys.",
                          "One rotation curve, cubic in quaternion space: eases through keys, honouring tangents."},
-            .doc ="How new rotate keys are stored: euler (three curves), or one rotation curve interpolated by slerp or "
+            .doc ="How new rotate keys are stored: euler (three curves), or one rotation curve interpolated by quaternion slerp or "
                    "smooth (cubic in quaternion space). convertRotationCurves converts existing keys."};
 }
 
