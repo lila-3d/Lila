@@ -6,6 +6,7 @@
 #include "curve/TestUtil.h"
 #include "groom/GroomLab.h"
 #include "ops/Undo.h"
+#include "scene/Anim.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Transform.h"
@@ -224,4 +225,150 @@ TEST_CASE("groomStrands: the same strands bit for bit on any thread count, evalu
     REQUIRE(opened);
     CHECK(bitsOf(curve::splinesOf(opened->value(opened->type().attrIndex("outCurve")))) == bits);
     std::filesystem::remove(path);
+}
+
+namespace
+{
+/** scatterGraph's strands through `motion` (a node named "motion" taking strands). */
+std::string motionGraph(const std::string& motion)
+{
+    return R"({"version": 1, "nodes": [
+      {"name": "scalp", "type": "Scalp"},
+      {"name": "guides", "type": "Guides"},
+      {"name": "scatter", "type": "Scatter", "params": {"density": 2.0}},
+      {"name": "interp", "type": "Interpolate"}, )" +
+           motion + R"(],
+     "connections": [
+      {"from": "scalp", "to": "scatter", "input": "scalp"},
+      {"from": "scatter", "to": "interp", "input": "strands"},
+      {"from": "guides", "to": "interp", "input": "guides"},
+      {"from": "scalp", "to": "interp", "input": "scalp"},
+      {"from": "interp", "to": "motion", "input": "strands"}],
+     "output": "motion"})";
+}
+
+/** The guides through a Simulate node from frame 1 before they are interpolated. */
+std::string simulateGraph()
+{
+    return R"({"version": 1, "nodes": [
+      {"name": "scalp", "type": "Scalp"},
+      {"name": "guides", "type": "Guides"},
+      {"name": "sim", "type": "Simulate", "params": {"startFrame": 1}},
+      {"name": "scatter", "type": "Scatter", "params": {"density": 2.0}},
+      {"name": "interp", "type": "Interpolate"}],
+     "connections": [
+      {"from": "scalp", "to": "scatter", "input": "scalp"},
+      {"from": "scatter", "to": "interp", "input": "strands"},
+      {"from": "guides", "to": "sim", "input": "guides"},
+      {"from": "sim", "to": "interp", "input": "guides"},
+      {"from": "scalp", "to": "interp", "input": "scalp"}],
+     "output": "interp"})";
+}
+
+const char* kJiggle = R"({"name": "motion", "type": "Jiggle"})";
+const char* kWind = R"({"name": "motion", "type": "Wind", "params": {"strength": 0.8}})";
+
+void setFrame(double frame)
+{
+    curvetest::run("currentTime", {{"args", {scene::anim::secondsOf(frame)}}});
+}
+
+/** strandsScene with `graph`, the head keyed from x 0 at frame 0 to x 30 at frame 12. */
+StrandsScene movingScene(const std::string& graph)
+{
+    StrandsScene s = strandsScene(10.0);
+    scene::Graph::current().setValue({s.strands->id(), s.at("graph"), -1}, graph);
+    curvetest::run("setKeyframe", {{"args", {s.head + ".tx"}}, {"time", scene::anim::secondsOf(0.0)}, {"value", 0.0}});
+    curvetest::run("setKeyframe", {{"args", {s.head + ".tx"}}, {"time", scene::anim::secondsOf(12.0)}, {"value", 30.0}});
+    setFrame(0.0);
+    return s;
+}
+
+/** The strands' bits at each frame from 1 to `last`, played in order. */
+std::vector<uint64_t> played(const StrandsScene& s, int last)
+{
+    std::vector<uint64_t> bits;
+    for (int frame = 1; frame <= last; ++frame)
+    {
+        setFrame(frame);
+        bits.push_back(bitsOf(s.grown()));
+    }
+    return bits;
+}
+} // namespace
+
+TEST_CASE("groomStrands: Wind moves with the scene's time, or holds at the node's own time")
+{
+    StrandsScene s = strandsScene(10.0);
+    scene::Graph& g = scene::Graph::current();
+    g.setValue({s.strands->id(), s.at("graph"), -1}, motionGraph(kWind));
+    setFrame(0.0);
+    const curve::Splines still = s.grown();
+    REQUIRE(still.size() > 100);
+    CHECK(s.strands->as<std::string>(s.at("warning")).empty());
+    const uint64_t atZero = bitsOf(still);
+    setFrame(15.0);
+    const uint64_t atHalf = bitsOf(s.grown());
+    CHECK(atHalf != atZero);
+
+    // Off the scene's time: the node's time, whatever frame the scene is on.
+    g.setValue({s.strands->id(), s.at("useSceneTime"), -1}, false);
+    g.setValue({s.strands->id(), s.at("time"), -1}, scene::anim::secondsOf(15.0));
+    setFrame(40.0);
+    CHECK(bitsOf(s.grown()) == atHalf);
+    g.setValue({s.strands->id(), s.at("time"), -1}, 0.0);
+    CHECK(bitsOf(s.grown()) == atZero);
+    setFrame(3.0);
+    CHECK(bitsOf(s.grown()) == atZero);
+}
+
+TEST_CASE("groomStrands: Jiggle reads the scalp's earlier frames, the same bits played, jumped to and on any thread count")
+{
+    const StrandsScene s = movingScene(motionGraph(kJiggle));
+    const std::vector<uint64_t> bits = played(s, 8);
+    CHECK(s.strands->as<std::string>(s.at("warning")).empty());
+
+    // Jumped straight to a frame: its earlier frames are read by moving the scene's time, and give the same strands.
+    for (const int threads : {1, 2})
+    {
+        const tbb::global_control cap(tbb::global_control::max_allowed_parallelism, size_t(threads));
+        const StrandsScene jumped = movingScene(motionGraph(kJiggle));
+        setFrame(8.0);
+        CHECK_MESSAGE(bitsOf(jumped.grown()) == bits.back(), threads, " threads");
+        setFrame(5.0);
+        CHECK_MESSAGE(bitsOf(jumped.grown()) == bits[4], threads, " threads");
+    }
+
+    // The jiggle trails the head: strands without it are elsewhere at the same frame, and the scene's time stays put.
+    const StrandsScene plain = movingScene(motionGraph(R"({"name": "motion", "type": "Width"})"));
+    setFrame(8.0);
+    CHECK(bitsOf(plain.grown()) != bits.back());
+    CHECK(scene::Graph::current().time() == doctest::Approx(scene::anim::secondsOf(8.0)));
+}
+
+TEST_CASE("groomStrands: Simulate steps frame by frame, scrubbing back reads its frames, the same bits on any thread count")
+{
+    const StrandsScene s = movingScene(simulateGraph());
+    const std::vector<uint64_t> bits = played(s, 8);
+    CHECK(s.strands->as<std::string>(s.at("warning")).empty());
+    CHECK(bits.back() != bits.front());
+
+    // Back to an earlier frame: the cached frame, bit for bit.
+    setFrame(3.0);
+    CHECK(bitsOf(s.grown()) == bits[2]);
+    setFrame(8.0);
+    CHECK(bitsOf(s.grown()) == bits.back());
+
+    // An edit to the graph drops the frames: the same graph again plays to the same bits.
+    scene::Graph::current().setValue({s.strands->id(), s.at("graph"), -1}, motionGraph(kWind));
+    s.grown();
+    scene::Graph::current().setValue({s.strands->id(), s.at("graph"), -1}, simulateGraph());
+    CHECK(played(s, 8) == bits);
+
+    for (const int threads : {1, 2})
+    {
+        const tbb::global_control cap(tbb::global_control::max_allowed_parallelism, size_t(threads));
+        CHECK_MESSAGE(played(movingScene(simulateGraph()), 8) == bits, threads, " threads");
+    }
+
 }

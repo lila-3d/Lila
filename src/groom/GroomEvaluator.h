@@ -13,6 +13,7 @@
 #include <groomlab/paths.h>
 #include <groomlab/scalp_maps.h>
 #include <groomlab/sculpt.h>
+#include <groomlab/simulation.h>
 
 #include <cstdint>
 #include <exception>
@@ -242,6 +243,38 @@ public:
     /** Whether the result depends on the time through the graph, the correctives or a scalp history. */
     bool readsTime() const;
 
+    // Simulation (simulation.h).
+    //
+    // Each Simulate node keeps every frame from its start frame to the last one stepped. An evaluation at a time steps
+    // a node whose cacheMode is "live" on to that frame from its last one when the frame is not cached; going back
+    // reads the cache. A change of the node's settings, of the frame rate, or of what it is fed at a frame it shows
+    // again drops its frames. Between two frames the two are blended; before its start frame, and while a preview is
+    // set, a node passes its guides through.
+
+    /** How the host's inputs at another time reach the evaluator (SimFeed); without one, frames on the way are stepped
+     * in one go toward the inputs as they are. */
+    void setSimulationFeed(groomlab::SimFeed feed) { mSimFeed = std::move(feed); }
+    /** Off: an evaluation never steps a node; a frame neither cached nor baked shows the guides as groomed. */
+    void setSimulationStepping(bool on) { mSimStepping = on; }
+    /** The groom at a frame depends on earlier frames: a scalp history, or a Simulate node not covered by a bake that
+     * matches its settings over max(firstFrame, its start) to lastFrame. */
+    bool readsEarlierFrames(const std::string& viewNode, int firstFrame, int lastFrame) const;
+    /** The Simulate nodes making the output (not bypassed), upstream first. */
+    std::vector<std::string> simulateNodes() const;
+    /** Every Simulate node making the output stepped on to `frame` from its last frame, in either cacheMode; the
+     * inputs are put back as the last evaluation had them. */
+    groomlab::SimRun simulateTo(int frame, const groomlab::SimProgress& progress = {});
+    /** Drops a node's frames ("": every node's); a bake stays. */
+    void invalidateSimulation(const std::string& node = {});
+    std::vector<groomlab::SimStatus> simulationStatus() const;
+    /** A node's frame as simulated; null when not cached. */
+    groomlab::GuidesPtr simulatedFrame(const std::string& node, int frame) const;
+    /** A bake of a node; null removes it. While its stamp matches the node's settings its frames come from it. */
+    void setBakedSimulation(const std::string& node, groomlab::BakedSimulationPtr baked);
+    groomlab::BakedSimulationPtr bakedSimulation(const std::string& node) const;
+    /** What a bake of the node made now records (SimSettings::hash of its params); 0 without the node. */
+    std::uint64_t simulationStamp(const std::string& node) const;
+
     // Previews (a brush tool edits these between evaluations).
 
     /** Replaces the stored guides while set. `final`: shown as it is (poses and correctives already in it). */
@@ -312,6 +345,37 @@ private:
                                    const groomlab::EvalContext& ctx);
     groomlab::StrandsPtr carry(const groomlab::StrandsPtr& strands, int slot);
     const groomlab::PathResolver* paths() const;
+
+    struct SimNode
+    {
+        groomlab::SimCache cache;
+        groomlab::BakedSimulationPtr baked;
+        /** Its frame for the last evaluation (the external "sim:<node>"); null: none. */
+        groomlab::GuidesPtr shown;
+        std::uint64_t shownHash = 0;
+        /** Its inputs' hash when last checked at checkedSeconds: other inputs at the same time start it again. */
+        bool checked = false;
+        double checkedSeconds = 0.0;
+        std::uint64_t checkedHash = 0;
+        /** The inputs its last frame was stepped toward. */
+        std::uint64_t towardHash = 0;
+    };
+    struct SimRef
+    {
+        std::string name;
+        groomlab::NodeId id = 0;
+        SimNode* node = nullptr;
+    };
+    std::vector<std::pair<std::string, groomlab::NodeId>> simulateNodeIds(const std::string& viewNode) const;
+    std::vector<SimRef> simRefs(const std::string& viewNode);
+    void checkSimInputs(SimRef& ref, double seconds, const groomlab::ExternalInputs& externals);
+    std::pair<groomlab::GuidesPtr, std::uint64_t> simFrameAt(const SimNode& node, double seconds) const;
+    groomlab::EvalContext simContext(double seconds, const groomlab::ExternalInputs& externals) const;
+    groomlab::SimInputs simInputs(const SimRef& ref, const groomlab::EvalContext& ctx, std::uint64_t* hash);
+    void stepSimulations(const Request& request, std::vector<std::string>& errors);
+    void advanceSimulations(std::vector<SimRef>& nodes, int target, double nowSeconds, const groomlab::SimProgress& progress,
+                            groomlab::SimRun& run);
+    bool bakeUsable(const SimNode& node, double seconds) const;
 
     groomlab::GroomData mData;
     bool mCacheIntermediates = true;
@@ -437,6 +501,13 @@ private:
     };
     /** The view's and evaluateNode's. */
     Carried mCarried[2];
+
+    std::map<std::string, std::unique_ptr<SimNode>> mSims;
+    groomlab::SimFeed mSimFeed;
+    bool mSimStepping = true;
+    /** The last evaluation's density and budget: what simulateTo evaluates inputs at. */
+    float mSimDensity = 1.0f;
+    double mSimPointBudget = 0.0;
 
     Result mResult;
     /** The strands or guides changed while no evaluation wanted bounds. */
