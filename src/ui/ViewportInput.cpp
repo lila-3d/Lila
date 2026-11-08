@@ -462,6 +462,11 @@ bool ViewportWidget::selectLoopAt(QPointF at, Qt::KeyboardModifiers mods)
     const char* op = ctrl && shift ? "add" : ctrl ? "deselect" : nullptr;
     if (shift && !ctrl && !std::ranges::binary_search(scene::components::selected(h.node, mode), h.id))
         op = "deselect";
+    auto addConnected = [&] {
+        ops::execute("selectConnected",
+                     {{"args", {n->path()}}, {"kind", scene::components::modeName(mode)}, {"id", h.id}, {"add", true}, {"symmetric", symmetric}},
+                     CallSource::UI);
+    };
     try
     {
         if (op)
@@ -496,16 +501,35 @@ bool ViewportWidget::selectLoopAt(QPointF at, Qt::KeyboardModifiers mods)
                         from = id;
                         break;
                     }
-            if (!from)
+            // Nothing selected on this mesh to run a path from: vertices and faces add their connected piece.
+            if (!from && mode == ComponentMode::Edge)
                 return false;
+            if (!from)
+            {
+                addConnected();
+                return true;
+            }
             // Like Maya, a second edge adds its own loop unless it shares one with the first, then only the run between them.
             if (mode == ComponentMode::Edge && std::ranges::count(geo::edgeLoop(*mesh, h.id), *from) == 0)
             {
                 ops::execute("selectLoopThrough", {{"args", {n->path()}}, {"edge", h.id}, {"add", true}, {"symmetric", symmetric}}, CallSource::UI);
                 return true;
             }
-            ops::execute("selectPathBetween",
-                         {{"args", {n->path()}}, {"kind", scene::components::modeName(mode)}, {"from", *from}, {"to", h.id}, {"symmetric", symmetric}}, CallSource::UI);
+            json path = {{"args", {n->path()}}, {"kind", scene::components::modeName(mode)}, {"from", *from}, {"to", h.id}, {"symmetric", symmetric}};
+            if (mode == ComponentMode::Edge)
+            {
+                ops::execute("selectPathBetween", path, CallSource::UI);
+                return true;
+            }
+            // A separate piece of the same mesh has no path to the anchor, so it is added whole.
+            try
+            {
+                ops::execute("selectPathBetween", path, CallSource::UI);
+            }
+            catch (const CommandError&)
+            {
+                addConnected();
+            }
             return true;
         }
         // Edges select their loop; vertices and faces the whole connected piece.
