@@ -64,7 +64,7 @@ TEST_CASE("the UV editor stays narrow whatever its status line and pack options 
             l->setText(QString("uvLayout: ") + QString(600, 'x'));
     CHECK(editor.minimumSizeHint().width() <= withToolkit);
 
-    for (const char* name : {"Planar", "Box", "Cylindrical", "Hose"})
+    for (const char* name : {"Planar", "Box", "Spherical", "Hose"})
     {
         CAPTURE(name);
         CHECK(buttonNamed(editor, name));

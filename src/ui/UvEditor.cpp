@@ -428,9 +428,9 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     QToolButton* hoseBtn = uvKitTile("Hose", "pipeline", QString::fromStdString(actions::tooltip("uv.hose")), body, "uv.hose");
     connect(hoseBtn, &QToolButton::clicked, this, [this, packCall] { runCommand("uvHose", packCall()); });
     QWidget* projectTiles = controls::grid({planarTile(body), tile("uv.projectBox", "box", "Box"),
-                                            tile("uv.projectCylindrical", "cylinder", "Cylindrical"), hoseBtn},
+                                            tile("uv.projectSpherical", "sphere", "Spherical"), hoseBtn},
                                            kToolkitColumns, body);
-    addSection(collapsibleSection("Project", stacked(body, {projectTiles, controls::overflow({"uv.projectSpherical"}, body)}), body,
+    addSection(collapsibleSection("Project", stacked(body, {projectTiles, controls::overflow({"uv.projectCylindrical"}, body)}), body,
                                   kUvCollapsed));
 
     // Relaxing: live solving, one-shot solves, pins, the stretch/compress balance and the brushes.
