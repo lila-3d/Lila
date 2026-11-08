@@ -206,7 +206,7 @@ void UvView::frameUnderCursor()
     const glm::dvec2 at = toUv(mapFromGlobal(QCursor::pos().toPointF()));
     PrefStore& prefs = PrefStore::get();
     const double zoom = prefs.value<bool>("general", "/viewport/frameUnderCursor/zoom", true)
-                            ? std::max(prefs.value<double>("general", "/viewport/frameUnderCursor/zoomFactor", 4.0), 0.01)
+                            ? std::max(prefs.value<double>("general", "/viewport/frameUnderCursor/zoomFactor", 8.0), 0.01)
                             : 1.0;
     mFit.reset();
     mZoom = std::clamp(mZoom * zoom, 1.0, 1e7);
