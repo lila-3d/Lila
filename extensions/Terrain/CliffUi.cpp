@@ -45,10 +45,10 @@ void registerCliffUi(ext::Context& ctx)
             menus::addItem(ctx, {.id = "cliffs.menu.sep" + std::to_string(separators++), .menu = "Level/Cliffs", .kind = menus::Kind::Separator});
     }
 
-    // Daily: find, mesh, extrude as tiles; kit, scatter and the send as buttons below them.
+    // Daily: find and mesh as tiles; extrude, kit, scatter and the send as buttons below them.
     levelToolkit::add(ctx, {.id = "cliffs",
                             .title = "Cliffs",
-                            .items = {{"cliffs.find", "scan", "Find", "Cliffs"}, {"cliffs.mesh", "mountain", "Mesh"}, {"cliffs.extrude", "chart-area-line", "Extrude"}, {},
+                            .items = {{"cliffs.find", "scan", "Find", "Cliffs"}, {"cliffs.mesh", "mountain", "Mesh", "Cliff Mesh"}, {"cliffs.extrude", "chart-area-line", "Extrude"}, {},
                                       {"cliffs.kit", "", "Kit"}, {"cliffs.scatter", "", "Scatter"}, {"cliffs.send", "", "Unreal"}},
                             .order = 12,
                             .docs = "terrain-cliffs"});

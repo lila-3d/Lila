@@ -1057,16 +1057,27 @@ json runSendCliffs(const Args& a)
     };
     std::vector<link::TileItem> items;
     std::vector<std::string> assets(planned.size());
+    // The cliff material: MI_<terrain>_Cliffs on M_LilaTerrainVolume (MF_LilaTerrainVolume).
+    bool material = a.get<bool>("material", true);
+    json materialResult;
+    if (material)
+    {
+        const json features = link::Link::get().status().value("features", json::array());
+        if (!features.is_array() || std::find(features.begin(), features.end(), json("cliffMaterial")) == features.end())
+        {
+            material = false;
+            out["warnings"].push_back("the LilaLink plugin in Unreal predates cliff materials: the tiles keep their imported material; rebuild LilaLink from Lila's ue/LilaLink");
+        }
+    }
     for (size_t i = 0; i < planned.size(); ++i)
     {
         const Planned& p = planned[i];
         link::TileItem it;
         it.key = p.key;
         it.hash = p.tile.hash ^ link::hashBytes(hlod.data(), hlod.size());
-        json options = {{"nanite", p.tile.nanite}, {"collision", "complexAsSimple"}, {"existing", "replace"}};
+        json options = {{"nanite", p.tile.nanite}, {"collision", "complexAsSimple"}, {"existing", "replace"}, {"reapplyOptions", true}};
         // Without Nanite the collision comes from the last LOD: simplified, and its borders still meet the neighbours'.
-        if (!p.tile.nanite && p.tile.lods.size() > 1)
-            options["lodForCollision"] = int64_t(p.tile.lods.size() - 1);
+        options["lodForCollision"] = !p.tile.nanite && p.tile.lods.size() > 1 ? int64_t(p.tile.lods.size() - 1) : int64_t(0);
         it.mapping = options;
         it.mapping["contentPath"] = content + "/" + p.name;
         it.mapping["kind"] = "static";
@@ -1076,8 +1087,11 @@ json runSendCliffs(const Args& a)
             return file;
         };
         const glm::dvec3 c = glm::dvec3(frame * glm::dvec4(p.tile.centre, 1.0));
-        it.after = [&call, &p, c, hlod, i, &assets](const std::string& asset) {
+        it.after = [&call, &p, c, hlod, i, &assets, material, &label, &materialResult](const std::string& asset) {
             assets[i] = asset;
+            // Per tile, so a long send never loads every tile at the end to give them their material.
+            if (material)
+                materialResult = call("setCliffMaterial", {{"label", label}, {"meshes", json::array({asset})}});
             const math::Vector u = math::toUnreal(math::Vector(c.x, c.y, c.z));
             json params = {{"group", p.key},
                            {"label", p.name},
@@ -1119,15 +1133,8 @@ json runSendCliffs(const Args& a)
             log::warn("{}: stale tiles stay in Unreal: {}", cmd, e.what());
         }
     }
-    // The cliff material: MI_<terrain>_Cliffs on M_LilaTerrainVolume (MF_LilaTerrainVolume), on every tile sent.
-    if (!sentAssets.empty() && a.get<bool>("material", true))
-    {
-        const json features = link::Link::get().status().value("features", json::array());
-        if (features.is_array() && std::find(features.begin(), features.end(), json("cliffMaterial")) != features.end())
-            out["material"] = call("setCliffMaterial", {{"label", label}, {"meshes", sentAssets}});
-        else
-            out["warnings"].push_back("the LilaLink plugin in Unreal predates cliff materials: the tiles keep their imported material; rebuild LilaLink from Lila's ue/LilaLink");
-    }
+    if (!materialResult.is_null())
+        out["material"] = materialResult.value("material", json());
     out["sent"] = r.sent;
     out["skipped"] = r.skipped;
     out["failed"] = r.failed;
