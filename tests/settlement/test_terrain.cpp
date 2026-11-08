@@ -475,3 +475,26 @@ TEST_CASE("settlement terrain: every built-in style and era preset passes settle
         CHECK(c["ok"] == true);
     }
 }
+
+TEST_CASE("settlement terrain: a walled town at a river keeps streets out of the water, stays connected and sits on its graded ground")
+{
+    terrainLoadPackages();
+    run("newScene");
+    const std::string t = terrainMesh(200000.0, 129, 4000.0, 3);
+    run("terrainAddRiver", {{"args", {t}}, {"id", "main"}, {"path", json::array({json::array({-95000, -20000}), json::array({0, 0}), json::array({95000, 15000})})}});
+    const double cx = 31478.9, cz = -12861.6, half = 30000.0;
+    const json outline = json::array({json::array({cx - half, cz - half}), json::array({cx + half, cz - half}), json::array({cx + half, cz + half}),
+                                      json::array({cx - half, cz + half})});
+    const json made = run("settlementCreate", {{"outline", outline}, {"attractors", json::array({json::array({cx, cz})})}, {"ground", t},
+                                               {"profile", "medievalTown"}, {"seed", 2}, {"eras", "walledTown"}});
+    const std::string mesh = made["mesh"].get<std::string>();
+    const json before = run("settlementCheck", {{"args", {mesh}}});
+    INFO(before["issues"].dump().substr(0, 600));
+    for (const char* k : {"water", "lanes", "laneGraph", "overlap", "frontage", "envelope", "foundation"})
+        CHECK(before["counts"][k] == 0);
+
+    run("settlementGrade", {{"args", {mesh}}, {"streets", false}, {"water", false}});
+    const json after = run("settlementCheck", {{"args", {mesh}}});
+    CHECK(after["plan"] == "pinned");
+    CHECK(after["counts"]["foundation"] == 0);
+}
