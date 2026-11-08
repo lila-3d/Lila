@@ -139,6 +139,11 @@ struct LILA_SCENE_API Surface
     void thinCorners(const std::vector<double>& spacing);
     double totalArea() const;
     double meanEdgeLength() const;
+    /**
+     * Per vertex: a corner made by its own sharp saddle (the bottom of a finger web) with no crease through it. Lines may
+     * turn there, but no result point is pulled onto it.
+     */
+    std::vector<uint8_t> saddleTips() const;
 };
 
 /**

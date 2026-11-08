@@ -823,8 +823,9 @@ void snapCorners(geo::Mesh& m, std::vector<FeatureKind>& feature, const Surface&
 
     const double same = 1e-9 * (1.0 + reach);
     std::vector<Index> corners;
+    const std::vector<uint8_t> tip = s.saddleTips();
     for (Index v = 0; v < s.vertexCount(); ++v)
-        if (s.feature[v] == FeatureKind::Corner)
+        if (s.feature[v] == FeatureKind::Corner && !tip[v])
             corners.push_back(v);
     std::vector<uint8_t> taken(m.pointCapacity(), 0);
     std::vector<std::pair<double, Index>> near;

@@ -881,6 +881,26 @@ uint64_t FeatureLines::hash(const std::array<int64_t, 3>& c) const
     return h % mBuckets.size();
 }
 
+std::vector<uint8_t> Surface::saddleTips() const
+{
+    const Index n = vertexCount();
+    std::vector<uint8_t> out(n, 0);
+    std::vector<double> deficit(n, glm::two_pi<double>());
+    for (const auto& t : tris)
+        for (int k = 0; k < 3; ++k)
+        {
+            const glm::dvec3 a = pos[t[(k + 1) % 3]] - pos[t[k]], b = pos[t[(k + 2) % 3]] - pos[t[k]];
+            deficit[t[k]] -= std::atan2(glm::length(glm::cross(a, b)), glm::dot(a, b));
+        }
+    std::vector<uint8_t> onCrease(n, 0);
+    for (size_t e = 0; e < edges.size(); ++e)
+        if (edgeFeature[e] || edgeTriCount[e] != 2)
+            onCrease[edges[e][0]] = onCrease[edges[e][1]] = 1;
+    for (Index v = 0; v < n; ++v)
+        out[v] = feature[v] == FeatureKind::Corner && deficit[v] < 0.0 && !onCrease[v] && (pinned.empty() || !pinned[v]);
+    return out;
+}
+
 void FeatureLines::build(const Surface& s, double cellSize, bool boundaryOnly)
 {
     LILA_ZONE();
@@ -891,8 +911,9 @@ void FeatureLines::build(const Surface& s, double cellSize, bool boundaryOnly)
     for (size_t e = 0; e < s.edges.size(); ++e)
         if (s.edgeFeature[e] && (!boundaryOnly || s.edgeBoundary[e]))
             mSegs.push_back({s.pos[s.edges[e][0]], s.pos[s.edges[e][1]]});
+    const std::vector<uint8_t> tip = s.saddleTips();
     for (Index v = 0; v < s.vertexCount(); ++v)
-        if (s.feature[v] == FeatureKind::Corner && (!boundaryOnly || s.onBoundary[v]))
+        if (s.feature[v] == FeatureKind::Corner && !tip[v] && (!boundaryOnly || s.onBoundary[v]))
             mCorners.push_back(s.pos[v]);
     mBuckets.assign(std::max<size_t>(64, mSegs.size() * 2), {});
     mCornerBuckets.assign(mBuckets.size(), {});
