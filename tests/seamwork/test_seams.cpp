@@ -564,3 +564,38 @@ TEST_CASE("skirt: on terrain the box wall is unioned with a fillet, borders on b
     CHECK(s.curves[0].reason.find("past") != std::string::npos);
     checkSkirt(s.mesh, objs[0], &g, nullptr);
 }
+
+TEST_CASE("skirt: a unioned box wall's outer corners are rounded, not tapered")
+{
+    const std::vector<Object> objs = {object("Wall", box({-200, -20, -10}, {200, 280, 10}))};
+    const Ground g = flatGround();
+    const Result r = findSeams(objs, &g, quick());
+    SkirtOptions o;
+    o.width = 15.0;
+    o.method = SkirtMethod::Union;
+    const SkirtResult s = buildSkirt(r, objs, &g, o);
+    REQUIRE(s.curves.size() == 1);
+    REQUIRE(s.curves[0].method == "union");
+    checkSkirt(s.mesh, objs[0], &g, nullptr);
+    // At each corner the ground border runs round it at the fillet width, like the ball the fillet rolls.
+    const auto side = s.mesh.pointAttrs().get<float>("side");
+    for (const glm::dvec2 corner : {glm::dvec2(200, 10), glm::dvec2(200, -10), glm::dvec2(-200, 10), glm::dvec2(-200, -10)})
+    {
+        double nearest = 1e300, farthest = 0.0;
+        for (Index p = 0; p < s.mesh.pointCapacity(); ++p)
+        {
+            if (!s.mesh.pointValid(p) || side[p] < 1.0 - 1e-6)
+                continue;
+            const glm::dvec3 q = s.mesh.position(p);
+            const glm::dvec2 d = glm::dvec2(q.x, q.z) - corner;
+            // The outer quadrant only: past both faces that meet at the corner.
+            if (d.x * corner.x <= 0.0 || d.y * corner.y <= 0.0)
+                continue;
+            nearest = std::min(nearest, glm::length(d));
+            farthest = std::max(farthest, glm::length(d));
+        }
+        INFO("corner " << corner.x << "," << corner.y);
+        CHECK(nearest > o.width * 0.85);
+        CHECK(farthest < o.width * 1.15);
+    }
+}

@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <tuple>
 
 namespace seamwork
 {
@@ -79,6 +81,8 @@ struct SkirtRow
 {
     glm::dvec3 p, t, na, nb;
     double along = 0.0;
+    /** The wall border takes na as its normal: rows fanning round a wall's edge, where the wall's own faces disagree. */
+    bool roundWall = false;
 };
 
 std::vector<SkirtRow> skirtRows(const Curve& c, double spacing)
@@ -159,6 +163,27 @@ struct Builder
         sizes.push_back(4);
         idx.insert(idx.end(), {a, b, c, d});
     }
+    /** A polygon with repeated points dropped; nothing when fewer than three remain. */
+    void polygon(std::vector<Index> face)
+    {
+        face.erase(std::unique(face.begin(), face.end()), face.end());
+        while (face.size() > 1 && face.front() == face.back())
+            face.pop_back();
+        if (face.size() < 3)
+            return;
+        sizes.push_back(Index(face.size()));
+        idx.insert(idx.end(), face.begin(), face.end());
+    }
+
+    /** add, reusing the point already at this position, so pieces built apart weld. */
+    Index shared(const glm::dvec3& p, const glm::dvec3& n, double s, glm::vec2 u, glm::vec3 c)
+    {
+        const auto key = std::make_tuple(std::llround(p.x * 1e5), std::llround(p.y * 1e5), std::llround(p.z * 1e5));
+        if (const auto it = at.find(key); it != at.end())
+            return it->second;
+        return at[key] = add(p, n, s, u, c);
+    }
+    std::map<std::tuple<long long, long long, long long>, Index> at;
 
     Mesh build() const
     {
@@ -206,6 +231,45 @@ glm::vec3 groundColor(const Ground* g, const std::vector<std::string>& layers, c
     return w > 1e-6 ? glm::vec3(sum / w) : glm::vec3(0.5f);
 }
 
+struct ProfilePoint
+{
+    glm::dvec3 p, n;
+    double side = 0.0;
+};
+
+/** The fillet profile across one row, wall border first: a cubic arc tangent to both surfaces, borders on them exactly. */
+bool profileRow(const SkirtRow& r, const Surface& wall, const Surface& floor, const SkirtOptions& o, std::vector<ProfilePoint>& out)
+{
+    const int segs = std::max(2, o.segments);
+    const glm::dvec3 w = sideDir(r.na, r.nb, r.t), g = sideDir(r.nb, r.na, r.t);
+    const double theta = std::acos(std::clamp(glm::dot(w, g), -1.0, 1.0));
+    const double half = std::clamp(theta * 0.5, glm::radians(3.0), glm::radians(87.0));
+    double d = o.width, radius = o.width * std::tan(half);
+    if (o.radius > 0.0)
+    {
+        radius = o.radius;
+        d = std::clamp(o.radius / std::tan(half), 0.5, o.width * 4.0);
+    }
+    glm::dvec3 pw, nw, pg, ng;
+    if (!wall.project(r.p + w * d, pw, nw) || !floor.project(r.p + g * d, pg, ng))
+        return false;
+    if (r.roundWall)
+        nw = r.na;
+    const glm::dvec3 ws = sideDir(nw, w, r.t), gs = unitTo(g - ng * glm::dot(g, ng), g);
+    const glm::dvec3 wAlong = unitTo(w - nw * glm::dot(w, nw), ws);
+    const double phi = kPi - 2.0 * half;
+    const double k = 4.0 / 3.0 * std::tan(phi / 4.0) * radius;
+    const glm::dvec3 b0 = pw, b1 = pw - wAlong * k, b2 = pg - gs * k, b3 = pg;
+    out.clear();
+    for (int j = 0; j <= segs; ++j)
+    {
+        const double s = double(j) / segs, u = 1.0 - s;
+        const glm::dvec3 p = j == 0 ? pw : j == segs ? pg : b0 * (u * u * u) + b1 * (3 * u * u * s) + b2 * (3 * u * s * s) + b3 * (s * s * s);
+        out.push_back({p, slerpDir(nw, ng, s), s});
+    }
+    return true;
+}
+
 /** Sweeps the fillet profile along one curve. Returns false (with why) when it can't. */
 bool sweepCurve(Builder& b, const Curve& c, const Surface& wall, const Surface& floor, const Ground* ground, const std::vector<std::string>& layers,
                 const SkirtOptions& o, std::string* why)
@@ -218,34 +282,16 @@ bool sweepCurve(Builder& b, const Curve& c, const Surface& wall, const Surface& 
     }
     const int segs = std::max(2, o.segments);
     const Index base = Index(b.pts.size());
+    std::vector<ProfilePoint> profile;
     for (const SkirtRow& r : rows)
     {
-        const glm::dvec3 w = sideDir(r.na, r.nb, r.t), g = sideDir(r.nb, r.na, r.t);
-        const double theta = std::acos(std::clamp(glm::dot(w, g), -1.0, 1.0));
-        const double half = std::clamp(theta * 0.5, glm::radians(3.0), glm::radians(87.0));
-        double d = o.width, radius = o.width * std::tan(half);
-        if (o.radius > 0.0)
-        {
-            radius = o.radius;
-            d = std::clamp(o.radius / std::tan(half), 0.5, o.width * 4.0);
-        }
-        glm::dvec3 pw, nw, pg, ng;
-        if (!wall.project(r.p + w * d, pw, nw) || !floor.project(r.p + g * d, pg, ng))
+        if (!profileRow(r, wall, floor, o, profile))
         {
             *why = "no surface to land on";
             return false;
         }
-        const glm::dvec3 ws = sideDir(nw, w, r.t), gs = unitTo(g - ng * glm::dot(g, ng), g);
-        const glm::dvec3 wAlong = unitTo(w - nw * glm::dot(w, nw), ws);
-        const double phi = kPi - 2.0 * half;
-        const double k = 4.0 / 3.0 * std::tan(phi / 4.0) * radius;
-        const glm::dvec3 b0 = pw, b1 = pw - wAlong * k, b2 = pg - gs * k, b3 = pg;
-        for (int j = 0; j <= segs; ++j)
-        {
-            const double s = double(j) / segs, u = 1.0 - s;
-            const glm::dvec3 p = j == 0 ? pw : j == segs ? pg : b0 * (u * u * u) + b1 * (3 * u * u * s) + b2 * (3 * u * s * s) + b3 * (s * s * s);
-            b.add(p, slerpDir(nw, ng, s), s, glm::vec2(float(r.along / 100.0), float(s)), groundColor(ground, layers, o, p));
-        }
+        for (const ProfilePoint& q : profile)
+            b.add(q.p, q.n, q.side, glm::vec2(float(r.along / 100.0), float(q.side)), groundColor(ground, layers, o, q.p));
     }
     const Index cols = Index(segs + 1);
     const size_t nr = rows.size();
@@ -318,9 +364,235 @@ Mesh slab(const Heightfield& h, int x0, int z0, int x1, int z1, double bottom)
     return Mesh::fromPolygons(pts, sizes, idx);
 }
 
-/** The object's ground skirt by boolean union with a fillet, cut back to the fillet band. False (with why) when it fails. */
+/**
+ * An outer corner of a wall on the ground (a box's vertical edge): the union's fillet tapers there, so the band is cut
+ * back on two planes across the seam, la before the corner and lb after it, and a rolling-ball cap fills the wedge.
+ */
+struct OuterCorner
+{
+    glm::dvec3 c, tIn, tOut, nIn, nOut, pa{0.0}, pb{0.0};
+    double la = 0.0, lb = 0.0;
+    /** Signed distances to the cut planes: the cap's wedge is where fa > 0 and fb < 0. */
+    double fa(const glm::dvec3& p) const { return glm::dot(p - pa, tIn); }
+    double fb(const glm::dvec3& p) const { return glm::dot(p - pb, tOut); }
+};
+
+glm::dvec3 acrossUp(const glm::dvec3& v, const glm::dvec3& up) { return v - up * glm::dot(v, up); }
+
+std::vector<OuterCorner> outerCorners(const Curve& c, const SkirtOptions& o)
+{
+    std::vector<OuterCorner> out;
+    const size_t n = c.points.size();
+    if (n < 3)
+        return out;
+    const glm::dvec3 up = unitTo(o.up, {0, 1, 0});
+    std::vector<double> at(n, 0.0);
+    for (size_t k = 1; k < n; ++k)
+        at[k] = at[k - 1] + glm::length(c.points[k] - c.points[k - 1]);
+    const double total = at[n - 1] + (c.closed ? glm::length(c.points[0] - c.points[n - 1]) : 0.0);
+    std::vector<size_t> found;
+    for (size_t k = c.closed ? 0 : 1; k < (c.closed ? n : n - 1); ++k)
+    {
+        const size_t prev = (k + n - 1) % n, next = (k + 1) % n;
+        const glm::dvec3 tIn = unitTo(acrossUp(c.points[k] - c.points[prev], up), {}), tOut = unitTo(acrossUp(c.points[next] - c.points[k], up), {});
+        if (glm::length(tIn) < 0.5 || glm::length(tOut) < 0.5 || glm::dot(tIn, tOut) > std::cos(glm::radians(30.0)))
+            continue;
+        const glm::dvec3 nIn = unitTo(acrossUp(c.normalA[prev], up), {}), nOut = unitTo(acrossUp(c.normalA[next], up), {});
+        // Outer: the contact turns back toward the wall it came along, away from the ground in front of it.
+        if (glm::length(nIn) < 0.5 || glm::length(nOut) < 0.5 || glm::dot(tOut, nIn) >= -0.2)
+            continue;
+        found.push_back(k);
+        OuterCorner oc;
+        oc.c = c.points[k];
+        oc.tIn = tIn;
+        oc.tOut = tOut;
+        oc.nIn = nIn;
+        oc.nOut = nOut;
+        out.push_back(oc);
+    }
+    const double reach = 1.5 * std::max(o.width, o.radius);
+    auto gap = [&](size_t a, size_t b) { return b >= a ? at[b] - at[a] : total - at[a] + at[b]; };
+    for (size_t i = 0; i < out.size(); ++i)
+    {
+        const size_t k = found[i];
+        double before = at[k], after = (c.closed ? total : at[n - 1]) - at[k];
+        if (c.closed)
+        {
+            before = gap(found[(i + out.size() - 1) % out.size()], k) * 0.5;
+            after = gap(k, found[(i + 1) % out.size()]) * 0.5;
+            if (out.size() == 1)
+                before = after = total * 0.5;
+        }
+        else
+        {
+            if (i > 0)
+                before = (at[k] - at[found[i - 1]]) * 0.5;
+            if (i + 1 < out.size())
+                after = (at[found[i + 1]] - at[k]) * 0.5;
+        }
+        OuterCorner& oc = out[i];
+        oc.la = std::min(reach, before);
+        oc.lb = std::min(reach, after);
+        oc.pa = oc.c - oc.tIn * oc.la;
+        oc.pb = oc.c + oc.tOut * oc.lb;
+    }
+    return out;
+}
+
+struct BandPoint
+{
+    glm::dvec3 p, n;
+    double side = 0.0;
+};
+using BandPoly = std::vector<BandPoint>;
+
+/** The part of a polygon where f <= 0 (Sutherland-Hodgman), new points interpolated along the cut edges. */
+template <typename F>
+BandPoly clipPoly(const BandPoly& poly, F f)
+{
+    BandPoly out;
+    const size_t n = poly.size();
+    for (size_t i = 0; i < n; ++i)
+    {
+        const BandPoint& a = poly[i];
+        const BandPoint& b = poly[(i + 1) % n];
+        const double fa = f(a.p), fb = f(b.p);
+        if (fa <= 0.0)
+            out.push_back(a);
+        if ((fa < 0.0 && fb > 0.0) || (fa > 0.0 && fb < 0.0))
+        {
+            const double t = fa / (fa - fb);
+            out.push_back({a.p + (b.p - a.p) * t, unitTo(a.n + (b.n - a.n) * t, a.n), a.side + (b.side - a.side) * t});
+        }
+    }
+    return out.size() >= 3 ? out : BandPoly{};
+}
+
+/** The polygons with each corner's wedge taken out; a piece that crosses both planes is split in two. */
+std::vector<BandPoly> cutCorners(std::vector<BandPoly> polys, std::span<const OuterCorner> corners)
+{
+    for (const OuterCorner& oc : corners)
+    {
+        std::vector<BandPoly> next;
+        for (const BandPoly& poly : polys)
+        {
+            if (BandPoly before = clipPoly(poly, [&](const glm::dvec3& p) { return oc.fa(p); }); !before.empty())
+                next.push_back(std::move(before));
+            const BandPoly past = clipPoly(poly, [&](const glm::dvec3& p) { return -oc.fa(p); });
+            if (!past.empty())
+                if (BandPoly beyond = clipPoly(past, [&](const glm::dvec3& p) { return -oc.fb(p); }); !beyond.empty())
+                    next.push_back(std::move(beyond));
+        }
+        polys = std::move(next);
+    }
+    return polys;
+}
+
+/**
+ * Faces from row a to row b (each wall border first) as quads where they match and a zipper of triangles where they
+ * don't, wound like the quad (a[j], a[j + 1], b[j + 1], b[j]), or the reverse when flip.
+ */
+void stitchRows(Builder& b, const std::vector<Index>& ra, const std::vector<Index>& rb, bool flip)
+{
+    auto emit = [&](std::vector<Index> f) {
+        if (flip)
+            std::reverse(f.begin(), f.end());
+        b.polygon(std::move(f));
+    };
+    if (ra.size() == rb.size())
+    {
+        for (size_t j = 0; j + 1 < ra.size(); ++j)
+            emit({ra[j], ra[j + 1], rb[j + 1], rb[j]});
+        return;
+    }
+    auto param = [&](const std::vector<Index>& r) {
+        std::vector<double> t(r.size(), 0.0);
+        for (size_t k = 1; k < r.size(); ++k)
+            t[k] = t[k - 1] + glm::length(b.pts[r[k]] - b.pts[r[k - 1]]);
+        for (double& v : t)
+            v /= std::max(t.back(), 1e-12);
+        return t;
+    };
+    const std::vector<double> ta = param(ra), tb = param(rb);
+    size_t i = 0, j = 0;
+    while (i + 1 < ra.size() || j + 1 < rb.size())
+    {
+        if (j + 1 >= rb.size() || (i + 1 < ra.size() && ta[i + 1] <= tb[j + 1]))
+        {
+            emit({ra[i], ra[i + 1], rb[j]});
+            ++i;
+        }
+        else
+        {
+            emit({ra[i], rb[j + 1], rb[j]});
+            ++j;
+        }
+    }
+}
+
+/**
+ * The rolling-ball cap of one corner: straight rows from the cut before the corner, a fan turning the profile round
+ * the corner, straight rows to the cut after it. Its end rows are the band's points on the cut planes, so it welds.
+ */
+void cornerCap(Builder& b, const OuterCorner& oc, const std::vector<Index>& endA, const std::vector<Index>& endB, const Surface& wall,
+               const Surface& floor, const Ground* ground, const std::vector<std::string>& layers, const SkirtOptions& o)
+{
+    const glm::dvec3 up = unitTo(o.up, {0, 1, 0});
+    auto groundNormal = [&](const glm::dvec3& p) {
+        glm::dvec3 at, n;
+        return floor.project(p, at, n) ? n : up;
+    };
+    std::vector<SkirtRow> rows;
+    const double step = std::max(0.5, o.spacing);
+    const int na = std::max(1, int(std::ceil(oc.la / step))), nb = std::max(1, int(std::ceil(oc.lb / step)));
+    for (int k = 0; k < na; ++k)
+    {
+        const glm::dvec3 p = oc.pa + oc.tIn * (oc.la * k / na);
+        rows.push_back({p, oc.tIn, oc.nIn, groundNormal(p)});
+    }
+    const double turn = std::acos(std::clamp(glm::dot(oc.nIn, oc.nOut), -1.0, 1.0));
+    const int fan = std::max(2, int(std::ceil(glm::degrees(turn) / 12.0)));
+    const glm::dvec3 nc = groundNormal(oc.c);
+    for (int k = 0; k <= fan; ++k)
+    {
+        const double s = double(k) / fan;
+        rows.push_back({oc.c, slerpDir(oc.tIn, oc.tOut, s), slerpDir(oc.nIn, oc.nOut, s), nc, 0.0, k > 0 && k < fan});
+    }
+    for (int k = 1; k <= nb; ++k)
+    {
+        const glm::dvec3 p = oc.c + oc.tOut * (oc.lb * k / nb);
+        rows.push_back({p, oc.tOut, oc.nOut, groundNormal(p)});
+    }
+    std::vector<std::vector<Index>> ids;
+    std::vector<ProfilePoint> profile;
+    for (size_t r = 0; r < rows.size(); ++r)
+    {
+        const bool first = r == 0, last = r + 1 == rows.size();
+        if ((first && endA.size() >= 2) || (last && endB.size() >= 2))
+        {
+            ids.push_back(first ? endA : endB);
+            continue;
+        }
+        if (!profileRow(rows[r], wall, floor, o, profile))
+            return;
+        std::vector<Index>& row = ids.emplace_back();
+        for (const ProfilePoint& q : profile)
+            row.push_back(b.shared(q.p, q.n, q.side, glm::vec2(0.0f, float(q.side)), groundColor(ground, layers, o, q.p)));
+    }
+    if (ids.size() < 3)
+        return;
+    // Face out of the wedge, like the band: the profile's normal against the first full row's quad.
+    const std::vector<Index>& r1 = ids[1];
+    const std::vector<Index>& r2 = ids[2];
+    const glm::dvec3 a0 = b.pts[r1[0]], a1 = b.pts[r1[1]], c0 = b.pts[r2[0]] == a0 ? b.pts[r2[1]] : b.pts[r2[0]];
+    const bool flip = glm::dot(glm::cross(a1 - a0, c0 - a0), b.nrm[r1[1]]) < 0.0;
+    for (size_t r = 0; r + 1 < ids.size(); ++r)
+        stitchRows(b, ids[r], ids[r + 1], flip);
+}
+
+/** The object's ground skirt by boolean union with a fillet, cut back to the fillet band, outer corners capped round. False (with why) when it fails. */
 bool unionObject(Builder& b, int object, std::span<const Object> objects, const Ground* ground, int groundObject, const std::vector<std::string>& layers,
-                 const SkirtOptions& o, std::string* why)
+                 const std::vector<const Curve*>& curves, const SkirtOptions& o, std::string* why)
 {
     const Object& obj = objects[size_t(object)];
     Mesh ground3;
@@ -371,25 +643,28 @@ bool unionObject(Builder& b, int object, std::span<const Object> objects, const 
     constexpr double kOn = 0.05;
     std::vector<double> dw(m.pointCapacity(), 0.0), dg(m.pointCapacity(), 0.0);
     std::vector<glm::dvec3> nw(m.pointCapacity()), ng(m.pointCapacity());
+    std::vector<uint8_t> below(m.pointCapacity(), 0);
     for (Index p = 0; p < m.pointCapacity(); ++p)
         if (m.pointValid(p))
         {
             glm::dvec3 at;
             wall.project(m.position(p), at, nw[p], &dw[p]);
             floor.project(m.position(p), at, ng[p], &dg[p]);
+            below[p] = glm::dot(m.position(p) - at, ng[p]) < -kOn;
         }
-    // The fillet band: faces with a point off both source surfaces.
+    // The fillet band: faces with a point off both source surfaces, none under the ground (the slab's sides and bottom).
     std::vector<Index> keep;
     for (Index f = 0; f < m.faceCapacity(); ++f)
     {
         if (!m.faceValid(f))
             continue;
-        bool off = false;
+        bool off = false, under = false;
         m.forEachFaceCorner(f, [&](Index c) {
             const Index p = m.cornerPoint(c);
             off |= dw[p] > kOn && dg[p] > kOn;
+            under |= below[p] != 0;
         });
-        if (off)
+        if (off && !under)
             keep.push_back(f);
     }
     if (keep.empty())
@@ -403,22 +678,56 @@ bool unionObject(Builder& b, int object, std::span<const Object> objects, const 
         const glm::dvec3 a = m.faceAreaVector(f);
         m.forEachFaceCorner(f, [&](Index c) { smooth[m.cornerPoint(c)] += a; });
     }
-    std::vector<Index> remap(m.pointCapacity(), lila::geo::kInvalid);
+    std::vector<BandPoly> polys;
     for (Index f : keep)
     {
-        std::vector<Index> face;
+        BandPoly& poly = polys.emplace_back();
         m.forEachFaceCorner(f, [&](Index c) {
             const Index p = m.cornerPoint(c);
-            if (remap[p] == lila::geo::kInvalid)
-            {
-                const double side = dw[p] <= kOn ? 0.0 : dg[p] <= kOn ? 1.0 : std::clamp(dw[p] / std::max(1e-9, dw[p] + dg[p]), 0.0, 1.0);
-                const glm::dvec3 n = dw[p] <= kOn ? nw[p] : dg[p] <= kOn ? ng[p] : unitTo(smooth[p], ng[p]);
-                remap[p] = b.add(m.position(p), n, side, glm::vec2(0.0f, float(side)), groundColor(ground, layers, o, m.position(p)));
-            }
-            face.push_back(remap[p]);
+            const double side = dw[p] <= kOn ? 0.0 : dg[p] <= kOn ? 1.0 : std::clamp(dw[p] / std::max(1e-9, dw[p] + dg[p]), 0.0, 1.0);
+            const glm::dvec3 n = dw[p] <= kOn ? nw[p] : dg[p] <= kOn ? ng[p] : unitTo(smooth[p], ng[p]);
+            poly.push_back({m.position(p), n, side});
         });
-        b.sizes.push_back(Index(face.size()));
-        b.idx.insert(b.idx.end(), face.begin(), face.end());
+    }
+    std::vector<OuterCorner> corners;
+    for (const Curve* c : curves)
+        for (const OuterCorner& oc : outerCorners(*c, o))
+            corners.push_back(oc);
+    polys = cutCorners(std::move(polys), corners);
+    // Points the cut made on a border take their surface's normal, not one interpolated along the edge.
+    for (BandPoly& poly : polys)
+        for (BandPoint& q : poly)
+            if (glm::dvec3 at, n; (q.side <= 0.0 && wall.project(q.p, at, n)) || (q.side >= 1.0 && floor.project(q.p, at, n)))
+                q.n = n;
+    for (const BandPoly& poly : polys)
+    {
+        std::vector<Index> face;
+        for (const BandPoint& q : poly)
+            face.push_back(b.shared(q.p, q.n, q.side, glm::vec2(0.0f, float(q.side)), groundColor(ground, layers, o, q.p)));
+        b.polygon(std::move(face));
+    }
+    // Each cap starts and ends on the band's points on its cut planes, wall border first.
+    constexpr double kPlane = 1e-6;
+    for (const OuterCorner& oc : corners)
+    {
+        std::vector<std::pair<double, Index>> onA, onB;
+        for (const BandPoly& poly : polys)
+            for (const BandPoint& q : poly)
+            {
+                if (std::abs(oc.fa(q.p)) < kPlane && oc.fb(q.p) < 0.0)
+                    onA.push_back({q.side, b.shared(q.p, q.n, q.side, {}, {})});
+                else if (std::abs(oc.fb(q.p)) < kPlane && oc.fa(q.p) > 0.0)
+                    onB.push_back({q.side, b.shared(q.p, q.n, q.side, {}, {})});
+            }
+        auto row = [](std::vector<std::pair<double, Index>> v) {
+            std::sort(v.begin(), v.end());
+            std::vector<Index> out;
+            for (const auto& [s, id] : v)
+                if (out.empty() || out.back() != id)
+                    out.push_back(id);
+            return out;
+        };
+        cornerCap(b, oc, row(onA), row(onB), wall, floor, ground, layers, o);
     }
     return true;
 }
@@ -490,7 +799,10 @@ SkirtResult buildSkirt(const Result& r, std::span<const Object> objects, const G
     {
         std::string why;
         const int g = unionGround[object];
-        if (unionObject(b, object, objects, ground, g >= 0 ? g : -1, r.layers, o, &why))
+        std::vector<const Curve*> own;
+        for (size_t ci : curves)
+            own.push_back(&r.curves[ci]);
+        if (unionObject(b, object, objects, ground, g >= 0 ? g : -1, r.layers, own, o, &why))
             continue;
         // Say what was used instead and why.
         for (size_t ci : curves)
