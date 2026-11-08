@@ -2410,9 +2410,13 @@ Extracted buildPatchMesh(const Layout& lay, const std::vector<uint8_t>& blocked,
             return it->second;
         };
         std::vector<std::array<Index, 3>> tris;
+        std::vector<double> triSize; // the size field's edge length over each fan triangle's surface triangle
         for (Index pi : piecesOf[p])
         {
             const std::vector<Index>& poly = polyPid[pi];
+            const Index st = pieces[pi].tri;
+            const double chartLen = glm::length(lay.chart[st][1] - lay.chart[st][0]);
+            const double size = chartLen > 0.0 ? glm::length(s.pos[s.tris[st][1]] - s.pos[s.tris[st][0]]) / chartLen : 1.0;
             glm::dvec3 c(0.0);
             for (Index w : poly)
                 c += weld.pos(w) / double(poly.size());
@@ -2420,7 +2424,10 @@ Extracted buildPatchMesh(const Layout& lay, const std::vector<uint8_t>& blocked,
             pos.push_back(c);
             for (size_t k = 0; k < poly.size(); ++k)
                 if (poly[k] != poly[(k + 1) % poly.size()])
+                {
                     tris.push_back({centre, localOf(poly[k]), localOf(poly[(k + 1) % poly.size()])});
+                    triSize.push_back(size);
+                }
         }
         // Border points on the domain polygon: corners on a regular polygon (a rectangle W x H when four-sided), the
         // rest placed along their side by whole steps.
@@ -2485,7 +2492,8 @@ Extracted buildPatchMesh(const Layout& lay, const std::vector<uint8_t>& blocked,
                 }
             }
         }
-        // Tutte: each inner point at the weighted mean of its neighbours, cotangent weights clamped positive.
+        // Tutte: each inner point at the weighted mean of its neighbours, cotangent weights clamped positive. Each weight
+        // also scales by the size field there, so grid lines crowd where faces should be small.
         std::vector<Index> inner(pos.size(), kInvalid);
         Index ni = 0;
         for (size_t i = 0; i < pos.size(); ++i)
@@ -2494,13 +2502,14 @@ Extracted buildPatchMesh(const Layout& lay, const std::vector<uint8_t>& blocked,
         if (ni > 0)
         {
             std::map<std::pair<Index, Index>, double> w;
-            for (const auto& t : tris)
+            for (size_t ti = 0; ti < tris.size(); ++ti)
                 for (int k = 0; k < 3; ++k)
                 {
+                    const auto& t = tris[ti];
                     const Index a = t[k], b = t[(k + 1) % 3], o = t[(k + 2) % 3];
                     const glm::dvec3 ea = pos[a] - pos[o], eb = pos[b] - pos[o];
                     const double cot = glm::dot(ea, eb) / std::max(glm::length(glm::cross(ea, eb)), 1e-300);
-                    w[{std::min(a, b), std::max(a, b)}] += 0.5 * cot;
+                    w[{std::min(a, b), std::max(a, b)}] += 0.5 * cot * triSize[ti];
                 }
             std::vector<Eigen::Triplet<double>> trip;
             Eigen::MatrixXd rhs = Eigen::MatrixXd::Zero(ni, 2);
@@ -2870,7 +2879,8 @@ struct PatchStats
 };
 } // namespace
 
-Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, const std::vector<double>& scale, double targetCells, std::string* error)
+Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, const std::vector<double>& scale, double targetCells, std::string* error,
+                        const std::vector<glm::dvec3>& crosses)
 {
     LILA_ZONE();
     auto fail = [&](const std::string& why) {
@@ -2897,6 +2907,34 @@ Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, cons
         return w.x * s.pos[s.tris[P.tri][0]] + w.y * s.pos[s.tris[P.tri][1]] + w.z * s.pos[s.tris[P.tri][2]];
     };
     const double unit = s.meanEdgeLength() * 1e-6;
+    std::vector<ExtraStart> crossStarts;
+    for (const glm::dvec3& c : crosses)
+    {
+        // The nearest triangle, by its centroid, and the point in it, by barycentrics clamped inside.
+        Index best = kInvalid;
+        double bestD = std::numeric_limits<double>::max();
+        for (Index t = 0; t < Index(s.tris.size()); ++t)
+        {
+            const double d = glm::length((s.pos[s.tris[t][0]] + s.pos[s.tris[t][1]] + s.pos[s.tris[t][2]]) / 3.0 - c);
+            if (d < bestD)
+            {
+                bestD = d;
+                best = t;
+            }
+        }
+        if (best == kInvalid || bestD > 4.0 * s.meanEdgeLength())
+            continue;
+        const glm::dvec3 a = s.pos[s.tris[best][0]], e1 = s.pos[s.tris[best][1]] - a, e2 = s.pos[s.tris[best][2]] - a, d = c - a;
+        const double d11 = glm::dot(e1, e1), d12 = glm::dot(e1, e2), d22 = glm::dot(e2, e2), den = d11 * d22 - d12 * d12;
+        double v = den > 0.0 ? (d22 * glm::dot(d, e1) - d12 * glm::dot(d, e2)) / den : 1.0 / 3.0;
+        double w = den > 0.0 ? (d11 * glm::dot(d, e2) - d12 * glm::dot(d, e1)) / den : 1.0 / 3.0;
+        v = std::clamp(v, 0.05, 0.9);
+        w = std::clamp(w, 0.05, 0.95 - v);
+        const Chart& ch = lay.chart[best];
+        const glm::dvec2 at = (1.0 - v - w) * ch[0] + v * ch[1] + w * ch[2];
+        for (int k = 0; k < 4; ++k)
+            crossStarts.push_back({best, at, k, 0.0});
+    }
     std::vector<ExtraStart> extras;
     Traces tr;
     std::vector<uint8_t> slitTracer; // per tracer: a line with the same patch on both sides
@@ -3010,7 +3048,9 @@ Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, cons
     for (int round = 0;; ++round)
     {
         st = {};
-        tr = trace(lay, extras, dropped);
+        std::vector<ExtraStart> starts = crossStarts;
+        starts.insert(starts.end(), extras.begin(), extras.end());
+        tr = trace(lay, starts, dropped);
         if (tr.runaway)
             return fail("patch lines kept stopping each other");
         st.tracers = int(tr.end.size());
