@@ -167,26 +167,35 @@ bool layRectangle(Chart& ch)
         glm::dvec2 d1 = b - a, d2 = c - b;
         turn[i] = std::atan2(d1.x * d2.y - d1.y * d2.x, glm::dot(d1, d2));
     }
-    // Four sharpest left turns, kept apart along the loop.
     std::vector<size_t> order(n);
     for (size_t i = 0; i < n; ++i)
         order[i] = i;
     std::stable_sort(order.begin(), order.end(), [&](size_t x, size_t y) { return turn[x] > turn[y]; });
-    std::vector<size_t> corners;
-    size_t gap = std::max<size_t>(1, n / 8);
-    for (size_t i : order)
-    {
-        bool close = false;
-        for (size_t c : corners)
+    // The four sharpest left turns at least `gap` vertices apart, counting only turns sharper than minTurn.
+    auto pick = [&](size_t gap, double minTurn) {
+        std::vector<size_t> corners;
+        for (size_t i : order)
         {
-            size_t d = i > c ? i - c : c - i;
-            close |= std::min(d, n - d) < gap;
+            if (turn[i] < minTurn)
+                break;
+            bool close = false;
+            for (size_t c : corners)
+            {
+                size_t d = i > c ? i - c : c - i;
+                close |= std::min(d, n - d) < gap;
+            }
+            if (!close)
+                corners.push_back(i);
+            if (corners.size() == 4)
+                break;
         }
-        if (!close)
-            corners.push_back(i);
-        if (corners.size() == 4)
-            break;
-    }
+        return corners;
+    };
+    // Real corners first, however close: a long strip's short ends put two corners only a few vertices apart.
+    // A round island has none, so its four are then spread around the loop.
+    std::vector<size_t> corners = pick(2, glm::quarter_pi<double>());
+    if (corners.size() < 4)
+        corners = pick(std::max<size_t>(1, n / 8), -glm::pi<double>());
     if (corners.size() < 4)
         return false;
     std::sort(corners.begin(), corners.end());
