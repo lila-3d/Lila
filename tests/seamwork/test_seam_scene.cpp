@@ -4,11 +4,14 @@
 #include "ops/Command.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
+#include "scene/Overlap.h"
+#include "geo/Heightfield.h"
 
 #include <doctest/doctest.h>
 
 #include <array>
 #include <cmath>
+#include <filesystem>
 
 using namespace lila;
 using namespace testutil;
@@ -118,6 +121,67 @@ TEST_CASE("seamFind: a wall on a terrain gives a live join, a field and a terrai
     moveTo(wall, {0, -100, 0});
     const json back = run("seamInfo", {{"args", {r["seam"]}}});
     CHECK(back["length"].get<double>() == doctest::Approx(840.0).epsilon(0.001));
+}
+
+TEST_CASE("terrainSpec: a seams key finds and covers contacts once the terrain is built")
+{
+    load();
+    run("newScene");
+    const std::string wall = box("SpecWall", {-200, -20, -10}, {200, 280, 10}, 4);
+    const json r = run("terrainSpec", {{"spec",
+                                        {{"name", "SpecGround"},
+                                         {"size", json::array({4000, 4000})},
+                                         {"resolution", 81},
+                                         {"source", {{"type", "flat"}}},
+                                         {"check", false},
+                                         {"seams", {{"objects", json::array({wall})}, {"skirt", {{"width", 30}}}, {"decal", true}}}}}});
+    INFO(r.dump().substr(0, 3000));
+    CHECK(r["ok"] == true);
+    json step;
+    for (const json& s : r["steps"])
+        if (s["step"] == "seams")
+            step = s;
+    REQUIRE_FALSE(step.is_null());
+    CHECK(step["ok"] == true);
+    CHECK(step["result"]["curves"].get<int>() == 1);
+    CHECK(step["result"].contains("skirt"));
+    CHECK(step["result"].contains("decal"));
+
+    // An unknown key is still refused.
+    CHECK_THROWS(ops::execute("terrainSpec", {{"spec", {{"name", "SpecGround2"}, {"seamz", true}}}}));
+}
+
+TEST_CASE("overlap: Stagehand measures how deep a box sits in a heightfield")
+{
+    load();
+    const geo::Heightfield ground = geo::makeHeightfield(41, 41, 50.0, {-1000.0, -1000.0}, 0.0f);
+    std::string label;
+    std::unique_ptr<overlap::Session> s = overlap::open(ground, &label);
+    REQUIRE(s);
+    CHECK(label == "stagehand");
+    auto cube = [](double bottom) {
+        std::vector<glm::dvec3> p;
+        for (int k = 0; k < 8; ++k)
+            p.push_back({(k & 1) ? 50.0 : -50.0, bottom + ((k & 2) ? 100.0 : 0.0), (k & 4) ? 50.0 : -50.0});
+        return p;
+    };
+    const glm::dvec3 up(0.0, 1.0, 0.0);
+    CHECK(s->depth(cube(-30.0), up) == doctest::Approx(30.0).epsilon(0.05));
+    CHECK(s->depth(cube(10.0), up) == doctest::Approx(0.0));
+    CHECK(s->depth(cube(-60.0), up) == doctest::Approx(60.0).epsilon(0.05));
+    CHECK(s->depth(cube(-150.0), up) == doctest::Approx(150.0).epsilon(0.05));
+    // Sideways out of a step: a box pushed 40 cm into a 500 cm wall leaves it after 40 cm.
+    geo::Heightfield step = geo::makeHeightfield(81, 41, 25.0, {-1000.0, -500.0}, 0.0f);
+    for (int z = 0; z < step.nz; ++z)
+        for (int x = 0; x < step.nx; ++x)
+            if (step.samplePos(x, z).x >= 0.0)
+                step.heights[step.index(x, z)] = 500.0f;
+    std::unique_ptr<overlap::Session> wall = overlap::open(step);
+    REQUIRE(wall);
+    std::vector<glm::dvec3> pushed;
+    for (int k = 0; k < 8; ++k)
+        pushed.push_back({(k & 1) ? 40.0 : -60.0, 10.0 + ((k & 2) ? 100.0 : 0.0), (k & 4) ? 50.0 : -50.0});
+    CHECK(wall->depth(pushed, glm::dvec3(-1.0, 0.0, 0.0)) == doctest::Approx(64.5).epsilon(0.05));
 }
 
 TEST_CASE("seamFind: tags leave objects out and seamCheck reports floating and open joins")

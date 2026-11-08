@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -349,6 +350,12 @@ struct KitParams
     double floatTolerance = 25.0;
     /** Deepest a piece may go into the ground at its back, as a fraction of its depth. */
     double maxPenetration = 0.6;
+    /**
+     * How deep, cm, a piece's back sits in the ground: how far its hull (its samples, placed, in the ground's space, the
+     * sunk base raised to the sink depth above its foot) must move along its outward facing to clear it. A physics check
+     * (overlap::Session); null judges by the share of samples under the ground instead.
+     */
+    std::function<double(std::span<const glm::dvec3>, const glm::dvec3&)> depthOf;
     /** Gaps wider than this along the face get smaller pieces, cm. */
     double gap = 150.0;
     int maxPieces = 4000;

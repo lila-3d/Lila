@@ -936,6 +936,8 @@ double RigidScene::penetration(int body) const
     const JPH::TransformedShape ts = w.bi().GetTransformedShape(id);
     JPH::CollideShapeSettings settings;
     settings.mMaxSeparationDistance = 0.0f;
+    // A body sunk past the middle of a mesh or heightfield faces its triangles from behind, and is still inside.
+    settings.mBackFaceMode = JPH::EBackFaceMode::CollideWithBackFaces;
     JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> hits;
     JPH::IgnoreSingleBodyFilter self(id);
     w.system.GetNarrowPhaseQueryNoLock().CollideShape(ts.mShape, ts.GetShapeScale(), ts.GetCenterOfMassTransform(), settings, JPH::RVec3::sZero(), hits,

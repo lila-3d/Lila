@@ -10,6 +10,7 @@
 #include <lila/GeometryNodes.h>
 #include <lila/Log.h>
 #include <lila/Math.h>
+#include <lila/Overlap.h>
 #include <lila/Profile.h>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -377,6 +378,38 @@ gn::NodeDecl kitDecl()
             inst->references.push_back(gn::makeGeometry(std::move(ref)));
             names.push_back(n.get<std::string>());
         }
+        // Over-buried pieces by Stagehand's physics when it is loaded, on the ground round the region only.
+        std::string check = "samples";
+        std::unique_ptr<lila::overlap::Session> session;
+        if (!r.rings.empty())
+        {
+            glm::dvec2 lo(1e300), hi(-1e300);
+            for (const auto& ring : r.rings)
+                for (const glm::dvec2& q : ring)
+                {
+                    lo = glm::min(lo, q);
+                    hi = glm::max(hi, q);
+                }
+            const double margin = 2.0 * std::max(1.0, r.high - r.low) + 4.0 * ground.cell;
+            const int x0 = std::max(0, int(std::floor((lo.x - margin - ground.origin.x) / ground.cell)));
+            const int z0 = std::max(0, int(std::floor((lo.y - margin - ground.origin.y) / ground.cell)));
+            const int x1 = std::min(ground.nx - 1, int(std::ceil((hi.x + margin - ground.origin.x) / ground.cell)));
+            const int z1 = std::min(ground.nz - 1, int(std::ceil((hi.y + margin - ground.origin.y) / ground.cell)));
+            if (x1 > x0 && z1 > z0)
+            {
+                Heightfield crop = lila::geo::makeHeightfield(x1 - x0 + 1, z1 - z0 + 1, ground.cell, ground.samplePos(x0, z0));
+                for (int z = z0; z <= z1; ++z)
+                    for (int x = x0; x <= x1; ++x)
+                        crop.heights[crop.index(x - x0, z - z0)] = ground.at(x, z);
+                std::string label;
+                session = lila::overlap::open(crop, &label);
+                if (session)
+                {
+                    check = label;
+                    p.depthOf = [&session](std::span<const glm::dvec3> hull, const glm::dvec3& out) { return session->depth(hull, out); };
+                }
+            }
+        }
         const KitResult res = fitKit(ground, r, kit, p);
         const glm::dmat4 toOwner = glm::inverse(c.env.ownerMatrix) * world;
         for (const KitPlacement& k : res.placed)
@@ -390,7 +423,10 @@ gn::NodeDecl kitDecl()
         }
         publishResult(c.env.owner, c.node.name,
                       {{"placed", res.placed.size()}, {"fillers", res.fillers}, {"rejectedFloating", res.rejectedFloating},
-                       {"rejectedPenetrating", res.rejectedPenetrating}, {"coverage", res.coverage}, {"pieces", names}});
+                       {"rejectedPenetrating", res.rejectedPenetrating}, {"coverage", res.coverage}, {"pieces", names},
+                       {"penetrationCheck", check},
+                       {"warnings", check == "samples" ? json::array({"Stagehand isn't loaded, so over-buried pieces were judged by how many of their sample points sit under the ground"})
+                                                       : json::array()}});
         gn::Geometry out;
         out.instances = std::move(inst);
         c.out("instances", gn::makeGeometry(std::move(out)));

@@ -213,6 +213,8 @@ std::vector<NodeId> neighbours(Graph& g, const std::vector<NodeId>& seeds, doubl
 bool registerNodes(lila::ext::Context& ctx);
 void registerCommands(lila::ext::Context& ctx);
 void registerUi(lila::ext::Context& ctx);
+/** overlap::providers' "stagehand": penetration depth against a heightfield, for other extensions (Terrain's cliff kits). */
+void registerPenetrationCheck(lila::ext::Context& ctx);
 /** The stagehandAsset node type, and the library and placement commands (Place.cpp). */
 bool registerLibraryNodes(lila::ext::Context& ctx);
 void registerLibraryCommands(lila::ext::Context& ctx);

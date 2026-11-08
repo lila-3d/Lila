@@ -112,6 +112,7 @@ lila_module(lila_scene Scene
     SoftSelect.cpp
     Spaces.cpp
     SpecSteps.cpp SpecSteps.h
+    Overlap.cpp Overlap.h
     Take.cpp
     TextureFolders.cpp
     TransferAttributes.cpp

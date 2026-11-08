@@ -1675,12 +1675,15 @@ KitResult fitKit(const Heightfield& ground, const Region& region, const std::vec
         m[3] = glm::dvec4(g.x, baseY, g.y, 1.0);
         const glm::dmat4 rot = glm::rotate(glm::dmat4(1.0), turn, glm::dvec3(0, 1, 0)) * glm::rotate(glm::dmat4(1.0), tilt, glm::dvec3(1, 0, 0));
         m = m * rot * glm::scale(glm::dmat4(1.0), glm::dvec3(scale)) * glm::translate(glm::dmat4(1.0), glm::dvec3(-(piece.lo.x + 0.5 * piece.size.x), -piece.lo.y, -(piece.lo.z + 0.5 * piece.size.z)));
-        // Floating: the lowest samples well above the ground; penetrating: most of the piece inside the hill.
+        // Floating: the lowest samples well above the ground; penetrating: buried deeper than maxPenetration of its depth.
         double lowest = 1e300;
         size_t inside = 0;
+        std::vector<glm::dvec3> placed;
+        placed.reserve(piece.samples.size());
         for (const glm::dvec3& q : piece.samples)
         {
             const glm::dvec3 w = glm::dvec3(m * glm::dvec4(q, 1.0));
+            placed.push_back(w);
             const double gh = ground.heightAt(w.x, w.z);
             lowest = std::min(lowest, w.y - gh);
             if (w.y < gh - 1.0)
@@ -1693,7 +1696,19 @@ KitResult fitKit(const Heightfield& ground, const Region& region, const std::vec
                 ++out.rejectedFloating;
                 return false;
             }
-            if (double(inside) / double(piece.samples.size()) > p.maxPenetration)
+            bool buried = false;
+            if (p.depthOf)
+            {
+                // The base is sunk on purpose, and the ground in front of it is never flat: only what stands more than
+                // the sink above the foot is measured.
+                const double foot = ground.heightAt(g.x, g.y) + std::max(1.0, p.sink * piece.size.y * scale);
+                for (glm::dvec3& q : placed)
+                    q.y = std::max(q.y, foot);
+                buried = p.depthOf(placed, fwd) > p.maxPenetration * piece.size.z * scale;
+            }
+            else
+                buried = double(inside) / double(piece.samples.size()) > p.maxPenetration;
+            if (buried)
             {
                 ++out.rejectedPenetrating;
                 return false;

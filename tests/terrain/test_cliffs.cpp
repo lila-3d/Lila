@@ -316,6 +316,41 @@ TEST_CASE("cliffs: kit pieces fit along a cliff, none floating, gaps filled")
     }
 }
 
+TEST_CASE("cliffs: a physics depth check rejects kit pieces buried past maxPenetration of their depth")
+{
+    const geo::Heightfield h = escarpment();
+    const std::vector<Region> r = findRegions(h, RegionParams{});
+    REQUIRE(!r.empty());
+    KitPiece k;
+    k.name = "rock";
+    k.size = {500.0, 1000.0, 400.0};
+    k.lo = {-250.0, 0.0, -200.0};
+    for (int i = 0; i <= 4; ++i)
+        for (int j = 0; j <= 4; ++j)
+            k.samples.push_back({-250.0 + 500.0 * i / 4.0, 1000.0 * j / 4.0, 200.0});
+    KitParams p;
+    size_t asked = 0;
+    // Every piece reads as buried 300 cm deep: past 0.6 of a 400 cm deep piece at scale 1.2 or more, clear below.
+    p.depthOf = [&asked](std::span<const glm::dvec3> hull, const glm::dvec3& out) {
+        ++asked;
+        CHECK(hull.size() == 25);
+        CHECK(std::abs(out.y) < 1e-9);
+        return 300.0;
+    };
+    p.maxPenetration = 0.6;
+    p.scaleJitter = 0.0;
+    const KitResult deep = fitKit(h, r[0], {k}, p);
+    CHECK(asked > 0);
+    p.maxPenetration = 0.01;
+    const KitResult strict = fitKit(h, r[0], {k}, p);
+    CHECK(strict.placed.empty());
+    CHECK(strict.rejectedPenetrating > 0);
+    p.maxPenetration = 10.0;
+    const KitResult loose = fitKit(h, r[0], {k}, p);
+    CHECK(loose.rejectedPenetrating == 0);
+    CHECK(loose.placed.size() >= deep.placed.size());
+}
+
 TEST_CASE("cliffs: an extruded wall rises from the ground to the stamped plateau, layered")
 {
     geo::Heightfield h = geo::makeHeightfieldCovering({0.0, 0.0}, {12800.0, 12800.0}, 129);

@@ -19,5 +19,6 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(lila::ext::Context& ctx)
     stagehand::registerUi(ctx);
     stagehand::registerLibraryUi(ctx);
     stagehand::registerKitUi(ctx);
+    stagehand::registerPenetrationCheck(ctx);
     return 0;
 }
