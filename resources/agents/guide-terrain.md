@@ -12,6 +12,8 @@ A terrain is a mesh whose geometry-nodes modifier builds a heightfield. Lengths 
 - Add a river, lake or sea: `terrainAddRiver`, `terrainAddLake`, `terrainSeaLevel`. See "Water: rivers, lakes, sea".
 - Caves, overhangs, arches: `terrainCave`, `terrainOverhang`, `terrainArch`. See "Caves, overhangs and arches".
 - Cover building bases (where walls, rocks and props meet the ground): read `lila://guide/contacts`; in short `seamFind(...)`, then `seamScatter`, `seamDecal` or `seamSkirt`, and `seamCheck()` until `ok`.
+- Cliffs from slopes: `terrainCliffs(t, slope=50)`, then `terrainCliffMesh(t, region='all')` (or `terrainCliffs(t, mesh=True)`), then `terrainGroundCover(t, rules=['scree', 'ledgePlants', 'hangingRoots'])` and `terrainCheck(t)`. See "Cliffs".
+- Ship cliffs to UE: `terrainSendToUnreal(t, cliffs=True)`, or `terrainSendCliffs(t, cellSize=12800)` after the landscape. Same section.
 - Check it: `terrainCheck(t)` until `ok`. Look at it: `terrainMap(t, file=)`.
 - Compare options: `terrainWedge(spec=, vary={'seed': [1, 2, 3]})`. See "Wedges".
 - Ship it: `terrainSendToUnreal(t)` or `terrainExport(t, target='unreal'|'unity'|'godot'|'files'|'mesh')`. See "To Unreal" and "To other engines and as meshes".
@@ -149,6 +151,26 @@ The heightfield is the ground; a volume adds to it and carves from it. Edits go 
 - Split (`terrainSplit(t, split=True, lods=3, minRoof=200, margin=1, skirt=200, maxHeightError=0)`): what the heightfield can hold goes into its heights; each connected place it can't becomes a mesh piece. Caves with at least `minRoof` of rock above keep the landscape on top; openings get a `holes` mask and a piece that fills them exactly, its edge on the ground and a skirt below. `split=False` keeps the heights and meshes every change. `maxHeightError=100` also meshes sheer detail the cells are too coarse for.
 - `terrainCheck(t)` adds `volumeSeam`, `volumeHoles`, `volumeUnmeshed` and `volumeEdit` issues.
 - Export: `terrainExport` writes `<name>_<piece>.fbx` (LOD group, world space about each piece's centre) and, for Unreal, `<name>_visibility.raw` instead of a holes paint layer. `terrainSendToUnreal` places the pieces as static meshes, writes the holes to the landscape's visibility layer, adds a Landscape Visibility Mask to Lila's generated landscape material, and gives the pieces `MI_<Label>_Volume` on `MF_LilaTerrainVolume` (triplanar, matching GroundColor); `volumeMaterial=` uses yours. Your own landscape material needs a Landscape Visibility Mask on Opacity Mask for the holes to show.
+
+## Cliffs
+
+Heightfields smear on steep slopes; cliffs replace them with meshes that hold layered rock, ledges and overhangs.
+
+- Cliffs from slopes: `c = terrainCliffs(t, slope=50, minArea=40, minHeight=400, mergeDistance=400)` stores regions `cliff_1`, `cliff_2`, ... (largest first; `region:cliff_1` works in every command, mask `region_cliff_1` in material rules). Each has `facing`, `facingDegrees` (0 faces -Z, 90 faces +X, like `aspect`), `strata`, `low`, `high`, `heightCm`, `areaM2`, `polygon`. `terrainCliffs(t, list=True)` lists them and what was built.
+- Mesh them: `terrainCliffMesh(t, region='cliff_1' | [...] | 'all', mode='proud', depth=150, strataHeight=250, undercut=0.55, ledges=0.3, noise=0.3, overhang=0, rockMap='rock.png', detail=4)`. The face is pushed in by `depth` and shaped back out, never past where the ground was. `mode='proud'` (default) keeps the landscape whole and sets the ground back behind the mesh; `mode='inset'` opens holes the mesh fills exactly. Check `stats`: `baseClearance` below 0 (the foot is buried), `hidden` near 0 (a proud cliff the ground still covers: raise the terrain's resolution or use inset), `warnings`. `blockout='Mesh'` builds from any blockout instead.
+- Masks: vertex colour R strata, G openness (1 - cavity), B up-facing, A scatter zones; point attributes `strata`, `cavity`, `upFacing`, `ledge`, `scatter`, `talus` for `scatterProps(mask=)`. The terrain gains masks `cliff`, `cliffTalus` and `cliffTop`.
+- Slope band presets for ground cover: `terrainGroundCover(t, rules=['scree', 'ledgePlants', 'hangingRoots'])` (scree reads `cliffTalus`; `{'preset': 'scree', 'density': 0.5}` overrides). Instances carry `slope` and `downhill`; `faceDownhill=True` in a rule turns pieces downhill.
+- Walls along a line: `terrainCliffExtrude(t, curve='Edge' | region='cliff_1' | edges={'mesh': 'M', 'ids': [...]}, height=2000, profile='vertical'|'battered'|'overhang'|'stepped', stamp=True)` raises a plateau behind the wall and cuts the base in front, live with the curve.
+- Your own kit: `terrainCliffKit(t, region='cliff_1', kit=['Rock_A', 'Rock_B'], overlap=0.8, send='none'|'hism'|'assembly')`; pieces stand on their base facing +Z. Returns `placed`, `rejectedFloating`, `rejectedPenetrating`, `coverage`.
+- Scatter on cliffs: `terrainCliffScatter(t, items={'boulder': 'SM_Boulder', 'rock': 'SM_Rock', 'debris': 'SM_Pebble'})`: tiers on their own grids, seeded per cell.
+- Check: `terrainCheck(t)` adds `floatingCliff`, `cliffCrack` and `tileOverBudget` (`triangleBudget=`, `cellSize=`).
+- Spec: `cliffs: true` or `{slope, minHeight, mesh: {...}, extrude: [...], kits: [...]}`.
+
+### Ship cliffs to UE
+
+- `terrainSendToUnreal(t, cliffs=True, cliffFlags={'cellSize': 12800, 'hlodLayer': '/Game/HLOD/HLOD_Cliffs'})` sends the landscape (with inset holes on its visibility layer), then the cliffs; `terrainSendCliffs(t)` sends only the cliffs.
+- Tiles are cut on the World Partition grid (`cellSize`), share their border vertices, keep borders at every LOD, pivot at their centre, Nanite past `naniteTriangles` (`nanite='on'|'off'|'auto'`), collision from the last LOD without Nanite. One tile at a time; only changed tiles go again; a stopped send carries on next time. `dryRun=True` plans the tiles without Unreal.
+- Tiles get `MI_<terrain>_Cliffs` on `MF_LilaTerrainVolume` (triplanar, biplanar on mobile, darkened by the cavity mask). Landscape layers use `MF_LilaTerrainLayer`, which projects from the sides above `TerrainSlopeStart` (35 degrees), so slopes no longer stretch.
 
 ## Erode, landforms and brushes
 

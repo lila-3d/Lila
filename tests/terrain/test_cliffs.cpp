@@ -404,3 +404,22 @@ TEST_CASE("cliffs: terrainCliffs, terrainCliffMesh, terrainCheck and terrainSend
     json list = run("terrainCliffs", {{"args", {t["mesh"]}}, {"list", true}});
     CHECK(list["cliffs"].size() == 1);
 }
+
+TEST_CASE("cliffs: a terrain spec's cliffs entry finds and meshes the cliffs")
+{
+    loadTerrain();
+    json spec = {{"name", "SpecCrag"},
+                 {"size", {20000.0, 20000.0}},
+                 {"resolution", 129},
+                 {"source", {{"type", "noise"}, {"amplitude", 6000.0}, {"featureSize", 6000.0}}},
+                 {"seed", 3},
+                 {"cliffs", {{"slope", 40.0}, {"minHeight", 300.0}, {"minArea", 10.0}, {"mesh", {{"region", "cliff_1"}, {"detail", 1.0}}}}},
+                 {"check", false}};
+    json r = run("terrainSpec", {{"spec", spec}});
+    INFO(r.dump().substr(0, 3000));
+    CHECK(r["ok"] == true);
+    bool meshed = false;
+    for (const json& s : r["steps"])
+        meshed = meshed || s.value("step", std::string()) == "cliffs.mesh";
+    CHECK(meshed);
+}

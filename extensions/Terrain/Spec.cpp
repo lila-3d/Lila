@@ -39,7 +39,7 @@ fs::path gPresetDir;
 const std::vector<std::string>& specKeys()
 {
     static const std::vector<std::string> k = {"name",  "size",     "resolution", "seed",    "center",  "source",  "constraints", "sculpt",
-                                               "erosion", "landforms", "water",    "regions", "roads",   "stamps",  "volume",      "biomes",
+                                               "erosion", "landforms", "water",    "regions", "roads",   "stamps",  "volume",      "cliffs",      "biomes",
                                                "materials", "groundCover", "check", "export",  "graph",   "inputs",  "transform",   "description"};
     return k;
 }
@@ -80,6 +80,13 @@ json schemaJson()
         {"stamps", list("Footprint stamps: {type: pad|region|feature|quay, ...flags of terrainStampPad, terrainStampRegion, terrainAddFeature or terrainStampQuay}.")},
         {"volume", list("Volume edits: {op: cave|tunnel|overhang|arch|stamp|split, ...flags of terrainCave, terrainTunnel, terrainOverhang, terrainArch, "
                         "terrainVolumeStamp or terrainSplit}. Path points may be 'region:<name>'.")},
+        {"cliffs",
+         {{"type", {"object", "boolean"}},
+          {"description", "Cliffs after the volume: terrainCliffs flags ({slope, minArea, minHeight, mergeDistance, strataDip}) plus mesh (true, or "
+                          "terrainCliffMesh flags: {region, mode: proud|inset, depth, strataHeight, undercut, ledges, noise, overhang, ...}), "
+                          "extrude (a list of terrainCliffExtrude calls: {curve | region, height, profile, ...}) and kits (a list of "
+                          "terrainCliffKit calls: {region, kit, ...}); or true to find the cliffs and mesh them with the defaults. Later "
+                          "steps refer to them as 'region:cliff_1', ..."}}},
         {"biomes", flagsOr("terrainBiomes flags, or true for the defaults.")},
         {"materials", flagsOr("terrainMaterialRules flags ({layers, set, seaLevel, seed}), or true for layers fitted to the terrain. Also sets the viewport's paint layers.")},
         {"groundCover", flagsOr("terrainGroundCover flags ({rules, items, density, seed}), or true for the default rules with placeholders.")},
@@ -444,6 +451,20 @@ json buildSteps(const json& spec, Builder& b, std::string& mesh)
         b.run("volume", it->second, callOf(t, v, {"op"}));
     }
 
+    if (enabled(spec, "cliffs", false))
+    {
+        const json c = flagsOf(spec, "cliffs");
+        if (b.run("cliffs", "terrainCliffs", callOf(t, c, {"mesh", "extrude", "kits"})))
+        {
+            const json meshFlags = c.value("mesh", json(c.empty()));
+            if (meshFlags.is_object() || (meshFlags.is_boolean() && meshFlags.get<bool>()))
+                b.run("cliffs.mesh", "terrainCliffMesh", callOf(t, meshFlags.is_object() ? meshFlags : json::object(), {}));
+            for (const json& e : c.value("extrude", json::array()))
+                b.run("cliffs.extrude", "terrainCliffExtrude", callOf(t, e, {}));
+            for (const json& k : c.value("kits", json::array()))
+                b.run("cliffs.kits", "terrainCliffKit", callOf(t, k, {}));
+        }
+    }
     if (enabled(spec, "biomes", false))
         b.run("biomes", "terrainBiomes", callOf(t, flagsOf(spec, "biomes"), {}));
     if (enabled(spec, "materials", false))
