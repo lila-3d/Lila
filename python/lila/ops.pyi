@@ -8113,7 +8113,7 @@ def setBakeOutput(project: str | None = None, folder: str | None = None, name: s
         format: png, exr, tga, tif or psd (one layered file per texture set, a layer per map). Short form f. One of 'png', 'exr', 'tga', 'tif', 'tiff', 'psd'.
         bits: 8 or 16 (PNG, PSD); 8, 16 or 32 float (TIFF); 16 half or 32 float (EXR). Short form b.
         dither: Triangular dither when writing 8 bit (never on ID or island maps). Short form di.
-        compression: TIFF: deflate or none. Short form cmp. One of 'deflate', 'none'.
+        compression: deflate or none: TIFF deflates, TGA run-length encodes. Short form cmp. One of 'deflate', 'none'.
         compressionLevel: Deflate level for PNG, EXR and TIFF: 1 fastest (default 2) to 9 smallest. Short form cl.
         udimNaming: How {udim} reads: 1001, uv (u1_v1) or uv0 (u0_v0). Short form un. One of '1001', 'uv', 'uv0'.
         sidecar: Write <texture>.json beside each texture (map, colour space, decode data). Short form sc.
