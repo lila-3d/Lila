@@ -26,6 +26,7 @@
 #include <QMenuBar>
 #include <QPainter>
 #include <QPointer>
+#include <QStyle>
 #include <QStyledItemDelegate>
 #include <QTabBar>
 #include <QTimer>
@@ -63,6 +64,7 @@ bool matches(const QAction* a, const QString& text, int depth = 0)
 struct Filter
 {
     QString text;
+    int width = 0; // the menu's width before filtering, held so it does not jump as rows hide
     QPointer<QWidgetAction> header;
     QPointer<QLabel> label;
     std::vector<QPointer<QAction>> hidden;
@@ -152,32 +154,41 @@ private:
             menu->setActiveAction(nullptr);
             return;
         }
-        f.label = new QLabel(menu);
+        if (!f.width)
+            f.width = menu->width();
+        QList<QAction*> rows = menu->actions();
+        std::vector<QAction*> shown;
+        for (QAction* a : rows)
+            if (a->isVisible() && !a->isSeparator() && matches(a, f.text))
+                shown.push_back(a);
+
+        // The menu resizes as rows hide, so the header needs its text and width before then, or a search with no
+        // match shrinks the menu to nothing.
+        f.label = new QLabel(shown.empty() ? QString("No match: %1").arg(f.text) : QString("Search: %1").arg(f.text), menu);
         f.label->setContentsMargins(10, 4, 10, 4);
         f.label->setEnabled(false);
+        const int frame = 2 * (menu->style()->pixelMetric(QStyle::PM_MenuPanelWidth, nullptr, menu) +
+                               menu->style()->pixelMetric(QStyle::PM_MenuHMargin, nullptr, menu));
+        f.label->setMinimumWidth(std::max(0, f.width - frame));
         f.header = new QWidgetAction(menu);
         f.header->setDefaultWidget(f.label);
-        QList<QAction*> rows = menu->actions();
         menu->insertAction(rows.value(0), f.header);
 
         QAction* first = nullptr;
-        int shown = 0;
         for (QAction* a : rows)
         {
             if (!a->isVisible())
                 continue;
-            if (a->isSeparator() || !matches(a, f.text))
+            if (std::find(shown.begin(), shown.end(), a) == shown.end())
             {
                 a->setVisible(false);
                 f.hidden.emplace_back(a);
                 continue;
             }
-            ++shown;
             // Highlighting a submenu row would pop it open, so Enter goes to the first plain row.
             if (!first && a->isEnabled() && !a->menu())
                 first = a;
         }
-        f.label->setText(shown ? QString("Search: %1").arg(f.text) : QString("No match: %1").arg(f.text));
         menu->setActiveAction(first);
     }
 
