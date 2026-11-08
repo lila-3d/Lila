@@ -164,3 +164,36 @@ TEST_CASE("seamScatter: rubble along a wall settles clean")
     CHECK(p["removed"].size() > 0);
     CHECK(p["kept"].get<int>() > 0);
 }
+
+TEST_CASE("contacts feed terrain layer rules and export to JSON and USD")
+{
+    load();
+    run("newScene");
+    const json t = run("terrainCreate", {{"flat", true}, {"size", json::array({4000, 4000})}, {"resolution", 81}, {"name", "Ground"}});
+    const std::string terrain = t["mesh"].get<std::string>();
+    const std::string wall = box("Wall", {-200, -20, -10}, {200, 280, 10});
+    const json r = run("seamFind", {{"args", {wall}}, {"terrain", terrain}, {"terrainWidth", 150.0}});
+    const json rules = run("terrainMaterialRules",
+                           {{"args", {terrain}}, {"layers", {{{"name", "grass"}}, {{"name", "dirt"}, {"when", {{"contact", json::array({0.3, 1.0})}}}}}}});
+    bool dirt = false;
+    for (const json& l : rules.value("layers", json::array()))
+        if (l.value("name", "") == "dirt")
+            dirt = l.value("coverage", 0.0) > 0.0;
+    CHECK(dirt);
+    CHECK(rules.value("missing", json::array()).empty());
+
+    const auto dir = std::filesystem::temp_directory_path();
+    const std::string jsonFile = (dir / "seamwork_contacts.json").string(), usdFile = (dir / "seamwork_contacts.usda").string();
+    run("seamExport", {{"args", {r["seam"]}}, {"file", jsonFile}});
+    run("seamExport", {{"args", {r["seam"]}}, {"file", usdFile}});
+    std::ifstream jf(jsonFile);
+    const json j = json::parse(jf);
+    CHECK(j["format"] == "lila-contacts");
+    REQUIRE(j["curves"].size() == 1);
+    CHECK(j["curves"][0]["b"] == terrain);
+    CHECK(j["points"].size() == r["points"].get<size_t>());
+    std::ifstream uf(usdFile);
+    const std::string usd((std::istreambuf_iterator<char>(uf)), std::istreambuf_iterator<char>());
+    CHECK(usd.find("def BasisCurves \"curve_0\"") != std::string::npos);
+    CHECK(usd.find("primvars:exposure") != std::string::npos);
+}

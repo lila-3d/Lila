@@ -10,6 +10,7 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(lila::ext::Context& ctx)
         return 1;
     seamwork::registerCommands(ctx);
     seamwork::registerScatterCommands(ctx);
+    seamwork::registerExportCommands(ctx);
     seamwork::registerLiveUpdates(ctx);
     seamwork::registerUi(ctx);
     return 0;

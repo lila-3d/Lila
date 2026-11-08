@@ -567,6 +567,19 @@ TSharedPtr<FJsonValue> SetSpline(const TSharedPtr<FJsonObject>& Params, FString&
 		Transaction.Cancel();
 		return nullptr;
 	}
+	// Extra actor tags (contact facts from Lila's seams); a re-send replaces the ones it set before.
+	const TArray<TSharedPtr<FJsonValue>>* ExtraTags = nullptr;
+	if (Mode != TEXT("landscape") && Params->TryGetArrayField(TEXT("tags"), ExtraTags))
+	{
+		if (AActor* Tagged = FindTagged(World, TagFor(Id)))
+		{
+			Tagged->Tags.RemoveAll([](const FName& T) { return T.ToString().StartsWith(TEXT("lila.")); });
+			for (const TSharedPtr<FJsonValue>& T : *ExtraTags)
+			{
+				Tagged->Tags.AddUnique(FName(*(TEXT("lila.") + T->AsString())));
+			}
+		}
+	}
 	TArray<TSharedPtr<FJsonValue>> WarningValues;
 	for (const FString& W : Warnings)
 	{
