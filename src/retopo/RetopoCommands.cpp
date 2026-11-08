@@ -310,9 +310,9 @@ std::vector<FlagDef> remeshFlags(const char* symmetry)
              "Starting settings for what the mesh is for: gameCharacter, midPoly, hero, stylized, hardSurface, prop, or the name of a preset "
              "saved from the option box. Flags set to other than their default win."},
             {"method", "", T::String, "patches",
-             "patches: lines from the poles cut the surface into patches filled with even grids, so loops run unbroken; field: each point placed "
-             "from the flow nearby, quicker but with broken loops; grid: a straight grid over an open sheet seen from one side (terrain tiles, "
-             "panels), patches otherwise.",
+             "patches: loops run unbroken between a few poles, for characters, props and anything edited by hand; field: each point follows "
+             "the flow near it, loops wander and poles scatter, for rough surfaces like scans and rocks; grid: a straight grid over an open "
+             "sheet seen from one side (terrain tiles, panels), patches otherwise.",
              {"patches", "field", "grid"}},
             {"targetFaces", "", T::Int, 3000, "Approximate face count.", {}, {}, 8.0},
             {"countTolerance", "", T::Float, 0.1, "Retry at a corrected size until the face count is within this fraction of targetFaces; 0 takes the first try.", {}, {}, 0.0, 1.0},

@@ -43,9 +43,9 @@ void registerBuiltinOverrides(std::map<std::string, Override, std::less<>>& m)
     O remesh;
     remesh.order = {"symmetry", "method"};
     remesh.choices["symmetry"] = {{"off", "Off"}, {"x", "X"}, {"y", "Y"}, {"z", "Z"}};
-    remesh.choices["method"] = {{"patches", "Patches"}, {"field", "Field (Quick)"}, {"grid", "Grid (Open Sheets)"}};
-    remesh.choiceDocs["method"] = {{"patches", "Lines from the poles cut the surface into patches filled with even grids: loops run unbroken between poles."},
-                                   {"field", "Each point placed from the flow nearby: quicker, with broken loops and more poles."},
+    remesh.choices["method"] = {{"patches", "Patches (Characters, Props)"}, {"field", "Field (Scans, Rocks)"}, {"grid", "Grid (Flat Sheets)"}};
+    remesh.choiceDocs["method"] = {{"patches", "Loops run unbroken between a few poles. For anything that deforms, gets baked or edited by hand."},
+                                   {"field", "Each point follows the flow near it: loops wander and poles scatter. For rough surfaces nobody edits by hand."},
                                    {"grid", "A straight grid seen down the sheet's normal, for terrain tiles and panels. Closed shapes get Patches."}};
     for (const char* f : {"targetFaces", "countTolerance", "targetEdgeLength", "adaptivity", "jointDensity", "jointDensityReach", "edgesAround"})
         remesh.sections[f] = "Density";
