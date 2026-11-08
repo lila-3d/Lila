@@ -129,6 +129,17 @@ TEST_CASE("version 1 group settings, which named the project only in its attr, s
     CHECK(bake::groupSettings(*grp).toJson()["version"] == bake::kSettingsVersion);
 }
 
+TEST_CASE("an island bakes into the UDIM tile holding its centre, even where it spills past the edge")
+{
+    bake::RasterSettings rs;
+    rs.width = rs.height = 64;
+    rs.supersampling = 1;
+    auto udims = [&](const geo::Mesh& m) { return bake::TexelRaster(bake::lowFromMesh(m, glm::dmat4(1.0), "m"), rs).udims(); };
+    CHECK(udims(plane(16, {0.0f, 0.0f}, {1.05f, 1.0f})) == std::vector<int>{1001});
+    CHECK(udims(plane(16, {-0.05f, -0.05f}, {0.9f, 0.9f})) == std::vector<int>{1001});
+    CHECK(udims(plane(2, {1.2f, 0.0f}, {1.8f, 1.0f})) == std::vector<int>{1002});
+}
+
 TEST_CASE("skew blends ray directions from the smooth normals to the face normal")
 {
     geo::SphereOptions so;

@@ -231,14 +231,14 @@ void uvOverlap(const BakeInputs& in, const ProjectSettings& ps, LintReport& r)
                 continue;
             const uint64_t lowIndex = lows.size();
             lows.push_back({g, l});
+            const std::vector<glm::ivec2> tiles = triangleTiles(low);
             for (size_t t = 0; t < s.triangleCount(); ++t)
             {
                 const glm::vec2* uv = &s.uvs[t * 3];
                 const double a = uvArea(uv);
                 if (std::abs(a) < 1e-14)
                     continue;
-                const glm::vec2 c = (uv[0] + uv[1] + uv[2]) / 3.0f;
-                const int tu = int(std::floor(c.x)), tv = int(std::floor(c.y));
+                const int tu = tiles[t].x, tv = tiles[t].y;
                 NameTokens tok;
                 tok.project = in.project;
                 tok.group = in.groups[g].name;

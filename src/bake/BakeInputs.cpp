@@ -217,6 +217,31 @@ MeshSoup soupFromMesh(const geo::Mesh& mesh, const glm::dmat4& world, std::strin
     return soupOn(mesh, tris, shadingNormals(mesh, storage), Xform(world), std::move(name));
 }
 
+std::vector<glm::ivec2> triangleTiles(const LowInput& low)
+{
+    const MeshSoup& s = low.soup;
+    const size_t n = s.uvs.size() == s.triangleCount() * 3 ? s.triangleCount() : 0;
+    std::vector<glm::dvec3> sums(low.islandCount, glm::dvec3(0.0));
+    for (size_t t = 0; t < n; ++t)
+        if (t < low.islands.size() && low.islands[t] < low.islandCount)
+        {
+            const glm::vec2* uv = &s.uvs[t * 3];
+            const double a = 0.5 * std::abs(double(uv[1].x - uv[0].x) * (uv[2].y - uv[0].y) - double(uv[2].x - uv[0].x) * (uv[1].y - uv[0].y));
+            const glm::dvec2 c = glm::dvec2(uv[0] + uv[1] + uv[2]) / 3.0;
+            sums[low.islands[t]] += glm::dvec3(c * a, a);
+        }
+    std::vector<glm::ivec2> out(n);
+    for (size_t t = 0; t < n; ++t)
+    {
+        const glm::vec2* uv = &s.uvs[t * 3];
+        glm::dvec2 c = glm::dvec2(uv[0] + uv[1] + uv[2]) / 3.0;
+        if (t < low.islands.size() && low.islands[t] < low.islandCount && sums[low.islands[t]].z > 0.0)
+            c = glm::dvec2(sums[low.islands[t]]) / sums[low.islands[t]].z;
+        out[t] = {int(std::floor(c.x)), int(std::floor(c.y))};
+    }
+    return out;
+}
+
 LowInput lowFromMesh(const geo::Mesh& mesh, const glm::dmat4& world, std::string name, const geo::Mesh* cage, const glm::dmat4& cageWorld)
 {
     LILA_ZONE();

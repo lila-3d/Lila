@@ -168,6 +168,12 @@ LILA_SCENE_API LowInput lowFromMesh(const geo::Mesh& mesh, const glm::dmat4& wor
                                     const glm::dmat4& cageWorld = glm::dmat4(1.0));
 
 /**
+ * The UDIM tile (u, v) each triangle bakes into: the tile holding its island's area-weighted UV centre, so a whole
+ * island lands in one tile and a face nudged just past a tile edge doesn't start another.
+ */
+LILA_SCENE_API std::vector<glm::ivec2> triangleTiles(const LowInput& low);
+
+/**
  * A bake-only modifier stack ([{"kind", "params"}]) instantiated on a private graph, never the scene's: nothing it does
  * reaches the scene graph, the file or undo. Build and apply on the main thread.
  */

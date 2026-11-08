@@ -59,13 +59,13 @@ TexelRaster::TexelRaster(const LowInput& low, const RasterSettings& settings, in
     }
     const double H = mSettings.height;
     mTriUdim.assign(s.triangleCount(), 0);
+    const std::vector<glm::ivec2> tiles = triangleTiles(low);
     for (uint32_t t = 0; t < s.triangleCount(); ++t)
     {
         if (material >= 0 && s.materials[t] != uint32_t(material))
             continue;
         const glm::vec2* uv = &s.uvs[size_t(t) * 3];
-        const glm::vec2 c = (uv[0] + uv[1] + uv[2]) / 3.0f;
-        const int tu = int(std::floor(c.x)), tv = int(std::floor(c.y));
+        const int tu = tiles[t].x, tv = tiles[t].y;
         const double area = edgeFunction(glm::dvec2(uv[0]), glm::dvec2(uv[1]), glm::dvec2(uv[2]));
         if (tu < 0 || tu > 9 || tv < 0 || std::abs(area) < 1e-14)
         {
