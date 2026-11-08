@@ -78,6 +78,8 @@ struct FImportRequest
 	bool bGenerateLightmapUVs = false;
 	bool bComputeNormals = false;
 	bool bNanite = false;
+	/** nanite was given, so an existing asset is set to it after a reimport too. */
+	bool bNaniteGiven = false;
 	bool bImportAnimations = false;
 	/** Reimport keeps the asset's stored settings unless this is set. */
 	bool bReapplyOptions = false;
@@ -194,7 +196,7 @@ bool ParseRequest(const TSharedPtr<FJsonObject>& Params, FImportRequest& Out, FS
 	}
 	Options->TryGetNumberField(TEXT("lodForCollision"), Out.LodForCollision);
 	Options->TryGetBoolField(TEXT("generateLightmapUVs"), Out.bGenerateLightmapUVs);
-	Options->TryGetBoolField(TEXT("nanite"), Out.bNanite);
+	Out.bNaniteGiven = Options->TryGetBoolField(TEXT("nanite"), Out.bNanite);
 	Options->TryGetBoolField(TEXT("importAnimations"), Out.bImportAnimations);
 	Options->TryGetBoolField(TEXT("reapplyOptions"), Out.bReapplyOptions);
 	Options->TryGetBoolField(TEXT("save"), Out.bSave);
@@ -880,6 +882,52 @@ void ApplyComponents(const FImportRequest& Request, FImportOutcome& Outcome)
 }
 
 /** The requested collision on the imported static mesh, replacing whatever the import gave it (ucx keeps the file's). */
+/**
+ * Nanite and the collision LOD set on the asset itself with reapplyOptions: a reimport over an existing static mesh keeps
+ * the asset's own settings whatever the pipeline asks, so the requested ones are written here and the mesh rebuilt when
+ * they changed.
+ */
+void ApplyStaticSettings(const FImportRequest& Request, FImportOutcome& Outcome)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImport::ApplyStaticSettings);
+
+	UStaticMesh* Mesh = Cast<UStaticMesh>(RequestedAsset(Request, Outcome));
+	if (!Mesh)
+	{
+		return;
+	}
+	bool bChanged = false;
+	if (Request.bNaniteGiven && Mesh->NaniteSettings.bEnabled != Request.bNanite)
+	{
+		Mesh->Modify();
+		Mesh->NaniteSettings.bEnabled = Request.bNanite;
+		bChanged = true;
+	}
+	if (Request.LodForCollision >= 0)
+	{
+		const int32 Lod = FMath::Clamp(Request.LodForCollision, 0, FMath::Max(0, Mesh->GetNumSourceModels() - 1));
+		if (Mesh->LODForCollision != Lod)
+		{
+			Mesh->Modify();
+			Mesh->LODForCollision = Lod;
+			bChanged = true;
+		}
+	}
+	if (!bChanged)
+	{
+		return;
+	}
+	Mesh->Build(false);
+	Mesh->PostEditChange();
+	if (UBodySetup* Body = Mesh->GetBodySetup())
+	{
+		Body->Modify();
+		Body->InvalidatePhysicsData();
+		Body->CreatePhysicsMeshes();
+	}
+	Mesh->MarkPackageDirty();
+}
+
 void ApplyCollision(const FImportRequest& Request, FImportOutcome& Outcome)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImport::ApplyCollision);
@@ -919,10 +967,6 @@ void ApplyCollision(const FImportRequest& Request, FImportOutcome& Outcome)
 			// The editor's Auto Convex Collision defaults: up to 4 hulls of 16 vertices from 100k voxels.
 			Meshes->SetConvexDecompositionCollisionsWithNotification(Mesh, 4, 16, 100000, false);
 		}
-	}
-	if (Request.LodForCollision >= 0)
-	{
-		Mesh->LODForCollision = FMath::Clamp(Request.LodForCollision, 0, FMath::Max(0, Mesh->GetNumSourceModels() - 1));
 	}
 	if (!Mesh->GetBodySetup())
 	{
@@ -977,6 +1021,11 @@ void FinishImport(const FImportRequest& Request, FImportOutcome& Outcome, const 
 	if (!Request.LodScreenSizes.IsEmpty() && !Outcome.Assets.IsEmpty())
 	{
 		ApplyLodScreenSizes(Request, Outcome);
+	}
+
+	if (Request.Kind == EKind::Static && Request.bReapplyOptions && (Request.bNaniteGiven || Request.LodForCollision >= 0) && Outcome.Errors.IsEmpty())
+	{
+		ApplyStaticSettings(Request, Outcome);
 	}
 
 	if (Request.Kind == EKind::Static && !Request.Collision.IsEmpty() && Outcome.Errors.IsEmpty())
