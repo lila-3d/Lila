@@ -70,6 +70,12 @@ void UvView::setShowUdim(bool on)
     update();
 }
 
+void UvView::setSelectedFacesOnly(bool on)
+{
+    PrefStore::get().set("general", kSelectedFacesOnlyPref, on);
+    update();
+}
+
 void UvView::setShowStacks(bool on)
 {
     mShowStacks = on;
@@ -656,10 +662,10 @@ void UvView::applyLive()
     }
 }
 
-std::vector<std::vector<Index>> UvView::shownFaces(const std::vector<scene::NodeId>& meshes)
+std::vector<std::vector<Index>> UvView::shownFaces(const std::vector<scene::NodeId>& meshes) const
 {
     std::vector<std::vector<Index>> out;
-    if (scene::components::mode() != ComponentMode::Face)
+    if (scene::components::mode() != ComponentMode::Face || !PrefStore::get().value<bool>("general", kSelectedFacesOnlyPref, false))
         return out;
     bool any = false;
     out.resize(meshes.size());

@@ -71,6 +71,9 @@ using json = nlohmann::json;
 using scene::ComponentMode;
 using geo::Index;
 
+/** Pref: in face mode the UV Editor shows only the selected faces' uvs. */
+inline constexpr const char* kSelectedFacesOnlyPref = "/uvEditor/selectedFacesOnly";
+
 /** The 2D uv canvas. */
 class UvView : public QWidget
 {
@@ -110,6 +113,8 @@ public:
     void setDisplay(Display d);
     void setShowUdim(bool on);
     void setShowStacks(bool on);
+    /** In face mode, shows only the selected faces' uvs instead of every uv of the shown meshes. */
+    void setSelectedFacesOnly(bool on);
     /** Shows the shown meshes' islands as if packed together into 0-1; view and select only, the uvs are untouched. */
     void setPackPreview(bool on);
     bool packPreview() const { return mPackPreview; }
@@ -218,7 +223,7 @@ private:
     void packShown();
 
     /** In face mode with faces selected, the selected faces of each mesh (none for a mesh without any); empty otherwise. */
-    static std::vector<std::vector<Index>> shownFaces(const std::vector<scene::NodeId>& meshes);
+    std::vector<std::vector<Index>> shownFaces(const std::vector<scene::NodeId>& meshes) const;
     static MeshUv build(scene::NodeId id, const std::string& name, scene::MeshPtr mesh, const std::string& set,
                         std::vector<Index> only = {});
 

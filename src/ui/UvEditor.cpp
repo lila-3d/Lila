@@ -292,6 +292,11 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     udim->setObjectName("udim");
     panelDefaults::setToggleDefault(udim, false);
     flow->addWidget(udim);
+    QToolButton* selectedFaces = uvKitPush("Selected Faces", "Selected Faces: in face mode, show only the selected faces' UVs", this, true,
+                                           PrefStore::get().value<bool>("general", kSelectedFacesOnlyPref, false));
+    selectedFaces->setObjectName("selectedFaces");
+    panelDefaults::setToggleDefault(selectedFaces, false);
+    flow->addWidget(selectedFaces);
     QToolButton* packPreview = uvKitPush("Pack Preview",
                                          "Pack Preview: show the shown objects' islands as if packed together, with the Pack options' "
                                          "padding and rotation. View and select only; the UVs stay as they are",
@@ -659,6 +664,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
         mView->setDisplay(UvView::Display(i));
     });
     connect(udim, &QToolButton::toggled, this, [this](bool on) { mView->setShowUdim(on); });
+    connect(selectedFaces, &QToolButton::toggled, this, [this](bool on) { mView->setSelectedFacesOnly(on); });
     connect(packPreview, &QToolButton::toggled, this, [this, tools, udim, paint](bool on) {
         if (on)
             paint->setChecked(false);
