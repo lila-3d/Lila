@@ -3,6 +3,7 @@
 #include "SettlementCore.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -119,6 +120,7 @@ void applyEdits(Site& site, const json& edits)
         }
         so.profile = o.value("profile", std::string());
         so.width = std::max(0.0, o.value("width", 0.0));
+        so.name = o.value("name", std::string());
         site.overrides.push_back(std::move(so));
     }
     if (const json profiles = edits.value("roadProfiles", json::object()); profiles.is_object())
@@ -135,6 +137,18 @@ void applyEdits(Site& site, const json& edits)
             r.name = name;
             site.roadProfiles.push_back(r);
         }
+    if (const json naming = edits.value("naming", json::object()); naming.is_object())
+    {
+        site.culture = naming.value("culture", std::string());
+        if (const json districts = naming.value("districts", json::object()); districts.is_object())
+            for (const auto& [id, name] : districts.items())
+            {
+                uint64_t key = 0;
+                if (std::from_chars(id.data(), id.data() + id.size(), key).ec != std::errc() || !name.is_string())
+                    throw std::runtime_error("naming: districts are {id: name}");
+                site.districtNames.emplace_back(key, name.get<std::string>());
+            }
+    }
     // Paths keep their order by id, so the network does not depend on how the JSON was written.
     std::stable_sort(site.paths.begin(), site.paths.end(), [](const SitePath& a, const SitePath& b) { return a.id < b.id; });
 }

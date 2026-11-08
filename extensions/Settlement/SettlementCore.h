@@ -435,6 +435,7 @@ struct StreetOverride
     StreetClass cls = StreetClass::Local;
     std::string profile;
     double width = 0.0;
+    std::string name; // the street's name, over the naming culture's
 };
 
 /** Generated street ids carry this bit, so they never collide with edit ids. */
@@ -454,6 +455,8 @@ struct Site
     std::vector<SitePath> paths;
     std::vector<RoadProfile> roadProfiles; // custom profiles paths may name, besides the built-in ones
     std::vector<StreetOverride> overrides;
+    std::string culture; // naming culture (cultureNames); empty for the profile's
+    std::vector<std::pair<uint64_t, std::string>> districtNames; // given district names, by district id
 };
 
 /**
@@ -559,6 +562,19 @@ struct Placement
     std::vector<std::string> tags;
 };
 
+/**
+ * A quarter between main roads (arterials, the outline, water and exclusions), named by the naming culture. Its id comes
+ * from the streets and edges around it, so it stays while they do.
+ */
+struct District
+{
+    uint64_t id = 0;
+    std::string name;
+    Polygon outline;
+    Vec2 center{0.0};
+    double area = 0.0; // m2
+};
+
 struct Layout
 {
     StreetGraph graph;
@@ -579,7 +595,23 @@ struct Layout
     std::vector<PathResult> pathResults;
     std::vector<uint64_t> staleOverrides; // overrides naming a street this layout does not make
     std::vector<Placement> placements;
+    std::string culture;                            // the naming culture used
+    std::unordered_map<uint64_t, std::string> streetNames; // by stable street id
+    std::vector<District> districts;
 };
+
+/** Old English, Latin, French, Spanish, numbered US grid and sci-fi sector codes, as culture names. */
+std::vector<std::string> cultureNames();
+/** The culture a style profile names its streets in when the site gives none. */
+std::string defaultCulture(std::string_view profileName);
+/**
+ * Districts and street names: every street through junctions (a run carried on by its straightest continuation of the
+ * same class) gets one name, stable by the ids of the streets in it, from the site's culture; overrides and edit names
+ * win. Throws std::runtime_error for an unknown culture.
+ */
+void nameStreets(Layout& l, const Site& site);
+/** A street's name, empty when it has none. */
+std::string streetName(const Layout& l, uint64_t street);
 
 /**
  * Gives every street edge the stable id of its street: a run of edges through plain (two-street) junctions, keyed by

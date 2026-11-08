@@ -1642,6 +1642,7 @@ Layout build(const Site& site, const Ground& g, const Options& in, const WalkSur
         joinComponents(l, g);
     assignStreetIds(l);
     applyOverrides(l, site);
+    nameStreets(l, site);
     for (size_t n = 0; n < l.graph.nodes.size(); ++n)
     {
         if (onWater(l.graph, int(n)) && l.graph.degree(int(n)) > 0)

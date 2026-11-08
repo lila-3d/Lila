@@ -301,7 +301,8 @@ json toJson(const Layout& l)
                            {"profile", edgeProfile(l, int(e)).name},
                            {"path", x.path},
                            {"street", x.street},
-                           {"era", x.era}});
+                           {"era", x.era},
+                           {"name", streetName(l, x.street)}});
     }
     json blocks = json::array();
     for (const Block& b : l.blocks)
@@ -368,6 +369,9 @@ json toJson(const Layout& l)
     json roads = json::array();
     for (const RoadProfile& r : l.roads)
         roads.push_back(toJson(r));
+    json districts = json::array();
+    for (const District& d : l.districts)
+        districts.push_back({{"id", d.id}, {"name", d.name}, {"areaM2", d.area}, {"center", xz(d.center)}, {"outline", ring(d.outline)}});
     return {{"format", "lila.settlement"},
             {"version", 1},
             {"units", "cm"},
@@ -385,7 +389,9 @@ json toJson(const Layout& l)
             {"bridges", bridges},
             {"exclusions", exclusions},
             {"surfacePaths", surface},
-            {"roadProfiles", roads}};
+            {"roadProfiles", roads},
+            {"culture", l.culture},
+            {"districts", districts}};
 }
 
 MeshParts toMeshes(const Layout& l, const Ground& ground, const OutputOptions& o)

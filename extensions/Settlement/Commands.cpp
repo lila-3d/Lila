@@ -512,6 +512,7 @@ json streetsJson(const Rebuilt& r, const std::function<bool(const StreetLine&)>&
                  {"profile", r.layout.roads[size_t(s.profile)].name},
                  {"width", s.width},
                  {"path", s.path},
+                 {"name", streetName(r.layout, s.street)},
                  {"lengthM", 0.0},
                  {"points", json::array()}};
         double len = 0.0;
@@ -961,7 +962,7 @@ void registerCommands(ext::Context& ctx)
         .name = "settlementEditStreet",
         .doc = "Changes a street or route added by settlementAddStreet or settlementRoute: its points (or stops), class, road "
                "profile, width, mode or name; or a generated street by its stable id (settlementStreets lists them): its class, "
-               "profile or width, kept through re-runs. Only the flags given change. Returns the outcome as settlementRoute does.",
+               "profile, width or name (the name holds along the whole street through its junctions), kept through re-runs. Only the flags given change. Returns the outcome as settlementRoute does.",
         .positionalDoc = "settlement mesh or its modifier",
         .flags = editFlags,
         .run = [](const Args& a) -> json {
@@ -993,6 +994,8 @@ void registerCommands(ext::Context& ctx)
                     o["profile"] = a.get<std::string>("profile");
                 if (a.has("width"))
                     o["width"] = a.get<double>("width");
+                if (a.has("name"))
+                    o["name"] = a.get<std::string>("name");
                 setEdits(t);
                 const Rebuilt r = rebuild(g, t.modifier->path(), cmd);
                 json out = {{"ids", json::array({street})}, {"modifier", r.modifier}, {"mesh", r.mesh}};
@@ -1259,5 +1262,6 @@ void registerCommands(ext::Context& ctx)
 
     registerUnrealCommands(ctx);
     registerExportCommands(ctx);
+    registerStreetscapeCommands(ctx);
 }
 } // namespace settlement
