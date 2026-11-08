@@ -101,8 +101,10 @@ LILA_SCENE_API CageEstimate estimateCage(std::span<const CageLow> lows, const Gr
 
 /**
  * Estimates a bake group's cage from the scene and, when apply is set, writes it: bakeOffset on each low's base mesh,
- * the group's frontal and rear distances, and an editable cage moved to the result. One undo step. Returns {group,
- * frontal, rear, before: coverage as the group bakes now, after, iterations, unreachable}. Throws std::runtime_error.
+ * the group's frontal and rear distances, and an editable cage moved to the result. One undo step. A low whose
+ * modifiers change its points is estimated as exported and the result mapped back to its base points; after is then
+ * measured through the stack. Returns {group, frontal, rear, before: coverage as the group bakes now, after,
+ * iterations, unreachable, mapped: those lows}. Throws std::runtime_error.
  */
 LILA_SCENE_API json estimateGroupCage(scene::Graph& g, scene::NodeId group, const CageEstimateOptions& options = {}, bool apply = true);
 

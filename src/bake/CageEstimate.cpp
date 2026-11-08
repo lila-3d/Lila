@@ -590,6 +590,103 @@ CageCoverage groupCoverage(scene::Graph& g, scene::NodeId group, int resolution)
     return total;
 }
 
+namespace
+{
+constexpr const char* kProbeAttrs[3] = {"bakeCageProbeX", "bakeCageProbeY", "bakeCageProbeZ"};
+
+/** The low as the bake exports it with stand in place of its base mesh, which is restored before returning. */
+scene::MeshPtr exportWithBase(scene::Graph& g, scene::NodeId mesh, const scene::MeshPtr& base, scene::MeshPtr stand)
+{
+    const scene::PlugRef plug = scene::modifiers::editPlug(g, mesh);
+    g.setValue(plug, std::move(stand));
+    scene::MeshPtr out = scene::modifiers::exportMesh(g, mesh);
+    g.setValue(plug, base);
+    return out;
+}
+
+/**
+ * For each exported point, the base point it comes from: base positions ride the stack as point attributes, and the
+ * nearest corner of the base triangle closest to where a point started is its source (kInvalid where none is found).
+ */
+std::vector<geo::Index> exportSources(scene::Graph& g, scene::NodeId mesh, const scene::MeshPtr& base)
+{
+    auto probed = std::make_shared<geo::Mesh>(*base);
+    for (int k = 0; k < 3; ++k)
+    {
+        std::span<float> v = probed->pointAttrs().add(kProbeAttrs[k], geo::AttrType::Float).values<float>();
+        for (geo::Index p = 0; p < geo::Index(v.size()); ++p)
+            v[p] = float(base->position(p)[k]);
+    }
+    const scene::MeshPtr exported = exportWithBase(g, mesh, base, std::move(probed));
+    std::span<const float> probe[3];
+    for (int k = 0; k < 3; ++k)
+        probe[k] = exported->pointAttrs().get<float>(kProbeAttrs[k]);
+    const size_t n = exported->pointCapacity();
+    if (probe[0].size() != n || probe[1].size() != n || probe[2].size() != n)
+        throw std::runtime_error("its modifiers drop point attributes, so the estimate can't be painted back onto its base points");
+    const geo::MeshBvh bvh(*base);
+    const geo::Triangulation& tris = bvh.triangles();
+    std::vector<geo::Index> out(n, geo::kInvalid);
+    for (size_t i = 0; i < n; ++i)
+    {
+        geo::BvhClosest hit;
+        if (!exported->pointValid(geo::Index(i)) || !bvh.closestPoint({probe[0][i], probe[1][i], probe[2][i]}, hit))
+            continue;
+        const geo::Index* c = &tris.corners[size_t(hit.triangle) * 3];
+        const int k = hit.bary.x >= hit.bary.y && hit.bary.x >= hit.bary.z ? 0 : hit.bary.y >= hit.bary.z ? 1 : 2;
+        out[i] = base->cornerPoint(c[k]);
+    }
+    return out;
+}
+
+/**
+ * Base point offsets that, carried through the low's modifiers, give each exported point at least the offset the
+ * estimate solved for it. Starts from the largest need among each base point's exported points, then grows the base
+ * points whose exported points still fall short, since modifiers like subdivision average offsets down.
+ */
+std::vector<float> fitBaseOffsets(scene::Graph& g, scene::NodeId mesh, const scene::MeshPtr& base, std::span<const float> need)
+{
+    const PaintAttr attr = *paintAttr(kOffsetAttr);
+    const std::vector<geo::Index> source = exportSources(g, mesh, base);
+    if (source.size() != need.size())
+        throw std::runtime_error("its modifiers give a different mesh each time, so the estimate can't be painted back onto its base points");
+    std::vector<float> values = pointValues(*base, attr);
+    std::vector<float> best(values.size(), -1.0f);
+    for (size_t i = 0; i < need.size(); ++i)
+        if (source[i] != geo::kInvalid)
+            best[source[i]] = std::max(best[source[i]], need[i]);
+    for (size_t p = 0; p < values.size(); ++p)
+        if (best[p] >= 0.0f)
+            values[p] = best[p];
+
+    constexpr int kPasses = 6;
+    for (int pass = 0; pass < kPasses; ++pass)
+    {
+        auto trial = std::make_shared<geo::Mesh>(*base);
+        geo::Attribute& a = trial->pointAttrs().add(attr.name, geo::AttrType::Float);
+        a.setDefault(attr.unpainted);
+        std::copy(values.begin(), values.end(), a.values<float>().begin());
+        const scene::MeshPtr exported = exportWithBase(g, mesh, base, std::move(trial));
+        const std::span<const float> got = exported->pointAttrs().get<float>(attr.name);
+        if (got.size() != need.size())
+            break;
+        std::vector<float> grow(values.size(), 1.0f);
+        bool shortfall = false;
+        for (size_t i = 0; i < need.size(); ++i)
+            if (source[i] != geo::kInvalid && got[i] > 0.0f && need[i] > got[i] * 1.01f)
+            {
+                grow[source[i]] = std::max(grow[source[i]], need[i] / got[i]);
+                shortfall = true;
+            }
+        if (!shortfall)
+            break;
+        for (size_t p = 0; p < values.size(); ++p)
+            values[p] = std::min(values[p] * grow[p], attr.max);
+    }
+    return values;
+}
+} // namespace
+
 json estimateGroupCage(scene::Graph& g, scene::NodeId group, const CageEstimateOptions& options, bool apply)
 {
     LILA_ZONE();
@@ -613,6 +710,7 @@ json estimateGroupCage(scene::Graph& g, scene::NodeId group, const CageEstimateO
 
     std::vector<CageLow> lows;
     std::vector<scene::NodeId> lowIds;
+    std::vector<scene::MeshPtr> bases;
     for (const std::string& name : s.lows)
     {
         scene::Node* n = meshByName(g, name);
@@ -624,30 +722,54 @@ json estimateGroupCage(scene::Graph& g, scene::NodeId group, const CageEstimateO
         const scene::MeshPtr base = std::get<scene::MeshPtr>(g.storedValue(scene::modifiers::editPlug(g, n->id())));
         if (!m || !base)
             throw std::runtime_error(n->name() + " has no mesh");
-        if (m->pointCapacity() != base->pointCapacity())
-            throw std::runtime_error(n->name() + ": its modifiers change its points, so per-point cage offsets can't be painted on it");
         lows.push_back({m, worldOf(g, n->id()), n->name()});
         lowIds.push_back(n->id());
+        bases.push_back(base);
     }
-    const CageEstimate est = estimateCage(lows, s, p->inputs, 0, *p->backend, options);
+    CageEstimate est = estimateCage(lows, s, p->inputs, 0, *p->backend, options);
 
+    // Lows whose modifiers change their points get the estimate painted back onto their base points; bakeOffset rides
+    // the stack from there, so their real coverage is measured again after the write.
+    json mapped = json::array();
     if (apply)
     {
         UndoChunk chunk("Estimate Bake Cage");
         for (size_t i = 0; i < lowIds.size(); ++i)
-            if (!setPointValues(g, lowIds[i], *paintAttr(kOffsetAttr), est.offsets[i], "Estimate Bake Cage"))
+        {
+            std::vector<float> values = std::move(est.offsets[i]);
+            if (lows[i].mesh->pointCapacity() != bases[i]->pointCapacity())
+            {
+                try
+                {
+                    values = fitBaseOffsets(g, lowIds[i], bases[i], values);
+                }
+                catch (const std::runtime_error& e)
+                {
+                    throw std::runtime_error(lows[i].name + ": " + e.what());
+                }
+                mapped.push_back(lows[i].name);
+            }
+            if (!setPointValues(g, lowIds[i], *paintAttr(kOffsetAttr), values, "Estimate Bake Cage"))
                 throw std::runtime_error("couldn't write bakeOffset on " + g.node(lowIds[i])->name());
+        }
         s.frontal = est.frontal;
         s.rear = est.rear;
         s.cageOffset = est.cageOffset;
         setGroupSettings(g, group, s);
         if (!s.cage.empty())
             cageFromPaint(g, group);
+        if (!mapped.empty())
+            est.after = groupCoverage(g, group, options.resolution);
     }
+    else
+        for (size_t i = 0; i < lows.size(); ++i)
+            if (lows[i].mesh->pointCapacity() != bases[i]->pointCapacity())
+                mapped.push_back(lows[i].name);
     json out = est.toJson();
     out["group"] = grp->path();
     out["before"] = before.toJson();
     out["applied"] = apply;
+    out["mapped"] = mapped;
     return out;
 }
 
@@ -689,7 +811,8 @@ void registerCageCommands()
         .doc = "Estimate a bake group's cage in one step: paints bakeOffset on its lows so every texel's ray starts just outside "
                "the high and meets it, and sets the group's frontal and rear distances (an editable cage moves to the result). "
                "Checks itself by tracing the lows as a bake would, growing the cage where rays still miss. One undo step. "
-               "Returns the miss rates before and after.",
+               "A low whose modifiers change its points gets the result painted on its base points (listed in mapped) and its "
+               "coverage measured again through the stack. Returns the miss rates before and after.",
         .positionalDoc = "group (or its low; default the selection)",
         .flags = {presetFlag({"resolution", "res", T::Int, 512, "Texels per side of the coverage check.", {}, {}, 16.0, 8192.0}, kTextureSizePresets),
                   {"iterations", "it", T::Int, 4, "Coverage passes that may grow the cage.", {}, {}, 0.0, 32.0},

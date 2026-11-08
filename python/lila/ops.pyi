@@ -699,7 +699,7 @@ def bakeCurveSymmetry(*objects: Any) -> Any:
     """
 
 def bakeEstimateCage(*objects: Any, resolution: int | None = None, iterations: int | None = None, margin: float | None = None, apply: bool | None = None, res: int | None = None, it: int | None = None, mg: float | None = None, ap: bool | None = None) -> Any:
-    """Estimate a bake group's cage in one step: paints bakeOffset on its lows so every texel's ray starts just outside the high and meets it, and sets the group's frontal and rear distances (an editable cage moves to the result). Checks itself by tracing the lows as a bake would, growing the cage where rays still miss. One undo step. Returns the miss rates before and after.
+    """Estimate a bake group's cage in one step: paints bakeOffset on its lows so every texel's ray starts just outside the high and meets it, and sets the group's frontal and rear distances (an editable cage moves to the result). Checks itself by tracing the lows as a bake would, growing the cage where rays still miss. One undo step. A low whose modifiers change its points gets the result painted on its base points (listed in mapped) and its coverage measured again through the stack. Returns the miss rates before and after.
 
     Args:
         objects: group (or its low; default the selection).
@@ -6585,7 +6585,7 @@ def quadRemesh(*objects: Any, preset: str | None = None, method: str | None = No
     Args:
         objects: source.
         preset: Starting settings for what the mesh is for: gameCharacter, midPoly, hero, stylized, hardSurface, prop, or the name of a preset saved from the option box. Flags set to other than their default win. Default 'none'.
-        method: patches: lines from the poles cut the surface into patches filled with even grids, so loops run unbroken; field: each point placed from the flow nearby, quicker but with broken loops; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), patches otherwise. One of 'patches', 'field', 'grid'. Default 'patches'.
+        method: patches: loops run unbroken between a few poles, for characters, props and anything edited by hand; field: each point follows the flow near it, loops wander and poles scatter, for rough surfaces like scans and rocks; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), patches otherwise. One of 'patches', 'field', 'grid'. Default 'patches'.
         targetFaces: Approximate face count. Default 3000.
         countTolerance: Retry at a corrected size until the face count is within this fraction of targetFaces; 0 takes the first try. Default 0.1.
         timeout: Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits until done or aborted. Default 0.0.
@@ -7231,7 +7231,7 @@ def retopoPoles(*objects: Any, preset: str | None = None, method: str | None = N
     Args:
         objects: source.
         preset: Starting settings for what the mesh is for: gameCharacter, midPoly, hero, stylized, hardSurface, prop, or the name of a preset saved from the option box. Flags set to other than their default win. Default 'none'.
-        method: patches: lines from the poles cut the surface into patches filled with even grids, so loops run unbroken; field: each point placed from the flow nearby, quicker but with broken loops; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), patches otherwise. One of 'patches', 'field', 'grid'. Default 'patches'.
+        method: patches: loops run unbroken between a few poles, for characters, props and anything edited by hand; field: each point follows the flow near it, loops wander and poles scatter, for rough surfaces like scans and rocks; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), patches otherwise. One of 'patches', 'field', 'grid'. Default 'patches'.
         targetFaces: Approximate face count. Default 3000.
         countTolerance: Retry at a corrected size until the face count is within this fraction of targetFaces; 0 takes the first try. Default 0.1.
         timeout: Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits until done or aborted. Default 0.0.

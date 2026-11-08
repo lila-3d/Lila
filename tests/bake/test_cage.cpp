@@ -164,6 +164,39 @@ TEST_CASE("bakeEstimateCage: one click gives a near-zero-miss cage on known pair
     }
 }
 
+TEST_CASE("bakeEstimateCage: a low whose modifiers change its points gets the cage on its base points")
+{
+    newScene();
+    geo::CubeOptions lo;
+    lo.subdivX = lo.subdivY = lo.subdivZ = 2;
+    const std::string low = addMesh("box_low", geo::makeCube(lo));
+    ops::execute("addModifier", {{"args", {low}}, {"kind", "bevel"}, {"params", {{"segments", 2}}}});
+    ops::execute("addModifier", {{"args", {low}}, {"kind", "subdivision"}});
+    geo::SphereOptions so;
+    so.radius = 75.0;
+    so.subdivAxis = 64;
+    so.subdivHeight = 32;
+    const std::string high = addMesh("box_high", geo::makeSphere(so));
+    const std::string grp = pairGroup(low, high, tempDir("lila_cage_estimate_mods"));
+    ops::execute("bakeGroup", {{"args", {grp}}, {"frontal", 3.0}, {"rear", 3.0}});
+    const geo::Index basePoints = baseMesh(low)->pointCapacity();
+    REQUIRE(lila::scene::modifiers::exportMesh(graph(), graph().find(low)->id())->pointCapacity() != basePoints);
+
+    const json r = ops::execute("bakeEstimateCage", {{"args", {grp}}, {"resolution", 256}});
+    MESSAGE("miss rate before " << r["before"]["missRate"].get<double>() * 100.0 << "%, after " << r["after"]["missRate"].get<double>() * 100.0 << "%");
+    CHECK(r["mapped"] == json::array({"box_low"}));
+    CHECK(r["after"]["missRate"].get<double>() < r["before"]["missRate"].get<double>());
+    CHECK(r["after"]["missRate"].get<double>() < 0.005);
+    const json after = ops::execute("bakeCageCoverage", {{"args", {grp}}, {"resolution", 256}});
+    CHECK(after["misses"] == r["after"]["misses"]);
+    const geo::Mesh& base = *baseMesh(low);
+    CHECK(base.pointCapacity() == basePoints);
+    CHECK(base.pointAttrs().has(bake::kOffsetAttr));
+    CHECK(!base.pointAttrs().has("bakeCageProbeX"));
+    UndoStack::get().undo();
+    CHECK(!baseMesh(low)->pointAttrs().has(bake::kOffsetAttr));
+}
+
 TEST_CASE("bakeEstimateCage: a low's cage stops short of another low lying on it")
 {
     newScene();
