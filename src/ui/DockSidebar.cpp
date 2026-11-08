@@ -4,6 +4,7 @@
 #include "ui/DocsUi.h"
 #include "ui/Icons.h"
 #include "ui/LocateFlash.h"
+#include "ui/PanelFilter.h"
 #include "ui/Panels.h"
 #include "ui/Theme.h"
 
@@ -470,6 +471,9 @@ DockTitleBar::DockTitleBar(QDockWidget* dock) : QWidget(dock), mDock(dock)
     h->setContentsMargins(8, 4, 4, 4);
     h->setSpacing(0);
     h->addStretch(1);
+    QToolButton* find = titleButton("search", "Find in panel (Ctrl+F)", this);
+    h->addWidget(find);
+    connect(find, &QToolButton::clicked, dock, [dock] { panelFilter::open(dock); });
     QToolButton* collapse = titleButton("minus", "Collapse to the side", this);
     QToolButton* floatBtn = titleButton("picture-in-picture", "Float", this);
     QToolButton* close = titleButton("x", "Close", this);
@@ -726,6 +730,7 @@ bool DockSidebars::eventFilter(QObject* obj, QEvent* e)
                 {
                     QMenu menu;
                     const std::string page = d->property(kDocsPage).toString().toStdString();
+                    menu.addAction(ui::icon("search"), "Find in Panel", d, [d] { panelFilter::open(d); });
                     if (!page.empty())
                         menu.addAction(ui::icon("help"), "Docs", [page] { docs::open(page); });
                     menu.addAction(ui::icon("minus"), "Collapse to the Side", this, [this, d] {

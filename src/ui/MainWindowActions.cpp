@@ -13,6 +13,7 @@
 #include "ui/SupportBundle.h"
 #include "ui/Updater.h"
 #include "ui/ViewportToast.h"
+#include "ui/PanelFilter.h"
 
 namespace lila::ui
 {
@@ -193,8 +194,17 @@ void MainWindow::registerActions()
                   "Finds any item in the main menus by typing part of its name or menu, and runs it or opens its options."});
     commandPalette::registerActions(this);
     presenter::install(this);
-    actions::add({"window.searchScene", "Search Scene...", "Windows", [this] { menuSearch::openSceneFinder(menuBar(), this); }, nullptr,
-                  "Finds any object in the scene by name, wildcard, type: or path, selects it and reveals it in the outliner."});
+    actions::add({"window.searchScene", "Search Scene...", "Windows",
+                  [this] {
+                      // In a panel the same key finds in that panel.
+                      if (QDockWidget* dock = panelFilter::dockOf(QApplication::focusWidget()); dock && dock->widget())
+                          panelFilter::open(dock);
+                      else
+                          menuSearch::openSceneFinder(menuBar(), this);
+                  },
+                  nullptr,
+                  "Finds any object in the scene by name, wildcard, type: or path, selects it and reveals it in the outliner. "
+                  "With a panel focused, finds in that panel instead."});
     actions::add({"window.searchTearOffs", "Search Tear-offs...", "Windows", [this] { menuSearch::openTearOffSearch(menuBar(), this); }, nullptr,
                   "Finds any menu or menu section by name and tears it off under the cursor as a palette; the next click drops it."});
     auto scriptEditor = [this]() -> ScriptEditor* {

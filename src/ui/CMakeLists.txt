@@ -92,6 +92,7 @@ lila_module(lila_ui UI
     PythonViewport.cpp
     Owner.h
     SpinScrub.cpp SpinScrub.h
+    PanelFilter.cpp PanelFilter.h
     ValueReset.h
     NodeLookup.h
     Manipulator.cpp Manipulator.h
