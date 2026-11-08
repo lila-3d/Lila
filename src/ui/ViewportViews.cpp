@@ -959,7 +959,7 @@ bool ViewportWidget::frameAt(QPointF px)
     CameraView before = cameraView();
     const glm::dvec3 eye = mCamera.eye();
     mCamera.target = *hit;
-    const double zoom = PrefStore::get().value<bool>("general", "/viewport/frameUnderCursor/zoom", false)
+    const double zoom = PrefStore::get().value<bool>("general", "/viewport/frameUnderCursor/zoom", true)
                             ? std::max(PrefStore::get().value<double>("general", "/viewport/frameUnderCursor/zoomFactor", 4.0), 0.01)
                             : 1.0;
     if (mCamera.ortho)

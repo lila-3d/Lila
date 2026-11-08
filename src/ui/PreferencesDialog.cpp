@@ -852,7 +852,7 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         sectionHeader(viewport, "Framing Zoom (2 = twice as close, below 1 = further out)");
         numberField(viewport, "Frame Selected zoom factor", "/viewport/frameSelected/zoomFactor", 1.0, 0.1, 100.0, 0.25, 2);
         numberField(viewport, "Frame All zoom factor", "/viewport/frameAll/zoomFactor", 1.0, 0.1, 100.0, 0.25, 2);
-        toggleField(viewport, "Frame Under Cursor also zooms in", "/viewport/frameUnderCursor/zoom", false);
+        toggleField(viewport, "Frame Under Cursor also zooms in", "/viewport/frameUnderCursor/zoom", true);
         numberField(viewport, "Frame Under Cursor zoom factor", "/viewport/frameUnderCursor/zoomFactor", 4.0, 0.1, 100.0, 0.25, 2);
         sectionHeader(viewport, "Brushes");
         toggleField(viewport, "Tumble around the last brush stroke", viewportTools::kOrbitStrokePref, true);
