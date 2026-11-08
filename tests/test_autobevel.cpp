@@ -5,6 +5,7 @@
 #include "ops/Command.h"
 #include "geo/FoldEdges.h"
 #include "geo/Ops.h"
+#include "geo/Primitives.h"
 #include "scene/AutoBevel.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
