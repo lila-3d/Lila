@@ -469,3 +469,23 @@ TEST_CASE("unfrozenTransforms lists non-identity objects and filters rotations b
     run("freezeTransforms", {{"args", {moved, quarter, tilted, scaled}}});
     CHECK(run("unfrozenTransforms", {{"scene", true}}).empty());
 }
+
+TEST_CASE("deleting an edge joins its faces and leaves every point")
+{
+    run("newScene");
+    std::string plane = run("polyPlane", {{"width", 100.0}, {"depth", 50.0}, {"subdivisionsX", 2}, {"subdivisionsZ", 1}})[0];
+    const geo::Mesh m = meshOf(plane);
+    json middle = json::array();
+    for (geo::Index e = 0; e < m.edgeCapacity(); ++e)
+        if (m.edgeValid(e) && m.isManifoldEdge(e))
+            middle.push_back(e);
+    REQUIRE(middle.size() == 1);
+    run("selectComponents", {{"args", {plane}}, {"edges", middle}});
+    run("deleteComponents");
+    const geo::Mesh after = meshOf(plane);
+    CHECK(after.numFaces() == 1);
+    CHECK(after.numPoints() == 6);
+    for (geo::Index p = 0; p < m.pointCapacity(); ++p)
+        if (m.pointValid(p))
+            CHECK(after.position(p) == m.position(p));
+}

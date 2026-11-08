@@ -2449,7 +2449,7 @@ def deleteComponent(name: str | None = None, studio: bool | None = None, *, n: s
     """
 
 def deleteComponents() -> Any:
-    """Delete the selected vertices, edges or faces (with whatever depends on them)."""
+    """Delete the selected vertices or faces (with whatever depends on them), or the selected edges, joining their faces and keeping every vertex."""
 
 def deleteCurvePoints() -> Any:
     """Delete the selected curve points (vertex mode); a spline left too short is removed."""

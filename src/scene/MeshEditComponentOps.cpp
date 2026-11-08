@@ -245,14 +245,14 @@ void registerMeshEditComponentCommands()
 
     ops::registerCommand({
         .name = "deleteComponents",
-        .doc = "Delete the selected vertices, edges or faces (with whatever depends on them).",
+        .doc = "Delete the selected vertices or faces (with whatever depends on them), or the selected edges, joining their faces and keeping every vertex.",
         .run = [](const Args&) -> json {
             K kind = components::mode();
             return editSelected("Delete Components", kind, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
                 if (kind == K::Vertex)
                     geo::deletePoints(m, sel, s);
                 else if (kind == K::Edge)
-                    geo::deleteEdges(m, sel, s);
+                    geo::dissolveEdges(m, withMirror(m, s, sel, K::Edge), false);
                 else
                     geo::deleteFaces(m, sel, s);
                 return EditResult{};
