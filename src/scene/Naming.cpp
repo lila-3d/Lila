@@ -209,6 +209,7 @@ NamingPolicy NamingPolicy::fromJson(const nlohmann::json& in)
     p.underscoreSuffixes = parseSuffixes(j["underscoreSuffixes"]);
     std::string mode = j.value("mode", "fix");
     p.mode = mode == "warn" ? Mode::Warn : mode == "block" ? Mode::Block : Mode::Fix;
+    p.rules.clear();
     std::pair<std::string, CaseStyle> fallback{"*", CaseStyle::Any};
     for (auto& [type, style] : j["rules"].items())
     {
