@@ -134,7 +134,8 @@ json CoverSpec::toJson() const
                           {"turn", r.turn},
                           {"sink", r.sink},
                           {"solid", r.solid},
-                          {"minFit", r.minFit}});
+                          {"minFit", r.minFit},
+                          {"faceDownhill", r.faceDownhill}});
     }
     return {{"seed", seed}, {"maxCount", maxCount}, {"densityScale", densityScale}, {"rules", rulesJ}};
 }
@@ -152,11 +153,28 @@ CoverSpec CoverSpec::fromJson(const json& j)
             throw std::runtime_error("ground cover needs rules: a list of {name, items, density, when, ...}");
         list = &j["rules"];
     }
-    if (!list->is_array())
-        throw std::runtime_error("rules is a list of {name, items, density, when, ...}");
+    json expanded = json::array();
+    if (list->is_string())
+        expanded.push_back(*list);
+    else if (list->is_array())
+        expanded = *list;
+    else
+        throw std::runtime_error("rules is a list of {name, items, density, when, ...} or preset names");
     std::set<std::string> names;
-    for (const json& rj : *list)
+    for (json rj : expanded)
     {
+        // A preset by name, or {preset: name, ...overrides}.
+        if (rj.is_string() || (rj.is_object() && rj.contains("preset")))
+        {
+            const std::string preset = rj.is_string() ? rj.get<std::string>() : rj["preset"].get<std::string>();
+            CoverRule base = coverPreset(preset);
+            json pj = CoverSpec{{base}}.toJson()["rules"][0];
+            if (rj.is_object())
+                for (const auto& [k, v] : rj.items())
+                    if (k != "preset")
+                        pj[k] = v;
+            rj = pj;
+        }
         if (!rj.is_object())
             throw std::runtime_error("each rule is {name, items, density, when, ...}");
         CoverRule r;
@@ -200,6 +218,7 @@ CoverSpec CoverSpec::fromJson(const json& j)
         r.sink = rj.value("sink", r.sink);
         r.solid = rj.value("solid", r.solid);
         r.minFit = std::clamp(rj.value("minFit", r.minFit), 0.0, 1.0);
+        r.faceDownhill = rj.value("faceDownhill", r.faceDownhill);
         s.rules.push_back(std::move(r));
     }
     return s;
@@ -354,6 +373,67 @@ CoverSpec defaultCover(const Heightfield& h)
     return s;
 }
 
+const std::vector<std::string>& coverPresetNames()
+{
+    static const std::vector<std::string> n = {"scree", "ledgePlants", "hangingRoots"};
+    return n;
+}
+
+CoverRule coverPreset(const std::string& name)
+{
+    auto term = [](const char* input, double lo, double hi, double fade) {
+        Term t;
+        t.input = input;
+        t.lo = lo;
+        t.hi = hi;
+        t.fade = fade;
+        return t;
+    };
+    constexpr double inf = 1e30;
+    CoverRule r;
+    r.name = name;
+    if (name == "scree")
+    {
+        // The talus band terrainCliffMesh writes below each cliff, on slopes scree can rest on.
+        r.items = {"scree"};
+        r.density = 0.3;
+        r.scaleMin = 0.4;
+        r.scaleMax = 1.2;
+        r.align = 0.8;
+        r.sink = 5.0;
+        r.terms = {term("cliffTalus", 0.15, inf, 0.1), term("slope", 15.0, 42.0, 5.0)};
+    }
+    else if (name == "ledgePlants")
+    {
+        r.items = {"ledgePlant"};
+        r.density = 0.15;
+        r.scaleMin = 0.6;
+        r.scaleMax = 1.3;
+        r.align = 1.0;
+        r.solid = false;
+        r.terms = {term("nearCliff", 0.3, inf, 0.15), term("slope", -inf, 30.0, 5.0)};
+    }
+    else if (name == "hangingRoots")
+    {
+        r.items = {"hangingRoot"};
+        r.density = 0.05;
+        r.scaleMin = 0.7;
+        r.scaleMax = 1.4;
+        r.align = 0.3;
+        r.turn = 15.0;
+        r.faceDownhill = true;
+        r.terms = {term("cliffTop", 0.2, inf, 0.1), term("slope", 30.0, inf, 5.0)};
+    }
+    else
+    {
+        std::string all;
+        for (const std::string& n : coverPresetNames())
+            all += (all.empty() ? "" : ", ") + n;
+        throw std::runtime_error("no ground cover preset " + name + " (" + all + ")");
+    }
+    return r;
+}
+
 CoverResult scatterCover(const Heightfield& h, const CoverSpec& s, const std::vector<std::vector<double>>& itemRadius)
 {
     LILA_ZONE();
@@ -464,8 +544,14 @@ CoverResult scatterCover(const Heightfield& h, const CoverSpec& s, const std::ve
             CoverPiece p;
             p.position = {c.p.x, h.heightAt(c.p.x, c.p.y), c.p.y};
             p.normal = h.normalAt(c.p.x, c.p.y);
+            p.slope = std::acos(std::clamp(p.normal.y, -1.0, 1.0)) * 57.29577951308232;
+            if (const double hl = std::hypot(p.normal.x, p.normal.z); hl > 1e-9)
+                p.downhill = {p.normal.x / hl, 0.0, p.normal.z / hl};
             p.scale = scale;
             p.turn = (coverUnit(coverHash(c.hash, 5u, 19u)) * 2.0 - 1.0) * rule.turn / 57.29577951308232;
+            // Facing downhill: the turn that brings +Z onto the downhill direction, jittered by turn.
+            if (rule.faceDownhill)
+                p.turn += std::atan2(p.downhill.x, p.downhill.z);
             p.radius = radius;
             p.fit = float(c.fit);
             p.random = float(coverUnit(coverHash(c.hash, 6u, 23u)));

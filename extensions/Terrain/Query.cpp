@@ -1003,6 +1003,28 @@ using namespace query_;
 
 json storedRegions(const std::string& terrain) { return readStored(findQ(terrain, "terrainQuery")); }
 
+void replaceRegions(const std::string& terrain, const std::string& prefix, const json& regions, const std::string& cmd)
+{
+    const QTerrain t = findQ(terrain, cmd);
+    RegionsGroup rg = regionsGroup(t, cmd);
+    gn::GNode& n = ensureRegionsNode(rg.group, cmd);
+    auto it = n.values.find("regions");
+    json stored = it != n.values.end() && it->is_string() ? parseRegions(it->get<std::string>()) : json::object();
+    for (auto s = stored.begin(); s != stored.end();)
+        s = !prefix.empty() && s.key().starts_with(prefix) ? stored.erase(s) : std::next(s);
+    for (const auto& [name, r] : regions.items())
+        stored[name] = r;
+    n.values["regions"] = stored.dump();
+    try
+    {
+        gn::commitGroup(Graph::current(), *rg.node, std::move(rg.group));
+    }
+    catch (const std::exception& e)
+    {
+        throw CommandError(cmd + ": " + e.what());
+    }
+}
+
 json resolveRegionRef(const std::string& terrain, const std::string& ref, bool polygon, const std::string& cmd)
 {
     std::string name = ref.substr(std::string(kRefPrefix).size());

@@ -209,8 +209,40 @@ float4 sampleTable(uint handle, float2 uv, float2 dx, float2 dy)
 #endif
 }
 
+// The slope-aware projection MF_LilaTerrainLayer uses (terrain::cliffs::projectionWeights): the top projection alone
+// below kHfSlopeStart degrees, the sides fading in over kHfSlopeBlend above it, so cliffs don't smear one texel row.
+static const float kHfSlopeStart = 35.0;
+static const float kHfSlopeBlend = 15.0;
+
+/** Weights of the top (y), X-facing (x) and Z-facing (z) projections for a heightfield-space normal. */
+float3 hfProjectionWeights(float3 n)
+{
+    float slope = degrees(acos(saturate(abs(n.y))));
+    float side = smoothstep(kHfSlopeStart, kHfSlopeStart + kHfSlopeBlend, slope);
+    float2 w = float2(n.x * n.x, n.z * n.z);
+    float sum = w.x + w.y;
+    if (sum <= 1e-8)
+        return float3(0.0, 1.0, 0.0);
+    w = w / sum * side;
+    return float3(w.x, 1.0 - side, w.y);
+}
+
+/** One projection of a layer's maps: colour times the base map, and the map's normal in heightfield space. */
+float3 hfLayerSample(HfLayer l, float2 uv, float2 dx, float2 dy, float3 t, float3 b, float3 n, inout float3 normal, float w)
+{
+    float3 c = l.color.rgb;
+    if (l.baseMap != 0xffff)
+        c *= sampleTable(l.baseMap, uv, dx, dy).rgb;
+    if (l.normalMap != 0xffff)
+    {
+        float3 tn = sampleTable(l.normalMap, uv, dx, dy).xyz * 2.0 - 1.0;
+        normal += normalize(t * tn.x + b * tn.y + n * max(tn.z, 1e-3)) * w;
+    }
+    return c;
+}
+
 /** The paint layers' blend at a pixel, into gTerrainBase, gTerrainRough and gTerrainNormal. */
-void hfLayers(float2 s, float3 n, float2 planar, float2 planarDx, float2 planarDy)
+void hfLayers(float2 s, float3 n, float2 planar, float2 planarDx, float2 planarDy, float height, float heightDx, float heightDy)
 {
     HfParams* p = hf();
     uint count = min(p->info.y, kMaxLayers);
@@ -223,21 +255,35 @@ void hfLayers(float2 s, float3 n, float2 planar, float2 planarDx, float2 planarD
         float w = l.weights != nullptr ? hfMask(l.weights, s) : 0.0;
         if (w <= 0.0)
             continue;
-        float2 uv = planar * l.tiling.x;
-        float2 dx = planarDx * l.tiling.x, dy = planarDy * l.tiling.x;
-        float3 c = l.color.rgb;
-        if (l.baseMap != 0xffff)
-            c *= sampleTable(l.baseMap, uv, dx, dy).rgb;
+        const float k = l.tiling.x;
+        const float3 pw = hfProjectionWeights(n);
+        float3 c = float3(0.0);
+        float3 ln = float3(0.0);
+        if (pw.y > 0.0)
+        {
+            // Seen from above: the map's right is +X, its top (green up, flipped for DirectX) is -Z.
+            float3 t = normalize(float3(1.0, 0.0, 0.0) - n * n.x);
+            c += hfLayerSample(l, planar * k, planarDx * k, planarDy * k, t, cross(n, t), n, ln, pw.y) * pw.y;
+        }
+        if (pw.x > 0.0)
+        {
+            // The X-facing side: across is Z, up is the height.
+            float2 uv = float2(planar.y, -height) * k;
+            float3 t = normalize(float3(0.0, 0.0, sign(n.x)) - n * n.z * sign(n.x));
+            c += hfLayerSample(l, uv, float2(planarDx.y, -heightDx) * k, float2(planarDy.y, -heightDy) * k, t, cross(n, t), n, ln, pw.x) * pw.x;
+        }
+        if (pw.z > 0.0)
+        {
+            float2 uv = float2(planar.x, -height) * k;
+            float3 t = normalize(float3(-sign(n.z), 0.0, 0.0) - n * -n.x * sign(n.z));
+            c += hfLayerSample(l, uv, float2(planarDx.x, -heightDx) * k, float2(planarDy.x, -heightDy) * k, t, cross(n, t), n, ln, pw.z) * pw.z;
+        }
         color += c * w;
         rough += l.color.a * w;
         total += w;
         if (l.normalMap != 0xffff)
         {
-            float3 tn = sampleTable(l.normalMap, uv, dx, dy).xyz * 2.0 - 1.0;
-            // Seen from above: the map's right is +X, its top (green up, flipped for DirectX) is -Z.
-            float3 t = normalize(float3(1.0, 0.0, 0.0) - n * n.x);
-            float3 b = cross(n, t);
-            normal += normalize(t * tn.x + b * tn.y + n * max(tn.z, 1e-3)) * w;
+            normal += ln * w;
             normalWeight += w;
         }
     }
@@ -373,8 +419,9 @@ float4 heightfieldPS(HfOut i, bool front : SV_IsFrontFace) : SV_Target
 
     const float3 n = hfPixelNormal(s, footprint);
     const float height = hfHeight(s);
+    const float heightDx = ddx(height), heightDy = ddy(height);
     if ((pc.flags & kGreyBase) == 0)
-        hfLayers(s, n, planar, planarDx, planarDy);
+        hfLayers(s, n, planar, planarDx, planarDy, height, heightDx, heightDy);
     VSOut m = hfMeshInput(i);
     m.normal = hfNormalToWorld(n);
     const Centers center = {m.normal, centerUv};

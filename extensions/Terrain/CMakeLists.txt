@@ -4,10 +4,10 @@ lila_add_extension(lila_terrain_extension ID Terrain MANIFEST extension.json UI 
             Water.cpp WaterCommands.cpp Roads.cpp RoadCommands.cpp Volume.cpp VolumeCommands.cpp TerrainEdit.cpp
             Landform.cpp LandformGpu.cpp LandformNodes.cpp LandformCommands.cpp ErosionFilter.cpp Shaping.cpp Brushes.cpp
             Projection.cpp Painted.cpp Osm.cpp Fetch.cpp LandCover.cpp DemRefine.cpp Http.cpp InputCommands.cpp
-            Materials.cpp GroundCover.cpp MaterialNodes.cpp MaterialCommands.cpp SurfaceUi.cpp Query.cpp Spec.cpp Wedge.cpp Checks.cpp
+            Materials.cpp GroundCover.cpp MaterialNodes.cpp MaterialCommands.cpp SurfaceUi.cpp Query.cpp Spec.cpp Wedge.cpp Checks.cpp Cliffs.cpp CliffNodes.cpp CliffCommands.cpp CliffUi.cpp
             Terrain.h Export.h ExportEngines.h Erosion.h ErosionGpu.h Inputs.h Stamps.h Analysis.h Water.h Roads.h Volume.h
             Landform.h LandformGpu.h LandformCommands.h ErosionFilter.h Shaping.h Brushes.h
-            Projection.h Painted.h Osm.h Fetch.h DemRefine.h Http.h Materials.h GroundCover.h MaterialNodes.h Query.h Spec.h Wedge.h Checks.h)
+            Projection.h Painted.h Osm.h Fetch.h DemRefine.h Http.h Materials.h GroundCover.h MaterialNodes.h Query.h Spec.h Wedge.h Checks.h Cliffs.h CliffScene.h)
 lila_add_shaders(lila_terrain_extension FILES shaders/terrain_erosion.slang shaders/terrain_landform.slang shaders/terrain_talus.slang
     INCLUDES shaders/terrain_landform.slang)
 find_package(miniz CONFIG REQUIRED)

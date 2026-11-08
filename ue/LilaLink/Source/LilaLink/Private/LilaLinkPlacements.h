@@ -14,6 +14,7 @@ namespace LilaLink
  *   holder takes the first placement's. One undo transaction. Returns {spawned, updated, removed, mode, warnings, assets}.
  *   A placement's lightingChannels [bool, bool, bool] set its component's Lighting Channels 0, 1 and 2 (an (H)ISM's
  *   from the first placement, as instances share them).
+ *   hlodLayer (an HLOD layer asset path) puts every actor of the group on that layer.
  * placeLights {lights: [{id, name, kind: point | spot | directional | area | disc, location, forward, up, color, intensity,
  *   units, useTemperature, temperature, range, innerConeAngle, outerConeAngle, width, height, sourceRadius, castShadows,
  *   lightingChannels?}]} spawns or updates a light actor per Lila light, matched by node id (forward is where it shines).

@@ -1,5 +1,5 @@
 # The Terrain extension: its core compiled in directly, and the package driven through its commands.
-add_executable(lila_terrain_tests main.cpp test_terrain.cpp test_stamps.cpp test_contract.cpp test_export_engines.cpp test_water.cpp test_roads.cpp test_volume.cpp test_landform.cpp test_brushes.cpp test_materials.cpp test_heightfield_draw.cpp test_agents.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Core.cpp
+add_executable(lila_terrain_tests main.cpp test_terrain.cpp test_stamps.cpp test_contract.cpp test_export_engines.cpp test_water.cpp test_roads.cpp test_volume.cpp test_landform.cpp test_brushes.cpp test_materials.cpp test_heightfield_draw.cpp test_agents.cpp test_cliffs.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Core.cpp
     ${CMAKE_SOURCE_DIR}/extensions/Terrain/Export.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/ExportEngines.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Erosion.cpp
     ${CMAKE_SOURCE_DIR}/extensions/Terrain/ErosionGpu.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Inputs.cpp
     ${CMAKE_SOURCE_DIR}/extensions/Terrain/Stamps.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Analysis.cpp
@@ -9,7 +9,7 @@ add_executable(lila_terrain_tests main.cpp test_terrain.cpp test_stamps.cpp test
     ${CMAKE_SOURCE_DIR}/extensions/Terrain/Brushes.cpp
     test_inputs.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Projection.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Painted.cpp
     ${CMAKE_SOURCE_DIR}/extensions/Terrain/Osm.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Fetch.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/LandCover.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/DemRefine.cpp
-    ${CMAKE_SOURCE_DIR}/extensions/Terrain/Materials.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/GroundCover.cpp)
+    ${CMAKE_SOURCE_DIR}/extensions/Terrain/Materials.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/GroundCover.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Cliffs.cpp)
 target_include_directories(lila_terrain_tests PRIVATE ${CMAKE_SOURCE_DIR}/extensions/Terrain)
 find_package(miniz CONFIG REQUIRED)
 target_link_libraries(lila_terrain_tests PRIVATE LilaUI doctest::doctest miniz::miniz)

@@ -27,6 +27,7 @@
 #include "Materials/MaterialExpressionScalarParameter.h"
 #include "Materials/MaterialExpressionTextureObjectParameter.h"
 #include "Materials/MaterialExpressionVectorParameter.h"
+#include "Materials/MaterialExpressionVertexNormalWS.h"
 #include "Materials/MaterialExpressionWorldPosition.h"
 #include "Materials/MaterialFunction.h"
 #include "Misc/PackageName.h"
@@ -41,7 +42,7 @@ namespace
 {
 const TCHAR* TerrainFunctionName = TEXT("MF_LilaTerrainLayer");
 const TCHAR* TerrainVersionTag = TEXT("Lila Terrain Layer v");
-constexpr int32 TerrainFunctionVersion = 1;
+constexpr int32 TerrainFunctionVersion = 2;
 const TCHAR* TerrainFolder = TEXT("/Game/LilaLink/Landscapes");
 
 struct FTerrainLayer
@@ -52,9 +53,57 @@ struct FTerrainLayer
 	float TileSize = 400.0f;
 };
 
+// Slope-aware projection (Lila's terrain::cliffs::projectionWeights): the top projection alone below SlopeStart degrees,
+// the X and Y sides fading in over SlopeBlend above it, so steep faces don't smear one texel row. HexTile turns on
+// Mikkelsen's hex-tile stochastic sampling, which breaks up tiling on large faces at three samples per projection.
 const TCHAR* TerrainColorCode = TEXT(R"(
-float3 c = Tint.rgb * Texture2DSample(Texture, TextureSampler, WorldTile.xy).rgb;
-return Accum + c * Weight;
+struct FLilaHex
+{
+	float2 Hash(float2 p) { return frac(sin(float2(dot(p, float2(127.1, 311.7)), dot(p, float2(269.5, 183.3)))) * 43758.5453); }
+	float3 Sample(Texture2D T, SamplerState S, float2 uv, float hex)
+	{
+		float2 dx = ddx(uv), dy = ddy(uv);
+		if (hex < 0.5)
+			return T.SampleGrad(S, uv, dx, dy).rgb;
+		float2 st = uv * 3.4641016;
+		float2 sk = float2(st.x, -0.57735027 * st.x + 1.15470054 * st.y);
+		float2 base = floor(sk);
+		float3 f = float3(frac(sk), 0.0);
+		f.z = 1.0 - f.x - f.y;
+		float s = step(0.0, -f.z);
+		float s2 = 2.0 * s - 1.0;
+		float3 w = float3(-f.z * s2, s - f.y * s2, s - f.x * s2);
+		float2 v1 = base + float2(s, s), v2 = base + float2(s, 1.0 - s), v3 = base + float2(1.0 - s, s);
+		w = pow(max(w, 0.0), 7.0);
+		w /= max(w.x + w.y + w.z, 1e-5);
+		return T.SampleGrad(S, uv + Hash(v1), dx, dy).rgb * w.x + T.SampleGrad(S, uv + Hash(v2), dx, dy).rgb * w.y + T.SampleGrad(S, uv + Hash(v3), dx, dy).rgb * w.z;
+	}
+};
+FLilaHex L;
+float3 n = normalize(Normal);
+float slope = degrees(acos(saturate(abs(n.z))));
+float side = smoothstep(SlopeStart, SlopeStart + max(SlopeBlend, 0.001), slope);
+float2 sw = float2(n.x * n.x, n.y * n.y);
+sw = sw / max(sw.x + sw.y, 1e-6) * side;
+float3 c = 0;
+if (side < 1.0)
+	c += L.Sample(Texture, TextureSampler, WorldTile.xy, HexTile) * (1.0 - side);
+if (sw.x > 0.0)
+	c += L.Sample(Texture, TextureSampler, WorldTile.yz, HexTile) * sw.x;
+if (sw.y > 0.0)
+	c += L.Sample(Texture, TextureSampler, WorldTile.xz, HexTile) * sw.y;
+return Accum + Tint.rgb * c * Weight;
+)");
+
+// Mobile (ES3.1, forward or deferred): biplanar, the top and the dominant side only, no hex tiling.
+const TCHAR* TerrainColorMobileCode = TEXT(R"(
+float3 n = normalize(Normal);
+float slope = degrees(acos(saturate(abs(n.z))));
+float side = smoothstep(SlopeStart, SlopeStart + max(SlopeBlend, 0.001), slope);
+float3 c = Texture2DSample(Texture, TextureSampler, WorldTile.xy).rgb * (1.0 - side);
+if (side > 0.0)
+	c += Texture2DSample(Texture, TextureSampler, abs(n.x) > abs(n.y) ? WorldTile.yz : WorldTile.xz).rgb * side;
+return Accum + Tint.rgb * c * Weight;
 )");
 
 const TCHAR* TerrainRoughnessCode = TEXT(R"(
@@ -75,14 +124,14 @@ int32 TerrainVersionOf(const UMaterialFunction* Function)
 
 /**
  * MF_LilaTerrainLayer: adds one weight-blended layer to what the calls before it summed. Accum and AccumRoughness come in
- * (zero for the first call), the layer's tinted texture (projected from above, TileSize cm per repeat) and roughness
+ * (zero for the first call), the layer's tinted texture (projected from above on flats and from the sides on slopes over TerrainSlopeStart, TileSize cm per repeat) and roughness
  * times Weight go on. Because a landscape's weight-blended layers sum to 1, chaining one call per layer gives the exact mix.
  */
 void BuildTerrainFunction(UMaterialFunction* Function)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkTerrainMaterial::BuildTerrainFunction);
 
-	LilaLink::FFunctionGraph G(Function, TEXT("Lila terrain layer: adds Weight times a tinted, top-projected texture and roughness to Accum."));
+	LilaLink::FFunctionGraph G(Function, TEXT("Lila terrain layer: adds Weight times a tinted texture (top-projected on flats, from the sides on steep slopes) and roughness to Accum."));
 	auto* AccumDefault = G.New<UMaterialExpressionConstant3Vector>(-1500);
 	AccumDefault->Constant = FLinearColor(0.0f, 0.0f, 0.0f);
 	auto* RoughDefault = G.New<UMaterialExpressionConstant>(-1500);
@@ -96,8 +145,12 @@ void BuildTerrainFunction(UMaterialFunction* Function)
 	UTexture* White = LoadObject<UTexture>(nullptr, TEXT("/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture"));
 	In.Add(TEXT("Tint"), G.VectorInput(TEXT("LayerTint"), FLinearColor(0.5f, 0.5f, 0.5f), TEXT("Layer"), TEXT("Layer colour, multiplied with Texture.")));
 	In.Add(TEXT("Roughness"), G.ScalarInput(TEXT("LayerRoughness"), 0.85f, TEXT("Layer"), TEXT("Layer roughness.")));
-	In.Add(TEXT("Texture"), G.TextureInput(TEXT("LayerTexture"), White, SAMPLERTYPE_Color, TEXT("Layer"), TEXT("Layer colour texture, projected from above.")));
+	In.Add(TEXT("Texture"), G.TextureInput(TEXT("LayerTexture"), White, SAMPLERTYPE_Color, TEXT("Layer"), TEXT("Layer colour texture.")));
 	UMaterialExpressionFunctionInput* TileSize = G.ScalarInput(TEXT("LayerTileSize"), 400.0f, TEXT("Layer"), TEXT("Texture repeat, cm."));
+	In.Add(TEXT("SlopeStart"), G.ScalarInput(TEXT("TerrainSlopeStart"), 35.0f, TEXT("Terrain"), TEXT("Slopes steeper than this, degrees, also project from the sides.")));
+	In.Add(TEXT("SlopeBlend"), G.ScalarInput(TEXT("TerrainSlopeBlend"), 15.0f, TEXT("Terrain"), TEXT("Degrees over which the side projections fade in.")));
+	In.Add(TEXT("HexTile"), G.ScalarInput(TEXT("TerrainHexTile"), 0.0f, TEXT("Terrain"), TEXT("1 breaks up tiling with hex-tile stochastic sampling (off on mobile).")));
+	In.Add(TEXT("Normal"), G.Make(UMaterialExpressionVertexNormalWS::StaticClass(), -1600));
 	// World position is large-world (double); divide and wrap it before the Custom node, which takes floats.
 	UMaterialExpression* World = G.Make(UMaterialExpressionWorldPosition::StaticClass(), -1600);
 	auto* Divide = G.New<UMaterialExpressionDivide>(-1400);
@@ -127,7 +180,11 @@ void BuildTerrainFunction(UMaterialFunction* Function)
 		return E;
 	};
 	const FString Version = FString::Printf(TEXT("%s%d"), TerrainVersionTag, TerrainFunctionVersion);
-	auto* Color = Custom(Version + TEXT(" colour"), TerrainColorCode, CMOT_Float3, {TEXT("Accum"), TEXT("Weight"), TEXT("Tint"), TEXT("Texture"), TEXT("WorldTile")});
+	auto* Full = Custom(Version + TEXT(" colour"), TerrainColorCode, CMOT_Float3,
+		{TEXT("Accum"), TEXT("Weight"), TEXT("Tint"), TEXT("Texture"), TEXT("WorldTile"), TEXT("Normal"), TEXT("SlopeStart"), TEXT("SlopeBlend"), TEXT("HexTile")});
+	auto* Mobile = Custom(Version + TEXT(" colour mobile"), TerrainColorMobileCode, CMOT_Float3,
+		{TEXT("Accum"), TEXT("Weight"), TEXT("Tint"), TEXT("Texture"), TEXT("WorldTile"), TEXT("Normal"), TEXT("SlopeStart"), TEXT("SlopeBlend")});
+	UMaterialExpression* Color = G.FeatureLevelSwitch(Full, Mobile);
 	auto* Rough = Custom(Version + TEXT(" roughness"), TerrainRoughnessCode, CMOT_Float1, {TEXT("AccumRoughness"), TEXT("Roughness"), TEXT("Weight")});
 	G.Output(Color, TEXT("BaseColor"), TEXT("Accum with this layer's share added."));
 	G.Output(Rough, TEXT("Roughness"), TEXT("AccumRoughness with this layer's share added."));

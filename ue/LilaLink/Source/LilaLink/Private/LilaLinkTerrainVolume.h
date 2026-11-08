@@ -13,6 +13,9 @@ namespace LilaLink
  * render, and a user's material without one is reported. meshes get material, or MI_<Label>_Volume on M_LilaTerrainVolume
  * (built on MF_LilaTerrainVolume, a triplanar ground for any material), with the landscape material's GroundColor and
  * GroundRoughness. Replies {holes, holeMaterial, material, meshes, assets, warnings}.
+ *
+ * setCliffMaterial {label, meshes, landscapeMaterial?} gives every slot of the meshes (Lila's cliff tiles) MI_<Label>_Cliffs on
+ * M_LilaTerrainVolume, coloured like landscapeMaterial when given. Replies {material, meshes, assets, warnings}.
  */
 void AddTerrainVolumeMethods(TMap<FString, FLilaLinkMethod>& Methods);
 } // namespace LilaLink

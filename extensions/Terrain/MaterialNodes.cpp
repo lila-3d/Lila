@@ -301,12 +301,16 @@ gn::NodeDecl coverDecl()
                 auto itemAttr = inst->attrs.getOrAdd<int32_t>("item");
                 auto fitAttr = inst->attrs.getOrAdd<float>("fit");
                 auto randomAttr = inst->attrs.getOrAdd<float>("random");
+                auto slopeAttr = inst->attrs.getOrAdd<float>("slope");
+                auto downhillAttr = inst->attrs.getOrAdd<glm::vec3>("downhill");
                 for (size_t k = 0; k < kept.size(); ++k)
                 {
                     ruleAttr[k] = kept[k]->rule;
                     itemAttr[k] = kept[k]->item;
                     fitAttr[k] = kept[k]->fit;
                     randomAttr[k] = kept[k]->random;
+                    slopeAttr[k] = float(kept[k]->slope);
+                    downhillAttr[k] = glm::vec3(glm::normalize(glm::dvec3(terrainWorld * glm::dvec4(kept[k]->downhill, 0.0))));
                 }
 
                 json rules = json::array();

@@ -73,6 +73,8 @@ struct FImportRequest
 	bool bAutoCollision = false;
 	/** Static: none, box, convex, complexAsSimple or ucx, applied after the import; empty leaves autoCollision in charge. */
 	FString Collision;
+	/** Static: complex collision from this LOD (a simplified one for non-Nanite tiles); -1 leaves LOD0. */
+	int32 LodForCollision = -1;
 	bool bGenerateLightmapUVs = false;
 	bool bComputeNormals = false;
 	bool bNanite = false;
@@ -190,6 +192,7 @@ bool ParseRequest(const TSharedPtr<FJsonObject>& Params, FImportRequest& Out, FS
 		OutError = FString::Printf(TEXT("importAsset: collision is none, box, convex, complexAsSimple or ucx, not '%s'"), *Out.Collision);
 		return false;
 	}
+	Options->TryGetNumberField(TEXT("lodForCollision"), Out.LodForCollision);
 	Options->TryGetBoolField(TEXT("generateLightmapUVs"), Out.bGenerateLightmapUVs);
 	Options->TryGetBoolField(TEXT("nanite"), Out.bNanite);
 	Options->TryGetBoolField(TEXT("importAnimations"), Out.bImportAnimations);
@@ -916,6 +919,10 @@ void ApplyCollision(const FImportRequest& Request, FImportOutcome& Outcome)
 			// The editor's Auto Convex Collision defaults: up to 4 hulls of 16 vertices from 100k voxels.
 			Meshes->SetConvexDecompositionCollisionsWithNotification(Mesh, 4, 16, 100000, false);
 		}
+	}
+	if (Request.LodForCollision >= 0)
+	{
+		Mesh->LODForCollision = FMath::Clamp(Request.LodForCollision, 0, FMath::Max(0, Mesh->GetNumSourceModels() - 1));
 	}
 	if (!Mesh->GetBodySetup())
 	{

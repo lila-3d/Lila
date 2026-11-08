@@ -37,7 +37,14 @@ struct CoverRule
     bool solid = true;
     /** Below this fit nothing grows, however lucky the draw. */
     double minFit = 0.05;
+    /** Each piece turns so its +Z faces downhill (roots, ferns hanging off a ledge) instead of a random turn. */
+    bool faceDownhill = false;
 };
+
+/** Slope band presets by name: scree (below cliffs), ledgePlants (flat spots on and near cliffs), hangingRoots (cliff tops). */
+const std::vector<std::string>& coverPresetNames();
+/** A preset rule; throws std::runtime_error for an unknown name. */
+CoverRule coverPreset(const std::string& name);
 
 struct CoverSpec
 {
@@ -67,6 +74,9 @@ struct CoverPiece
     int rule = 0;
     /** Index into the rule's items. */
     int item = 0;
+    /** Ground slope, degrees, and the horizontal downhill direction, in the heightfield's space. */
+    double slope = 0.0;
+    glm::dvec3 downhill{1.0, 0.0, 0.0};
 };
 
 struct CoverRuleStats

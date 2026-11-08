@@ -4,6 +4,7 @@
 
 #include "Analysis.h"
 #include "Checks.h"
+#include "CliffScene.h"
 #include "Erosion.h"
 #include "ErosionGpu.h"
 #include "Export.h"
@@ -1823,14 +1824,19 @@ void registerContractCommands(ext::Context& ctx)
                "than floatTolerance cm anywhere), stamps and streets across a river with no bridge or culvert, and canals that "
                "reach no water, volume splits whose seams crack (seamTolerance cm), whose holes no mesh fills, or with places no "
                "mesh covers, roads (terrainAddRoad) steeper or more banked than their design or over water with no bridge or culvert, "
-               "rivers rising downstream, and lakes below their rim with no outlet or above it with no dam. Returns ok and the issues, each with its type, what it is about, where and a message.",
+               "rivers rising downstream, lakes below their rim with no outlet or above it with no dam, cliff pieces floating above the "
+               "ground (floatingCliff), cracks where a cliff meets the terrain (cliffCrack) and cliff tiles over triangleBudget in a "
+               "World Partition cell (tileOverBudget). Returns ok and the issues, each with its type, what it is about, where and a message.",
         .positionalDoc = "terrain mesh or its modifier",
         .flags = withAnalysisFlags({nodeFlag({"buildings", "b", T::List, json::array(), "Meshes standing on the terrain to check."}, "mesh"),
                                     {"cutFillLimit", "cf", T::Float, 500.0, "Largest cut plus fill per pad, m3.", {}, {}, 0.0},
                                     {"maxGrade", "mg", T::Float, 12.0, "Steepest street, percent.", {}, {}, 0.0},
                                     {"floodTolerance", "ft", T::Float, 0.5, "Flood risk counted as flooding.", {}, {}, 0.0, 1.0},
                                     {"floatTolerance", "flt", T::Float, 10.0, "Gap under a building counted as floating, cm.", {}, {}, 0.0},
-                                    {"seamTolerance", "stl", T::Float, 1.0, "Gap between a volume piece and the ground at a seam counted as a crack, cm.", {}, {}, 0.0}}),
+                                    {"seamTolerance", "stl", T::Float, 1.0, "Gap between a volume piece and the ground at a seam counted as a crack, cm.", {}, {}, 0.0},
+                                    {"cliffTolerance", "ctl", T::Float, 5.0, "Gap under a cliff's foot (floating) or over its top or seam (crack), cm.", {}, {}, 0.0},
+                                    {"triangleBudget", "tb", T::Float, 400000.0, "Most cliff triangles in one World Partition cell.", {}, {}, 1.0},
+                                    {"cellSize", "cs", T::Float, 12800.0, "World Partition cell size for the triangle budget, cm.", {}, {}, 100.0}}),
         .undoable = false,
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -1974,6 +1980,9 @@ void registerContractCommands(ext::Context& ctx)
             for (const json& i : volumeIssues(f.modifier ? f.modifier->id() : 0, f.frame.m, a.get<double>("seamTolerance", 1.0)))
                 issues.push_back(i);
             for (const json& i : featureIssues(pathOf(f, a.objects()[0]), *an, f.frame.m, 0.05))
+                issues.push_back(i);
+            for (const json& i : cliffs::cliffIssues(pathOf(f, a.objects()[0]), a.get<double>("cliffTolerance", 5.0), a.get<double>("triangleBudget", 400000.0),
+                                                     a.get<double>("cellSize", 12800.0)))
                 issues.push_back(i);
             return {{"ok", issues.empty()}, {"issues", issues}, {"revision", revision(h)}};
         },
@@ -2413,6 +2422,8 @@ void registerCommands(ext::Context& ctx)
                   {"roads", "rd", T::Bool, true, "Also send the terrain's roads as landscape splines."},
                   {"volumeMaterial", "vm", T::String, "", "Material for the volume pieces; empty generates one on MF_LilaTerrainVolume."},
                   {"rvt", "rvt", T::Bool, false, "Material layers: also write a runtime virtual texture, so meshes can blend into the ground."},
+                  {"cliffs", "cl", T::Bool, false, "Also send the terrain's cliffs as World Partition tiles (terrainSendCliffs)."},
+                  {"cliffFlags", "clf", T::Any, nullptr, "terrainSendCliffs flags for cliffs=True, such as {'cellSize': 12800, 'hlodLayer': ...}."},
                   {"timeout", "to", T::Float, 300.0, "Seconds to wait for Unreal.", {}, {}, 0.0}}),
         .undoable = false,
         .run = [](const Args& a) -> json {
@@ -2500,9 +2511,34 @@ void registerCommands(ext::Context& ctx)
                     log::warn("terrainSendToUnreal: the landscape went, its roads did not: {}", e.what());
                     out["roadsError"] = e.what();
                 }
+            // Inset cliffs open holes without a volume: the visibility layer still has to reach the landscape.
+            const std::string visibility = settings.contains("files") ? settings["files"].value("visibility", std::string()) : std::string();
+            if (!out.contains("volume") && f.local->findMask("holes") && !visibility.empty() &&
+                std::find(features.begin(), features.end(), json("landscapeVolume")) != features.end())
+            {
+                link::RpcResult hv = client->call("setLandscapeVolume", {{"id", f.mesh ? f.mesh->path() : names[0]}, {"label", name}, {"meshes", json::array()},
+                                                                           {"resolution", settings.value("resolution", json::array())}, {"visibility", visibility}},
+                                                  timeoutMs);
+                if (hv.ok)
+                    out["holes"] = hv.result;
+                else
+                    log::warn("terrainSendToUnreal: the landscape went without its cliff holes: {}", hv.error);
+            }
+            if (a.get<bool>("cliffs", false))
+                try
+                {
+                    json flags = a.flags.value("cliffFlags", json::object());
+                    if (json c = cliffs::sendCliffsWith(names[0], flags); !c.is_null())
+                        out["cliffs"] = c;
+                }
+                catch (const std::exception& e)
+                {
+                    log::warn("terrainSendToUnreal: the landscape went, its cliffs did not: {}", e.what());
+                    out["cliffsError"] = e.what();
+                }
             return out;
         },
-        .examples = {"terrainSendToUnreal('Terrain', material='/Game/Terrain/M_Landscape')"},
+        .examples = {"terrainSendToUnreal('Terrain', material='/Game/Terrain/M_Landscape')", "terrainSendToUnreal('Terrain', cliffs=True, cliffFlags={'cellSize': 12800})"},
     });
     ctx.registerCommand({
         .name = "terrainErode",

@@ -27,6 +27,7 @@
 #include "Materials/MaterialExpressionFmod.h"
 #include "Materials/MaterialExpressionLandscapeVisibilityMask.h"
 #include "Materials/MaterialExpressionMaterialFunctionCall.h"
+#include "Materials/MaterialExpressionVertexColor.h"
 #include "Materials/MaterialExpressionVertexNormalWS.h"
 #include "Materials/MaterialExpressionWorldPosition.h"
 #include "Materials/MaterialFunction.h"
@@ -43,18 +44,58 @@ const FName LilaLayerName(TEXT("Lila"));
 const TCHAR* FunctionName = TEXT("MF_LilaTerrainVolume");
 const TCHAR* MasterName = TEXT("M_LilaTerrainVolume");
 const TCHAR* VersionTag = TEXT("Lila Terrain Volume v");
-constexpr int32 FunctionVersion = 1;
+constexpr int32 FunctionVersion = 2;
 const TCHAR* LandscapeFolder = TEXT("/Game/LilaLink/Landscapes");
 const FLinearColor GroundColorDefault(0.25f, 0.22f, 0.18f);
 constexpr float GroundRoughnessDefault = 0.9f;
 
+// Triplanar, optionally hex-tiled (Mikkelsen) to break up repeats on big faces, darkened in cavities by the vertex colour
+// Lila's cliff meshes carry (G is openness: white, or no colour, leaves it as it is).
 const TCHAR* TriplanarCode = TEXT(R"(
+struct FLilaHex
+{
+	float2 Hash(float2 p) { return frac(sin(float2(dot(p, float2(127.1, 311.7)), dot(p, float2(269.5, 183.3)))) * 43758.5453); }
+	float3 Sample(Texture2D T, SamplerState S, float2 uv, float hex)
+	{
+		float2 dx = ddx(uv), dy = ddy(uv);
+		if (hex < 0.5)
+			return T.SampleGrad(S, uv, dx, dy).rgb;
+		float2 st = uv * 3.4641016;
+		float2 sk = float2(st.x, -0.57735027 * st.x + 1.15470054 * st.y);
+		float2 base = floor(sk);
+		float3 f = float3(frac(sk), 0.0);
+		f.z = 1.0 - f.x - f.y;
+		float s = step(0.0, -f.z);
+		float s2 = 2.0 * s - 1.0;
+		float3 w = float3(-f.z * s2, s - f.y * s2, s - f.x * s2);
+		float2 v1 = base + float2(s, s), v2 = base + float2(s, 1.0 - s), v3 = base + float2(1.0 - s, s);
+		w = pow(max(w, 0.0), 7.0);
+		w /= max(w.x + w.y + w.z, 1e-5);
+		return T.SampleGrad(S, uv + Hash(v1), dx, dy).rgb * w.x + T.SampleGrad(S, uv + Hash(v2), dx, dy).rgb * w.y + T.SampleGrad(S, uv + Hash(v3), dx, dy).rgb * w.z;
+	}
+};
+FLilaHex L;
 float3 w = pow(abs(Normal) + 1e-4, max(Sharpness, 1.0));
 w /= (w.x + w.y + w.z);
-float3 cx = Texture2DSample(Texture, TextureSampler, WorldTile.yz).rgb;
-float3 cy = Texture2DSample(Texture, TextureSampler, WorldTile.xz).rgb;
-float3 cz = Texture2DSample(Texture, TextureSampler, WorldTile.xy).rgb;
-return Tint.rgb * (cx * w.x + cy * w.y + cz * w.z);
+float3 c = 0;
+if (w.x > 0.01) c += L.Sample(Texture, TextureSampler, WorldTile.yz, HexTile) * w.x;
+if (w.y > 0.01) c += L.Sample(Texture, TextureSampler, WorldTile.xz, HexTile) * w.y;
+if (w.z > 0.01) c += L.Sample(Texture, TextureSampler, WorldTile.xy, HexTile) * w.z;
+return Tint.rgb * c * lerp(1.0, Masks.g, saturate(CavityStrength));
+)");
+
+// Mobile (ES3.1): biplanar, the two strongest projections only, no hex tiling.
+const TCHAR* BiplanarCode = TEXT(R"(
+float3 a = abs(Normal);
+float2 uvA, uvB;
+float2 w;
+if (a.z >= a.x && a.z >= a.y) { uvA = WorldTile.xy; w.x = a.z; if (a.x > a.y) { uvB = WorldTile.yz; w.y = a.x; } else { uvB = WorldTile.xz; w.y = a.y; } }
+else if (a.x >= a.y) { uvA = WorldTile.yz; w.x = a.x; if (a.z > a.y) { uvB = WorldTile.xy; w.y = a.z; } else { uvB = WorldTile.xz; w.y = a.y; } }
+else { uvA = WorldTile.xz; w.x = a.y; if (a.z > a.x) { uvB = WorldTile.xy; w.y = a.z; } else { uvB = WorldTile.yz; w.y = a.x; } }
+w = pow(w, max(Sharpness, 1.0));
+w /= max(w.x + w.y, 1e-5);
+float3 c = Texture2DSample(Texture, TextureSampler, uvA).rgb * w.x + Texture2DSample(Texture, TextureSampler, uvB).rgb * w.y;
+return Tint.rgb * c * lerp(1.0, Masks.g, saturate(CavityStrength));
 )");
 
 int32 VersionOf(const UMaterialFunction* Function)
@@ -87,6 +128,10 @@ void BuildFunction(UMaterialFunction* Function)
 	UMaterialExpressionFunctionInput* TileSize = G.ScalarInput(TEXT("GroundTileSize"), 400.0f, TEXT("Ground"), TEXT("Texture repeat, cm."));
 	In.Add(TEXT("Sharpness"), G.ScalarInput(TEXT("TriplanarSharpness"), 4.0f, TEXT("Ground"), TEXT("How sharply the three projections part.")));
 	In.Add(TEXT("Normal"), G.Make(UMaterialExpressionVertexNormalWS::StaticClass(), -1600));
+	In.Add(TEXT("HexTile"), G.ScalarInput(TEXT("GroundHexTile"), 0.0f, TEXT("Ground"), TEXT("1 breaks up tiling with hex-tile stochastic sampling (off on mobile).")));
+	In.Add(TEXT("CavityStrength"), G.ScalarInput(TEXT("CavityStrength"), 0.5f, TEXT("Ground"), TEXT("How much cavities (vertex colour G, 1 open) darken the colour.")));
+	UMaterialExpression* VertexColor = G.Make(UMaterialExpressionVertexColor::StaticClass(), -1600);
+	In.Add(TEXT("Masks"), VertexColor);
 	// World position is large-world (double); divide and wrap it before the Custom node, which takes floats.
 	UMaterialExpression* World = G.Make(UMaterialExpressionWorldPosition::StaticClass(), -1600);
 	auto* Divide = G.New<UMaterialExpressionDivide>(-1400);
@@ -99,22 +144,32 @@ void BuildFunction(UMaterialFunction* Function)
 	UMaterialEditingLibrary::ConnectMaterialExpressions(Period, TEXT(""), Wrap, TEXT("B"));
 	In.Add(TEXT("WorldTile"), Wrap);
 
-	auto* Color = G.New<UMaterialExpressionCustom>(-400);
-	Color->Description = FString::Printf(TEXT("%s%d colour"), VersionTag, FunctionVersion);
-	Color->Code = TriplanarCode;
-	Color->OutputType = CMOT_Float3;
-	Color->Inputs.Reset();
-	const TCHAR* Names[] = {TEXT("Tint"), TEXT("Texture"), TEXT("WorldTile"), TEXT("Normal"), TEXT("Sharpness")};
-	for (const TCHAR* Name : Names)
-	{
-		Color->Inputs.AddDefaulted_GetRef().InputName = Name;
-	}
-	for (const TCHAR* Name : Names)
-	{
-		UMaterialEditingLibrary::ConnectMaterialExpressions(In[Name], TEXT(""), Color, Name);
-	}
-	G.Output(Color, TEXT("BaseColor"), TEXT("The projected, tinted texture."));
+	auto Custom = [&](const TCHAR* Suffix, const TCHAR* Code, std::initializer_list<const TCHAR*> Names) {
+		auto* E = G.New<UMaterialExpressionCustom>(-400);
+		E->Description = FString::Printf(TEXT("%s%d %s"), VersionTag, FunctionVersion, Suffix);
+		E->Code = Code;
+		E->OutputType = CMOT_Float3;
+		E->Inputs.Reset();
+		for (const TCHAR* Name : Names)
+		{
+			E->Inputs.AddDefaulted_GetRef().InputName = Name;
+		}
+		for (const TCHAR* Name : Names)
+		{
+			UMaterialEditingLibrary::ConnectMaterialExpressions(In[Name], TEXT(""), E, Name);
+		}
+		return E;
+	};
+	auto* Full = Custom(TEXT("colour"), TriplanarCode,
+		{TEXT("Tint"), TEXT("Texture"), TEXT("WorldTile"), TEXT("Normal"), TEXT("Sharpness"), TEXT("HexTile"), TEXT("CavityStrength"), TEXT("Masks")});
+	auto* Mobile = Custom(TEXT("colour mobile"), BiplanarCode,
+		{TEXT("Tint"), TEXT("Texture"), TEXT("WorldTile"), TEXT("Normal"), TEXT("Sharpness"), TEXT("CavityStrength"), TEXT("Masks")});
+	G.Output(G.FeatureLevelSwitch(Full, Mobile), TEXT("BaseColor"), TEXT("The projected, tinted texture (triplanar; biplanar on mobile)."));
 	G.Output(Rough, TEXT("Roughness"), TEXT("Roughness."));
+	G.Output(VertexColor, TEXT("Strata"), TEXT("Cliff meshes: where in its rock layer a point is, 0 bottom to 1 top (vertex colour R)."), 1);
+	G.Output(VertexColor, TEXT("Openness"), TEXT("Cliff meshes: 1 open, 0 deep in a cavity (vertex colour G)."), 2);
+	G.Output(VertexColor, TEXT("UpFacing"), TEXT("Cliff meshes: 1 on ledges and tops (vertex colour B)."), 3);
+	G.Output(VertexColor, TEXT("ScatterZones"), TEXT("Cliff meshes: where scatter can sit (vertex colour A)."), 4);
 	G.Finish();
 }
 
@@ -146,8 +201,9 @@ UMaterial* Master(TArray<FString>& OutCreated, TArray<FString>& OutWarnings)
 	return Pair.Material;
 }
 
-/** MI_<Label>_Volume on the master, coloured like the landscape's own material where it has GroundColor and GroundRoughness. */
-UMaterialInterface* VolumeInstance(const FString& Label, UMaterialInterface* LandscapeMaterial, TArray<FString>& OutCreated, TArray<FString>& OutWarnings)
+/** MI_<Label><Suffix> on the master, coloured like the landscape's own material where it has GroundColor and GroundRoughness. */
+UMaterialInterface* VolumeInstance(const FString& Label, UMaterialInterface* LandscapeMaterial, TArray<FString>& OutCreated, TArray<FString>& OutWarnings,
+	const TCHAR* Suffix = TEXT("_Volume"))
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkTerrainVolume::VolumeInstance);
 
@@ -157,7 +213,7 @@ UMaterialInterface* VolumeInstance(const FString& Label, UMaterialInterface* Lan
 		return nullptr;
 	}
 	const FString Folder = FString(LandscapeFolder) / Label;
-	const FString Name = TEXT("MI_") + Label + TEXT("_Volume");
+	const FString Name = TEXT("MI_") + Label + Suffix;
 	UMaterialInstanceConstant* Instance = LoadObject<UMaterialInstanceConstant>(nullptr, *(Folder / Name + TEXT(".") + Name), nullptr, LOAD_NoWarn | LOAD_Quiet);
 	if (!Instance)
 	{
@@ -427,9 +483,67 @@ TSharedPtr<FJsonValue> SetLandscapeVolume(const TSharedPtr<FJsonObject>& Params,
 	UE_LOG(LogLilaLink, Log, TEXT("setLandscapeVolume: %s, %d hole vertices, %d meshes"), *Label, Holes, MeshValues.Num());
 	return MakeShared<FJsonValueObject>(Out);
 }
+/** setCliffMaterial: MI_<Label>_Cliffs on M_LilaTerrainVolume on every slot of the meshes, coloured like landscapeMaterial when given. */
+TSharedPtr<FJsonValue> SetCliffMaterial(const TSharedPtr<FJsonObject>& Params, FString& OutError)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkTerrainVolume::SetCliffMaterial);
+
+	FString Label;
+	if (!Params->TryGetStringField(TEXT("label"), Label) || Label.IsEmpty())
+	{
+		OutError = TEXT("setCliffMaterial: label is required");
+		return nullptr;
+	}
+	TArray<FString> Created, Warnings;
+	UMaterialInterface* LandscapeMaterial = nullptr;
+	FString LandscapePath;
+	if (Params->TryGetStringField(TEXT("landscapeMaterial"), LandscapePath) && !LandscapePath.IsEmpty())
+	{
+		LandscapeMaterial = LoadObject<UMaterialInterface>(nullptr, *LandscapePath);
+	}
+	FScopedTransaction Transaction(NSLOCTEXT("LilaLink", "SetCliffMaterial", "Lila: Cliff Material"));
+	UMaterialInterface* Material = VolumeInstance(Label, LandscapeMaterial, Created, Warnings, TEXT("_Cliffs"));
+	TArray<TSharedPtr<FJsonValue>> MeshValues;
+	const TArray<TSharedPtr<FJsonValue>>* Meshes = nullptr;
+	if (Material && Params->TryGetArrayField(TEXT("meshes"), Meshes))
+	{
+		for (const TSharedPtr<FJsonValue>& V : *Meshes)
+		{
+			UStaticMesh* Mesh = LoadObject<UStaticMesh>(nullptr, *V->AsString());
+			if (!Mesh)
+			{
+				Warnings.Add(TEXT("no static mesh ") + V->AsString());
+				continue;
+			}
+			Mesh->Modify();
+			for (int32 Slot = 0; Slot < Mesh->GetStaticMaterials().Num(); ++Slot)
+			{
+				Mesh->SetMaterial(Slot, Material);
+			}
+			Mesh->MarkPackageDirty();
+			MeshValues.Add(MakeShared<FJsonValueString>(Mesh->GetPathName()));
+		}
+	}
+	TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
+	Out->SetStringField(TEXT("material"), Material ? Material->GetPathName() : FString());
+	Out->SetArrayField(TEXT("meshes"), MeshValues);
+	TArray<TSharedPtr<FJsonValue>> CreatedValues, WarningValues;
+	for (const FString& C : Created)
+	{
+		CreatedValues.Add(MakeShared<FJsonValueString>(C));
+	}
+	for (const FString& W : Warnings)
+	{
+		WarningValues.Add(MakeShared<FJsonValueString>(W));
+	}
+	Out->SetArrayField(TEXT("assets"), CreatedValues);
+	Out->SetArrayField(TEXT("warnings"), WarningValues);
+	return MakeShared<FJsonValueObject>(Out);
+}
 } // namespace
 
 void LilaLink::AddTerrainVolumeMethods(TMap<FString, FLilaLinkMethod>& Methods)
 {
 	Methods.Add(TEXT("setLandscapeVolume"), LilaLink::Sync(&SetLandscapeVolume));
+	Methods.Add(TEXT("setCliffMaterial"), LilaLink::Sync(&SetCliffMaterial));
 }

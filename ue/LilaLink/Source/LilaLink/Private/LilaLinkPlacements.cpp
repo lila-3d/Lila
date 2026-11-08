@@ -42,6 +42,7 @@
 #include "PhysicsEngine/BodySetup.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "ScopedTransaction.h"
+#include "WorldPartition/HLOD/HLODLayer.h"
 #include "WorldPartition/WorldPartition.h"
 
 #define LOCTEXT_NAMESPACE "LilaLinkPlacements"
@@ -656,6 +657,23 @@ TSharedPtr<FJsonValue> PlaceInstances(const TSharedPtr<FJsonObject>& Params, FSt
 	else
 	{
 		PlaceInstanced(World, Params, Group, Label, Mesh, Mode == TEXT("hism"), bCollide, *Placements, Existing, Spawned, Updated, Removed, Sink);
+	}
+	FString HlodPath;
+	if (Params->TryGetStringField(TEXT("hlodLayer"), HlodPath) && !HlodPath.IsEmpty())
+	{
+		const FString ObjectPath = HlodPath.Contains(TEXT(".")) ? HlodPath : HlodPath + TEXT(".") + FPackageName::GetShortName(HlodPath);
+		if (UHLODLayer* Layer = LoadObject<UHLODLayer>(nullptr, *ObjectPath, nullptr, LOAD_NoWarn | LOAD_Quiet))
+		{
+			for (AActor* Actor : TaggedActors(World, GroupTag(Group)))
+			{
+				Actor->Modify();
+				Actor->SetHLODLayer(Layer);
+			}
+		}
+		else
+		{
+			Sink.Warnings.Add(TEXT("no HLOD layer ") + HlodPath + TEXT("; the actors keep the default"));
+		}
 	}
 	for (const FString& W : Sink.Warnings)
 	{

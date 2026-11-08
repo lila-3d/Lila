@@ -994,7 +994,10 @@ void registerCoverCommand(ext::Context& ctx)
                "forest biome, grass on the grass layer, debris below cliffs, or your own. Each rule is {name, items, density "
                "(per m2 where it fits fully), footprint (cm kept clear; default the item's size across), when: {input: [min, "
                "max], biome: name(s), layer: name(s)}, scale: [min, max], align (0 upright, 1 on the normal), turn (degrees), "
-               "sink (cm), solid (later rules keep clear of it), minFit}. Pieces go where they fit, kept with probability equal "
+               "sink (cm), solid (later rules keep clear of it), minFit, faceDownhill (turn +Z downhill)}, or a slope band preset by "
+               "name: scree (the cliffTalus band below cliffs), ledgePlants (flat spots near cliffs) or hangingRoots (cliff tops, "
+               "facing downhill), also as {preset, ...overrides}. Instances carry rule, item, fit, random, slope and downhill. "
+               "Pieces go where they fit, kept with probability equal "
                "to the fit, and never inside another piece's footprint.\n\n"
                "items= maps each item name to a mesh; an item no mesh stands for gets a hidden placeholder (said in the "
                "result). The scatter is live: a new mesh <terrain>_GroundCover whose geometry nodes (Terrain Ground Cover) "
@@ -1003,7 +1006,7 @@ void registerCoverCommand(ext::Context& ctx)
                "Returns the mesh, group and per rule the pieces placed, per hectare, those blocked by footprints, and the "
                "thinning when maxCount was reached.",
         .positionalDoc = "terrain mesh or its modifier",
-        .flags = {{"rules", "r", MT::Any, nullptr, "The rules; 'default' (the default) for rocks, trees, debris and grass."},
+        .flags = {{"rules", "r", MT::Any, nullptr, "The rules (or preset names: scree, ledgePlants, hangingRoots); 'default' (the default) for rocks, trees, debris and grass."},
                   {"items", "it", MT::Any, nullptr, "{item name: mesh} for the rules' items."},
                   {"seed", "sd", MT::Int, int64_t(1), "Another seed gives another scatter."},
                   {"density", "d", MT::Float, 1.0, "Multiplies every rule's density.", {}, {}, 0.0},

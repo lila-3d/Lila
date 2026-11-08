@@ -26,6 +26,7 @@
 #include <format>
 #include <fstream>
 #include <set>
+#include <unordered_map>
 
 using namespace lila;
 
@@ -303,6 +304,74 @@ json removeOps(const Args& a, const std::string& cmd)
 
 // ---------------------------------------------------------------------------------------------------- the node
 
+/**
+ * Stamped meshes that carry a vertex colour (cliff masks: strata, openness, up-facing, scatter) hand it to the pieces
+ * made from them, each piece point taking the colour of the nearest stamped point.
+ */
+void carryColors(VolumeResult& r, const std::map<std::string, std::shared_ptr<const geo::Mesh>>& meshes)
+{
+    std::vector<glm::dvec3> pts;
+    std::vector<glm::vec4> cols;
+    for (const auto& [name, m] : meshes)
+    {
+        const auto c = m->pointAttrs().get<glm::vec4>(geo::attr::kColor);
+        if (c.empty())
+            continue;
+        for (geo::Index p = 0; p < m->pointCapacity(); ++p)
+            if (m->pointValid(p))
+            {
+                pts.push_back(m->position(p));
+                cols.push_back(c[p]);
+            }
+    }
+    if (pts.empty() || r.pieces.empty())
+        return;
+    const double cell = std::max(1.0, r.voxel * 2.0);
+    auto key = [&](const glm::dvec3& q) {
+        return (int64_t(std::floor(q.x / cell)) * 73856093) ^ (int64_t(std::floor(q.y / cell)) * 19349663) ^ (int64_t(std::floor(q.z / cell)) * 83492791);
+    };
+    std::unordered_map<int64_t, std::vector<uint32_t>> grid;
+    for (uint32_t i = 0; i < pts.size(); ++i)
+        grid[key(pts[i])].push_back(i);
+    auto nearest = [&](const glm::dvec3& q) {
+        double best = 1e300;
+        uint32_t at = 0;
+        for (int ring = 1; ring <= 4 && best == 1e300; ++ring)
+            for (int dz = -ring; dz <= ring; ++dz)
+                for (int dy = -ring; dy <= ring; ++dy)
+                    for (int dx = -ring; dx <= ring; ++dx)
+                    {
+                        auto it = grid.find(key(q + glm::dvec3(dx, dy, dz) * cell));
+                        if (it == grid.end())
+                            continue;
+                        for (uint32_t i : it->second)
+                            if (const double d = glm::length(pts[i] - q); d < best)
+                            {
+                                best = d;
+                                at = i;
+                            }
+                    }
+        return best == 1e300 ? glm::vec4(1.0f) : cols[at];
+    };
+    geo::Mesh joined;
+    for (VolumePiece& piece : r.pieces)
+    {
+        for (auto& lod : piece.lods)
+        {
+            geo::Mesh m = *lod;
+            auto dst = m.pointAttrs().getOrAdd<glm::vec4>(geo::attr::kColor);
+            for (geo::Index p = 0; p < m.pointCapacity(); ++p)
+                if (m.pointValid(p))
+                    dst[p] = nearest(m.position(p));
+            lod = std::make_shared<const geo::Mesh>(std::move(m));
+        }
+        if (!piece.lods.empty())
+            joined.append(*piece.lods[0]);
+    }
+    joined.compact();
+    r.mesh = std::make_shared<const geo::Mesh>(std::move(joined));
+}
+
 gn::NodeDecl volumeDecl()
 {
     gn::NodeDecl d;
@@ -369,6 +438,7 @@ gn::NodeDecl volumeDecl()
         }
         Heightfield h = *in;
         auto r = std::make_shared<VolumeResult>(buildVolume(h, ops, VolumeSettings::fromJson(settings), meshes));
+        carryColors(*r, meshes);
         gn::Geometry out = *g;
         out.heightfield = std::make_shared<const Heightfield>(std::move(h));
         if (r->mesh)
