@@ -66,6 +66,9 @@ struct JsonData final : Data
     json toJson() const override { return {{"kind", kind()}, {"value", value}}; }
 };
 
+geo::Mesh bevelChosen(const geo::Mesh& in, const Node& n, std::span<const Index> edges);
+std::vector<Index> chooseEdges(const geo::Mesh& m, const Node& n, int* lost);
+
 class AutoBevelNode final : public ModifierNode
 {
 public:
@@ -74,6 +77,8 @@ public:
         inAttr = kInMesh;
         enabledAttr = kEnabled;
         outAttr = kOutMesh;
+        // Re-runs (exports, uv solves on the exported mesh) bevel whatever input they give.
+        apply = [](const geo::Mesh& in, const Node& n) { return bevelChosen(in, n, chooseEdges(in, n, nullptr)); };
     }
 
     bool editingInput() const override { return as<bool>(kEditing); }
@@ -163,6 +168,22 @@ std::vector<Index> chooseEdges(const geo::Mesh& m, const Node& n, int* lost)
     return out;
 }
 
+geo::Mesh bevelChosen(const geo::Mesh& in, const Node& n, std::span<const Index> edges)
+{
+    geo::Mesh m = in;
+    if (edges.empty())
+        return m;
+    geo::BevelOptions o;
+    o.offset = n.as<double>(kOffset);
+    o.segments = int(std::clamp<int64_t>(n.as<int64_t>(kSegments), 1, 32));
+    o.profile = n.as<double>(kProfile);
+    o.clamp = n.as<bool>(kClamp);
+    o.smoothingAngle = n.as<double>(kSmoothingAngle);
+    geo::bevelEdges(m, edges, o);
+    m.compact();
+    return m;
+}
+
 void AutoBevelNode::compute(const EvalContext&)
 {
     LILA_ZONE();
@@ -190,18 +211,7 @@ void AutoBevelNode::compute(const EvalContext&)
             setOutput(kOutMesh, MeshPtr(std::move(shown)));
         }
         else if (!set->edges.empty())
-        {
-            geo::Mesh m = *in;
-            geo::BevelOptions o;
-            o.offset = as<double>(kOffset);
-            o.segments = int(std::clamp<int64_t>(as<int64_t>(kSegments), 1, 32));
-            o.profile = as<double>(kProfile);
-            o.clamp = as<bool>(kClamp);
-            o.smoothingAngle = as<double>(kSmoothingAngle);
-            geo::bevelEdges(m, set->edges, o);
-            m.compact();
-            setOutput(kOutMesh, MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
-        }
+            setOutput(kOutMesh, MeshPtr(std::make_shared<geo::Mesh>(bevelChosen(*in, *this, set->edges))));
     }
     catch (const std::exception& e)
     {
