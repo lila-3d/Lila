@@ -144,7 +144,7 @@ Settings settings()
 {
     const PrefStore& p = PrefStore::get();
     Settings s;
-    s.heightfieldDraw = p.value<bool>(kPrefFile, kDrawPref, false);
+    s.heightfieldDraw = p.value<bool>(kPrefFile, kDrawPref, true);
     s.overlay = p.value<std::string>(kPrefFile, kOverlayPref, "");
     s.overlayRamp = p.value<std::string>(kPrefFile, kRampPref, "turbo") == "grey" ? 0 : 1;
     s.overlayOpacity = float(std::clamp(p.value<double>(kPrefFile, kOpacityPref, 0.75), 0.0, 1.0));

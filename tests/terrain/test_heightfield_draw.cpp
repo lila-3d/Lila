@@ -654,7 +654,11 @@ TEST_CASE("terrain display commands: options and paint layers round trip, layers
     s = run("terrainDisplay", {{"overlay", "nosuchmask"}});
     CHECK(s.contains("warning"));
     s = run("terrainDisplay", {{"overlay", ""}, {"contours", 0.0}, {"flowArrows", false}});
+    // The heightfield draw is the default, so it stays with every overlay off.
+    CHECK(s["draw"] == "heightfield");
+    s = run("terrainDisplay", {{"draw", "mesh"}});
     CHECK(s["draw"] == "mesh");
+    run("terrainDisplay", {{"draw", "heightfield"}});
 
     json l = run("terrainDisplayLayers", {{"args", {t["mesh"]}},
                                           {"layers", {{{"name", "rock"}, {"mask", "wear"}, {"color", "#807060"}},

@@ -31,7 +31,7 @@ inline constexpr const char* kLayersAttr = "terrainLayers";
 /** The terrain display options, from the general prefs. */
 struct Settings
 {
-    bool heightfieldDraw = false; // /viewport/heightfieldDraw
+    bool heightfieldDraw = true; // /viewport/heightfieldDraw
     std::string overlay;          // a mask's name, empty for none
     int overlayRamp = 1;          // 0 grey, 1 turbo
     float overlayOpacity = 0.75f;
