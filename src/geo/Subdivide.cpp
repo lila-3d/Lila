@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <optional>
+#include <string>
+#include <utility>
 
 namespace lila::geo
 {
@@ -15,12 +17,157 @@ namespace
 constexpr Index kRefineGrain = 2048;
 
 /**
+ * One uv layer refined like the positions, within each uv island: per source corner the uv at its point and at the
+ * middle of its outgoing edge, and per face the uv at its centre. Seams, mesh borders and creases are island borders,
+ * smoothed along themselves like a crease; a point whose island has only one face around it keeps its uv.
+ */
+struct UvRefine
+{
+    std::string name;
+    std::vector<glm::vec2> point, edge, face;
+};
+
+template <class Sharpness> UvRefine refineUvs(const Mesh& src, const Attribute& layer, Sharpness&& sharpness)
+{
+    LILA_ZONE();
+
+    const std::span<const glm::vec2> uv = layer.values<glm::vec2>();
+    UvRefine r{layer.name(), std::vector<glm::vec2>(src.cornerCapacity()), std::vector<glm::vec2>(src.cornerCapacity()),
+               std::vector<glm::vec2>(src.faceCapacity())};
+    const Index fc = src.faceCapacity(), pc = src.pointCapacity();
+    tbb::parallel_for(tbb::blocked_range<Index>(0, fc, kRefineGrain), [&](const tbb::blocked_range<Index>& rg) {
+        for (Index f = rg.begin(); f < rg.end(); ++f)
+            if (src.faceValid(f))
+            {
+                glm::vec2 sum(0.0f);
+                int n = 0;
+                src.forEachFaceCorner(f, [&](Index c) {
+                    sum += uv[c];
+                    ++n;
+                });
+                r.face[f] = sum / float(n);
+            }
+    });
+    auto same = [&](Index a, Index b) { return glm::all(glm::lessThanEqual(glm::abs(uv[a] - uv[b]), glm::vec2(1e-6f))); };
+    // The corner at point p of the face holding corner c.
+    auto cornerAt = [&](Index c, Index p) { return src.cornerPoint(c) == p ? c : src.cornerNext(c); };
+    // Whether e joins its two faces' uvs, so it lies inside an island.
+    auto joins = [&](Index e) {
+        if (!src.isManifoldEdge(e) || sharpness(e) > 0.0)
+            return false;
+        const Index c = src.edgeCorner(e), rc = src.cornerRadial(c);
+        const Index p0 = src.edgePoint(e, 0), p1 = src.edgePoint(e, 1);
+        return same(cornerAt(c, p0), cornerAt(rc, p0)) && same(cornerAt(c, p1), cornerAt(rc, p1));
+    };
+    tbb::parallel_for(tbb::blocked_range<Index>(0, fc, kRefineGrain), [&](const tbb::blocked_range<Index>& rg) {
+        for (Index f = rg.begin(); f < rg.end(); ++f)
+            if (src.faceValid(f))
+                src.forEachFaceCorner(f, [&](Index c) {
+                    const Index e = src.cornerEdge(c);
+                    const glm::vec2 mid = (uv[c] + uv[src.cornerNext(c)]) * 0.5f;
+                    if (!joins(e))
+                    {
+                        r.edge[c] = mid;
+                        return;
+                    }
+                    const Index ec = src.edgeCorner(e);
+                    const Index f2 = src.cornerFace(ec) == f ? src.cornerFace(src.cornerRadial(ec)) : src.cornerFace(ec);
+                    r.edge[c] = (mid + (r.face[f] + r.face[f2]) * 0.5f) * 0.5f;
+                });
+    });
+    tbb::parallel_for(tbb::blocked_range<Index>(0, pc, kRefineGrain), [&](const tbb::blocked_range<Index>& rg) {
+        std::vector<Index> corners, island, stack;
+        std::vector<uint8_t> done;
+        for (Index p = rg.begin(); p < rg.end(); ++p)
+        {
+            if (!src.pointValid(p))
+                continue;
+            corners.clear();
+            src.forEachPointCorner(p, [&](Index c) { corners.push_back(c); });
+            done.assign(corners.size(), 0);
+            for (size_t start = 0; start < corners.size(); ++start)
+            {
+                if (done[start])
+                    continue;
+                // The corners at p in one island, reached across the edges at p that join their faces.
+                island.clear();
+                stack.assign(1, corners[start]);
+                done[start] = 1;
+                while (!stack.empty())
+                {
+                    const Index c = stack.back();
+                    stack.pop_back();
+                    island.push_back(c);
+                    for (Index e : {src.cornerEdge(c), src.cornerEdge(src.cornerPrev(c))})
+                    {
+                        if (!joins(e))
+                            continue;
+                        const Index ec = src.edgeCorner(e);
+                        const Index nb = cornerAt(src.cornerFace(ec) == src.cornerFace(c) ? src.cornerRadial(ec) : ec, p);
+                        const auto it = std::ranges::find(corners, nb);
+                        if (it != corners.end() && !done[size_t(it - corners.begin())])
+                        {
+                            done[size_t(it - corners.begin())] = 1;
+                            stack.push_back(nb);
+                        }
+                    }
+                }
+                const glm::vec2 P = uv[island.front()];
+                glm::vec2 F(0.0f), R(0.0f), rim(0.0f);
+                int inner = 0, borders = 0;
+                for (Index c : island)
+                {
+                    F += r.face[src.cornerFace(c)];
+                    const Index cn = src.cornerNext(c), cp = src.cornerPrev(c);
+                    for (auto [e, q] : {std::pair{src.cornerEdge(c), cn}, std::pair{src.cornerEdge(cp), cp}})
+                        if (joins(e))
+                        {
+                            // Met from both of its faces, so each sighting adds half.
+                            R += (P + uv[q]) * 0.25f;
+                            ++inner;
+                        }
+                        else
+                        {
+                            rim += uv[q];
+                            ++borders;
+                        }
+                }
+                const float n = float(island.size());
+                glm::vec2 result = P;
+                if (borders == 0 && island.size() >= 3)
+                    result = (F / n + 2.0f * R / (float(inner) * 0.5f) + (n - 3.0f) * P) / n;
+                else if (borders == 2 && island.size() >= 2)
+                    result = (6.0f * P + rim) / 8.0f;
+                for (Index c : island)
+                    r.point[c] = result;
+            }
+        }
+    });
+    return r;
+}
+
+/** Writes the refined uvs onto the quad of source corner c, whose first corner is oc. */
+void writeUvs(Mesh& out, const Mesh& src, std::span<const UvRefine> uvs, Index oc, Index c)
+{
+    for (const UvRefine& u : uvs)
+    {
+        const std::span<glm::vec2> v = out.cornerAttrs().get<glm::vec2>(u.name);
+        if (v.empty())
+            continue;
+        v[oc] = u.point[c];
+        v[out.cornerNext(oc)] = u.edge[c];
+        v[out.cornerNext(out.cornerNext(oc))] = u.face[src.cornerFace(c)];
+        v[out.cornerPrev(oc)] = u.edge[src.cornerPrev(c)];
+    }
+}
+
+/**
  * The subdivided mesh built in parallel: every face's quads laid out in source order and built at once, then their
  * attributes copied face by face. Null when the builder dropped a face, for the face-by-face build to handle.
  */
 std::optional<Mesh> buildQuads(const Mesh& src, const std::vector<glm::dvec3>& pos, const std::vector<Index>& pId,
                                const std::vector<Index>& eId, const std::vector<Index>& fId, std::span<const float> crease,
-                               SubdivideMap* map)
+                               std::span<const UvRefine> uvs, SubdivideMap* map)
 {
     LILA_ZONE();
 
@@ -131,6 +278,7 @@ std::optional<Mesh> buildQuads(const Mesh& src, const std::vector<glm::dvec3>& p
                     out.cornerAttrs().mixFrom(src.cornerAttrs(), out.cornerNext(oc), a, half);
                     out.cornerAttrs().mixFrom(src.cornerAttrs(), out.cornerNext(out.cornerNext(oc)), faceCorners, avg);
                     out.cornerAttrs().mixFrom(src.cornerAttrs(), out.cornerPrev(oc), b, half);
+                    writeUvs(out, src, uvs, oc, c);
                 }
             }
         }
@@ -234,7 +382,12 @@ Mesh subdivideOnce(const Mesh& src, const SubdivideOptions& opts, SubdivideMap* 
         }
     });
 
-    if (std::optional<Mesh> built = buildQuads(src, pos, pId, eId, fId, crease, map))
+    std::vector<UvRefine> uvs;
+    for (size_t l = 0; l < src.cornerAttrs().layerCount(); ++l)
+        if (const Attribute& a = src.cornerAttrs().layer(l); a.type() == AttrType::Float2)
+            uvs.push_back(refineUvs(src, a, sharpness));
+
+    if (std::optional<Mesh> built = buildQuads(src, pos, pId, eId, fId, crease, uvs, map))
         return std::move(*built);
 
     Mesh out;
@@ -324,6 +477,7 @@ Mesh subdivideOnce(const Mesh& src, const SubdivideOptions& opts, SubdivideMap* 
                 out.cornerAttrs().mixFrom(src.cornerAttrs(), out.cornerNext(oc), a, half);
                 out.cornerAttrs().mixFrom(src.cornerAttrs(), out.cornerNext(out.cornerNext(oc)), corners, avg);
                 out.cornerAttrs().mixFrom(src.cornerAttrs(), out.cornerPrev(oc), b, half);
+                writeUvs(out, src, uvs, oc, c);
             }
         }
     }

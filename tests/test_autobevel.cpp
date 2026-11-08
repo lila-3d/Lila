@@ -298,6 +298,41 @@ TEST_CASE("bevel keeps every face's UVs inside its island across seams and at co
     CHECK(collapsed == 0);
 }
 
+TEST_CASE("subdivision smooths UVs with the surface inside each island and keeps island corners")
+{
+    std::vector<std::pair<glm::vec2, glm::vec2>> islands;
+    geo::Mesh m = islandBracket(islands);
+    geo::bevelEdges(m, allEdges(m), {.offset = 0.3, .segments = 2});
+    const geo::Mesh smooth = geo::subdivide(m, {.levels = 2});
+    // The rounded bevels grow in 3D; their uvs grow with them instead of staying thin strips.
+    const auto [outside, collapsed] = uvFaults(smooth, islands);
+    CHECK(outside == 0);
+    CHECK(collapsed == 0);
+
+    // A flat grid's inner uvs land where linear interpolation puts them, and its corners stay where they were.
+    geo::PlaneOptions po;
+    po.subdivX = po.subdivZ = 4;
+    const geo::Mesh plane = geo::makePlane(po);
+    const geo::Mesh fine = geo::subdivide(plane, {.levels = 1, .sharpBoundary = true});
+    const std::span<const glm::vec2> uv = fine.cornerAttrs().get<glm::vec2>("uv0");
+    const glm::dvec3 lo(-po.width / 2.0, 0.0, -po.depth / 2.0);
+    size_t off = 0, corners = 0;
+    for (Index c = 0; c < fine.cornerCapacity(); ++c)
+    {
+        const glm::dvec3 p = fine.position(fine.cornerPoint(c));
+        const glm::dvec2 t((p.x - lo.x) / po.width, (p.z - lo.z) / po.depth);
+        const bool corner = (t.x < 1e-9 || t.x > 1.0 - 1e-9) && (t.y < 1e-9 || t.y > 1.0 - 1e-9);
+        corners += corner;
+        const glm::vec2 u = uv[c];
+        // The plane maps x and z linearly to u and v (either way round), so a smooth result is linear in position.
+        const double du = std::min(std::abs(u.x - t.x), std::abs(u.x - (1.0 - t.x))) + std::min(std::abs(u.y - t.y), std::abs(u.y - (1.0 - t.y)));
+        const double dv = std::min(std::abs(u.x - t.y), std::abs(u.x - (1.0 - t.y))) + std::min(std::abs(u.y - t.x), std::abs(u.y - (1.0 - t.x)));
+        off += std::min(du, dv) > 1e-5;
+    }
+    CHECK(corners == 4);
+    CHECK(off == 0);
+}
+
 TEST_CASE("autoBevel modifier bevels folds and stays live")
 {
     run("newScene");
