@@ -362,7 +362,8 @@ protected:
                 return true;
             }
         }
-        else if ((obj == mDock->widget() || obj == mAnchor) && (e->type() == QEvent::Resize || e->type() == QEvent::Move))
+        // Type first: the panel's teardown sends ChildRemoved here after ~QDockWidget, when mDock->widget() is dead.
+        else if ((e->type() == QEvent::Resize || e->type() == QEvent::Move) && (obj == mAnchor || obj == mDock->widget()))
             place();
         return false;
     }
