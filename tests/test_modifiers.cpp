@@ -308,3 +308,26 @@ TEST_CASE("triangulating a mesh with modifiers triangulates the result")
     CHECK(run("modifiers", {{"args", {cube}}}).size() == 1);
     CHECK(run("meshInfo", {{"args", {cube}}})["faces"] == before["faces"]);
 }
+
+TEST_CASE("weighted normals modifier shades big faces flat beside a bevel")
+{
+    run("newScene");
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
+    run("addModifier", {{"args", {cube}}, {"kind", "bevel"}, {"params", {{"offset", 5.0}, {"segments", 2}}}});
+    run("addModifier", {{"args", {cube}}, {"kind", "weightedNormals"}, {"params", {{"keepHardEdges", false}}}});
+    const geo::Mesh m = meshOf(cube);
+    const auto normals = m.cornerAttrs().get<glm::vec3>("normal");
+    REQUIRE(!normals.empty());
+    int flatCorners = 0;
+    for (geo::Index f = 0; f < m.faceCapacity(); ++f)
+    {
+        if (!m.faceValid(f) || m.faceArea(f) < 50.0 * 50.0)
+            continue;
+        const glm::vec3 fn = glm::vec3(m.faceNormal(f));
+        m.forEachFaceCorner(f, [&](geo::Index c) {
+            CHECK(glm::dot(normals[c], fn) == doctest::Approx(1.0).epsilon(1e-4));
+            ++flatCorners;
+        });
+    }
+    CHECK(flatCorners == 24);
+}

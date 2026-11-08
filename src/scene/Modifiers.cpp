@@ -249,11 +249,16 @@ std::vector<ModifierType> modifierTypes()
         {"weightedNormalsModifier",
          "Weights vertex normals by face area so big flat faces shade flat and the bevels take the curvature. Use it on "
          "bevelled hard-surface game meshes.",
-         {param("keepHardEdges", PlugType::Bool, true, "Keep normals split along hard edges instead of smoothing across them.")},
+         {param("mode", PlugType::Enum, int64_t(0), "What weighs a face: its area, its corner angle, or both."),
+          param("dominance", PlugType::Float, 0.5, "Faces under this fraction of the heaviest face in a fan are left out; 0 keeps all.", 0.0, 1.0),
+          param("keepHardEdges", PlugType::Bool, true, "Keep normals split along hard edges instead of smoothing across them.")},
          [](const geo::Mesh& in, const Node& n) {
-             // Face-area weighting keeps big flat faces flat, the usual game-art bevel look.
              geo::Mesh m = in;
-             geo::updateCornerNormals(m, {geo::NormalWeight::Area, flagOf(n, "keepHardEdges")});
+             geo::WeightedNormalOptions o;
+             o.mode = geo::WeightedNormalMode(std::clamp<int64_t>(intOf(n, "mode"), 0, 2));
+             o.dominance = std::clamp(numOf(n, "dominance"), 0.0, 1.0);
+             o.keepSharp = flagOf(n, "keepHardEdges");
+             geo::applyWeightedNormals(m, o);
              return m;
          }},
         {"solidifyModifier",
@@ -512,6 +517,8 @@ void registerTypes()
                 p.enumNames = {"x", "y", "z"};
             if (std::string(m.name) == "mirrorModifier" && p.name == "direction")
                 p.enumNames = {"+ to -", "- to +", "both"};
+            if (std::string(m.name) == "weightedNormalsModifier" && p.name == "mode")
+                p.enumNames = {"area", "angle", "areaAngle"};
             if (std::string(m.name) == "decimateModifier" && p.name == "symmetry")
                 p.enumNames = {"off", "x", "y", "z"};
             if (std::string(m.name) == "arrayModifier")
