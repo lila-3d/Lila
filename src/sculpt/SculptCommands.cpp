@@ -1021,13 +1021,11 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "sculptDeleteHigher",
-        .doc = "Delete the levels above the one being sculpted, and their detail. Returns {level, levels, points, faces}.",
+        .doc = "Delete the levels above the one being sculpted, and their detail; at level 0, every level. Returns {level, levels, points, faces}.",
         .run = [](const Args&) -> json {
             std::shared_ptr<Session> s = requireSession("sculptDeleteHigher");
             if (!s->stack)
                 throw CommandError("sculptDeleteHigher: levels need a subdivide sculpt; this one is remeshed or direct");
-            if (s->level == 0)
-                throw CommandError("sculptDeleteHigher: the cage is level 0; go up a level first, a sculpt keeps at least one");
             if (s->level == s->stack->top())
                 return levelJson(*s);
             UndoChunk chunk("Delete Higher Levels");

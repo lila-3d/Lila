@@ -21,6 +21,7 @@
 #include "ui/FlowLayout.h"
 #include "ui/Icons.h"
 #include "ui/LayoutsUi.h"
+#include "ui/Outliner.h"
 #include "ui/ModelingToolkit.h"
 #include "ui/SculptTool.h"
 #include "ui/SpinScrub.h"
@@ -42,6 +43,7 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMimeData>
+#include <QMouseEvent>
 #include <QUrl>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
@@ -220,8 +222,12 @@ void exitSculpt()
     scene::Node* n = g.node(node);
     if (const std::optional<sculpt::KeptSculpt> kept = n ? sculpt::keptSculpt(*n) : std::nullopt)
         if (scene::Node* k = g.node(kept->node))
+        {
             viewportToast::showActive(QString("Sculpt kept in hidden %1. Sculpt %2 again to resume it.")
                                           .arg(QString::fromStdString(k->name()), QString::fromStdString(n->name())), 5000);
+            // After the outliners have picked up the new node.
+            QTimer::singleShot(0, [id = kept->node] { revealInOutliners({id}); });
+        }
 }
 
 QToolButton* sculptActionButton(const std::string& id, const QString& iconName, QWidget* parent)
@@ -276,6 +282,42 @@ void setSegmentedDefault(controls::Segmented* seg, int id, const QString& defaul
                 Q_EMIT seg->picked(id);
             },
             defaultText, seg);
+}
+/** A label that runs a function when clicked. */
+class SculptClickLabel : public QLabel
+{
+public:
+    using QLabel::QLabel;
+    std::function<void()> clicked;
+
+protected:
+    void mousePressEvent(QMouseEvent* e) override
+    {
+        if (e->button() == Qt::LeftButton && clicked)
+            clicked();
+        QLabel::mousePressEvent(e);
+    }
+};
+
+/** What Exit leaves of mesh `name`: the low poly and the high poly, as a noun phrase. */
+QString exitSummary(const QString& name, sculpt::ProxyMode mode, int top, const SculptSettings& st)
+{
+    if (mode == sculpt::ProxyMode::Direct)
+        return name + ", sculpted in place";
+    if (mode == sculpt::ProxyMode::Subdivide && top == 0)
+        return name + " as sculpted";
+    QString low = st.exitMethod == "fit" ? "subdivision cage" : "game mesh";
+    if (st.lowLevel > 0 && mode == sculpt::ProxyMode::Subdivide)
+        low += QString(", level %1").arg(std::min(st.lowLevel, top));
+    if (st.highPoly == "none")
+        return QString("%1 (%2), sculpt discarded").arg(name, low);
+    QString high = "voxel sculpt";
+    if (mode == sculpt::ProxyMode::Subdivide)
+    {
+        const int level = st.highPoly == "belowHighest" ? top - st.highLevel : st.highPoly == "level" ? st.highLevel : top;
+        high = QString("level %1").arg(std::clamp(level, 1, top));
+    }
+    return QString("%1 (%2) + hidden %1_high (%3)").arg(name, low, high);
 }
 } // namespace
 
@@ -353,6 +395,18 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     mResolution->setToolTip("Resolution: voxels along the longest side of the remesh.");
     setSpinDefault(mResolution, defaults.resolution);
     sform->addRow("Resolution", mResolution);
+    auto* summary = new SculptClickLabel(sessionFields);
+    summary->setObjectName("sculptExitSummary");
+    summary->setWordWrap(true);
+    summary->setCursor(Qt::PointingHandCursor);
+    summary->setToolTip("Exit Makes: the low poly Exit leaves, and the high poly it keeps hidden under it to bake from. Click to change.");
+    summary->clicked = [this] {
+        if (mExitHeader && !mExitHeader->isChecked())
+            mExitHeader->click();
+        flashLocate(mExitHeader);
+    };
+    mExitSummary = summary;
+    sform->addRow("Exit Makes", mExitSummary);
     sessionCol->addWidget(sessionFields);
     col->addWidget(session);
 
@@ -555,7 +609,8 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     mHighLevel = sculptSlider(exitBox, 0, 6, 0);
     setSpinDefault(mHighLevel, defaults.highLevel);
     eform->addRow("High Level", mHighLevel);
-    col->addWidget(controls::section("On Exit", exitBox, this, kSections, false));
+    // Right under the session, since it decides what the sculpt turns into.
+    col->insertWidget(col->indexOf(session) + 1, controls::section("On Exit", exitBox, this, kSections, false, &mExitHeader));
 
     col->addWidget(referenceOverlays::createSculptSection(this));
     col->addWidget(controls::overflow({"sculpt.duplicateLowPoly", "mesh.relaxKeepForm", "mesh.reproject", "mesh.transferShape"}, this));
@@ -945,10 +1000,7 @@ void SculptPanel::refreshSession()
         else
             mStatus->setText(QString("Ready: %1").arg(QString::fromStdString(m->name())));
     }
-    // How a sculpt starts is fixed once it has; the level row replaces the starting levels while it runs.
     const std::string& mode = sculptSettings().proxyMode;
-    mMode->setEnabled(!n);
-    mLevels->setEnabled(!n && !resuming && mode == "subdivide");
     const std::string& high = sculptSettings().highPoly;
     if (auto* form = qobject_cast<QFormLayout*>(mHighLevel->parentWidget()->layout()))
         form->setRowVisible(mHighLevel, high == "belowHighest" || high == "level");
@@ -966,11 +1018,25 @@ void SculptPanel::refreshSession()
     mLowLevel->setEnabled(top > 0);
     // Sculpting the mesh itself leaves nothing to keep.
     mHighPoly->setEnabled(n ? s->mode != sculpt::ProxyMode::Direct : mode != "direct");
-    mResolution->setEnabled(!n && mode == "remesh");
+    // How a sculpt starts is fixed once it has: the start rows give way to the level row while it runs.
     if (auto* form = qobject_cast<QFormLayout*>(mLevelRow->parentWidget()->layout()))
     {
-        form->setRowVisible(mLevels, !levels);
+        form->setRowVisible(mMode, !n);
+        form->setRowVisible(mLevels, !n && !resuming && mode == "subdivide");
+        form->setRowVisible(mResolution, !n && mode == "remesh");
         form->setRowVisible(mLevelRow, levels);
+        scene::Node* target = n ? n : [&]() -> scene::Node* {
+            auto meshes = selectedMeshes();
+            return meshes.empty() ? nullptr : g.find(meshes.back());
+        }();
+        form->setRowVisible(mExitSummary, target != nullptr);
+        if (target)
+        {
+            const sculpt::ProxyMode pm = n ? s->mode : resuming ? (resumingLevels > 0 ? sculpt::ProxyMode::Subdivide : sculpt::ProxyMode::Remesh)
+                                         : mode == "remesh" ? sculpt::ProxyMode::Remesh : mode == "direct" ? sculpt::ProxyMode::Direct
+                                                            : sculpt::ProxyMode::Subdivide;
+            mExitSummary->setText(exitSummary(QString::fromStdString(target->name()), pm, top, sculptSettings()));
+        }
     }
     if (levels)
     {
@@ -978,7 +1044,7 @@ void SculptPanel::refreshSession()
         mLevelDown->setEnabled(s->level > 0);
         mLevelUp->setEnabled(s->level < s->stack->top());
         mAddLevel->setEnabled(s->stack->top() < 6);
-        mDeleteHigher->setEnabled(s->level > 0 && s->level < s->stack->top());
+        mDeleteHigher->setEnabled(s->level < s->stack->top());
     }
     mEnter->setEnabled(!n && !selectedMeshes().empty());
     mExit->setEnabled(n != nullptr);

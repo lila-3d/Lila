@@ -1406,6 +1406,13 @@ void revealSelectionInOutliners()
             o->revealSelected();
 }
 
+void revealInOutliners(const std::vector<scene::NodeId>& ids)
+{
+    for (Outliner* o : gOutliners)
+        if (o->isVisible())
+            o->reveal(ids);
+}
+
 namespace
 {
 constexpr const char* kSplitPref = "/outliner/split";

@@ -130,7 +130,6 @@ TEST_CASE("adding a level subdivides the finest and keeps its shape; deleting hi
     CHECK(r["levels"].get<int>() == 1);
     ops::execute("sculptLevel", {{"level", 1}});
     CHECK(level() == 1);
-    CHECK_THROWS(ops::execute("sculptLevel", {{"level", 0}}), ops::execute("sculptDeleteHigher", json::object()));
     ops::execute("sculptCancel", json::object());
 }
 
@@ -140,6 +139,10 @@ TEST_CASE("enter starts on the cage and exit without levels keeps no high poly")
     json r = ops::execute("sculptEnter", {{"args", {"lvBare"}}});
     CHECK(r["levels"].get<int>() == 0);
     CHECK(r["faces"].get<int>() == 6 * 16);
+    // Delete Higher from level 0 drops every level.
+    ops::execute("sculptAddLevel", json::object());
+    ops::execute("sculptLevel", {{"level", 0}});
+    CHECK(ops::execute("sculptDeleteHigher", json::object())["levels"].get<int>() == 0);
     bump({0.0, 0.0, 50.0}, 20.0);
     const std::vector<glm::dvec3> sculpted = positions();
     ops::execute("sculptExit", json::object());

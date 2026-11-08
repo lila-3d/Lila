@@ -39,6 +39,8 @@ public:
 
     /** Expands the parents of the selected objects and scrolls the first one into view. */
     void revealSelected();
+    /** Expands the parents of the rows and scrolls the first one into view. */
+    void reveal(const std::vector<scene::NodeId>& ids, QAbstractItemView::ScrollHint hint = QAbstractItemView::EnsureVisible);
     /** Starts editing the name of the first selected object's row. */
     void renameSelected();
     void expandEverything();
@@ -62,8 +64,6 @@ protected:
 
 private:
     void rebuild();
-    /** Expands the parents of the rows and scrolls the first one into view. */
-    void reveal(const std::vector<scene::NodeId>& ids, QAbstractItemView::ScrollHint hint = QAbstractItemView::EnsureVisible);
     /**
      * Updates the rows' icons, fonts and colors from their nodes' type, reference and visibility. Only rows that can be
      * seen (every parent expanded) are touched; expanding a row restyles what it shows. With `only`, just those nodes'
@@ -117,6 +117,9 @@ private:
 
 /** Expands every visible outliner down to the selected objects and scrolls to them. */
 LILA_UI_API void revealSelectionInOutliners();
+
+/** Expands every visible outliner down to these nodes and scrolls to the first. */
+LILA_UI_API void revealInOutliners(const std::vector<scene::NodeId>& ids);
 
 /**
  * The outliner panel: a filter row (filter field, filter options, + for new groups and sets, ... for the rarer actions

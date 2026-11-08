@@ -109,6 +109,9 @@ private:
     controls::Segmented* mSymmetry = nullptr;
     brush::ui::StrokeOptions* mStrokeOptions = nullptr;
     QLabel* mStatus = nullptr;
+    /** What Exit will leave, in one line; clicking it opens On Exit. */
+    QLabel* mExitSummary = nullptr;
+    QToolButton* mExitHeader = nullptr;
     QPushButton* mEnter = nullptr;
     QPushButton* mExit = nullptr;
     QPushButton* mPreview = nullptr;
