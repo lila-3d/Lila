@@ -429,10 +429,11 @@ std::string probe(const geo::Mesh& cage, std::string_view uvSet, const Stack& st
 /** Moves an island that grew over its UDIM tile's border back inside, shrinking it only when it is bigger than the tile. */
 void keepInTile(Chart& ch, const glm::ivec2& tile)
 {
-    const glm::dvec2 lo(tile), hi = lo + glm::dvec2(1.0);
+    // Just inside, so the island's uvs never round onto the next tile.
+    const glm::dvec2 lo = glm::dvec2(tile) + glm::dvec2(1e-5), hi = glm::dvec2(tile) + glm::dvec2(1.0 - 1e-5);
     glm::dvec2 mn = ch.uvMin(), mx = ch.uvMax();
     const glm::dvec2 size = mx - mn;
-    const double fit = std::min(1.0, 1.0 / std::max(size.x, size.y));
+    const double fit = std::min(1.0, (hi.x - lo.x) / std::max(size.x, size.y));
     if (fit < 1.0)
     {
         const glm::dvec2 c = (mn + mx) * 0.5;
@@ -497,6 +498,11 @@ FinalMap traceFaces(const geo::Mesh& cage, const Stack& stack)
     out.faceAttrs().remove(kProbeCentre);
     map.exported = std::make_shared<geo::Mesh>(std::move(out));
     return map;
+}
+
+void keepInUdimTile(Chart& chart, const glm::ivec2& tile)
+{
+    keepInTile(chart, tile);
 }
 
 std::vector<Index> exportedFaces(const FinalMap& map, std::span<const Index> cageFaces)

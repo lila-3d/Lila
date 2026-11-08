@@ -110,6 +110,9 @@ RelaxStats relaxIslands(geo::Mesh& m, std::span<const Index> faces, std::string_
     if (!stack.empty())
         if (FinalMap map = attachFinal(islands, m, set, stack); !map.warning.empty())
             st.warning = map.warning;
+    std::vector<glm::ivec2> tiles;
+    for (const LiveIsland& is : islands)
+        tiles.push_back(glm::ivec2(glm::floor(is.chart().uvCentroid())));
     std::vector<int> iters(islands.size(), 0);
     tbb::parallel_for(size_t(0), islands.size(), size_t(1), [&](size_t i) {
         LiveIsland& is = islands[i];
@@ -127,6 +130,16 @@ RelaxStats relaxIslands(geo::Mesh& m, std::span<const Index> faces, std::string_
         st.settled &= islands[i].settled() && iters[i] < iterations;
     }
     st.islands = islands.size();
+    // Islands relaxed on the exported mesh can grow; they stay in their UDIM tile.
+    for (size_t i = 0; i < islands.size(); ++i)
+        if (islands[i].hasFinal() && std::ranges::none_of(islands[i].chart().pinned, [](uint8_t p) { return p != 0; }))
+        {
+            Chart c = islands[i].chart();
+            keepInUdimTile(c, tiles[i]);
+            for (Index v = 0; v < c.vertexCount(); ++v)
+                if (c.uv[v] != islands[i].chart().uv[v])
+                    islands[i].setUv(v, c.uv[v]);
+        }
     writeLiveIslands(m, islands, set, false);
     return st;
 }

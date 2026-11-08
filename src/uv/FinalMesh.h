@@ -144,6 +144,9 @@ struct FinalRefineResult
 LILA_SCENE_API FinalRefineResult refineFinal(geo::Mesh& cage, std::span<const Index> faces, std::string_view uvSet, const Stack& stack,
                                              const FinalSolveOptions& opts = {});
 
+/** Moves an island that grew past its UDIM tile back inside, shrinking it only when it is bigger than the tile. */
+LILA_SCENE_API void keepInUdimTile(Chart& chart, const glm::ivec2& tile);
+
 /** Sets densityArea on each chart from the exported mesh, when the stack changes the surface. Returns the map used. */
 LILA_SCENE_API FinalMap applyDensityAreas(const geo::Mesh& cage, std::span<Chart> charts, std::string_view uvSet, const Stack& stack);
 } // namespace lila::uv
