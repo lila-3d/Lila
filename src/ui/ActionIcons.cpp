@@ -827,6 +827,7 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"uv.projectBox", "box"},
     {"uv.projectCylindrical", "cylinder"},
     {"uv.projectSpherical", "sphere"},
+    {"uv.projectCamera", "camera"},
     {"uv.cut", "scissors"},
     {"uv.delete", "eraser"},
     {"uv.seamView", "eye"},

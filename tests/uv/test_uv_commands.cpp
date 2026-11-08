@@ -678,3 +678,33 @@ TEST_CASE("uv tools solve and measure on the mesh after its modifiers")
     run("uvTexelDensity", {{"density", target}, {"resolution", 1024}, {"worldSpace", false}});
     CHECK(run("uvTexelDensity", {{"resolution", 1024}, {"worldSpace", false}}).get<double>() == doctest::Approx(target).epsilon(0.02));
 }
+
+TEST_CASE("camera projection maps what a camera sees to 0-1, image up as V")
+{
+    run("newScene");
+    std::string plane = run("polyPlane", {{"width", 10}, {"depth", 10}})[0];
+    run("setAttr", {{"args", {plane + ".translate", {3.0, 0.0, 0.0}}}});
+    std::string cam = run("createNode", {{"args", {"camera"}}}).get<std::string>();
+    // Looking straight down, so image up is world -Z.
+    run("setAttr", {{"args", {cam + ".translate", {0.0, 50.0, 0.0}}}});
+    run("setAttr", {{"args", {cam + ".rotate", {-90.0, 0.0, 0.0}}}});
+    run("select", {{"args", {plane}}});
+    CHECK_THROWS_AS(run("uvProject", {{"type", "camera"}, {"camera", plane}}), CommandError);
+    run("uvProject", {{"type", "camera"}, {"camera", cam}});
+
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    const geo::Mesh& m = *g.find(plane)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+    std::span<const glm::vec2> uvs = m.cornerAttrs().get<glm::vec2>("uv0");
+    for (geo::Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f))
+            m.forEachFaceCorner(f, [&](geo::Index c) {
+                glm::dvec3 p = m.position(m.cornerPoint(c));
+                CHECK(uvs[c].x > 0.4f);
+                CHECK(uvs[c].x < 0.7f);
+                CHECK(uvs[c].y > 0.0f);
+                CHECK(uvs[c].y < 1.0f);
+                CHECK((uvs[c].x > 0.5f) == (p.x > 0.0));
+                CHECK((uvs[c].y > 0.5f) == (p.z < 0.0));
+            });
+}

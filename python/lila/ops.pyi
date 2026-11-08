@@ -6600,7 +6600,7 @@ def quadRemesh(*objects: Any, preset: str | None = None, method: str | None = No
     Args:
         objects: source.
         preset: Starting settings for what the mesh is for: gameCharacter, midPoly, hero, stylized, hardSurface, prop, or the name of a preset saved from the option box. Flags set to other than their default win. Default 'none'.
-        method: patches: loops run unbroken between a few poles, for characters, props and anything edited by hand; field: each point follows the flow near it, loops wander and poles scatter, for rough surfaces like scans and rocks; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), patches otherwise. One of 'patches', 'field', 'grid'. Default 'patches'.
+        method: patches: loops run unbroken between a few poles; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), patches otherwise. One of 'patches', 'grid'. Default 'patches'.
         targetFaces: Approximate face count. Default 3000.
         countTolerance: Retry at a corrected size until the face count is within this fraction of targetFaces; 0 takes the first try. Default 0.1.
         timeout: Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits until done or aborted. Default 0.0.
@@ -7246,7 +7246,7 @@ def retopoPoles(*objects: Any, preset: str | None = None, method: str | None = N
     Args:
         objects: source.
         preset: Starting settings for what the mesh is for: gameCharacter, midPoly, hero, stylized, hardSurface, prop, or the name of a preset saved from the option box. Flags set to other than their default win. Default 'none'.
-        method: patches: loops run unbroken between a few poles, for characters, props and anything edited by hand; field: each point follows the flow near it, loops wander and poles scatter, for rough surfaces like scans and rocks; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), patches otherwise. One of 'patches', 'field', 'grid'. Default 'patches'.
+        method: patches: loops run unbroken between a few poles; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), patches otherwise. One of 'patches', 'grid'. Default 'patches'.
         targetFaces: Approximate face count. Default 3000.
         countTolerance: Retry at a corrected size until the face count is within this fraction of targetFaces; 0 takes the first try. Default 0.1.
         timeout: Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits until done or aborted. Default 0.0.
@@ -7761,7 +7761,7 @@ def sculptAddLevel() -> Any:
     """Subdivide the sculpt once more and sculpt the new level (from a lower level, the finest is subdivided). Returns {level, levels, points, faces}."""
 
 def sculptCancel() -> Any:
-    """Leave sculpt mode without changing the mesh, discarding the sculpt (a kept <mesh>_high stays as it was)."""
+    """Leave sculpt mode without changing the mesh or its stored levels, discarding this session's sculpting."""
 
 def sculptColor(op: str | None = None, color: Sequence[Any] | None = None) -> Any:
     """Fill the sculpt's polypaint with a color (masked points keep theirs) or clear it back to white.
@@ -7779,38 +7779,37 @@ def sculptCorrective(*objects: Any) -> Any:
     """
 
 def sculptDeleteHigher() -> Any:
-    """Delete the levels above the one being sculpted, and their detail; at level 0, every level. Returns {level, levels, points, faces}."""
+    """Delete the levels above the one being sculpted, and their detail. Returns {level, levels, points, faces}."""
 
-def sculptDuplicateLowPoly(method: str | None = None, level: int | None = None, name: str | None = None) -> Any:
-    """Without leaving sculpt mode, duplicate the mesh as the low poly sculptExit would leave with this method at this level, next to it. The copy keeps the mesh's materials, transform and modifiers. Returns its name.
+def sculptDeleteLevels(*objects: Any) -> Any:
+    """Remove the sculpt levels stored on meshes, leaving each at the level it is at. Returns the meshes that had levels.
 
     Args:
-        method: closest, normal or fit. One of 'closest', 'normal', 'fit'. Default 'closest'.
-        level: 0 keeps the mesh's topology; higher subdivides it that many times. Default 0.
-        name: Name for the copy; default <mesh>_low<level>.
+        objects: meshes...
     """
 
-def sculptEnter(*objects: Any, mode: str | None = None, levels: int | None = None, resolution: int | None = None, resume: bool | None = None) -> Any:
-    """Enter sculpt mode on a mesh: builds a high-resolution copy of its cage to sculpt on, outside the scene. mode='subdivide' gives Catmull-Clark levels to step between (sculptLevel) and fits back exactly on exit; 'remesh' sculpts a uniform voxel remesh; 'direct' sculpts the mesh itself. Resumes from the high poly a previous exit kept (<mesh>_high). Returns {mesh, mode, level, levels, points, faces}.
+def sculptDeleteLower() -> Any:
+    """Delete the levels below the one being sculpted: it becomes level 0, the mesh's new topology on exit. The levels above keep their detail. Returns {level, levels, points, faces}."""
+
+def sculptDuplicate(level: int | None = None, hide: bool | None = None, name: str | None = None) -> Any:
+    """Copy the mesh at a sculpt level as a new mesh beside it in the outliner, with its materials, transform and modifiers but no levels of its own. Without hide, the copy is selected and sculpt mode ends; with hide, the copy is hidden and sculpting carries on. Returns {mesh, level}.
+
+    Args:
+        level: The level to copy; -1 for the one being sculpted. Default -1.
+        hide: Hide the copy and stay in sculpt mode. Default False.
+        name: Name for the copy; default <mesh>_level<N>.
+    """
+
+def sculptEnter(*objects: Any, levels: int | None = None) -> Any:
+    """Enter sculpt mode on a mesh: strokes sculpt the mesh itself. Levels stored by an earlier sculptExit come back, at the level the mesh is at; edits made to the mesh since that keep its topology carry into them. levels adds that many subdivision levels to a mesh without any. Returns {mesh, level, levels, points, faces}.
 
     Args:
         objects: mesh.
-        mode: subdivide, remesh or direct. One of 'subdivide', 'remesh', 'direct'. Default 'subdivide'.
-        levels: Subdivision levels to start with, 0 to 6: 0 sculpts the cage until sculptAddLevel adds some. Default 0.
-        resolution: Voxels along the longest side, for mode='remesh'. Default 192.
-        resume: Continue from the mesh's kept high poly when it has one. Default True.
+        levels: Subdivision levels to add to a mesh without stored levels, 0 to 6. Default 0.
     """
 
-def sculptExit(method: str | None = None, high: str | None = None, highLevel: int | None = None, lowLevel: int | None = None, iterations: int | None = None) -> Any:
-    """Leave sculpt mode, moving the mesh (the low poly) onto the sculpt. method='closest' moves each point to the nearest spot on the sculpt and 'normal' along its normal onto it: a game mesh to bake onto. 'fit' solves for the cage whose subdivision best matches the sculpt, its points off the surface: a mesh to subdivide again. The fit is to the finest level from any level. Only positions change: UVs and other attributes stay, except that polypaint lands on the mesh's polypaint color set. high keeps the sculpt as the hidden child <mesh>_high to bake from, at the finest level, highLevel levels below it, or level highLevel; the next sculptEnter gets every level back from it, less the levels lowLevel moved into the low poly. Returns {mesh, maxMove, high: {mesh, level, levels} or null}.
-
-    Args:
-        method: closest, normal or fit. One of 'closest', 'normal', 'fit'. Default 'closest'.
-        high: Which level <mesh>_high keeps: highest, belowHighest, level, or none to keep nothing. One of 'highest', 'belowHighest', 'level', 'none'. Default 'highest'.
-        highLevel: Levels below the highest (belowHighest), or the level (level). Default 1.
-        lowLevel: The level the low poly comes out at: 0 keeps the mesh's topology, higher subdivides it that many times (its UVs with it). Default 0.
-        iterations: Project-and-fit rounds for remeshed proxies. Default 3.
-    """
+def sculptExit() -> Any:
+    """Leave sculpt mode. The mesh stays at the level being sculpted, and every level is stored on it for the next sculptEnter (sculptDeleteLevels removes them). Polypaint lands on the mesh's polypaint color set. Returns {mesh, level, levels}."""
 
 def sculptLevel(level: int | None = None, step: int | None = None) -> Any:
     """Sculpt another subdivision level: 0 is the cage, the highest the finest. Going down keeps the finer detail, and going back up lays it over whatever changed below. Returns {level, levels, points, faces}.
@@ -7829,8 +7828,18 @@ def sculptMask(op: str | None = None, layer: str | None = None, iterations: int 
         iterations: Blur passes. Default 2.
     """
 
+def sculptReconstruct() -> Any:
+    """Rebuild a level below level 0 from a mesh that was subdivided elsewhere: the new cage is the mesh before that subdivision, its UVs and materials taken from the fine mesh. Level 0 must be all quads laid out the way a subdivision lays them out. Sculpting carries on at the same level, one number higher. Returns {level, levels, points, faces}."""
+
+def sculptRemesh(resolution: int | None = None) -> Any:
+    """Replace the sculpt with an even voxel remesh of its finest level, free of the mesh's topology, as level 0 with no levels above. Polypaint carries over; UVs, the mask and freeze don't. Returns {level, levels, points, faces}.
+
+    Args:
+        resolution: Voxels along the longest side. Default 192.
+    """
+
 def sculptState() -> Any:
-    """The open sculpt session: {active, mesh, mode, level, levels, points, faces, symmetry, masked, frozen, painted}."""
+    """The open sculpt session: {active, mesh, level, levels, points, faces, symmetry, masked, frozen, painted}."""
 
 def sculptStroke(brush: str | None = None, paint: bool | None = None, color: Sequence[Any] | None = None, falloff: str | None = None, strength: float | None = None, invert: bool | None = None, frontFacesOnly: bool | None = None, radialCount: int | None = None, radialAxis: str | None = None, dabs: Sequence[Any] | None = None, live: int | None = None) -> Any:
     """One brush stroke on the sculpt: dabs is a list of {center, normal, radius, pressure, opacity, flow, view, delta, direction} in world space (only center is required; opacity defaults to pressure). Honours the mask, frozen points and the mesh's symmetry, mirrored exactly. Returns {points} changed.
@@ -8039,7 +8048,7 @@ def selectMode(*objects: Any) -> Any:
     """
 
 def selectPathBetween(*objects: Any, kind: str | None = None, to: int | None = None, replace: bool | None = None, deselect: bool | None = None, symmetric: bool | None = None, **flags: Any) -> Any:
-    """Select the components between two of a mesh's vertices, edges or faces: the shorter way along a loop or ring they share, else the shortest path across the surface. Neighbours (vertices on one edge, edges along a loop or across a quad, faces sharing an edge) select the whole loop or ring through both instead. Adds to the selection unless replace or deselect. Returns the ids in order.
+    """Select the components between two of a mesh's vertices, edges or faces: the shorter way along a loop or ring they share, else the shortest path across the surface. Neighbours (vertices on one edge, edges along a loop or across a quad, faces sharing an edge) select the whole loop or ring through both instead, unless deselecting. Adds to the selection unless replace or deselect. Returns the ids in order.
 
     Args:
         objects: mesh.
@@ -10456,8 +10465,8 @@ def uvPin(uvSet: str | None = None) -> Any:
         uvSet: UV set; the current one (uvSetCurrent) when not given.
     """
 
-def uvProject(uvSet: str | None = None, type: str | None = None, axis: str | None = None, fit: str | None = None, center: Sequence[float] | None = None, rotation: Sequence[float] | None = None, width: float | None = None, height: float | None = None, depth: float | None = None, radius: float | None = None, seamAngle: float | None = None, scaleU: float | None = None, scaleV: float | None = None, offsetU: float | None = None, offsetV: float | None = None, viewDir: Sequence[float] | None = None, normalize: bool | None = None, keepSeams: bool | None = None, matrix: Sequence[Any] | None = None, pack: bool | None = None) -> Any:
-    """Project uvs onto the selected faces: planar, box, cylindrical, spherical or camera (matrix=object to clip, 16 numbers). The frame is fitted to the faces unless given; returns the frame used.
+def uvProject(uvSet: str | None = None, type: str | None = None, axis: str | None = None, fit: str | None = None, center: Sequence[float] | None = None, rotation: Sequence[float] | None = None, width: float | None = None, height: float | None = None, depth: float | None = None, radius: float | None = None, seamAngle: float | None = None, scaleU: float | None = None, scaleV: float | None = None, offsetU: float | None = None, offsetV: float | None = None, viewDir: Sequence[float] | None = None, normalize: bool | None = None, keepSeams: bool | None = None, camera: str | None = None, matrix: Sequence[Any] | None = None, pack: bool | None = None) -> Any:
+    """Project uvs onto the selected faces: planar, box, cylindrical, spherical or camera (matrix=object to clip, 16 numbers). Camera uses camera=, else the active view, unless matrix= is given. The frame is fitted to the faces unless given; returns the frame used.
 
     Args:
         uvSet: UV set; the current one (uvSetCurrent) when not given.
@@ -10478,7 +10487,8 @@ def uvProject(uvSet: str | None = None, type: str | None = None, axis: str | Non
         viewDir: World direction the camera looks along, for the seam; the UI passes the active view's.
         normalize: Fit into 0-1 keeping proportions. Default True.
         keepSeams: Keep the seams already cut inside the faces; off joins the faces into the projection's islands. Default False.
-        matrix: Camera projection, column major, for type=camera.
+        camera: Camera node to project through, for type=camera; the active view when not given. UVs span its resolution gate.
+        matrix: Object to clip, column major, for type=camera; overrides camera.
         pack: Pack the resulting islands afterwards. Default False.
     """
 
