@@ -733,7 +733,7 @@ json estimateGroupCage(scene::Graph& g, scene::NodeId group, const CageEstimateO
     json mapped = json::array();
     if (apply)
     {
-        UndoChunk chunk("Estimate Bake Cage");
+        UndoChunk chunk("Auto Paint Bake Cage");
         for (size_t i = 0; i < lowIds.size(); ++i)
         {
             std::vector<float> values = std::move(est.offsets[i]);
@@ -749,7 +749,7 @@ json estimateGroupCage(scene::Graph& g, scene::NodeId group, const CageEstimateO
                 }
                 mapped.push_back(lows[i].name);
             }
-            if (!setPointValues(g, lowIds[i], *paintAttr(kOffsetAttr), values, "Estimate Bake Cage"))
+            if (!setPointValues(g, lowIds[i], *paintAttr(kOffsetAttr), values, "Auto Paint Bake Cage"))
                 throw std::runtime_error("couldn't write bakeOffset on " + g.node(lowIds[i])->name());
         }
         s.frontal = est.frontal;
@@ -775,7 +775,7 @@ json estimateGroupCage(scene::Graph& g, scene::NodeId group, const CageEstimateO
 
 void registerCageCommands()
 {
-    if (ops::find("bakeEstimateCage"))
+    if (ops::find("bakeAutoPaintCage"))
         return;
     using T = ArgType;
     auto groupOf = [](const Args& a, const char* cmd) -> scene::Node& {
@@ -807,8 +807,8 @@ void registerCageCommands()
     };
 
     ops::registerCommand({
-        .name = "bakeEstimateCage",
-        .doc = "Estimate a bake group's cage in one step: paints bakeOffset on its lows so every texel's ray starts just outside "
+        .name = "bakeAutoPaintCage",
+        .doc = "Auto paint a bake group's cage in one step: paints bakeOffset on its lows so every texel's ray starts just outside "
                "the high and meets it, and sets the group's frontal and rear distances (an editable cage moves to the result). "
                "Checks itself by tracing the lows as a bake would, growing the cage where rays still miss. One undo step. "
                "A low whose modifiers change its points gets the result painted on its base points (listed in mapped) and its "
@@ -819,7 +819,7 @@ void registerCageCommands()
                   {"margin", "mg", T::Float, 0.004, "Gap kept between cage and high, as a fraction of each low's bounds diagonal.", {}, {}, 0.0, 1.0},
                   {"apply", "ap", T::Bool, true, "Write the result; False only reports it."}},
         .run = [groupOf](const Args& a) -> json {
-            scene::Node& grp = groupOf(a, "bakeEstimateCage");
+            scene::Node& grp = groupOf(a, "bakeAutoPaintCage");
             CageEstimateOptions o;
             o.resolution = std::clamp(int(a.get<int64_t>("resolution", 512)), 16, 8192);
             o.iterations = std::clamp(int(a.get<int64_t>("iterations", 4)), 0, 32);
@@ -830,7 +830,7 @@ void registerCageCommands()
             }
             catch (const std::runtime_error& e)
             {
-                throw CommandError(std::string("bakeEstimateCage: ") + e.what());
+                throw CommandError(std::string("bakeAutoPaintCage: ") + e.what());
             }
         },
     });

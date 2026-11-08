@@ -20,7 +20,7 @@ class Graph;
  * cage is (the editable cage mesh, or the auto cage with its painted offsets), and with live preview on, the lows drawn
  * with a low resolution preview bake (normal map, missed rays glowing red), rebaked as the cage changes.
  *
- * Actions: bake.showCage (toggles the selected groups' cage), bake.livePreview, bake.estimateCage.
+ * Actions: bake.showCage (toggles the selected groups' cage), bake.livePreview, bake.autoPaintCage.
  */
 namespace lila::ui::bakeCage
 {

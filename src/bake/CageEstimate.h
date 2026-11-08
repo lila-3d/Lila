@@ -20,7 +20,7 @@ class Graph;
 }
 
 /**
- * One-click cage estimation (bakeEstimateCage): per low point, how far the auto cage must push out so every texel's ray
+ * One-click cage painting (bakeAutoPaintCage): per low point, how far the auto cage must push out so every texel's ray
  * starts outside the high and meets it on the way in, as close to the high as that allows.
  *
  * Samples spread over each low triangle walk outward along the cage direction, counting high crossings: the last exit

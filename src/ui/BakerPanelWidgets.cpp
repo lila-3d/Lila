@@ -620,13 +620,13 @@ QWidget* BakerPanel::buildGroupDetails()
         runUi("select", {{"args", {bake::groupSettings(*n).lows.front()}}});
         actions::run(json("bake.paintCage"));
     });
-    QToolButton* estimate = bakerPush(mCageRow, "Estimate", "Estimate: paint the offsets a near-zero-miss bake needs and set the distances");
-    estimate->setObjectName("bakerEstimateCage");
-    connect(estimate, &QToolButton::clicked, this, [this] {
+    QToolButton* autoPaint = bakerPush(mCageRow, "Auto Paint", "Auto Paint: paint the offsets every ray needs to start outside the high and meet it, and set Frontal and Rear");
+    autoPaint->setObjectName("bakerAutoPaintCage");
+    connect(autoPaint, &QToolButton::clicked, this, [this] {
         const std::string g = currentGroup();
         if (g.empty())
             return;
-        const json r = run("bakeEstimateCage", {{"args", {g}}}, false);
+        const json r = run("bakeAutoPaintCage", {{"args", {g}}}, false);
         if (r.is_object() && r.contains("after"))
             mCageStatus->setText(QString("Rays missing: %1% before, %2% after")
                                      .arg(r["before"].value("missRate", 0.0) * 100.0, 0, 'f', 2)
@@ -651,8 +651,8 @@ QWidget* BakerPanel::buildGroupDetails()
     bakeCage::onChanged(this, [this] { scheduleRefresh(); });
     cageRow->addWidget(mShowCage, 0, 0);
     cageRow->addWidget(mLivePreview, 0, 1);
-    cageRow->addWidget(estimate, 1, 0);
-    cageRow->addWidget(paint, 1, 1);
+    cageRow->addWidget(paint, 1, 0);
+    cageRow->addWidget(autoPaint, 1, 1);
     cageRow->addWidget(resetPaint, 2, 0);
     mAoScope = new QComboBox(mDetails);
     mAoScope->addItem("Group", "group");

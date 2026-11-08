@@ -175,9 +175,9 @@ public:
         buttons->addWidget(intoCage);
         col->addLayout(buttons);
         auto* more = new QHBoxLayout;
-        auto* estimate = new QPushButton("Estimate Cage", this);
-        estimate->setToolTip("Paint the offsets a near-zero-miss bake needs and set the group's distances, in one undo step");
-        more->addWidget(estimate);
+        auto* autoPaint = new QPushButton("Auto Paint", this);
+        autoPaint->setToolTip("Auto Paint: paint the offsets every ray needs to start outside the high and meet it, and set the group's Frontal and Rear, in one undo step");
+        more->addWidget(autoPaint);
         live = new QCheckBox("Live preview", this);
         live->setToolTip("Rebake a low resolution preview of the group as you paint; missed rays glow red. Nothing is written.");
         live->setChecked(bakeCage::livePreview());
@@ -186,7 +186,7 @@ public:
         auto* hint = new QLabel("Paints in the viewport and in the UV editor.", this);
         hint->setEnabled(false);
         col->addWidget(hint);
-        connect(estimate, &QPushButton::clicked, this, [] { actions::run(json("bake.estimateCage")); });
+        connect(autoPaint, &QPushButton::clicked, this, [] { actions::run(json("bake.autoPaintCage")); });
         connect(live, &QCheckBox::toggled, this, [](bool on) { bakeCage::setLivePreview(on); });
 
         syncFromSettings();

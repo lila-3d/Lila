@@ -103,7 +103,7 @@ TEST_CASE("UV dabs keep points split across islands consistent: one application 
     CHECK(places.size() > 1); // the point really is split across islands
 }
 
-TEST_CASE("bakeEstimateCage: one click gives a near-zero-miss cage on known pairs")
+TEST_CASE("bakeAutoPaintCage: one click gives a near-zero-miss cage on known pairs")
 {
     struct Pair
     {
@@ -144,7 +144,7 @@ TEST_CASE("bakeEstimateCage: one click gives a near-zero-miss cage on known pair
         ops::execute("bakeGroup", {{"args", {grp}}, {"frontal", 3.0}, {"rear", 3.0}});
 
         const json before = ops::execute("bakeCageCoverage", {{"args", {grp}}, {"resolution", 256}});
-        const json r = ops::execute("bakeEstimateCage", {{"args", {grp}}, {"resolution", 256}});
+        const json r = ops::execute("bakeAutoPaintCage", {{"args", {grp}}, {"resolution", 256}});
         MESSAGE(std::string(pr.name) << ": miss rate before " << r["before"]["missRate"].get<double>() * 100.0 << "%, after "
                         << r["after"]["missRate"].get<double>() * 100.0 << "% (" << r["after"]["misses"] << " of " << r["after"]["samples"]
                         << "), frontal " << r["frontal"] << " rear " << r["rear"] << ", passes " << r["iterations"]);
@@ -164,7 +164,7 @@ TEST_CASE("bakeEstimateCage: one click gives a near-zero-miss cage on known pair
     }
 }
 
-TEST_CASE("bakeEstimateCage: a low whose modifiers change its points gets the cage on its base points")
+TEST_CASE("bakeAutoPaintCage: a low whose modifiers change its points gets the cage on its base points")
 {
     newScene();
     geo::CubeOptions lo;
@@ -182,7 +182,7 @@ TEST_CASE("bakeEstimateCage: a low whose modifiers change its points gets the ca
     const geo::Index basePoints = baseMesh(low)->pointCapacity();
     REQUIRE(lila::scene::modifiers::exportMesh(graph(), graph().find(low)->id())->pointCapacity() != basePoints);
 
-    const json r = ops::execute("bakeEstimateCage", {{"args", {grp}}, {"resolution", 256}});
+    const json r = ops::execute("bakeAutoPaintCage", {{"args", {grp}}, {"resolution", 256}});
     MESSAGE("miss rate before " << r["before"]["missRate"].get<double>() * 100.0 << "%, after " << r["after"]["missRate"].get<double>() * 100.0 << "%");
     CHECK(r["mapped"] == json::array({"box_low"}));
     CHECK(r["after"]["missRate"].get<double>() < r["before"]["missRate"].get<double>());
@@ -197,7 +197,7 @@ TEST_CASE("bakeEstimateCage: a low whose modifiers change its points gets the ca
     CHECK(!baseMesh(low)->pointAttrs().has(bake::kOffsetAttr));
 }
 
-TEST_CASE("bakeEstimateCage: a low's cage stops short of another low lying on it")
+TEST_CASE("bakeAutoPaintCage: a low's cage stops short of another low lying on it")
 {
     newScene();
     // A skirt and a ribbon 5 cm above its middle, both inside a high box whose top is 20 cm up: both push out past 15 cm,
@@ -221,7 +221,7 @@ TEST_CASE("bakeEstimateCage: a low's cage stops short of another low lying on it
     ops::execute("setBakeOutput", {{"project", p}, {"folder", tempDir("lila_cage_clearance").generic_string()}, {"resolution", 64}, {"supersampling", 1}});
     ops::execute("bakeGroup", {{"args", {"g"}}, {"project", p}, {"lows", {skirt, ribbon}}, {"highs", {box}}});
 
-    const json r = ops::execute("bakeEstimateCage", {{"args", {"g"}}, {"resolution", 128}});
+    const json r = ops::execute("bakeAutoPaintCage", {{"args", {"g"}}, {"resolution", 128}});
     const double frontal = r["frontal"].get<double>();
     const geo::Mesh& m = *baseMesh(skirt);
     const auto offsets = m.pointAttrs().get<float>(bake::kOffsetAttr);

@@ -25,8 +25,8 @@ LintCheckView lintCheckView(const std::string& check)
         {"mirroredTangents", {"Mirrored or folded UVs", "Mirrored UVs decode inverted when the tangent sign disagrees; folded islands bake twice."}},
         {"uvOverlap", {"Overlapping UVs", "Overlapping islands writing one texture overwrite each other: offset or separate them."}},
         {"texelDensity", {"Texel density outliers", "Islands far from the project's median density look sharper or blurrier than the rest."}},
-        {"highRange", {"Rays missing the high", "Move the high onto the low or raise the Frontal and Rear distances (or Estimate the cage)."}},
-        {"cageContainment", {"High outside the cage", "Rays start inside the high there: raise Frontal or Rear, or Estimate the cage."}},
+        {"highRange", {"Rays missing the high", "Move the high onto the low or raise the Frontal and Rear distances (or Auto Paint the cage)."}},
+        {"cageContainment", {"High outside the cage", "Rays start inside the high there: raise Frontal or Rear, or Auto Paint the cage."}},
         {"triangulation", {"Non-planar faces", "They bake on Lila's triangle split: export triangulated so the game splits them the same way."}},
         {"cageTopology", {"Cage doesn't match", "The editable cage isn't used until it matches its low; the auto cage bakes instead."}},
     };

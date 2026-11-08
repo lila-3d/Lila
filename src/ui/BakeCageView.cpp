@@ -758,12 +758,12 @@ void registerBakeCageView()
                   .doc = "Toggles live preview bakes: shown and painted groups rebake a low resolution normal map in memory as their "
                          "cage changes, drawn on the lows with missed rays glowing red. Nothing is written.",
                   .python = "lila.ui.run_action(\"bake.livePreview\")"});
-    actions::add({.id = "bake.estimateCage",
-                  .label = "Estimate Cage",
+    actions::add({.id = "bake.autoPaintCage",
+                  .label = "Auto Paint Cage",
                   .category = "Bake",
                   .doc = "Paints the selected group's cage offsets so every ray starts just outside the high and meets it, and sets "
                          "its frontal and rear distances. One undo step.",
-                  .command = "bakeEstimateCage",
+                  .command = "bakeAutoPaintCage",
                   .call = json::object()});
 }
 } // namespace lila::ui::bakeCage

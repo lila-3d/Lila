@@ -583,7 +583,7 @@ void BakerPanel::showResult(const json& result)
         if (const double s = g.value("samples", 0.0); s > 0.0 && g.value("misses", 0.0) / s > 0.01)
         {
             if (!misses)
-                misses = add(nullptr, "Rays missing the high", QString(), "alert-triangle", "Raise Frontal or Rear, or Estimate the cage");
+                misses = add(nullptr, "Rays missing the high", QString(), "alert-triangle", "Raise Frontal or Rear, or Auto Paint the cage");
             add(misses, qs(g.value("group", std::string())), QString("%1%").arg(100.0 * g.value("misses", 0.0) / s, 0, 'f', 1), "box");
         }
     if (misses)

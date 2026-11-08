@@ -657,6 +657,17 @@ def bakeAssign(project: str | None = None, create: bool | None = None, channels:
         channels: Override which material channel a map goes to: {"height": "roughness"}. Short form ch.
     """
 
+def bakeAutoPaintCage(*objects: Any, resolution: int | None = None, iterations: int | None = None, margin: float | None = None, apply: bool | None = None, res: int | None = None, it: int | None = None, mg: float | None = None, ap: bool | None = None) -> Any:
+    """Auto paint a bake group's cage in one step: paints bakeOffset on its lows so every texel's ray starts just outside the high and meets it, and sets the group's frontal and rear distances (an editable cage moves to the result). Checks itself by tracing the lows as a bake would, growing the cage where rays still miss. One undo step. A low whose modifiers change its points gets the result painted on its base points (listed in mapped) and its coverage measured again through the stack. Returns the miss rates before and after.
+
+    Args:
+        objects: group (or its low; default the selection).
+        resolution: Texels per side of the coverage check. Short form res. Default 512.
+        iterations: Coverage passes that may grow the cage. Short form it. Default 4.
+        margin: Gap kept between cage and high, as a fraction of each low's bounds diagonal. Short form mg. Default 0.004.
+        apply: Write the result; False only reports it. Short form ap. Default True.
+    """
+
 def bakeCage(*objects: Any, create: bool | None = None, name: str | None = None, fromPaint: bool | None = None, reset: bool | None = None, delete: bool | None = None, c: bool | None = None, n: str | None = None, fp: bool | None = None, rs: bool | None = None) -> Any:
     """A bake group's editable cage. create=True duplicates the low pushed out by the auto cage (frontal x cageOffset x the painted bakeOffset) as a mesh the group then uses; edit its points freely, its topology must stay the low's. fromPaint=True moves an existing cage to the auto cage as painted now. reset=True goes back to the auto cage (delete=True also removes the cage mesh). With no flag, reports the cage and whether it matches the low.
 
@@ -696,17 +707,6 @@ def bakeCurveSymmetry(*objects: Any) -> Any:
 
     Args:
         objects: curves (default: the selected curves).
-    """
-
-def bakeEstimateCage(*objects: Any, resolution: int | None = None, iterations: int | None = None, margin: float | None = None, apply: bool | None = None, res: int | None = None, it: int | None = None, mg: float | None = None, ap: bool | None = None) -> Any:
-    """Estimate a bake group's cage in one step: paints bakeOffset on its lows so every texel's ray starts just outside the high and meets it, and sets the group's frontal and rear distances (an editable cage moves to the result). Checks itself by tracing the lows as a bake would, growing the cage where rays still miss. One undo step. A low whose modifiers change its points gets the result painted on its base points (listed in mapped) and its coverage measured again through the stack. Returns the miss rates before and after.
-
-    Args:
-        objects: group (or its low; default the selection).
-        resolution: Texels per side of the coverage check. Short form res. Default 512.
-        iterations: Coverage passes that may grow the cage. Short form it. Default 4.
-        margin: Gap kept between cage and high, as a fraction of each low's bounds diagonal. Short form mg. Default 0.004.
-        apply: Write the result; False only reports it. Short form ap. Default True.
     """
 
 def bakeForTarget(project: str | None = None, target: str | None = None, optional: bool | None = None, autoGroup: bool | None = None, dryRun: bool | None = None, backend: str | None = None, overrideGroups: bool | None = None, *, pj: str | None = None, t: str | None = None, op: bool | None = None, ag: bool | None = None, dr: bool | None = None, be: str | None = None, og: bool | None = None, **flags: Any) -> Any:
