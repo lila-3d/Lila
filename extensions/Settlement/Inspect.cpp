@@ -140,8 +140,11 @@ json streetscapeLaneChecks(const Layout& l, const Ground& ground)
             add("error", x, std::format("{} exit lane {} cannot be reached", mode, x.dump()));
     }
     for (const json& c : r.contains("conflictingGreens") ? r["conflictingGreens"] : json::array())
-        add("error", c.value("junction", -1), std::format("junction {} phase {}: two green movements {}", c.value("junction", -1), c.value("phase", -1),
-                                                            c.value("kind", std::string("cross"))));
+    {
+        auto move = [](const json& m) { return std::format("{} lane {} to {}", m.value("move", std::string()), m.value("from", -1), m.value("to", -1)); };
+        add("error", c.value("junction", -1), std::format("junction {} phase {}: green movements {} ({} and {})", c.value("junction", -1), c.value("phase", -1),
+                                                            c.value("kind", std::string("cross")), move(c.value("a", json::object())), move(c.value("b", json::object()))));
+    }
     for (const json& u : r.contains("unphasedApproaches") ? r["unphasedApproaches"] : json::array())
         add("error", u.value("junction", -1), std::format("junction {}: approach {} has no signal phase", u.value("junction", -1), u.value("end", -1)));
     for (const json& t : r.contains("unreachableRoutes") ? r["unreachableRoutes"] : json::array())
@@ -256,7 +259,7 @@ json checkLayout(const Layout& l, const Ground& ground, const Options& o)
         const Polygon& poly = it->second->outline;
         std::vector<double> d(poly.size());
         for (size_t k = 0; k < poly.size(); ++k)
-            d[k] = poly.tag[k] >= 0 ? p.frontSetback : p.sideSetback;
+            d[k] = poly.tag[k] >= 0 ? env.frontSetback : env.sideSetback; // the setbacks its block type gave it
         const Polygon allowed = inset(poly, d);
         bool inside = !allowed.pts.empty();
         for (const Vec2& q : env.footprint.pts)

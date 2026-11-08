@@ -13,6 +13,7 @@
 #include <numeric>
 #include <queue>
 #include <set>
+#include <tuple>
 
 namespace settlement
 {
@@ -459,6 +460,43 @@ LaneGraph laneGraph(const Layout& l, const RoadNetwork& net)
                         connectVehicles(a, b, -1, nullptr, true);
         connectPedestrians(ends, -1);
     }
+    // On a skewed junction a turn from one approach can cross the through movement it shares a phase with: that turn
+    // goes on green only when the way is clear, as a permissive turn. Two crossing through movements get phases of their own.
+    std::map<std::pair<int, int>, std::vector<size_t>> greens;
+    std::map<int, int> lastPhase;
+    std::set<std::tuple<int, int, int>> ownPhase; // junction, line, direction of an approach moved to a phase of its own
+    for (size_t k = 0; k < g.links.size(); ++k)
+        if (const LaneLink& x = g.links[k]; x.junction >= 0 && x.phase >= 0 && !x.yields && g.lanes[size_t(x.from)].mode == LaneMode::Vehicle)
+        {
+            greens[{x.junction, x.phase}].push_back(k);
+            lastPhase[x.junction] = std::max(lastPhase[x.junction], x.phase);
+        }
+    for (const auto& [key, moves] : greens)
+        for (size_t a = 0; a < moves.size(); ++a)
+            for (size_t b = a + 1; b < moves.size(); ++b)
+            {
+                LaneLink &x = g.links[moves[a]], &y = g.links[moves[b]];
+                if (x.yields || y.yields)
+                    continue;
+                const Lane &xf = g.lanes[size_t(x.from)], &yf = g.lanes[size_t(y.from)];
+                if (xf.line == yf.line && xf.dir == yf.dir)
+                    continue;
+                if (x.to != y.to && !pathsCross(connector(xf, g.lanes[size_t(x.to)]), connector(yf, g.lanes[size_t(y.to)])))
+                    continue;
+                if (y.move != Movement::Through)
+                    y.yields = true;
+                else if (x.move != Movement::Through)
+                    x.yields = true;
+                else
+                    ownPhase.insert({key.first, yf.line, int(yf.dir)});
+            }
+    std::map<std::tuple<int, int, int>, int> newPhase;
+    for (const auto& approach : ownPhase)
+        newPhase[approach] = ++lastPhase[std::get<0>(approach)];
+    for (LaneLink& k : g.links)
+        if (k.junction >= 0 && k.phase >= 0)
+            if (auto it = newPhase.find({k.junction, g.lanes[size_t(k.from)].line, int(g.lanes[size_t(k.from)].dir)}); it != newPhase.end())
+                k.phase = it->second;
     return g;
 }
 
@@ -599,11 +637,12 @@ void addTransit(LaneGraph& g, const Layout& l, const RoadNetwork& net, const Tra
                 return path(s, e, ok);
             };
             r.lanes = lay(allowed);
-            if (r.lanes.empty() && mode == "bus")
+            if (r.lanes.empty())
             {
                 r.lanes = lay(anyVehicle);
                 if (!r.lanes.empty())
-                    r.note = "no way along arterials and collectors alone: the route uses minor streets";
+                    r.note = mode == "tram" ? "no way along the arterials' inner lanes: the tram shares the general lanes"
+                                            : "no way along arterials and collectors alone: the route uses minor streets";
             }
             if (r.lanes.empty())
             {
