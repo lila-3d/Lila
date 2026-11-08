@@ -260,6 +260,26 @@ struct NgonSplitOptions
  */
 LILA_SCENE_API std::vector<Index> splitNgons(Mesh& mesh, std::span<const Index> faces, const NgonSplitOptions& opts = {});
 
+/** How subdivision gives the inside of each uv island its uvs. */
+enum class SubdivideUvs : uint8_t
+{
+    /** Blended from the level below, like the positions. */
+    Blend,
+    /**
+     * The island's border uvs as Blend gives them, its interior the harmonic fill of that border on the subdivided
+     * surface (one solve on the last level), so the interior follows the surface however the cage moved.
+     */
+    FitSurface,
+};
+
+/** What subdivision does with the uv of an island corner, where only one of the island's faces meets the point. */
+enum class SubdivideUvCorners : uint8_t
+{
+    Keep,
+    /** Smoothed along the island border like any other border point. */
+    Smooth,
+};
+
 struct SubdivideOptions
 {
     int levels = 1;
@@ -267,6 +287,8 @@ struct SubdivideOptions
     bool sharpBoundary = true;
     /** Normals stay split along hard edges; off, the result is smooth-shaded everywhere, like Maya's smooth preview. */
     bool keepHardEdges = false;
+    SubdivideUvs uvs = SubdivideUvs::FitSurface;
+    SubdivideUvCorners uvCorners = SubdivideUvCorners::Keep;
 };
 
 /** Where the cage's components went in subdivide's result. */
@@ -285,7 +307,7 @@ struct SubdivideMap
 /**
  * Catmull-Clark subdivision. Edge "crease" of 1 or more is sharp (and drops by one per level),
  * fractions blend between smooth and sharp. Uv layers are smoothed within their islands (a layer named "<name>@<set>" uses
- * the islands of uv set <set>); colours are interpolated linearly per face.
+ * the islands of uv set <set>) as opts.uvs says; colours are interpolated linearly per face.
  */
 LILA_SCENE_API Mesh subdivide(const Mesh& mesh, const SubdivideOptions& opts = {}, SubdivideMap* map = nullptr);
 

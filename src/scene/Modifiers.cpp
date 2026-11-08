@@ -187,11 +187,17 @@ std::vector<ModifierType> modifierTypes()
         {"subdivisionModifier",
          "Smooths the mesh with Catmull-Clark subdivision. Use it to turn a low-poly cage into a smooth high-poly surface.",
          {param("levels", PlugType::Int, int64_t(1), "Subdivision levels, 0 to 4. Each level about quadruples the face count; 0 passes the mesh through.", 0.0, 4.0),
-          param("keepHardEdges", PlugType::Bool, false, "Keep normals split along hard edges; off smooths the shading across them.")},
+          param("keepHardEdges", PlugType::Bool, false, "Keep normals split along hard edges; off smooths the shading across them."),
+          param("uvs", PlugType::Enum, int64_t(1),
+                "How island interiors get their uvs. fitSurface spreads them evenly over the smoothed surface, so rounded "
+                "bevels never squash into slivers; blend smooths them like the points."),
+          param("uvCorners", PlugType::Enum, int64_t(0), "Island corner uvs: keep holds them where the cage has them; smooth rounds them off with the border.")},
          [](const geo::Mesh& in, const Node& n) {
              geo::SubdivideOptions o;
              o.levels = int(std::clamp<int64_t>(intOf(n, "levels"), 0, 4));
              o.keepHardEdges = flagOf(n, "keepHardEdges");
+             o.uvs = geo::SubdivideUvs(std::clamp<int64_t>(intOf(n, "uvs"), 0, 1));
+             o.uvCorners = geo::SubdivideUvCorners(std::clamp<int64_t>(intOf(n, "uvCorners"), 0, 1));
              return o.levels == 0 ? in : geo::subdivide(in, o);
          }},
         {"bevelModifier",
@@ -519,6 +525,16 @@ void registerTypes()
                 p.enumNames = {"+ to -", "- to +", "both"};
             if (std::string(m.name) == "weightedNormalsModifier" && p.name == "mode")
                 p.enumNames = {"area", "angle", "areaAngle"};
+            if (std::string(m.name) == "subdivisionModifier" && p.name == "uvs")
+            {
+                p.enumNames = {"blend", "fitSurface"};
+                p.niceName = "UVs";
+            }
+            if (std::string(m.name) == "subdivisionModifier" && p.name == "uvCorners")
+            {
+                p.enumNames = {"keep", "smooth"};
+                p.niceName = "UV Corners";
+            }
             if (std::string(m.name) == "decimateModifier" && p.name == "symmetry")
                 p.enumNames = {"off", "x", "y", "z"};
             if (std::string(m.name) == "arrayModifier")

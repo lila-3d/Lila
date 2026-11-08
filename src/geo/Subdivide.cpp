@@ -2,11 +2,20 @@
 
 #include "core/Profile.h"
 
+#include <Eigen/Sparse>
+#include <Eigen/SparseCholesky>
 #include <tbb/blocked_range.h>
 #include <tbb/parallel_for.h>
 
 #include <algorithm>
+#include <bit>
+#include <list>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <numbers>
 #include <optional>
+#include <unordered_map>
 #include <string>
 #include <utility>
 
@@ -41,7 +50,8 @@ const Attribute& islandLayer(const Mesh& src, const Attribute& layer)
     return set && set->type() == AttrType::Float2 ? *set : layer;
 }
 
-template <class Sharpness> UvRefine refineUvs(const Mesh& src, const Attribute& layer, const Attribute& islands, Sharpness&& sharpness)
+template <class Sharpness>
+UvRefine refineUvs(const Mesh& src, const Attribute& layer, const Attribute& islands, Sharpness&& sharpness, bool smoothCorners)
 {
     LILA_ZONE();
 
@@ -151,7 +161,7 @@ template <class Sharpness> UvRefine refineUvs(const Mesh& src, const Attribute& 
                 glm::vec2 result = P;
                 if (borders == 0 && island.size() >= 3)
                     result = (F / n + 2.0f * R / (float(inner) * 0.5f) + (n - 3.0f) * P) / n;
-                else if (borders == 2 && island.size() >= 2)
+                else if (borders == 2 && (island.size() >= 2 || smoothCorners))
                     result = (6.0f * P + rim) / 8.0f;
                 for (Index c : island)
                     r.point[c] = result;
@@ -400,7 +410,7 @@ Mesh subdivideOnce(const Mesh& src, const SubdivideOptions& opts, SubdivideMap* 
     std::vector<UvRefine> uvs;
     for (size_t l = 0; l < src.cornerAttrs().layerCount(); ++l)
         if (const Attribute& a = src.cornerAttrs().layer(l); a.type() == AttrType::Float2)
-            uvs.push_back(refineUvs(src, a, islandLayer(src, a), sharpness));
+            uvs.push_back(refineUvs(src, a, islandLayer(src, a), sharpness, opts.uvCorners == SubdivideUvCorners::Smooth));
 
     if (std::optional<Mesh> built = buildQuads(src, pos, pId, eId, fId, crease, uvs, map))
         return std::move(*built);
@@ -504,6 +514,556 @@ Mesh subdivideOnce(const Mesh& src, const SubdivideOptions& opts, SubdivideMap* 
     }
     return out;
 }
+
+namespace fit
+{
+using SpMat = Eigen::SparseMatrix<double>;
+
+/**
+ * A mesh's uv islands for one island layer: its corners grouped per point within an island (the points of the island's
+ * own surface), each group on the island's border or inside it.
+ */
+struct Islands
+{
+    std::vector<Index> groupOfCorner;
+    std::vector<uint8_t> border;
+    std::vector<Index> islandOfGroup;
+    std::vector<std::vector<Index>> groupCorners;
+    std::vector<std::vector<Index>> faces; // per island
+};
+
+Islands islandsOf(const Mesh& m, const Attribute& layer)
+{
+    LILA_ZONE();
+
+    const std::span<const glm::vec2> key = layer.values<glm::vec2>();
+    auto same = [&](Index a, Index b) { return glm::all(glm::lessThanEqual(glm::abs(key[a] - key[b]), glm::vec2(1e-6f))); };
+    auto cornerAt = [&](Index c, Index p) { return m.cornerPoint(c) == p ? c : m.cornerNext(c); };
+    auto joins = [&](Index e) {
+        if (!m.isManifoldEdge(e))
+            return false;
+        const Index c = m.edgeCorner(e), rc = m.cornerRadial(c);
+        const Index p0 = m.edgePoint(e, 0), p1 = m.edgePoint(e, 1);
+        return same(cornerAt(c, p0), cornerAt(rc, p0)) && same(cornerAt(c, p1), cornerAt(rc, p1));
+    };
+    Islands is;
+    is.groupOfCorner.assign(m.cornerCapacity(), kInvalid);
+    std::vector<Index> corners, stack;
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+    {
+        if (!m.pointValid(p))
+            continue;
+        corners.clear();
+        m.forEachPointCorner(p, [&](Index c) { corners.push_back(c); });
+        for (Index start : corners)
+        {
+            if (is.groupOfCorner[start] != kInvalid)
+                continue;
+            const Index g = Index(is.border.size());
+            is.border.push_back(0);
+            is.groupCorners.emplace_back();
+            is.groupOfCorner[start] = g;
+            stack.assign(1, start);
+            while (!stack.empty())
+            {
+                const Index c = stack.back();
+                stack.pop_back();
+                is.groupCorners[g].push_back(c);
+                for (Index e : {m.cornerEdge(c), m.cornerEdge(m.cornerPrev(c))})
+                {
+                    if (!joins(e))
+                    {
+                        is.border[g] = 1;
+                        continue;
+                    }
+                    const Index ec = m.edgeCorner(e);
+                    const Index nb = cornerAt(m.cornerFace(ec) == m.cornerFace(c) ? m.cornerRadial(ec) : ec, p);
+                    if (is.groupOfCorner[nb] == kInvalid)
+                    {
+                        is.groupOfCorner[nb] = g;
+                        stack.push_back(nb);
+                    }
+                }
+            }
+        }
+    }
+    // Islands: groups joined through the faces they share.
+    std::vector<Index> parent(is.border.size());
+    for (Index g = 0; g < parent.size(); ++g)
+        parent[g] = g;
+    auto root = [&](Index g) {
+        while (parent[g] != g)
+            g = parent[g] = parent[parent[g]];
+        return g;
+    };
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f))
+        {
+            const Index a = root(is.groupOfCorner[m.faceCorner(f)]);
+            m.forEachFaceCorner(f, [&](Index c) {
+                const Index b = root(is.groupOfCorner[c]);
+                if (b != a)
+                    parent[b] = a;
+            });
+        }
+    std::vector<Index> id(parent.size(), kInvalid);
+    is.islandOfGroup.resize(parent.size());
+    for (Index g = 0; g < parent.size(); ++g)
+    {
+        Index& i = id[root(g)];
+        if (i == kInvalid)
+        {
+            i = Index(is.faces.size());
+            is.faces.emplace_back();
+        }
+        is.islandOfGroup[g] = i;
+    }
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f))
+            is.faces[is.islandOfGroup[is.groupOfCorner[m.faceCorner(f)]]].push_back(f);
+    return is;
+}
+
+/** One island's interior system: the cotan Laplacian over its interior groups and their couplings to its border. */
+struct System
+{
+    std::vector<Index> interior; // groups, in unknown order
+    std::vector<Index> border;   // groups
+    SpMat a;                     // interior x interior
+    SpMat b;                     // interior x border: rhs = b * border values
+};
+
+struct Factor
+{
+    Eigen::SimplicialLDLT<SpMat> ldlt;
+    bool ok = false;
+};
+
+/** Factorisations by matrix content, so re-evaluating an unchanged surface (new uvs, more probe layers) skips them. */
+class FactorCache
+{
+public:
+    std::shared_ptr<const Factor> get(const SpMat& a)
+    {
+        const uint64_t key = hashOf(a);
+        {
+            std::lock_guard lock(mMutex);
+            for (auto it = mEntries.begin(); it != mEntries.end(); ++it)
+                if (it->key == key && it->n == a.rows() && it->nnz == a.nonZeros())
+                {
+                    mEntries.splice(mEntries.begin(), mEntries, it);
+                    return it->factor;
+                }
+        }
+        auto f = std::make_shared<Factor>();
+        f->ldlt.compute(a);
+        f->ok = f->ldlt.info() == Eigen::Success;
+        std::lock_guard lock(mMutex);
+        mEntries.push_front({key, a.rows(), a.nonZeros(), f});
+        mNonZeros += size_t(a.nonZeros());
+        while (mEntries.size() > 1 && (mNonZeros > kBudget || mEntries.size() > kMaxEntries))
+        {
+            mNonZeros -= size_t(mEntries.back().nnz);
+            mEntries.pop_back();
+        }
+        return f;
+    }
+
+private:
+    static constexpr size_t kBudget = size_t(8) << 20;
+    static constexpr size_t kMaxEntries = 4096;
+
+    static uint64_t hashOf(const SpMat& a)
+    {
+        uint64_t h = 0x9e3779b97f4a7c15ull ^ uint64_t(a.rows());
+        auto mix = [&](uint64_t v) {
+            h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+            h *= 0xff51afd7ed558ccdull;
+        };
+        for (Eigen::Index k = 0; k <= a.outerSize(); ++k)
+            mix(uint64_t(a.outerIndexPtr()[k]));
+        for (Eigen::Index k = 0; k < a.nonZeros(); ++k)
+        {
+            mix(uint64_t(a.innerIndexPtr()[k]));
+            mix(std::bit_cast<uint64_t>(a.valuePtr()[k]));
+        }
+        return h;
+    }
+
+    struct Entry
+    {
+        uint64_t key;
+        Eigen::Index n, nnz;
+        std::shared_ptr<const Factor> factor;
+    };
+    std::mutex mMutex;
+    std::list<Entry> mEntries;
+    size_t mNonZeros = 0;
+};
+
+FactorCache& factorCache()
+{
+    // Never destroyed: meshes may still be subdivided while statics shut down.
+    static FactorCache& c = *new FactorCache();
+    return c;
+}
+
+/** Cotan weights of the island's faces on the mesh's surface; a quad averages both of its diagonals. */
+System systemOf(const Mesh& m, const Islands& is, Index island)
+{
+    System s;
+    std::map<Index, Index> unknown, known;
+    for (Index f : is.faces[island])
+        m.forEachFaceCorner(f, [&](Index c) {
+            const Index g = is.groupOfCorner[c];
+            auto& to = is.border[g] ? known : unknown;
+            if (to.emplace(g, Index(to.size())).second)
+                (is.border[g] ? s.border : s.interior).push_back(g);
+        });
+    if (s.interior.empty() || s.border.empty())
+        return s;
+    std::vector<Eigen::Triplet<double>> ta, tb;
+    auto half = [&](Index g, Index o, double w) {
+        if (is.border[g])
+            return;
+        const int r = int(unknown[g]);
+        ta.emplace_back(r, r, w);
+        if (is.border[o])
+            tb.emplace_back(r, int(known[o]), w);
+        else
+            ta.emplace_back(r, int(unknown[o]), -w);
+    };
+    auto addTri = [&](Index c0, Index c1, Index c2, double tw) {
+        const Index cs[3] = {c0, c1, c2};
+        for (int k = 0; k < 3; ++k)
+        {
+            const Index ci = cs[(k + 1) % 3], cj = cs[(k + 2) % 3];
+            const glm::dvec3 pk = m.position(m.cornerPoint(cs[k]));
+            const glm::dvec3 u = m.position(m.cornerPoint(ci)) - pk, v = m.position(m.cornerPoint(cj)) - pk;
+            const double sn = glm::length(glm::cross(u, v));
+            if (sn <= 1e-300)
+                continue;
+            const double w = 0.5 * tw * glm::dot(u, v) / sn;
+            const Index gi = is.groupOfCorner[ci], gj = is.groupOfCorner[cj];
+            half(gi, gj, w);
+            half(gj, gi, w);
+        }
+    };
+    std::vector<Index> fc;
+    for (Index f : is.faces[island])
+    {
+        fc = m.faceCorners(f);
+        if (fc.size() == 4)
+        {
+            addTri(fc[0], fc[1], fc[2], 0.5);
+            addTri(fc[0], fc[2], fc[3], 0.5);
+            addTri(fc[1], fc[2], fc[3], 0.5);
+            addTri(fc[1], fc[3], fc[0], 0.5);
+        }
+        else
+            for (size_t i = 1; i + 1 < fc.size(); ++i)
+                addTri(fc[0], fc[i], fc[i + 1], 1.0);
+    }
+    const auto n = Eigen::Index(s.interior.size());
+    s.a.resize(n, n);
+    s.a.setFromTriplets(ta.begin(), ta.end());
+    s.b.resize(n, Eigen::Index(s.border.size()));
+    s.b.setFromTriplets(tb.begin(), tb.end());
+    return s;
+}
+
+/** A layer's value at a group, whose corners agree up to float noise. */
+glm::dvec2 groupValue(std::span<const glm::vec2> uv, const std::vector<Index>& corners)
+{
+    glm::dvec2 sum(0.0);
+    for (Index c : corners)
+        sum += glm::dvec2(uv[c]);
+    return sum / double(corners.size());
+}
+
+/** A border group's new value: the blend of two border groups' values at t. */
+struct BorderBlend
+{
+    Index group, a, b;
+    double t;
+};
+
+/** Border edges shorter in uv than this share of their length on the surface at the island's density are bunched. */
+constexpr double kBunched = 0.2;
+/** A bunched run takes in its neighbours until it has this share of its surface length in uv. */
+constexpr double kRespaced = 0.6;
+
+/**
+ * Where an island's border bunches up in uv (a bevel's corner points all carry the one cage uv of the corner they
+ * replaced), the run and enough of its neighbours spread along the same uv polyline by their length on the surface.
+ * The polyline and so the blends come from the island layer; every layer using it is blended alike, so uvs stay linear
+ * in the cage's.
+ */
+std::vector<BorderBlend> respaceBorder(const Mesh& m, const Islands& is, Index island, std::span<const glm::vec2> set)
+{
+    std::vector<BorderBlend> out;
+    auto cornerAt = [&](Index c, Index p) { return m.cornerPoint(c) == p ? c : m.cornerNext(c); };
+    std::unordered_map<Index, Index> next;
+    double a3 = 0.0, auv = 0.0;
+    std::vector<Index> fc;
+    for (Index f : is.faces[island])
+    {
+        fc = m.faceCorners(f);
+        for (size_t i = 1; i + 1 < fc.size(); ++i)
+        {
+            const glm::dvec3 p0 = m.position(m.cornerPoint(fc[0]));
+            a3 += 0.5 * glm::length(glm::cross(m.position(m.cornerPoint(fc[i])) - p0, m.position(m.cornerPoint(fc[i + 1])) - p0));
+            const glm::dvec2 u0 = set[fc[0]], u1 = glm::dvec2(set[fc[i]]) - u0, u2 = glm::dvec2(set[fc[i + 1]]) - u0;
+            auv += 0.5 * (u1.x * u2.y - u1.y * u2.x);
+        }
+        for (Index c : fc)
+        {
+            const Index e = m.cornerEdge(c), cn = m.cornerNext(c);
+            bool joined = false;
+            if (m.isManifoldEdge(e))
+            {
+                const Index ec = m.edgeCorner(e), rc = m.cornerFace(ec) == f ? m.cornerRadial(ec) : ec;
+                joined = is.groupOfCorner[cornerAt(rc, m.cornerPoint(c))] == is.groupOfCorner[c] &&
+                         is.groupOfCorner[cornerAt(rc, m.cornerPoint(cn))] == is.groupOfCorner[cn];
+            }
+            // A group with two borders leaving it pinches the island; its loops are left alone.
+            if (!joined && !next.emplace(is.groupOfCorner[c], is.groupOfCorner[cn]).second)
+                return out;
+        }
+    }
+    const double s = std::sqrt(std::abs(auv) / std::max(a3, 1e-300));
+    if (!(s > 0.0))
+        return out;
+    auto pos = [&](Index g) { return m.position(m.cornerPoint(is.groupCorners[g].front())); };
+    std::unordered_map<Index, uint8_t> seen;
+    std::vector<Index> loop;
+    std::vector<double> l, u;
+    for (const auto& [first, unused] : next)
+    {
+        if (seen.count(first))
+            continue;
+        loop.clear();
+        for (Index g = first; !seen.count(g);)
+        {
+            seen[g] = 1;
+            loop.push_back(g);
+            const auto it = next.find(g);
+            if (it == next.end())
+                break;
+            g = it->second;
+        }
+        const size_t n = loop.size();
+        if (n < 4 || next.find(loop.back()) == next.end() || next.at(loop.back()) != first)
+            continue;
+        l.resize(n);
+        u.resize(n);
+        for (size_t i = 0; i < n; ++i)
+        {
+            const Index a = loop[i], b = loop[(i + 1) % n];
+            l[i] = glm::length(pos(b) - pos(a)) * s;
+            u[i] = glm::length(groupValue(set, is.groupCorners[b]) - groupValue(set, is.groupCorners[a]));
+        }
+        auto bad = [&](size_t i) { return u[i] < kBunched * l[i]; };
+        // Start after the best spaced edge, so no window wraps past the scan's start.
+        size_t start = 0;
+        for (size_t i = 1; i < n; ++i)
+            if (u[i] / std::max(l[i], 1e-300) > u[start] / std::max(l[start], 1e-300))
+                start = i;
+        if (bad(start))
+            continue;
+        std::vector<uint8_t> covered(n, 0);
+        covered[start] = 1;
+        for (size_t k = 1; k < n; ++k)
+        {
+            const size_t i = (start + k) % n;
+            if (covered[i] || !bad(i))
+                continue;
+            // Edges lo..hi (counted from start), grown both ways over uncovered edges until spaced enough.
+            size_t lo = k, hi = k;
+            double L = l[i], U = u[i];
+            while (U < kRespaced * L)
+            {
+                const bool back = lo > 1 && !covered[(start + lo - 1) % n], fwd = hi + 1 < n && !covered[(start + hi + 1) % n];
+                if (!back && !fwd)
+                    break;
+                if (back)
+                {
+                    --lo;
+                    L += l[(start + lo) % n];
+                    U += u[(start + lo) % n];
+                }
+                if (fwd)
+                {
+                    ++hi;
+                    L += l[(start + hi) % n];
+                    U += u[(start + hi) % n];
+                }
+            }
+            for (size_t j = lo; j <= hi; ++j)
+                covered[(start + j) % n] = 1;
+            if (U <= 0.0 || L <= 0.0)
+                continue;
+            // Vertices lo+1..hi move to their share of the window's surface length along its uv polyline.
+            double along = 0.0, segStart = 0.0;
+            size_t seg = lo;
+            for (size_t v = lo + 1; v <= hi; ++v)
+            {
+                along += l[(start + v - 1) % n];
+                const double target = along / L * U;
+                while (seg < hi && segStart + u[(start + seg) % n] < target)
+                {
+                    segStart += u[(start + seg) % n];
+                    ++seg;
+                }
+                const double len = u[(start + seg) % n];
+                const double t = len > 0.0 ? std::clamp((target - segStart) / len, 0.0, 1.0) : 0.0;
+                out.push_back({loop[(start + v) % n], loop[(start + seg) % n], loop[(start + seg + 1) % n], t});
+            }
+        }
+    }
+    return out;
+}
+
+/** An island corner's new value as plain weights of its quad's other three points (probing can't follow u mixed into v). */
+struct CornerApex
+{
+    Index group, a, b, d;
+    double wa, wb, wd;
+};
+
+/** How much wider than on the surface an island corner may open in uv before it is rebuilt, radians. */
+constexpr double kCornerSlack = 1.0;
+/** The rebuilt corner rises this share of the surface's height, so it stays close to the border it leaves. */
+constexpr double kApexHeight = 0.5;
+
+/**
+ * Island corners (one face of the island at the point) that open much wider in uv than on the surface, such as a corner
+ * on a straight stretch of border: pinned there, no fill can open the face. Each becomes the apex of the triangle its two
+ * border neighbours make with it on the surface, scaled into uv along their edge, written as weights of those two and the
+ * quad's opposite point.
+ */
+std::vector<CornerApex> openCorners(const Mesh& m, const Islands& is, Index island, std::span<const glm::vec2> set)
+{
+    std::vector<CornerApex> out;
+    double area = 0.0;
+    for (Index f : is.faces[island])
+    {
+        const std::vector<Index> fc = m.faceCorners(f);
+        for (size_t i = 1; i + 1 < fc.size(); ++i)
+        {
+            const glm::dvec2 u0 = set[fc[0]], u1 = glm::dvec2(set[fc[i]]) - u0, u2 = glm::dvec2(set[fc[i + 1]]) - u0;
+            area += u1.x * u2.y - u1.y * u2.x;
+        }
+    }
+    const double side = area < 0.0 ? -1.0 : 1.0;
+    for (Index f : is.faces[island])
+        m.forEachFaceCorner(f, [&](Index c) {
+            const Index g = is.groupOfCorner[c];
+            if (!is.border[g] || is.groupCorners[g].size() != 1 || m.faceSize(m.cornerFace(c)) != 4)
+                return;
+            const Index ca = m.cornerPrev(c), cb = m.cornerNext(c);
+            const glm::dvec3 pa = m.position(m.cornerPoint(ca)), pc = m.position(m.cornerPoint(c)), pb = m.position(m.cornerPoint(cb));
+            const glm::dvec3 ab = pb - pa;
+            const double ab2 = glm::dot(ab, ab);
+            const double ea = glm::length(pa - pc), eb = glm::length(pb - pc);
+            if (ab2 <= 0.0 || ea <= 0.0 || eb <= 0.0)
+                return;
+            const double angle3 = std::acos(std::clamp(glm::dot(pa - pc, pb - pc) / (ea * eb), -1.0, 1.0));
+            // The face's angle at the corner in uv, measured inside the island.
+            const glm::dvec2 ua = glm::dvec2(set[ca]) - glm::dvec2(set[c]), ub = glm::dvec2(set[cb]) - glm::dvec2(set[c]);
+            double angleUv = std::atan2(side * (ub.x * ua.y - ub.y * ua.x), glm::dot(ua, ub));
+            if (angleUv < 0.0)
+                angleUv += 2.0 * std::numbers::pi;
+            if (angleUv <= angle3 + kCornerSlack)
+                return;
+            const double t = glm::dot(pc - pa, ab) / ab2, h = glm::length(glm::cross(pc - pa, ab)) / ab2 * kApexHeight;
+            const Index cd = m.cornerNext(cb);
+            const glm::dvec2 a = set[ca], b = set[cb], d = set[cd], e = b - a;
+            const glm::dvec2 apex = a + e * t + glm::dvec2(e.y, -e.x) * (side * h);
+            // Barycentric weights of the apex in the triangle a, b, d; d must stand clear of the edge to carry them.
+            const double det = e.x * (d.y - a.y) - e.y * (d.x - a.x);
+            if (std::abs(det) < 1e-3 * glm::dot(e, e))
+                return;
+            const glm::dvec2 q = apex - a;
+            const double wb = (q.x * (d.y - a.y) - q.y * (d.x - a.x)) / det, wd = (e.x * q.y - e.y * q.x) / det;
+            out.push_back({g, is.groupOfCorner[ca], is.groupOfCorner[cb], is.groupOfCorner[cd], 1.0 - wb - wd, wb, wd});
+        });
+    return out;
+}
+
+/** Replaces each uv island's interior with the harmonic fill of its border, in every layer using those islands. */
+void fitSurface(Mesh& m)
+{
+    LILA_ZONE();
+
+    std::map<std::string, std::vector<std::string>> byIslands;
+    for (size_t l = 0; l < m.cornerAttrs().layerCount(); ++l)
+        if (const Attribute& a = m.cornerAttrs().layer(l); a.type() == AttrType::Float2)
+            byIslands[islandLayer(m, a).name()].push_back(a.name());
+    for (const auto& [islandName, layers] : byIslands)
+    {
+        const Islands is = islandsOf(m, *m.cornerAttrs().find(islandName));
+        std::vector<std::span<glm::vec2>> spans;
+        for (const std::string& l : layers)
+            spans.push_back(m.cornerAttrs().get<glm::vec2>(l));
+        const std::span<const glm::vec2> set = m.cornerAttrs().find(islandName)->values<glm::vec2>();
+        // Islands share no corners, so each writes only its own groups while the others read theirs.
+        tbb::parallel_for(Index(0), Index(is.faces.size()), [&](Index island) {
+            const std::vector<BorderBlend> blends = respaceBorder(m, is, island, set);
+            std::vector<glm::vec2> moved(blends.size());
+            for (std::span<glm::vec2> uv : spans)
+            {
+                for (size_t k = 0; k < blends.size(); ++k)
+                    moved[k] = glm::vec2(glm::mix(groupValue(uv, is.groupCorners[blends[k].a]), groupValue(uv, is.groupCorners[blends[k].b]), blends[k].t));
+                for (size_t k = 0; k < blends.size(); ++k)
+                    for (Index c : is.groupCorners[blends[k].group])
+                        uv[c] = moved[k];
+            }
+            const std::vector<CornerApex> apexes = openCorners(m, is, island, set);
+            moved.resize(apexes.size());
+            for (std::span<glm::vec2> uv : spans)
+            {
+                for (size_t k = 0; k < apexes.size(); ++k)
+                {
+                    const CornerApex& x = apexes[k];
+                    moved[k] = glm::vec2(groupValue(uv, is.groupCorners[x.a]) * x.wa + groupValue(uv, is.groupCorners[x.b]) * x.wb +
+                                         groupValue(uv, is.groupCorners[x.d]) * x.wd);
+                }
+                for (size_t k = 0; k < apexes.size(); ++k)
+                    for (Index c : is.groupCorners[apexes[k].group])
+                        uv[c] = moved[k];
+            }
+            const System s = systemOf(m, is, island);
+            if (s.interior.empty() || s.border.empty())
+                return;
+            const std::shared_ptr<const Factor> f = factorCache().get(s.a);
+            if (!f->ok)
+                return;
+            const auto nb = Eigen::Index(s.border.size()), cols = Eigen::Index(spans.size()) * 2;
+            Eigen::MatrixXd xb(nb, cols);
+            for (size_t l = 0; l < spans.size(); ++l)
+                for (Eigen::Index k = 0; k < nb; ++k)
+                {
+                    const glm::dvec2 v = groupValue(spans[l], is.groupCorners[s.border[size_t(k)]]);
+                    xb(k, Eigen::Index(l) * 2) = v.x;
+                    xb(k, Eigen::Index(l) * 2 + 1) = v.y;
+                }
+            const Eigen::MatrixXd rhs = s.b * xb;
+            const Eigen::MatrixXd xi = f->ldlt.solve(rhs);
+            if (!xi.allFinite())
+                return;
+            for (size_t l = 0; l < spans.size(); ++l)
+                for (size_t k = 0; k < s.interior.size(); ++k)
+                {
+                    const auto r = Eigen::Index(k), col = Eigen::Index(l) * 2;
+                    const glm::vec2 v(float(xi(r, col)), float(xi(r, col + 1)));
+                    for (Index c : is.groupCorners[s.interior[k]])
+                        spans[l][c] = v;
+                }
+        });
+    }
+}
+} // namespace fit
 } // namespace
 
 Mesh subdivide(const Mesh& mesh, const SubdivideOptions& opts, SubdivideMap* map)
@@ -541,6 +1101,8 @@ Mesh subdivide(const Mesh& mesh, const SubdivideOptions& opts, SubdivideMap* map
         map->edges = std::move(once.edges);
         map->faces = std::move(once.faces);
     }
+    if (opts.uvs == SubdivideUvs::FitSurface && opts.levels > 0)
+        fit::fitSurface(cur);
     if (!opts.keepHardEdges && opts.levels > 0)
     {
         cur.edgeAttrs().remove(attr::kHard);

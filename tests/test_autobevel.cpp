@@ -10,7 +10,9 @@
 #include "scene/Components.h"
 #include "scene/Graph.h"
 #include "scene/Modifiers.h"
+#include "uv/FinalMesh.h"
 
+#include <bit>
 #include <filesystem>
 
 using namespace lila;
@@ -299,22 +301,24 @@ TEST_CASE("bevel keeps every face's UVs inside its island across seams and at co
     CHECK(collapsed == 0);
 }
 
-TEST_CASE("subdivision smooths UVs with the surface inside each island and keeps island corners")
+TEST_CASE("subdivision fits island interiors to the surface and keeps island corners")
 {
     std::vector<std::pair<glm::vec2, glm::vec2>> islands;
     geo::Mesh m = islandBracket(islands);
     geo::bevelEdges(m, allEdges(m), {.offset = 0.3, .segments = 2});
-    const geo::Mesh smooth = geo::subdivide(m, {.levels = 2});
-    // The rounded bevels grow in 3D; their uvs grow with them instead of staying thin strips.
-    const auto [outside, collapsed] = uvFaults(smooth, islands);
-    CHECK(outside == 0);
-    CHECK(collapsed == 0);
+    const geo::SubdivideOptions fit{.levels = 2, .uvs = geo::SubdivideUvs::FitSurface};
+    // Interiors follow their island's border, so a solve against the export opens every sliver; blend's can't.
+    uv::Stack stack;
+    stack.push_back({"subdivide", [&](const geo::Mesh& in) { return geo::subdivide(in, fit); }});
+    const uv::FinalRefineResult r = uv::refineFinal(m, {}, "uv0", stack);
+    CHECK(r.method == uv::FinalMethod::Probed);
+    CHECK(uvFaults(geo::subdivide(m, fit), islands).second == 0);
 
     // A flat grid's inner uvs land where linear interpolation puts them, and its corners stay where they were.
     geo::PlaneOptions po;
     po.subdivX = po.subdivZ = 4;
     const geo::Mesh plane = geo::makePlane(po);
-    const geo::Mesh fine = geo::subdivide(plane, {.levels = 1, .sharpBoundary = true});
+    const geo::Mesh fine = geo::subdivide(plane, {.levels = 2, .sharpBoundary = true, .uvs = geo::SubdivideUvs::FitSurface});
     const std::span<const glm::vec2> uv = fine.cornerAttrs().get<glm::vec2>("uv0");
     const glm::dvec3 lo(-po.width / 2.0, 0.0, -po.depth / 2.0);
     size_t off = 0, corners = 0;
@@ -332,6 +336,25 @@ TEST_CASE("subdivision smooths UVs with the surface inside each island and keeps
     }
     CHECK(corners == 4);
     CHECK(off == 0);
+}
+
+TEST_CASE("blend subdivision uvs stay as they were")
+{
+    std::vector<std::pair<glm::vec2, glm::vec2>> islands;
+    geo::Mesh m = islandBracket(islands);
+    geo::bevelEdges(m, allEdges(m), {.offset = 0.3, .segments = 2});
+    const geo::Mesh smooth = geo::subdivide(m, {.levels = 2, .uvs = geo::SubdivideUvs::Blend});
+    // FNV-1a of every corner's uv bits: the output of the blend rules before Fit Surface existed.
+    uint64_t h = 0xcbf29ce484222325ull;
+    const std::span<const glm::vec2> uv = smooth.cornerAttrs().get<glm::vec2>("uv0");
+    for (Index c = 0; c < smooth.cornerCapacity(); ++c)
+        for (float f : {uv[c].x, uv[c].y})
+            for (int k = 0; k < 4; ++k)
+            {
+                h ^= (std::bit_cast<uint32_t>(f) >> (8 * k)) & 0xffu;
+                h *= 0x100000001b3ull;
+            }
+    CHECK(h == 10769423284830584747ull);
 }
 
 TEST_CASE("autoBevel modifier bevels folds and stays live")

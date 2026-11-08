@@ -70,7 +70,7 @@ geo::Mesh lidPlate(double thick = 0.4, int grid = 6)
 }
 
 /** Every edge bevelled 0.13 cm, then two levels of Catmull-Clark: the game-art stack that drags rim islands. */
-uv::Stack bevelSubdivStack(double offset = 0.13, int segments = 1, int levels = 2)
+uv::Stack bevelSubdivStack(double offset = 0.13, int segments = 1, int levels = 2, geo::SubdivideUvs uvs = geo::SubdivideUvs::FitSurface)
 {
     uv::Stack s;
     s.push_back({"bevel", [=](const geo::Mesh& in) {
@@ -88,6 +88,7 @@ uv::Stack bevelSubdivStack(double offset = 0.13, int segments = 1, int levels = 
     s.push_back({"subdivide", [=](const geo::Mesh& in) {
                      geo::SubdivideOptions o;
                      o.levels = levels;
+                     o.uvs = uvs;
                      return geo::subdivide(in, o);
                  }});
     return s;
@@ -210,7 +211,6 @@ TEST_CASE("final mesh: a dragged rim island is re-solved until nothing collapses
     const uv::Stack stack = bevelSubdivStack(0.13, 3, 2);
     const ExportState before = exportState(m, stack);
     MESSAGE("collapsed before " << before.collapsed << ", folded " << before.folded << ", angle " << before.capped << ", area " << before.area);
-    CHECK(before.collapsed > 0);
 
     uv::FinalRefineResult r = uv::refineFinal(m, {}, "uv0", stack);
     CHECK(r.method == uv::FinalMethod::Probed);
@@ -223,6 +223,43 @@ TEST_CASE("final mesh: a dragged rim island is re-solved until nothing collapses
     // Opening the slivers costs some evenness elsewhere: the cage's few uvs per island can't match an unwrap of the export.
     CHECK(after.capped < 0.6);
     CHECK(after.area < 0.6);
+}
+
+TEST_CASE("final mesh: fit surface opens the rim that blend collapses, before any solve")
+{
+    geo::Mesh m = lidPlate(0.4, 2);
+    const ExportState blend = exportState(m, bevelSubdivStack(0.13, 3, 2, geo::SubdivideUvs::Blend));
+    const ExportState fit = exportState(m, bevelSubdivStack(0.13, 3, 2));
+    MESSAGE("collapsed blend " << blend.collapsed << ", fit " << fit.collapsed << "; angle blend " << blend.capped << ", fit " << fit.capped);
+    CHECK(blend.collapsed > 0);
+    CHECK(fit.collapsed == 0);
+    CHECK(fit.folded == 0);
+}
+
+TEST_CASE("final mesh: a fit surface map reaches across whole islands")
+{
+    // Islands far wider than the probe rings: every interior uv of the export reads the whole island border.
+    geo::Mesh m = plate(0.4, 24);
+    const uv::Stack stack = bevelSubdivStack();
+    uv::FinalMap map = uv::buildFinalMap(m, "uv0", stack);
+    INFO(map.warning);
+    REQUIRE(map.active());
+    const std::span<const glm::vec2> cageUv = m.cornerAttrs().get<glm::vec2>("uv0");
+    const std::span<const glm::vec2> exUv = map.exported->cornerAttrs().get<glm::vec2>("uv0");
+    double worst = 0.0;
+    for (Index f = 0; f < map.exported->faceCapacity(); ++f)
+        if (map.exported->faceValid(f))
+            map.exported->forEachFaceCorner(f, [&](Index c) {
+                glm::dvec2 s(0.0);
+                for (Index k = map.rowStart[c]; k < map.rowStart[c + 1]; ++k)
+                    s += map.weights[k] * glm::dvec2(cageUv[map.cols[k]]);
+                worst = std::max(worst, glm::length(s - glm::dvec2(exUv[c])));
+            });
+    MESSAGE("runs " << map.runs << ", rings " << map.rings << ", entries " << map.cols.size() << ", worst " << worst);
+    CHECK(worst < 1e-3);
+    const uv::FinalRefineResult r = uv::refineFinal(m, {}, "uv0", stack);
+    MESSAGE("collapsed " << r.collapsedBefore << " -> " << r.collapsedAfter << ", angle " << r.distortionBefore << " -> " << r.distortionAfter);
+    CHECK(r.collapsedAfter == 0);
 }
 
 TEST_CASE("final mesh: islands stay where they were")
@@ -381,4 +418,32 @@ TEST_CASE("final mesh: solve time on a big export" * doctest::skip())
                       << std::chrono::duration<double>(a2 - a1).count() * 1000.0 << " ms, step " << std::chrono::duration<double>(a3 - a2).count() * 100.0
                       << " ms");
     }
+}
+
+TEST_CASE("final mesh: fit surface cost on a 50k face export" * doctest::skip())
+{
+    geo::CubeOptions co;
+    co.width = 10.0;
+    co.height = 0.4;
+    co.depth = 10.0;
+    co.subdivX = 40;
+    co.subdivZ = 40;
+    geo::Mesh m = geo::makeCube(co);
+    uv::ProjectOptions po;
+    po.type = uv::Projection::Box;
+    REQUIRE(uv::project(m, {}, "uv0", po));
+    REQUIRE(uv::packIslands(m, {}, "uv0").ok);
+    const geo::Mesh bevelled = uv::runStack(m, {bevelSubdivStack().front()});
+    auto time = [&](geo::SubdivideUvs uvs) {
+        const auto t0 = std::chrono::steady_clock::now();
+        const geo::Mesh out = geo::subdivide(bevelled, {.levels = 2, .uvs = uvs});
+        MESSAGE("faces " << out.numFaces());
+        return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() * 1000.0;
+    };
+    const double blend = time(geo::SubdivideUvs::Blend), cold = time(geo::SubdivideUvs::FitSurface), warm = time(geo::SubdivideUvs::FitSurface);
+    MESSAGE("subdivide ms: blend " << blend << ", fit surface " << cold << ", fit surface with cached factorisations " << warm);
+    const auto t0 = std::chrono::steady_clock::now();
+    const uv::FinalMap map = uv::buildFinalMap(m, "uv0", bevelSubdivStack());
+    MESSAGE("probe s " << std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() << ", runs " << map.runs << ", entries "
+                       << map.cols.size() << ", active " << map.active() << " " << map.warning);
 }

@@ -6449,13 +6449,15 @@ def polyStraighten(spacing: str | None = None, fitLine: bool | None = None, stre
         strength: How far toward the shape, 0 to 1; soft selection fades it further. Default 1.0.
     """
 
-def polySubdivide(*objects: Any, levels: int | None = None, keepHardEdges: bool | None = None) -> Any:
+def polySubdivide(*objects: Any, levels: int | None = None, keepHardEdges: bool | None = None, uvs: str | None = None, uvCorners: str | None = None) -> Any:
     """Catmull-Clark subdivide whole meshes (crease-aware).
 
     Args:
         objects: objects.
         levels: Subdivision levels. Default 1.
         keepHardEdges: Keep normals split along hard edges; off smooths the shading across them. Default False.
+        uvs: Island interior uvs: fitSurface spreads them evenly over the smoothed surface; blend smooths them like the points. One of 'fitSurface', 'blend'. Default 'fitSurface'.
+        uvCorners: Island corner uvs: keep or smooth. One of 'keep', 'smooth'. Default 'keep'.
     """
 
 def polyTargetWeld(mesh: str | None = None, source: int | None = None, target: int | None = None, edge: bool | None = None, center: bool | None = None) -> Any:

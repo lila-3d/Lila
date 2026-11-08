@@ -1626,7 +1626,8 @@ private:
                     Geom out;
                     out.mesh = geo::subdivide(g->mesh, {.levels = levels,
                                                                 .sharpBoundary = num(n, {"kb", "keepBorder"}, 1.0) != 0.0,
-                                                                .keepHardEdges = num(n, {"khe", "keepHardEdge"}, 1.0) != 0.0});
+                                                                .keepHardEdges = num(n, {"khe", "keepHardEdge"}, 1.0) != 0.0,
+                                                                .uvs = geo::SubdivideUvs::Blend});
                     return out;
                 }
             }
