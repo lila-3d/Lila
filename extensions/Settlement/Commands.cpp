@@ -6,6 +6,7 @@
 #include "Streetscape.h"
 #include "Parcels.h"
 #include "SettlementTerrain.h"
+#include "GenCommands.h"
 
 #include <lila/Command.h>
 #include <lila/Curves.h>
@@ -48,7 +49,7 @@ struct Exposed
 
 constexpr Exposed kInputs[] = {
     {"profile", "string", "Style", 0, 0, "hamlet, streetVillage, medievalTown, usTown, manhattan, europeanCity, modernCity or scifiMegacity."},
-    {"pattern", "string", "Style", 0, 0, "Empty for the profile's; else organic, grid, radial, linear or organicGrid."},
+    {"pattern", "string", "Style", 0, 0, "Empty for the profile's; else organic, grid, radial, linear, organicGrid, none, tensor, contour, osm or example."},
     {"overrides", "string", "Style", 0, 0, "JSON object of profile fields to change, such as {\"maxFloors\": 6}."},
     {"growth", "float", "Layout", 0, 1, "How far the settlement has grown, 0 to 1."},
     {"seed", "int", "Layout", 0, 0, "Another seed gives another settlement on the same site."},
@@ -64,6 +65,7 @@ constexpr Exposed kInputs[] = {
     {"showStreets", "bool", "Display", 0, 0, "Show street ribbons."},
     {"showLots", "bool", "Display", 0, 0, "Show lot outlines."},
     {"showBuildings", "bool", "Display", 0, 0, "Show building envelopes."},
+    {"generators", "string", "Style", 0, 0, "Tensor fields, eras, districts, walls, imported streets and levels as JSON."},
 };
 
 std::vector<FlagDef> layoutFlags()
@@ -71,7 +73,7 @@ std::vector<FlagDef> layoutFlags()
     const Options o;
     return {
         {"profile", "pf", T::String, "medievalTown", "Style.", profileNames()},
-        {"pattern", "pt", T::String, "", "Override the profile's pattern: organic, grid, radial, linear, organicGrid."},
+        {"pattern", "pt", T::String, "", "Override the profile's pattern: organic, grid, radial, linear, organicGrid, none, tensor, contour, osm, example."},
         {"overrides", "ov", T::String, "", "JSON object of profile fields to change."},
         {"growth", "gr", T::Float, o.growth, "How far the settlement has grown, 0 to 1.", {}, {}, 0.0, 1.0},
         {"seed", "s", T::Int, int64_t(o.seed), "Random seed."},
@@ -87,6 +89,7 @@ std::vector<FlagDef> layoutFlags()
         {"showStreets", "ss", T::Bool, true, "Show street ribbons."},
         {"showLots", "sl", T::Bool, true, "Show lot outlines."},
         {"showBuildings", "sb", T::Bool, true, "Show building envelopes."},
+        {"generators", "gen", T::String, "", "Tensor fields, eras, districts, walls, imported streets and levels as JSON."},
     };
 }
 
@@ -576,6 +579,19 @@ SitingRules sitingRulesFrom(const Args& a, const char* cmd)
 
 Rebuilt rebuildSettlement(scene::Graph& g, const std::string& name, const char* cmd, const json* edits) { return rebuild(g, name, cmd, edits); }
 
+/** The site's outline from settlementCreate's flags, for generators that need it before the settlement exists. */
+static std::vector<Vec2> generatorRegion(const Args& a)
+{
+    std::vector<Vec2> pts = pointsFromJson(a.flags.value("outline", json()), "settlementCreate", "outline");
+    if (pts.size() >= 3)
+        return pts;
+    const double h = std::max(100.0, a.get<double>("size", 40000.0)) * 0.5;
+    Vec2 c(0.0);
+    if (const json at = a.flags.value("attractors", json()); at.is_array() && !at.empty())
+        c = pointsFromJson(json::array({at[0]}), "settlementCreate", "attractors").front();
+    return {c + Vec2(-h, -h), c + Vec2(h, -h), c + Vec2(h, h), c + Vec2(-h, h)};
+}
+
 void registerCommands(ext::Context& ctx)
 {
     std::vector<FlagDef> flags = {
@@ -595,6 +611,8 @@ void registerCommands(ext::Context& ctx)
         {"terrainWater", "tw", T::Bool, true, "On a Terrain ground with no water of its own: the terrain's rivers crossing the outline become the settlement's water."},
     };
     for (FlagDef& f : layoutFlags())
+        flags.push_back(std::move(f));
+    for (FlagDef& f : generatorFlags())
         flags.push_back(std::move(f));
 
     ctx.registerCommand({
@@ -616,8 +634,9 @@ void registerCommands(ext::Context& ctx)
             json values = json::object();
             for (const Exposed& e : kInputs)
                 values[e.name] = a.flags[e.name];
-            const Options o = optionsFromJson(values);
             const std::string groundName = a.get<std::string>("ground", ""), walkName = a.get<std::string>("walkable", "");
+            resolveGeneratorFlags(g, a, values, generatorRegion(a), groundName, "settlementCreate");
+            const Options o = optionsFromJson(values);
             for (const std::string* n : {&groundName, &walkName})
                 if (!n->empty())
                     if (Node* node = g.find(*n); !node || !node->type().isA("mesh"))
@@ -709,7 +728,10 @@ void registerCommands(ext::Context& ctx)
                      "town = settlementCreate(outline=[[-40000, -30000], [45000, -25000], [38000, 35000], [-35000, 30000]],\n"
                      "                        attractors=[[0, 0], [40000, 0]], ground='Terrain', profile='europeanCity')\n"
                      "setAttr(town['modifier'] + '.overrides', '{\"maxFloors\": 9}')\n"
-                     "settlementInfo(town['mesh'])['checks']"},
+                     "settlementInfo(town['mesh'])['checks']",
+                     "settlementCreate(profile='medievalTown', size=200000, eras='medievalToModern')",
+                     "settlementCreate(profile='modernCity', size=150000, tensor={'fields': [{'kind': 'grid', 'angle': 20}, "
+                     "{'kind': 'boundary', 'follow': 'water', 'weight': 2}]}, water=[[[-80000, 0], [80000, 20000]]])"},
     });
 
     ctx.registerCommand({
@@ -1381,5 +1403,6 @@ void registerCommands(ext::Context& ctx)
     registerStreetscapeCommands(ctx);
     registerLotCommands(ctx);
     registerTerrainCommands(ctx);
+    registerGeneratorCommands(ctx);
 }
 } // namespace settlement

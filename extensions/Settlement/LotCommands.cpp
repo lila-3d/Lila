@@ -185,7 +185,7 @@ json placeLibrary(const std::vector<const Envelope*>& envs, const Args& a, std::
                 continue;
             double score = aw * ad / std::max(w * d, 1.0);
             for (const json& t : asset.value("tags", json::array()))
-                if (t.is_string() && (t.get<std::string>() == env->era || t.get<std::string>() == useName(env->use)))
+                if (t.is_string() && (t.get<std::string>() == env->eraName || t.get<std::string>() == useName(env->use)))
                     score += 0.1;
             score += 0.01 * unitRandom(hash64(env->key) ^ hash64(std::hash<std::string>{}(asset.value("id", std::string()))));
             if (score > bestScore)

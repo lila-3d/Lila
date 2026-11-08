@@ -139,7 +139,7 @@ Envelope parcelEnvelope(const Lot& lot, const Block& block, const Layout& l, con
     env.frontSetback = front;
     env.sideSetback = side;
     env.landmark = lot.landmark;
-    env.era = era;
+    env.eraName = era;
     env.wealth = lot.wealth;
     env.route = lot.route;
     for (int& t : env.footprint.tag)
@@ -299,8 +299,8 @@ Placement libraryPlacement(const Envelope& env, const LibraryPick& pick)
     p.position = {c.x, env.ground, c.y};
     p.rotation = {0.0, std::sin(0.5 * turn), 0.0, std::cos(0.5 * turn)};
     p.tags = {"building", useName(env.use)};
-    if (!env.era.empty())
-        p.tags.push_back(env.era);
+    if (!env.eraName.empty())
+        p.tags.push_back(env.eraName);
     if (!env.landmark.empty())
         p.tags.push_back(env.landmark);
     if (pick.unreal.empty())
@@ -564,7 +564,7 @@ json envelopeExtras(const Envelope& env)
             {"foundationDepth", env.foundationDepth},
             {"foundationSource", env.foundationSource},
             {"landmark", env.landmark},
-            {"era", env.era},
+            {"eraName", env.eraName},
             {"wealth", env.wealth},
             {"route", routeName(env.route)}};
 }

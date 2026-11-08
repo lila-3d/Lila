@@ -3,6 +3,7 @@
 #include "SettlementCore.h"
 #include "Parcels.h"
 #include "SettlementTerrain.h"
+#include "Generators.h"
 
 #include <lila/Profile.h>
 
@@ -1616,6 +1617,8 @@ Layout build(const Site& site, const Ground& g, const Options& in, const WalkSur
                 l.graph.addPolyline(path, StreetClass::Arterial);
         }
 
+    prepareGenerators(l, g, o);
+    if (!layEras(l, g, o))
     switch (p.pattern)
     {
     case Pattern::Organic:
@@ -1640,7 +1643,12 @@ Layout build(const Site& site, const Ground& g, const Options& in, const WalkSur
         break;
     }
     case Pattern::None: break;
+    case Pattern::Tensor:
+    case Pattern::Contour:
+    case Pattern::Osm:
+    case Pattern::Example: layPattern(l, g, o, p.pattern); break;
     }
+    afterPattern(l, g, o);
     if (o.blocks)
         cutLargeBlocks(l, g, o);
     pullBackFromWater(l);
@@ -1648,6 +1656,7 @@ Layout build(const Site& site, const Ground& g, const Options& in, const WalkSur
         joinComponents(l, g);
     assignStreetIds(l);
     applyOverrides(l, site);
+    afterStreets(l, g, o);
     nameStreets(l, site);
     for (size_t n = 0; n < l.graph.nodes.size(); ++n)
     {
@@ -1658,6 +1667,7 @@ Layout build(const Site& site, const Ground& g, const Options& in, const WalkSur
         return l;
 
     planParcels(l, site, g, o);
+    afterLots(l, g, o);
     return l;
 }
 } // namespace settlement

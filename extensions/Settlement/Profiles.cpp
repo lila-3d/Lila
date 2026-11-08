@@ -3,6 +3,7 @@
 #include "SettlementCore.h"
 #include "Parcels.h"
 #include "SettlementTerrain.h"
+#include "Generators.h"
 
 #include <algorithm>
 #include <cctype>
@@ -40,6 +41,10 @@ constexpr DoubleField kDoubles[] = {
     {"floorHeight", &Profile::floorHeight},     {"foundation", &Profile::foundation},
     {"commercial", &Profile::commercial},
     {"windAngle", &Profile::windAngle},
+    {"targetEntropyMin", &Profile::targetEntropyMin}, {"targetEntropyMax", &Profile::targetEntropyMax},
+    {"targetDeadEndMin", &Profile::targetDeadEndMin}, {"targetDeadEndMax", &Profile::targetDeadEndMax},
+    {"targetFourWayMin", &Profile::targetFourWayMin}, {"targetFourWayMax", &Profile::targetFourWayMax},
+    {"targetBlockMin", &Profile::targetBlockMin},     {"targetBlockMax", &Profile::targetBlockMax},
 };
 
 constexpr IntField kInts[] = {
@@ -174,13 +179,18 @@ const char* patternName(Pattern p)
     case Pattern::Linear: return "linear";
     case Pattern::OrganicGrid: return "organicGrid";
     case Pattern::None: return "none";
+    case Pattern::Tensor: return "tensor";
+    case Pattern::Contour: return "contour";
+    case Pattern::Osm: return "osm";
+    case Pattern::Example: return "example";
     }
     return "organic";
 }
 
 bool parsePattern(std::string_view name, Pattern* out)
 {
-    for (Pattern p : {Pattern::Organic, Pattern::Grid, Pattern::Radial, Pattern::Linear, Pattern::OrganicGrid, Pattern::None})
+    for (Pattern p : {Pattern::Organic, Pattern::Grid, Pattern::Radial, Pattern::Linear, Pattern::OrganicGrid, Pattern::None,
+                      Pattern::Tensor, Pattern::Contour, Pattern::Osm, Pattern::Example})
         if (name == patternName(p))
         {
             *out = p;
@@ -203,6 +213,7 @@ bool builtinProfile(std::string_view name, Profile* out)
         if (name == b.name)
         {
             *out = b.make();
+            applyBuiltinTargets(*out);
             return true;
         }
     return false;
@@ -264,7 +275,7 @@ void applyJson(Profile& p, const json& j)
         else if (k == "pattern" && v.is_string())
         {
             if (!parsePattern(v.get<std::string>(), &p.pattern))
-                throw std::runtime_error("unknown pattern '" + v.get<std::string>() + "' (organic, grid, radial, linear, organicGrid, none)");
+                throw std::runtime_error("unknown pattern '" + v.get<std::string>() + "' (organic, grid, radial, linear, organicGrid, none, tensor, contour, osm, example)");
         }
         else
             throw std::runtime_error("unknown or mistyped profile field '" + k + "'");

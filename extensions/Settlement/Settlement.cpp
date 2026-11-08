@@ -3,6 +3,7 @@
 
 #include "Settlement.h"
 #include "SettlementTerrain.h"
+#include "Generators.h"
 
 #include <lila/Extension.h>
 #include <lila/GeometryNodes.h>
@@ -189,7 +190,8 @@ gn::NodeDecl settlementDecl()
                                                  "int attribute exclude are exclusions."),
                                geoSocket("ground", "Mesh the settlement stands on. Empty for flat ground at the site's height."),
                                in("profile", Socket::String, "medievalTown", "Style: " + profiles + "."),
-                               in("pattern", Socket::String, "", "Override the profile's pattern: organic, grid, radial, linear, organicGrid."),
+                               in("pattern", Socket::String, "", "Override the profile's pattern: organic, grid, radial, linear, organicGrid, "
+                                                              "none, tensor, contour, osm, example."),
                                in("overrides", Socket::String, "", "JSON object of profile fields to change, such as {\"maxFloors\": 6}."),
                                in("size", Socket::Float, 40000.0, "Side of the square used when the site has no outline.", 100.0),
                                in("growth", Socket::Float, o.growth, "0 to 1: how far the settlement has grown.", 0.0, 1.0),
@@ -206,7 +208,9 @@ gn::NodeDecl settlementDecl()
                                in("walkStep", Socket::Float, o.walk.step, "Height a walk may step between separate pieces, cm.", 0.0),
                                in("showStreets", Socket::Bool, true, "Include streets in geometry."),
                                in("showLots", Socket::Bool, true, "Include lot outlines in geometry."),
-                               in("showBuildings", Socket::Bool, true, "Include building envelopes in geometry.")},
+                               in("showBuildings", Socket::Bool, true, "Include building envelopes in geometry."),
+                               in("generators", Socket::String, "", "Tensor fields, eras, districts, walls, imported streets and levels as "
+                                                               "JSON (settlementCreate's generator flags write it).")},
                     .outputs = {geoSocket("geometry", "What the show inputs select, joined."),
                                 geoSocket("streets", "Street ribbons and centreline curves."),
                                 geoSocket("lots", "Lot outlines as loose edges and closed curves."),
@@ -353,7 +357,7 @@ Options optionsFrom(const std::function<double(const char*)>& f, const std::func
     }
     const std::string pattern = s("pattern");
     if (!pattern.empty() && !parsePattern(pattern, &o.profile.pattern))
-        throw std::runtime_error("unknown pattern '" + pattern + "' (organic, grid, radial, linear, organicGrid, none)");
+        throw std::runtime_error("unknown pattern '" + pattern + "' (organic, grid, radial, linear, organicGrid, none, tensor, contour, osm, example)");
     const std::string overrides = s("overrides");
     if (!overrides.empty())
     {
@@ -371,6 +375,13 @@ Options optionsFrom(const std::function<double(const char*)>& f, const std::func
     o.buildings = b("buildings");
     o.walk.maxSlope = std::clamp(f("walkSlope"), 0.0, 89.0);
     o.walk.step = std::max(0.0, f("walkStep"));
+    if (const std::string gen = s("generators"); !gen.empty())
+    {
+        o.generators = json::parse(gen, nullptr, false);
+        if (o.generators.is_discarded() || !o.generators.is_object())
+            throw std::runtime_error("generators isn't a JSON object");
+        parseGenerators(o.generators);
+    }
     return o;
 }
 

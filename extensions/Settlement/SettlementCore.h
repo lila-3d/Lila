@@ -213,6 +213,8 @@ struct StreetEdge
     uint64_t street = 0; // stable id of the street it is part of (streetId), 0 until the layout is finished
     bool bridge = false; // carried over water or a gap: graded as a span, never as a cut through the bank
     bool tunnel = false;
+    int layer = 0;       // 0 the ground; k a level above it (Layout::gen levels[k - 1])
+    bool moat = false;   // water dug as a moat
 };
 
 /** Planar street network: inserting a street splits every street it crosses and snaps its ends to what is near. */
@@ -284,6 +286,10 @@ enum class Pattern : uint8_t
     Linear,      // one main street through, lots and lanes off it
     OrganicGrid, // an organic core inside a ring road, a grid beyond it
     None,        // no generated streets: only the given streets, roads and routes
+    Tensor,      // streets traced along a tensor field: grids, rings, coasts and contours blended
+    Contour,     // streets along the contours of the ground, cross streets and switchbacks between, growth on the flat
+    Osm,         // imported streets as they are, joined and cut into blocks
+    Example,     // grown to match another street network's numbers
 };
 
 const char* patternName(Pattern p);
@@ -339,6 +345,12 @@ struct Profile
     std::string lotMethod = "auto"; // how ordinary blocks are cut into lots (lotMethodName), auto chooses by block type and era
     double windAngle = 0.0;         // degrees: the prevailing wind blows toward this heading (0 is +X); industry goes downwind
     SitingRules siting;
+
+    // Ranges the street metrics should land in (Boeing 2019 measures), checked by targetReport.
+    double targetEntropyMin = 0.0, targetEntropyMax = 3.6;
+    double targetDeadEndMin = 0.0, targetDeadEndMax = 1.0;
+    double targetFourWayMin = 0.0, targetFourWayMax = 1.0; // share of intersections where four or more streets meet
+    double targetBlockMin = 0.0, targetBlockMax = 1.0e9;    // median block area, m2
 };
 
 /** The built-in styles, by name. */
@@ -587,6 +599,7 @@ struct Options
     bool blocks = true;    // false: streets and paths only, no blocks, lots or buildings
     bool buildings = true; // false: blocks and lots without building envelopes
     WalkOptions walk;
+    json generators = json::object(); // tensor fields, eras, districts, walls, imported streets, levels (Generators.h)
 };
 
 enum class Use : uint8_t
@@ -619,6 +632,7 @@ struct Block
     std::vector<Polygon> courtyards; // open ground inside a courtyard block, in no lot
     bool water = false;              // a side on a river or canal
     std::vector<std::string> reasons;
+    int era = 0;
 };
 
 struct Lot
@@ -638,6 +652,7 @@ struct Lot
     std::string landmark; // a reserved landmark's name (market_square, church, castle, axis_end_1), empty for none
     std::vector<std::string> reasons; // why a landmark is where it is
     BuildingRoute route = BuildingRoute::Outline;
+    int era = 0;
 };
 
 /** The space a building may fill on its lot, and what it is for. Buildings themselves are made elsewhere. */
@@ -673,9 +688,10 @@ struct Envelope
     double foundationDepth = 0.0;  // from the highest ground under the footprint to the bottom of the foundation
     std::string foundationSource;  // terrainRegionStats or ground
     std::string landmark;
-    std::string era;
+    std::string eraName; // the style era (Profile::era names): medieval, early, industrial, modern or future
     int wealth = 1;
     BuildingRoute route = BuildingRoute::Outline;
+    int era = 0; // the era its lot was laid out in; floors and roof follow that era's profile
 };
 
 /** A path off the ground: on the walkable surface, across ramps, terraces and floors at any height. */
@@ -752,6 +768,7 @@ struct Layout
     std::vector<std::string> parcelWarnings; // what blocks, lots and envelopes fell back to and why
     std::shared_ptr<RouteBook> routeBook;
     std::string plan; // none, pinned (the pinned plan shown) or stale (inputs changed since it was pinned)
+    std::shared_ptr<struct GenLayout> gen; // walls, gates, eras, levels and the rest generators make (Generators.h)
 };
 
 /** Old English, Latin, French, Spanish, numbered US grid and sci-fi sector codes, as culture names. */

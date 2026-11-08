@@ -99,7 +99,8 @@ json planBlockJson(const Block& b)
             {"method", int(b.method)},
             {"courtyards", polysJson(b.courtyards)},
             {"water", b.water},
-            {"reasons", b.reasons}};
+            {"reasons", b.reasons},
+            {"era", b.era}};
 }
 
 Block blockOf(const json& j)
@@ -115,6 +116,7 @@ Block blockOf(const json& j)
     b.courtyards = polysOf(j.value("courtyards", json::array()));
     b.water = j.value("water", false);
     b.reasons = j.value("reasons", std::vector<std::string>());
+    b.era = j.value("era", 0);
     return b;
 }
 
@@ -134,7 +136,8 @@ json lotJson(const Lot& l)
             {"access", l.access},
             {"landmark", l.landmark},
             {"reasons", l.reasons},
-            {"route", int(l.route)}};
+            {"route", int(l.route)},
+            {"era", l.era}};
 }
 
 Lot lotOf(const json& j)
@@ -155,6 +158,7 @@ Lot lotOf(const json& j)
     l.landmark = j.value("landmark", std::string());
     l.reasons = j.value("reasons", std::vector<std::string>());
     l.route = BuildingRoute(j.value("route", 0));
+    l.era = j.value("era", 0);
     return l;
 }
 
@@ -187,6 +191,7 @@ json envelopeJson(const Envelope& e)
             {"foundationDepth", e.foundationDepth},
             {"foundationSource", e.foundationSource},
             {"landmark", e.landmark},
+            {"eraName", e.eraName},
             {"era", e.era},
             {"wealth", e.wealth},
             {"route", int(e.route)}};
@@ -220,7 +225,8 @@ Envelope envelopeOf(const json& j)
     e.foundationDepth = j.value("foundationDepth", 0.0);
     e.foundationSource = j.value("foundationSource", std::string());
     e.landmark = j.value("landmark", std::string());
-    e.era = j.value("era", std::string());
+    e.eraName = j.value("eraName", std::string());
+    e.era = j.value("era", 0);
     e.wealth = j.value("wealth", 1);
     e.route = BuildingRoute(j.value("route", 0));
     return e;
@@ -425,7 +431,7 @@ json planToJson(const Layout& l, uint64_t key, const std::string& revision, cons
     for (const StreetNode& n : l.graph.nodes)
         nodes.push_back(json::array({n.p.x, n.p.y, n.alive}));
     for (const StreetEdge& e : l.graph.edges)
-        edges.push_back(json::array({e.a, e.b, int(e.cls), e.era, e.alive, e.width, e.profile, e.path, e.street, e.bridge, e.tunnel}));
+        edges.push_back(json::array({e.a, e.b, int(e.cls), e.era, e.alive, e.width, e.profile, e.path, e.street, e.bridge, e.tunnel, e.layer, e.moat}));
     for (const Block& b : l.blocks)
         blocks.push_back(planBlockJson(b));
     for (const Lot& lot : l.lots)
@@ -460,7 +466,7 @@ std::shared_ptr<PlanSnapshot> planFromJson(const json& j)
     for (const json& e : j.value("edges", json::array()))
     {
         if (!e.is_array() || e.size() < 9)
-            throw std::runtime_error("plan edges are [a, b, class, era, alive, width, profile, path, street, bridge, tunnel]");
+            throw std::runtime_error("plan edges are [a, b, class, era, alive, width, profile, path, street, bridge, tunnel, layer, moat]");
         StreetEdge x;
         x.a = e[0].get<int>();
         x.b = e[1].get<int>();
@@ -473,6 +479,8 @@ std::shared_ptr<PlanSnapshot> planFromJson(const json& j)
         x.street = e[8].get<uint64_t>();
         x.bridge = e.size() > 9 && e[9].get<bool>();
         x.tunnel = e.size() > 10 && e[10].get<bool>();
+        x.layer = e.size() > 11 ? e[11].get<int>() : 0;
+        x.moat = e.size() > 12 && e[12].get<bool>();
         if (x.a < 0 || x.b < 0 || size_t(x.a) >= s->nodes.size() || size_t(x.b) >= s->nodes.size())
             throw std::runtime_error("plan edge names a node it does not have");
         s->edges.push_back(x);
