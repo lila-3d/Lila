@@ -19,7 +19,7 @@ using namespace settlementtest;
 
 namespace
 {
-void loadPackages()
+void terrainLoadPackages()
 {
     if (!gn::findDecl("Settlement"))
         REQUIRE(extensions::ExtensionManager::get().load(LILA_TEST_SETTLEMENT_PACKAGE) == "Settlement");
@@ -47,7 +47,7 @@ geo::Mesh heightMesh(double half, int n, const std::function<double(double, doub
     return m;
 }
 
-Options profileOptions(const char* name, uint32_t seed = 1)
+Options terrainProfileOptions(const char* name, uint32_t seed = 1)
 {
     Options o;
     REQUIRE(builtinProfile(name, &o.profile));
@@ -149,7 +149,7 @@ TEST_CASE("settlement terrain: siting presets, weights as data and the score the
 
 TEST_CASE("settlement terrain: sites on a Terrain come from its analysis with reasons per term")
 {
-    loadPackages();
+    terrainLoadPackages();
     run("newScene");
     const std::string t = terrainMesh();
     run("terrainAddRiver", {{"args", {t}}, {"id", "main"}, {"path", json::array({json::array({-95000, -20000}), json::array({0, 0}), json::array({95000, 15000})})}});
@@ -184,7 +184,7 @@ TEST_CASE("settlement terrain: sites on a Terrain come from its analysis with re
 
 TEST_CASE("settlement terrain: main roads route over the Terrain and grading sends roads, rings, pads and water")
 {
-    loadPackages();
+    terrainLoadPackages();
     run("newScene");
     const std::string t = terrainMesh(80000.0, 129, 1500.0, 3);
     const json made = run("settlementCreate", {{"profile", "medievalTown"}, {"size", 40000.0}, {"seed", 2}, {"ground", t}});
@@ -270,7 +270,7 @@ TEST_CASE("settlement terrain: re-planning keeps untouched blocks byte for byte"
     // Two grounds that differ only in a bump: blocks away from it keep their hash, blocks on it are laid again.
     Site site;
     site.size = 60000.0;
-    const Options o = profileOptions("usTown", 4);
+    const Options o = terrainProfileOptions("usTown", 4);
     const geo::Mesh flatMesh = heightMesh(40000.0, 40, [](double, double) { return 0.0; });
     const geo::Mesh bumped = heightMesh(40000.0, 40, [](double x, double z) {
         const double dx = x - 15000.0, dz = z - 15000.0;
@@ -313,7 +313,7 @@ TEST_CASE("settlement terrain: re-planning keeps untouched blocks byte for byte"
 
 TEST_CASE("settlement terrain: settlementReplan re-plans only where the Terrain changed")
 {
-    loadPackages();
+    terrainLoadPackages();
     run("newScene");
     const std::string t = terrainMesh(80000.0, 129, 600.0, 5);
     const json made = run("settlementCreate", {{"profile", "usTown"}, {"size", 50000.0}, {"seed", 4}, {"ground", t}, {"terrainWater", false}});
@@ -419,7 +419,7 @@ TEST_CASE("settlement terrain: checks find each kind of problem by id")
 
 TEST_CASE("settlement terrain: settlementCheck and settlementExplain on a settlement")
 {
-    loadPackages();
+    terrainLoadPackages();
     run("newScene");
     const json made = run("settlementCreate", {{"profile", "medievalTown"}, {"size", 40000.0}, {"seed", 3}});
     const std::string mesh = made["mesh"].get<std::string>();

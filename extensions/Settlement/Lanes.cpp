@@ -104,7 +104,7 @@ std::vector<Vec2> connector(const Lane& a, const Lane& b)
     return out;
 }
 
-bool segmentsCross(Vec2 a, Vec2 b, Vec2 c, Vec2 d)
+bool laneSegmentsCross(Vec2 a, Vec2 b, Vec2 c, Vec2 d)
 {
     const double d1 = cross(b - a, c - a), d2 = cross(b - a, d - a), d3 = cross(d - c, a - c), d4 = cross(d - c, b - c);
     return ((d1 > 1e-6 && d2 < -1e-6) || (d1 < -1e-6 && d2 > 1e-6)) && ((d3 > 1e-6 && d4 < -1e-6) || (d3 < -1e-6 && d4 > 1e-6));
@@ -114,13 +114,13 @@ bool pathsCross(const std::vector<Vec2>& x, const std::vector<Vec2>& y)
 {
     for (size_t i = 0; i + 1 < x.size(); ++i)
         for (size_t j = 0; j + 1 < y.size(); ++j)
-            if (segmentsCross(x[i], x[i + 1], y[j], y[j + 1]))
+            if (laneSegmentsCross(x[i], x[i + 1], y[j], y[j + 1]))
                 return true;
     return false;
 }
 
 /** Strongly connected components (Tarjan, iterative): component per vertex. */
-std::vector<int> components(const std::vector<std::vector<int>>& adj, int* count)
+std::vector<int> laneComponents(const std::vector<std::vector<int>>& adj, int* count)
 {
     const int n = int(adj.size());
     std::vector<int> index(size_t(n), -1), low(size_t(n), 0), comp(size_t(n), -1);
@@ -698,7 +698,7 @@ json checkLaneGraph(const LaneGraph& g, const RoadNetwork& net)
         }
         const std::vector<std::vector<int>> adj = adjacency(g, mode), radj = adjacency(g, mode, true);
         int count = 0;
-        const std::vector<int> comp = components(adj, &count);
+        const std::vector<int> comp = laneComponents(adj, &count);
         std::map<int, int> sizes;
         for (int x : lanes)
             ++sizes[comp[size_t(x)]];

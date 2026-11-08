@@ -108,7 +108,7 @@ std::vector<Chain> chains(const geo::Mesh& m)
     return out;
 }
 
-std::vector<Vec2> flat(const std::vector<glm::dvec3>& pts)
+std::vector<Vec2> flatPoints(const std::vector<glm::dvec3>& pts)
 {
     std::vector<Vec2> out;
     for (const glm::dvec3& p : pts)
@@ -283,7 +283,7 @@ Site siteFrom(const gn::Geometry& g, double* planeY)
         }
         if (all[k].kind == 0 && all[k].closed && all[k].pts.size() >= 3)
         {
-            const double a = std::abs(signedArea(flat(all[k].pts)));
+            const double a = std::abs(signedArea(flatPoints(all[k].pts)));
             if (a > bestArea)
             {
                 bestArea = a;
@@ -294,21 +294,21 @@ Site siteFrom(const gn::Geometry& g, double* planeY)
     for (size_t k = 0; k < all.size(); ++k)
     {
         if (int(k) == outline)
-            site.outline = flat(all[k].pts);
+            site.outline = flatPoints(all[k].pts);
         else if (all[k].kind == 3)
         {
             Exclusion x;
-            x.pts = flat(all[k].pts);
+            x.pts = flatPoints(all[k].pts);
             if (x.pts.size() >= 3)
                 site.exclusions.push_back(std::move(x));
         }
         else if (all[k].kind == 2)
-            site.water.push_back({flat(all[k].pts), all[k].width > 0.0 ? all[k].width : 2000.0});
+            site.water.push_back({flatPoints(all[k].pts), all[k].width > 0.0 ? all[k].width : 2000.0});
         else if (all[k].kind == 1)
-            site.roads.push_back(flat(all[k].pts));
+            site.roads.push_back(flatPoints(all[k].pts));
         else
         {
-            std::vector<Vec2> s = flat(all[k].pts);
+            std::vector<Vec2> s = flatPoints(all[k].pts);
             if (all[k].closed)
                 s.push_back(s.front());
             site.streets.push_back(std::move(s));

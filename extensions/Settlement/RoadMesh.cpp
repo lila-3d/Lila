@@ -13,7 +13,7 @@ namespace settlement
 {
 namespace
 {
-inline Vec2 flat(const glm::dvec3& p) { return {p.x, p.z}; }
+inline Vec2 roadFlat(const glm::dvec3& p) { return {p.x, p.z}; }
 /** The kerb side a driver has on the right, seen from above with Y up. */
 inline Vec2 rightSide(Vec2 d) { return {-d.y, d.x}; }
 
@@ -23,7 +23,7 @@ std::vector<glm::dvec3> resample(const std::vector<glm::dvec3>& pts, double seg)
     std::vector<glm::dvec3> out;
     for (size_t k = 0; k + 1 < pts.size(); ++k)
     {
-        const int n = std::max(1, int(std::ceil(glm::length(flat(pts[k + 1]) - flat(pts[k])) / seg)));
+        const int n = std::max(1, int(std::ceil(glm::length(roadFlat(pts[k + 1]) - roadFlat(pts[k])) / seg)));
         for (int i = 0; i < n; ++i)
             out.push_back(pts[k] + (pts[k + 1] - pts[k]) * (double(i) / n));
     }
@@ -37,7 +37,7 @@ std::vector<Vec2> mitres(const std::vector<glm::dvec3>& pts)
 {
     std::vector<Vec2> out(pts.size(), Vec2(0.0));
     auto dirAt = [&](size_t a, size_t b) {
-        const Vec2 d = flat(pts[b]) - flat(pts[a]);
+        const Vec2 d = roadFlat(pts[b]) - roadFlat(pts[a]);
         const double len = glm::length(d);
         return len > 1e-9 ? d / len : Vec2(0.0);
     };
@@ -219,7 +219,7 @@ RoadMeshes roadMeshes(const Layout& l, const RoadNetwork& net, const Ground& gro
         const std::vector<glm::dvec3> pts = resample(line.pts, seg);
         const std::vector<Vec2> side = mitres(pts);
         auto at = [&](size_t i, double off, double up) {
-            const Vec2 q = flat(pts[i]) + side[i] * off;
+            const Vec2 q = roadFlat(pts[i]) + side[i] * off;
             const double h = line.surface ? pts[i].y : ground.surfaceHeight(q);
             return glm::dvec3(q.x, h + o.lift + up, q.y);
         };
@@ -283,7 +283,7 @@ RoadMeshes roadMeshes(const Layout& l, const RoadNetwork& net, const Ground& gro
         std::vector<int> order(j.ends.size());
         std::iota(order.begin(), order.end(), 0);
         auto dirOf = [&](int e) {
-            const Vec2 d = flat(j.ends[size_t(e)].out);
+            const Vec2 d = roadFlat(j.ends[size_t(e)].out);
             return glm::length(d) > 1e-9 ? d / glm::length(d) : Vec2(1.0, 0.0);
         };
         std::sort(order.begin(), order.end(), [&](int a, int b) {
@@ -299,7 +299,7 @@ RoadMeshes roadMeshes(const Layout& l, const RoadNetwork& net, const Ground& gro
             const RoadEnd &ea = j.ends[size_t(a)], &eb = j.ends[size_t(b)];
             const RoadSection &sa = sections[size_t(ea.line)], &sb = sections[size_t(eb.line)];
             anyKerbless |= sa.kerbless;
-            const Vec2 da = dirOf(a), db = dirOf(b), pa = flat(ea.p), pb = flat(eb.p);
+            const Vec2 da = dirOf(a), db = dirOf(b), pa = roadFlat(ea.p), pb = roadFlat(eb.p);
             const double ca = sa.carriage > 0.0 ? sa.carriage : sa.half(), cb = sb.carriage > 0.0 ? sb.carriage : sb.half();
             ring.push_back(pa - rightSide(da) * ca);
             const std::vector<Vec2> kerb = corner(pa + rightSide(da) * ca, da, pb - rightSide(db) * cb, db, 6);
@@ -321,7 +321,7 @@ RoadMeshes roadMeshes(const Layout& l, const RoadNetwork& net, const Ground& gro
             out.curbReturnArea += area;
             ++out.curbReturns;
         }
-        const Vec2 c = flat(j.p);
+        const Vec2 c = roadFlat(j.p);
         const Surface surf = anyKerbless ? (o.forceSurface ? o.surface : Surface::Cobble) : (o.forceSurface ? o.surface : Surface::Asphalt);
         for (size_t t = 0; t < ring.size(); ++t)
             out.junctionArea += roads.face({h(c, 0.0), h(ring[t], 0.0), h(ring[(t + 1) % ring.size()], 0.0)}, RoadPart::Junction, surf, -1, int(ji));
@@ -333,7 +333,7 @@ RoadMeshes roadMeshes(const Layout& l, const RoadNetwork& net, const Ground& gro
             const RoadSection& s = sections[size_t(e.line)];
             if (s.kerbless || s.carriage <= 0.0)
                 continue;
-            const Vec2 d = dirOf(cw.end), n = rightSide(d), p0 = flat(e.p);
+            const Vec2 d = dirOf(cw.end), n = rightSide(d), p0 = roadFlat(e.p);
             const double depth = 300.0, bar = 50.0, from = 100.0;
             out.crosswalks.push_back({h(p0 + d * (from + 0.5 * depth), 1.0), 2.0 * s.carriage, depth,
                                       glm::degrees(std::atan2(d.x, d.y)), int(ji)});

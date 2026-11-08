@@ -16,7 +16,7 @@ namespace
 inline Vec2 planXZ(const glm::dvec3& p) { return {p.x, p.z}; }
 inline Vec2 kerbSide(Vec2 d) { return {-d.y, d.x}; }
 
-uint64_t mix(uint64_t h, uint64_t v) { return hash64(h ^ (v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2))); }
+uint64_t furnitureMix(uint64_t h, uint64_t v) { return hash64(h ^ (v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2))); }
 
 uint64_t textKey(std::string_view s)
 {
@@ -26,7 +26,7 @@ uint64_t textKey(std::string_view s)
     return h;
 }
 
-uint64_t pointKey(Vec2 p) { return mix(uint64_t(std::llround(p.x / 10.0)), uint64_t(std::llround(p.y / 10.0))); }
+uint64_t pointKey(Vec2 p) { return furnitureMix(uint64_t(std::llround(p.x / 10.0)), uint64_t(std::llround(p.y / 10.0))); }
 
 double headingOf(Vec2 facing) { return glm::degrees(std::atan2(facing.x, facing.y)); }
 
@@ -187,7 +187,7 @@ std::vector<FurniturePlacement> placeFurniture(const Layout& l, const RoadNetwor
             *d = (planXZ(pts[i + 1]) - planXZ(pts[i])) / seg;
             *p = planXZ(pts[i]) + *d * (s - at[i]);
         };
-        const uint64_t lineKey = mix(line.street, pointKey(planXZ(pts.front())));
+        const uint64_t lineKey = furnitureMix(line.street, pointKey(planXZ(pts.front())));
         for (size_t r = 0; r < set->rules.size(); ++r)
         {
             const FurnitureRule& rule = set->rules[r];
@@ -219,7 +219,7 @@ std::vector<FurniturePlacement> placeFurniture(const Layout& l, const RoadNetwor
             if (!fits || length < 0.5 * rule.spacing)
                 continue;
             const int n = std::max(1, int(length / rule.spacing));
-            const uint64_t ruleKey = mix(lineKey, textKey(rule.kind) + r);
+            const uint64_t ruleKey = furnitureMix(lineKey, textKey(rule.kind) + r);
             for (int slot = 0; slot < n; ++slot)
             {
                 Vec2 p, d;
@@ -236,7 +236,7 @@ std::vector<FurniturePlacement> placeFurniture(const Layout& l, const RoadNetwor
                 for (int side : sides)
                 {
                     FurniturePlacement x;
-                    x.id = mix(mix(ruleKey, uint64_t(slot)), uint64_t(side + 2)) & kStreetscapeIdMask;
+                    x.id = furnitureMix(furnitureMix(ruleKey, uint64_t(slot)), uint64_t(side + 2)) & kStreetscapeIdMask;
                     x.kind = rule.kind;
                     const Vec2 q = p + kerbSide(d) * (offset * side);
                     x.p = groundAt(q, up);
@@ -274,7 +274,7 @@ std::vector<FurniturePlacement> placeFurniture(const Layout& l, const RoadNetwor
             const Vec2 right = planXZ(end.p) - kerbSide(d) * off;
             auto add = [&](const char* kind, Vec2 q, Vec2 facing) {
                 FurniturePlacement x;
-                x.id = mix(mix(jKey, textKey(kind)), line.street) & kStreetscapeIdMask;
+                x.id = furnitureMix(furnitureMix(jKey, textKey(kind)), line.street) & kStreetscapeIdMask;
                 x.kind = kind;
                 x.p = groundAt(q, sec.sidewalk > 0.0 && !sec.kerbless ? kCurb : 0.0);
                 x.heading = headingOf(facing);
@@ -306,7 +306,7 @@ std::vector<FurniturePlacement> placeFurniture(const Layout& l, const RoadNetwor
         int counter = 0;
         auto add = [&](const char* kind, Vec2 q, Vec2 facing, double up = 0.0) {
             FurniturePlacement x;
-            x.id = mix(mix(bKey, textKey(kind)), uint64_t(counter++)) & kStreetscapeIdMask;
+            x.id = furnitureMix(furnitureMix(bKey, textKey(kind)), uint64_t(counter++)) & kStreetscapeIdMask;
             x.kind = kind;
             x.p = groundAt(q, up);
             x.heading = headingOf(facing);

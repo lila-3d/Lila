@@ -28,7 +28,7 @@ namespace
 {
 using scene::Graph;
 using scene::Node;
-using T = ArgType;
+using StreetT = ArgType;
 
 std::string settlementOf(const Args& a, const char* cmd)
 {
@@ -40,7 +40,7 @@ std::string settlementOf(const Args& a, const char* cmd)
 
 json pointJson(const glm::dvec3& p) { return json::array({p.x, p.y, p.z}); }
 
-std::string baseName(const Rebuilt& r)
+std::string streetBaseName(const Rebuilt& r)
 {
     const std::string& path = r.mesh.empty() ? r.modifier : r.mesh;
     std::string leaf = path.substr(path.find_last_of('|') == std::string::npos ? 0 : path.find_last_of('|') + 1);
@@ -105,11 +105,11 @@ std::map<uint64_t, std::string> terrainStreetRoads(const Rebuilt& r, std::string
 
 std::vector<FlagDef> laneFlags()
 {
-    return {{"busRoutes", "br", T::Int, int64_t(-1), "Bus routes (each out and back); -1 from the style: none in medieval ones, else one per two districts, at most 4."},
-            {"tramRoutes", "tr", T::Int, int64_t(-1), "Tram routes on the arterials' inner lanes; -1: one in cities with arterials."},
-            {"busStopSpacing", "bs", T::Float, 40000.0, "cm between bus stops.", {}, {}, 2000.0},
-            {"tramStopSpacing", "ts", T::Float, 60000.0, "cm between tram stops.", {}, {}, 2000.0},
-            {"lanes", "ln", T::Bool, false, "Also every lane (points, mode, direction, street) and link (movement, phase)."}};
+    return {{"busRoutes", "br", StreetT::Int, int64_t(-1), "Bus routes (each out and back); -1 from the style: none in medieval ones, else one per two districts, at most 4."},
+            {"tramRoutes", "tr", StreetT::Int, int64_t(-1), "Tram routes on the arterials' inner lanes; -1: one in cities with arterials."},
+            {"busStopSpacing", "bs", StreetT::Float, 40000.0, "cm between bus stops.", {}, {}, 2000.0},
+            {"tramStopSpacing", "ts", StreetT::Float, 60000.0, "cm between tram stops.", {}, {}, 2000.0},
+            {"lanes", "ln", StreetT::Bool, false, "Also every lane (points, mode, direction, street) and link (movement, phase)."}};
 }
 
 TransitOptions transitOptions(const Args& a)
@@ -155,15 +155,15 @@ void registerStreetscapeCommands(ext::Context& ctx)
                "terrainRoadBuild instead (builder says which was used, and why). Returns the meshes, areas in m2 (roads, "
                "junctions, sidewalks, curb returns, markings), counts, and crosswalk decal placements.",
         .positionalDoc = "settlement mesh or its modifier",
-        .flags = {{"curb", "cb", T::Float, 15.0, "Height of sidewalks and medians above the road, cm.", {}, {}, 0.0},
-                  {"gutter", "gt", T::Float, 8.0, "How far the middle of a kerbless street dips, cm.", {}, {}, 0.0},
-                  {"segment", "sg", T::Float, 500.0, "Longest step between cross-sections, cm.", {}, {}, 10.0},
-                  {"markings", "mk", T::String, "both", "Crosswalks as mesh stripes, decal placements (returned), both or none.",
+        .flags = {{"curb", "cb", StreetT::Float, 15.0, "Height of sidewalks and medians above the road, cm.", {}, {}, 0.0},
+                  {"gutter", "gt", StreetT::Float, 8.0, "How far the middle of a kerbless street dips, cm.", {}, {}, 0.0},
+                  {"segment", "sg", StreetT::Float, 500.0, "Longest step between cross-sections, cm.", {}, {}, 10.0},
+                  {"markings", "mk", StreetT::String, "both", "Crosswalks as mesh stripes, decal placements (returned), both or none.",
                    {"both", "mesh", "decals", "none"}},
-                  {"surface", "sf", T::String, "auto", "Paving for every road; auto from the style and class.", {"auto", "asphalt", "cobble", "earth", "paving"}},
-                  {"builder", "bd", T::String, "auto", "auto: terrainRoadBuild for streets laid as terrain roads, the rest here; own: all here.",
+                  {"surface", "sf", StreetT::String, "auto", "Paving for every road; auto from the style and class.", {"auto", "asphalt", "cobble", "earth", "paving"}},
+                  {"builder", "bd", StreetT::String, "auto", "auto: terrainRoadBuild for streets laid as terrain roads, the rest here; own: all here.",
                    {"auto", "own"}},
-                  {"name", "n", T::String, nullptr, "Base name of the meshes (default the settlement's)."}},
+                  {"name", "n", StreetT::String, nullptr, "Base name of the meshes (default the settlement's)."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
@@ -223,7 +223,7 @@ void registerStreetscapeCommands(ext::Context& ctx)
                 log::warn("{}: {} streets built by terrainRoadBuild; junctions they meet are patched here without crosswalks", cmd, terrainRoads.size());
 
             RoadMeshes m = roadMeshes(r.layout, net, r.ground, o);
-            const std::string base = a.get<std::string>("name", baseName(r));
+            const std::string base = a.get<std::string>("name", streetBaseName(r));
             if (Node* old = g.find(base + "_Streetscape"))
                 ops::execute("delete", {{"args", {old->path()}}});
             json children = json::array();
@@ -268,13 +268,13 @@ void registerStreetscapeCommands(ext::Context& ctx)
                "placements, which exports and Send to Unreal read, use both. Returns counts by kind and by profile, the "
                "sets used and the placements.",
         .positionalDoc = "settlement mesh or its modifier",
-        .flags = {{"sets", "st", T::Any, nullptr, "Furniture rules per road profile, over the built-in ones."},
-                  {"kinds", "k", T::List, nullptr, "Only these kinds."},
-                  {"realize", "rz", T::Bool, false, "Place library assets in the scene (needs the Set Dressing extension)."},
-                  {"assets", "as", T::Any, nullptr, "{kind: library asset id} for realize."},
-                  {"limit", "lm", T::Int, int64_t(2000), "Most placements returned in the list (counts cover all).", {}, {}, 0.0},
-                  {"store", "sr", T::Bool, false, "Keep sets= with the settlement, so its placements (exports, Send to Unreal) use them."},
-                  {"engineAssets", "ea", T::Any, nullptr, "{kind: engine asset path} the settlement's placements use, kept with it."}},
+        .flags = {{"sets", "st", StreetT::Any, nullptr, "Furniture rules per road profile, over the built-in ones."},
+                  {"kinds", "k", StreetT::List, nullptr, "Only these kinds."},
+                  {"realize", "rz", StreetT::Bool, false, "Place library assets in the scene (needs the Set Dressing extension)."},
+                  {"assets", "as", StreetT::Any, nullptr, "{kind: library asset id} for realize."},
+                  {"limit", "lm", StreetT::Int, int64_t(2000), "Most placements returned in the list (counts cover all).", {}, {}, 0.0},
+                  {"store", "sr", StreetT::Bool, false, "Keep sets= with the settlement, so its placements (exports, Send to Unreal) use them."},
+                  {"engineAssets", "ea", StreetT::Any, nullptr, "{kind: engine asset path} the settlement's placements use, kept with it."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
@@ -401,9 +401,9 @@ void registerStreetscapeCommands(ext::Context& ctx)
                "settlementEditStreet(name=). Names save with the scene and go out in settlementExport. Returns the culture, "
                "every street's name by stable id and the districts.",
         .positionalDoc = "settlement mesh or its modifier",
-        .flags = {{"culture", "cu", T::String, nullptr, "Naming culture; empty for the style's.", {"oldEnglish", "latin", "french", "spanish", "usGrid", "sector", ""}},
-                  {"district", "d", T::Int, nullptr, "A district's id, with name=."},
-                  {"name", "n", T::String, nullptr, "The district's new name; empty gives it back to the culture."}},
+        .flags = {{"culture", "cu", StreetT::String, nullptr, "Naming culture; empty for the style's.", {"oldEnglish", "latin", "french", "spanish", "usGrid", "sector", ""}},
+                  {"district", "d", StreetT::Int, nullptr, "A district's id, with name=."},
+                  {"name", "n", StreetT::String, nullptr, "The district's new name; empty gives it back to the culture."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 

@@ -21,7 +21,7 @@ namespace settlement
 {
 namespace
 {
-using T = ArgType;
+using LotT = ArgType;
 
 json xzJson(Vec2 p) { return json::array({p.x, p.y}); }
 
@@ -33,7 +33,7 @@ Rebuilt lotSettlementOf(const Args& a, const char* cmd)
     return rebuildSettlement(scene::Graph::current(), names[0], cmd);
 }
 
-json editsOf(const Rebuilt& r, const char* cmd)
+json lotEditsOf(const Rebuilt& r, const char* cmd)
 {
     const json text = ops::execute("getAttr", {{"args", {r.modifier + ".edits"}}});
     try
@@ -145,7 +145,7 @@ json& entryFor(json& list, const char* key, uint64_t id)
 }
 
 /** A command another extension registers, or a CommandError naming it and the extension. */
-void needCommand(const char* name, const char* extension, const char* cmd)
+void lotNeedCommand(const char* name, const char* extension, const char* cmd)
 {
     if (!ops::find(name))
         throw CommandError(std::string(cmd) + ": " + name + " is not available; load the " + extension + " extension");
@@ -156,8 +156,8 @@ std::string objectName(const Envelope& env) { return env.landmark.empty() ? "lot
 /** Library assets fitted to each envelope by footprint, tags and era, placed on it turned to the street. */
 json placeLibrary(const std::vector<const Envelope*>& envs, const Args& a, std::vector<std::string>& made, json& picks, const char* cmd)
 {
-    needCommand("librarySearch", "Stagehand", cmd);
-    needCommand("place", "Stagehand", cmd);
+    lotNeedCommand("librarySearch", "Stagehand", cmd);
+    lotNeedCommand("place", "Stagehand", cmd);
     json query = {{"limit", 0}};
     query["tags"] = a.has("tags") ? a.flags["tags"] : json::array({"building"});
     if (a.has("collection"))
@@ -223,7 +223,7 @@ json placeLibrary(const std::vector<const Envelope*>& envs, const Args& a, std::
 /** A Masonry building per envelope: walls round the footprint on the ground, a door at the main entrance, windows on the street. */
 json buildMasonry(const Rebuilt& r, const std::vector<const Envelope*>& envs, std::vector<std::string>& made, const char* cmd)
 {
-    needCommand("masonryBuilding", "Masonry", cmd);
+    lotNeedCommand("masonryBuilding", "Masonry", cmd);
     json built = json::array();
     for (const Envelope* env : envs)
     {
@@ -275,7 +275,7 @@ json buildMasonry(const Rebuilt& r, const std::vector<const Envelope*>& envs, st
 /** Contact skirts, grime strips or scatter where the buildings meet the ground, through Seamwork. */
 json contactsFor(const Rebuilt& r, const std::vector<std::string>& objects, const json& kinds, const char* cmd)
 {
-    needCommand("seamFind", "Seamwork", cmd);
+    lotNeedCommand("seamFind", "Seamwork", cmd);
     json findArgs = {{"args", objects}};
     if (const std::string ground = r.values.value("ground", std::string()); !ground.empty())
         findArgs["terrain"] = ground;
@@ -290,7 +290,7 @@ json contactsFor(const Rebuilt& r, const std::vector<std::string>& objects, cons
         const char* name = kind == "skirt" ? "seamSkirt" : kind == "decal" ? "seamDecal" : kind == "scatter" ? "seamScatter" : nullptr;
         if (!name)
             throw CommandError(std::string(cmd) + ": unknown contact kind '" + kind + "' (skirt, decal, scatter)");
-        needCommand(name, "Seamwork", cmd);
+        lotNeedCommand(name, "Seamwork", cmd);
         out[kind] = ops::execute(name, {{"args", {seam}}});
     }
     return out;
@@ -315,8 +315,8 @@ void registerLotCommands(ext::Context& ctx)
                "churchyard, field), lot method, area, centre, courtyards and why special blocks are what they are, with counts "
                "of block types, lot methods, uses and the lot area distribution.",
         .positionalDoc = "settlement mesh or its modifier",
-        .flags = {{"type", "t", T::String, nullptr, "Only blocks of this type.", types},
-                  {"limit", "l", T::Int, int64_t(0), "At most this many; 0 for all.", {}, {}, 0.0}},
+        .flags = {{"type", "t", LotT::String, nullptr, "Only blocks of this type.", types},
+                  {"limit", "l", LotT::Int, int64_t(0), "At most this many; 0 for all.", {}, {}, 0.0}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -348,11 +348,11 @@ void registerLotCommands(ext::Context& ctx)
                "(irregular cells), strips (farm strips), whole (one lot). Every method leaves each lot on a street; lots that "
                "would reach none join a neighbour. clear=True drops the block's override. Returns the blocks as rebuilt.",
         .positionalDoc = "settlement mesh or its modifier",
-        .flags = {{"block", "b", T::Any, nullptr, "Block id, or a list of them (settlementBlocks lists them)."},
-                  {"at", "", T::List, nullptr, "Or the block under this point, [x, z]."},
-                  {"type", "t", T::String, nullptr, "Block type.", types},
-                  {"method", "m", T::String, nullptr, "Lot method.", methods},
-                  {"clear", "cl", T::Bool, false, "Drop the override instead."}},
+        .flags = {{"block", "b", LotT::Any, nullptr, "Block id, or a list of them (settlementBlocks lists them)."},
+                  {"at", "", LotT::List, nullptr, "Or the block under this point, [x, z]."},
+                  {"type", "t", LotT::String, nullptr, "Block type.", types},
+                  {"method", "m", LotT::String, nullptr, "Lot method.", methods},
+                  {"clear", "cl", LotT::Bool, false, "Drop the override instead."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
@@ -368,7 +368,7 @@ void registerLotCommands(ext::Context& ctx)
                 throw CommandError(std::string(cmd) + ": unknown type '" + a.get<std::string>("type") + "'");
             if (a.has("method") && !parseLotMethod(a.get<std::string>("method"), &m))
                 throw CommandError(std::string(cmd) + ": unknown method '" + a.get<std::string>("method") + "'");
-            json edits = editsOf(r, cmd);
+            json edits = lotEditsOf(r, cmd);
             if (!edits.contains("blockOverrides"))
                 edits["blockOverrides"] = json::array();
             for (uint64_t id : ids)
@@ -408,10 +408,10 @@ void registerLotCommands(ext::Context& ctx)
                "(0 to 1, integration and betweenness of the streets it faces), landmark name and the reasons it is there, "
                "building route. Filter by use, block or landmarks only. stats holds the lot area distribution and use counts.",
         .positionalDoc = "settlement mesh or its modifier",
-        .flags = {{"use", "u", T::String, nullptr, "Only lots of this use.", uses},
-                  {"block", "b", T::Any, nullptr, "Only lots in this block (its id)."},
-                  {"landmarks", "lm", T::Bool, false, "Only landmark lots."},
-                  {"limit", "l", T::Int, int64_t(500), "At most this many; 0 for all.", {}, {}, 0.0}},
+        .flags = {{"use", "u", LotT::String, nullptr, "Only lots of this use.", uses},
+                  {"block", "b", LotT::Any, nullptr, "Only lots in this block (its id)."},
+                  {"landmarks", "lm", LotT::Bool, false, "Only landmark lots."},
+                  {"limit", "l", LotT::Int, int64_t(500), "At most this many; 0 for all.", {}, {}, 0.0}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -444,10 +444,10 @@ void registerLotCommands(ext::Context& ctx)
                "downwind and downstream), fields outside pre-modern towns, a market facing the square, commerce on the most "
                "central streets and residential wealth tiers by land value. clear=True drops the lot's use override.",
         .positionalDoc = "settlement mesh or its modifier",
-        .flags = {{"lot", "lt", T::Any, nullptr, "Lot id, or a list of them."},
-                  {"at", "", T::List, nullptr, "Or the lot under this point, [x, z]."},
-                  {"use", "u", T::String, nullptr, "The use to give them.", uses},
-                  {"clear", "cl", T::Bool, false, "Drop their use overrides."}},
+        .flags = {{"lot", "lt", LotT::Any, nullptr, "Lot id, or a list of them."},
+                  {"at", "", LotT::List, nullptr, "Or the lot under this point, [x, z]."},
+                  {"use", "u", LotT::String, nullptr, "The use to give them.", uses},
+                  {"clear", "cl", LotT::Bool, false, "Drop their use overrides."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
@@ -462,7 +462,7 @@ void registerLotCommands(ext::Context& ctx)
                 Use u;
                 if (!clear && (!a.has("use") || !parseUse(a.get<std::string>("use"), &u)))
                     throw CommandError(std::string(cmd) + ": give use= (one of the uses) or clear=True");
-                json edits = editsOf(r, cmd);
+                json edits = lotEditsOf(r, cmd);
                 if (!edits.contains("lotOverrides"))
                     edits["lotOverrides"] = json::array();
                 for (uint64_t id : ids)
@@ -506,11 +506,11 @@ void registerLotCommands(ext::Context& ctx)
                "landmarks (market_square, church, town_hall, castle or temple on high ground, axis_end_N, park_N, cemetery) "
                "carry the reasons they are where they are; settlementLots(landmarks=True) lists them all.",
         .positionalDoc = "settlement mesh or its modifier",
-        .flags = {{"lot", "lt", T::Any, nullptr, "Lot id."},
-                  {"at", "", T::List, nullptr, "Or the lot under this point, [x, z]."},
-                  {"name", "n", T::String, nullptr, "Landmark name, such as guild_hall."},
-                  {"use", "u", T::String, nullptr, "Its use.", uses},
-                  {"remove", "rm", T::Bool, false, "Take the landmark name off."}},
+        .flags = {{"lot", "lt", LotT::Any, nullptr, "Lot id."},
+                  {"at", "", LotT::List, nullptr, "Or the lot under this point, [x, z]."},
+                  {"name", "n", LotT::String, nullptr, "Landmark name, such as guild_hall."},
+                  {"use", "u", LotT::String, nullptr, "Its use.", uses},
+                  {"remove", "rm", LotT::Bool, false, "Take the landmark name off."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
@@ -525,7 +525,7 @@ void registerLotCommands(ext::Context& ctx)
             Use u;
             if (a.has("use") && !parseUse(a.get<std::string>("use"), &u))
                 throw CommandError(std::string(cmd) + ": unknown use '" + a.get<std::string>("use") + "'");
-            json edits = editsOf(r, cmd);
+            json edits = lotEditsOf(r, cmd);
             if (!edits.contains("lotOverrides"))
                 edits["lotOverrides"] = json::array();
             json& e = entryFor(edits["lotOverrides"], "lot", ids[0]);
@@ -552,10 +552,10 @@ void registerLotCommands(ext::Context& ctx)
                "street, ground-floor use, corner treatment, foundation depth and its source (terrainRegionStats or the "
                "ground sampled under the footprint), landmark, era, wealth and building route. Filter by lot, use or landmarks.",
         .positionalDoc = "settlement mesh or its modifier",
-        .flags = {{"lot", "lt", T::Any, nullptr, "Only these lot ids."},
-                  {"use", "u", T::String, nullptr, "Only this use.", uses},
-                  {"landmarks", "lm", T::Bool, false, "Only landmark envelopes."},
-                  {"limit", "l", T::Int, int64_t(200), "At most this many; 0 for all.", {}, {}, 0.0}},
+        .flags = {{"lot", "lt", LotT::Any, nullptr, "Only these lot ids."},
+                  {"use", "u", LotT::String, nullptr, "Only this use.", uses},
+                  {"landmarks", "lm", LotT::Bool, false, "Only landmark envelopes."},
+                  {"limit", "l", LotT::Int, int64_t(200), "At most this many; 0 for all.", {}, {}, 0.0}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -598,14 +598,14 @@ void registerLotCommands(ext::Context& ctx)
                "foundation depth from them. terrain= defaults to the settlement's ground. clear=True drops them, going back to "
                "the ground sampled under each footprint.",
         .positionalDoc = "settlement mesh or its modifier",
-        .flags = {{"terrain", "t", T::String, nullptr, "The Terrain mesh; default the settlement's ground."},
-                  {"clear", "cl", T::Bool, false, "Drop the measured foundations."}},
+        .flags = {{"terrain", "t", LotT::String, nullptr, "The Terrain mesh; default the settlement's ground."},
+                  {"clear", "cl", LotT::Bool, false, "Drop the measured foundations."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
             const char* cmd = "settlementFoundations";
             const Rebuilt r = lotSettlementOf(a, cmd);
-            json edits = editsOf(r, cmd);
+            json edits = lotEditsOf(r, cmd);
             if (a.get<bool>("clear", false))
             {
                 edits.erase("foundations");
@@ -615,7 +615,7 @@ void registerLotCommands(ext::Context& ctx)
             const std::string terrain = a.get<std::string>("terrain", r.values.value("ground", std::string()));
             if (terrain.empty())
                 throw CommandError(std::string(cmd) + ": the settlement stands on flat ground; give terrain=");
-            needCommand("terrainRegionStats", "Terrain", cmd);
+            lotNeedCommand("terrainRegionStats", "Terrain", cmd);
             json found = json::object();
             double deepest = 0.0;
             for (const Envelope& env : r.layout.envelopes)
@@ -656,19 +656,19 @@ void registerLotCommands(ext::Context& ctx)
                "now). contacts=True adds Seamwork contact skirts, strips or scatter where placed buildings meet the ground. "
                "Placed objects are grouped under <settlement>_<route> and replaced when the route is built again.",
         .positionalDoc = "settlement mesh or its modifier",
-        .flags = {{"route", "r", T::String, "outline", "How buildings are made.", routes},
-                  {"polygon", "pg", T::List, nullptr, "A district, [[x, z], ...]: the route applies to lots whose centre is inside."},
-                  {"name", "n", T::String, nullptr, "The district's name; the same name replaces its route."},
-                  {"build", "bd", T::Bool, true, "Place the library or Masonry buildings now."},
-                  {"tags", "tg", T::List, nullptr, "Library tags every asset must have (default ['building'])."},
-                  {"collection", "co", T::String, nullptr, "Only assets in this library collection."},
-                  {"assetFront", "af", T::String, "+z", "The axis library assets face along.", {"+z", "-z", "+x", "-x"}},
-                  {"fit", "ft", T::Float, 1.05, "How much larger than the footprint an asset may be (1 is exact).", {}, {}, 0.5, 2.0},
-                  {"landmarksOnly", "lo", T::Bool, true, "Masonry: only landmark lots."},
-                  {"limit", "l", T::Int, int64_t(12), "Masonry: at most this many buildings.", {}, {}, 1.0},
-                  {"contacts", "ct", T::Bool, false, "Seamwork contacts at the base of placed buildings."},
-                  {"contactKinds", "ck", T::List, json::array({"skirt"}), "skirt (seamSkirt), decal (seamDecal), scatter (seamScatter)."},
-                  {"send", "sd", T::Bool, false, "unreal: send to Unreal now through settlementSendToUnreal."}},
+        .flags = {{"route", "r", LotT::String, "outline", "How buildings are made.", routes},
+                  {"polygon", "pg", LotT::List, nullptr, "A district, [[x, z], ...]: the route applies to lots whose centre is inside."},
+                  {"name", "n", LotT::String, nullptr, "The district's name; the same name replaces its route."},
+                  {"build", "bd", LotT::Bool, true, "Place the library or Masonry buildings now."},
+                  {"tags", "tg", LotT::List, nullptr, "Library tags every asset must have (default ['building'])."},
+                  {"collection", "co", LotT::String, nullptr, "Only assets in this library collection."},
+                  {"assetFront", "af", LotT::String, "+z", "The axis library assets face along.", {"+z", "-z", "+x", "-x"}},
+                  {"fit", "ft", LotT::Float, 1.05, "How much larger than the footprint an asset may be (1 is exact).", {}, {}, 0.5, 2.0},
+                  {"landmarksOnly", "lo", LotT::Bool, true, "Masonry: only landmark lots."},
+                  {"limit", "l", LotT::Int, int64_t(12), "Masonry: at most this many buildings.", {}, {}, 1.0},
+                  {"contacts", "ct", LotT::Bool, false, "Seamwork contacts at the base of placed buildings."},
+                  {"contactKinds", "ck", LotT::List, json::array({"skirt"}), "skirt (seamSkirt), decal (seamDecal), scatter (seamScatter)."},
+                  {"send", "sd", LotT::Bool, false, "unreal: send to Unreal now through settlementSendToUnreal."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
@@ -680,12 +680,12 @@ void registerLotCommands(ext::Context& ctx)
             const bool build = a.get<bool>("build", true);
             if (build && route == BuildingRoute::Library)
                 for (const char* need : {"librarySearch", "place"})
-                    needCommand(need, "Stagehand", cmd);
+                    lotNeedCommand(need, "Stagehand", cmd);
             if (build && route == BuildingRoute::Masonry)
-                needCommand("masonryBuilding", "Masonry", cmd);
+                lotNeedCommand("masonryBuilding", "Masonry", cmd);
             if (build && a.get<bool>("contacts", false) && (route == BuildingRoute::Library || route == BuildingRoute::Masonry))
-                needCommand("seamFind", "Seamwork", cmd);
-            json edits = editsOf(r, cmd);
+                lotNeedCommand("seamFind", "Seamwork", cmd);
+            json edits = lotEditsOf(r, cmd);
             if (!edits.contains("buildingRoutes"))
                 edits["buildingRoutes"] = json::array();
             json region = {{"route", routeName(route)}};
@@ -741,7 +741,7 @@ void registerLotCommands(ext::Context& ctx)
                     // The picks go in the edits so the layout carries them as engine placements on every rebuild.
                     json picks = json::object();
                     out["library"] = placeLibrary(envs, a, made, picks, cmd);
-                    json kept = editsOf(after, cmd);
+                    json kept = lotEditsOf(after, cmd);
                     json& all = kept["libraryPicks"];
                     if (!all.is_object())
                         all = json::object();

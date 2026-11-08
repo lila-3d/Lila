@@ -28,7 +28,7 @@ namespace
 {
 using scene::Graph;
 using scene::Node;
-using T = ArgType;
+using LinkT = ArgType;
 
 uint64_t linkHash(std::string_view s)
 {
@@ -43,13 +43,13 @@ uint64_t linkHash(std::string_view s)
 
 std::string linkHex(uint64_t v) { return std::format("{:016x}", v); }
 
-json xz(Vec2 p) { return json::array({p.x, p.y}); }
+json linkXz(Vec2 p) { return json::array({p.x, p.y}); }
 
 json xzLine(std::span<const Vec2> pts)
 {
     json a = json::array();
     for (const Vec2& q : pts)
-        a.push_back(xz(q));
+        a.push_back(linkXz(q));
     return a;
 }
 
@@ -76,7 +76,7 @@ json terrainCall(const char* name, const std::string& terrain, json flags, const
     return ops::execute(name, flags);
 }
 
-std::string textOf(const json& v) { return v.is_string() ? v.get<std::string>() : std::string(); }
+std::string linkTextOf(const json& v) { return v.is_string() ? v.get<std::string>() : std::string(); }
 
 /** The current revision, remembered by the terrain so terrainDirtyRegions can compare with it later. */
 std::string revisionOf(const std::string& terrain, const std::string& cmd)
@@ -101,7 +101,7 @@ Node* modifierOf(Graph& g, const std::string& settlement, const std::string& cmd
 
 json editsOf(const Node& mod, const std::string& cmd)
 {
-    const std::string text = textOf(ops::execute("getAttr", {{"args", {mod.path() + ".edits"}}}));
+    const std::string text = linkTextOf(ops::execute("getAttr", {{"args", {mod.path() + ".edits"}}}));
     try
     {
         return parseEdits(text);
@@ -118,7 +118,7 @@ std::string terrainOf(const Rebuilt& r, const Args& a, const std::string& cmd)
 {
     std::string terrain = a.get<std::string>("terrain", "");
     if (terrain.empty())
-        terrain = textOf(r.values.value("ground", json()));
+        terrain = linkTextOf(r.values.value("ground", json()));
     if (terrain.empty())
         throw CommandError(cmd + ": give terrain= (the settlement stands on flat ground)");
     if (!isTerrainGround(terrain))
@@ -146,7 +146,7 @@ TerrainWay routeTerrain(const std::string& terrain, Vec2 a, Vec2 b, double maxGr
     try
     {
         const json r = terrainCall("terrainRoute", terrain,
-                                   {{"start", xz(a)}, {"end", xz(b)}, {"maxGrade", maxGrade * 100.0}, {"weights", {{"water", 25.0}}}, {"resolution", 512}}, cmd);
+                                   {{"start", linkXz(a)}, {"end", linkXz(b)}, {"maxGrade", maxGrade * 100.0}, {"weights", {{"water", 25.0}}}, {"resolution", 512}}, cmd);
         for (const json& p : r.value("points", json::array()))
             w.pts.push_back(groundPoint(p));
         if (w.pts.size() >= 2)
@@ -319,7 +319,7 @@ json replan(Graph& g, const std::string& name, const std::string& terrain, json&
         report.update(counts);
         json regions = json::array();
         for (const DirtyRect& r : rects)
-            regions.push_back({{"min", xz(r.lo)}, {"max", xz(r.hi)}});
+            regions.push_back({{"min", linkXz(r.lo)}, {"max", linkXz(r.hi)}});
         report["regions"] = regions;
         report["revision"] = rev;
     }
@@ -810,7 +810,7 @@ std::vector<SiteScore> suggestOnTerrain(const std::string& terrain, const Polygo
 
     json pts = json::array();
     for (const Vec2& q : cands)
-        pts.push_back(xz(q));
+        pts.push_back(linkXz(q));
     const json samples = terrainCall("terrainSample", terrain,
                                      merged(analysis, {{"points", pts},
                                                        {"fields", {"floodRisk", "distanceToWater", "prominence", "viewshedScore", "solar", "windExposure"}}}),
@@ -985,7 +985,7 @@ std::vector<SiteScore> suggestOnTerrain(const std::string& terrain, const Polygo
             for (int i = 0; i < 12; ++i)
             {
                 const double t = 2.0 * kPi * i / 12.0;
-                ring.push_back(xz(f.p + Vec2(std::cos(t), std::sin(t)) * radius));
+                ring.push_back(linkXz(f.p + Vec2(std::cos(t), std::sin(t)) * radius));
             }
             const json st = terrainCall("terrainRegionStats", terrain, merged(analysis, {{"polygon", ring}, {"fields", {"slope", "floodRisk"}}}), cmd);
             const json fields = st.value("fields", json::object());
@@ -1061,16 +1061,16 @@ void registerTerrainCommands(ext::Context& ctx)
                "longer moves when the ground under it changes until it is re-planned. Needs the Terrain extension. Returns "
                "counts per kind (made and sent), what was unchanged and removed, the plan state, the revision and any errors.",
         .positionalDoc = "settlement mesh or its modifier",
-        .flags = {{"terrain", "tr", T::String, nullptr, "The terrain to shape (default the settlement's ground)."},
-                  {"streets", "st", T::Bool, true, "Streets as terrain roads."},
-                  {"lots", "lt", T::Bool, true, "Lots as building pads (the envelope's footprint where there is one)."},
-                  {"plazas", "pz", T::Bool, true, "Squares as region stamps."},
-                  {"water", "wa", T::Bool, true, "Canals, moats, quays and rivers the settlement builds."},
-                  {"roundabouts", "ra", T::String, "arterial", "Junctions made roundabouts: where three or more main roads meet, or none.",
+        .flags = {{"terrain", "tr", LinkT::String, nullptr, "The terrain to shape (default the settlement's ground)."},
+                  {"streets", "st", LinkT::Bool, true, "Streets as terrain roads."},
+                  {"lots", "lt", LinkT::Bool, true, "Lots as building pads (the envelope's footprint where there is one)."},
+                  {"plazas", "pz", LinkT::Bool, true, "Squares as region stamps."},
+                  {"water", "wa", LinkT::Bool, true, "Canals, moats, quays and rivers the settlement builds."},
+                  {"roundabouts", "ra", LinkT::String, "arterial", "Junctions made roundabouts: where three or more main roads meet, or none.",
                    {"arterial", "none"}},
-                  {"roadLayer", "rl", T::String, "CityRoads", "Terrain roads layer the streets go in."},
-                  {"replan", "rp", T::Bool, true, "Re-plan the regions the terrain changed in first."},
-                  {"padMode", "pm", T::String, "flatten", "How pads meet the slope.", {"flatten", "carve", "raise", "blend", "plinth", "terraced", "stilts"}}},
+                  {"roadLayer", "rl", LinkT::String, "CityRoads", "Terrain roads layer the streets go in."},
+                  {"replan", "rp", LinkT::Bool, true, "Re-plan the regions the terrain changed in first."},
+                  {"padMode", "pm", LinkT::String, "flatten", "How pads meet the slope.", {"flatten", "carve", "raise", "blend", "plinth", "terraced", "stilts"}}},
         .run = [](const Args& a) -> json {
             const std::vector<std::string> names = a.objects();
             if (names.size() != 1)
@@ -1090,9 +1090,9 @@ void registerTerrainCommands(ext::Context& ctx)
                "and main roads crossing a changed region are routed again. Returns the mode (full, dirty or unchanged) and why, "
                "the regions, blocks kept, dropped and new, street edges removed and added, the routes and the revision.",
         .positionalDoc = "settlement mesh or its modifier",
-        .flags = {{"terrain", "tr", T::String, nullptr, "The terrain (default the settlement's ground)."},
-                  {"routes", "ro", T::Bool, true, "Route main roads with terrainRoute."},
-                  {"full", "fu", T::Bool, false, "Plan everything afresh."}},
+        .flags = {{"terrain", "tr", LinkT::String, nullptr, "The terrain (default the settlement's ground)."},
+                  {"routes", "ro", LinkT::Bool, true, "Route main roads with terrainRoute."},
+                  {"full", "fu", LinkT::Bool, false, "Plan everything afresh."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
@@ -1123,7 +1123,7 @@ void registerTerrainCommands(ext::Context& ctx)
                "through a large block; bridges; its steepest grade against the class's limit), 'lot:<id>' and 'landmark:<id>' "
                "(why it has its use, its envelope), 'block:<id>'. Changes nothing.",
         .positionalDoc = "settlement mesh or its modifier",
-        .flags = {{"id", "i", T::String, "centre", "centre, site, a street id, street:<id>, lot:<id>, landmark:<id> or block:<id>."}},
+        .flags = {{"id", "i", LinkT::String, "centre", "centre, site, a street id, street:<id>, lot:<id>, landmark:<id> or block:<id>."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -1159,7 +1159,7 @@ void registerTerrainCommands(ext::Context& ctx)
                "crossing approaches go together). report=True also lists them in the Validation panel on the settlement's "
                "mesh. Returns ok, counts per check, the issues, warnings (checks that could not run) and the plan state.",
         .positionalDoc = "settlement mesh or its modifier",
-        .flags = {{"report", "rp", T::Bool, false, "Also report the issues in the Validation panel (replacing this check's earlier ones)."}},
+        .flags = {{"report", "rp", LinkT::Bool, false, "Also report the issues in the Validation panel (replacing this check's earlier ones)."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             LILA_ZONE();
