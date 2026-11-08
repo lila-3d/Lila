@@ -1,6 +1,7 @@
 #include "uv/Uv.h"
 
 #include "core/Profile.h"
+#include "geo/Topology.h"
 #include "uv/UvCommon.h"
 
 #include <tbb/parallel_for.h>
@@ -82,42 +83,10 @@ std::string& currentSet()
 
 std::vector<Index> uvCornersOfFaces(const geo::Mesh& mesh, std::string_view uvSet, std::span<const Index> faces)
 {
-    std::span<const glm::vec2> uv = mesh.cornerAttrs().get<glm::vec2>(uvSet);
-    std::span<const bool> seam = mesh.edgeAttrs().get<bool>(geo::attr::kSeam);
-    std::vector<Index> out, stack;
-    std::vector<uint8_t> taken(uv.empty() ? 0 : mesh.cornerCapacity(), 0);
+    std::vector<Index> corners;
     for (Index f : liveFaces(mesh, faces))
-        mesh.forEachFaceCorner(f, [&](Index c) {
-            out.push_back(c);
-            if (uv.empty() || taken[c])
-                return;
-            taken[c] = 1;
-            // Around the point through edges that are not seams, so uvs that only touch across a cut stay behind.
-            const Index p = mesh.cornerPoint(c);
-            stack.assign(1, c);
-            while (!stack.empty())
-            {
-                const Index k = stack.back();
-                stack.pop_back();
-                for (Index e : {mesh.cornerEdge(k), mesh.cornerEdge(mesh.cornerPrev(k))})
-                {
-                    if (!seam.empty() && seam[e])
-                        continue;
-                    mesh.forEachEdgeCorner(e, [&](Index r) {
-                        const Index at = mesh.cornerPoint(r) == p ? r : mesh.cornerNext(r);
-                        if (!taken[at] && glm::all(glm::lessThanEqual(glm::abs(uv[at] - uv[c]), glm::vec2(1e-6f))))
-                        {
-                            taken[at] = 1;
-                            out.push_back(at);
-                            stack.push_back(at);
-                        }
-                    });
-                }
-            }
-        });
-    std::sort(out.begin(), out.end());
-    out.erase(std::unique(out.begin(), out.end()), out.end());
-    return out;
+        mesh.forEachFaceCorner(f, [&](Index c) { corners.push_back(c); });
+    return geo::uvVertexCorners(mesh, uvSet, corners);
 }
 
 std::vector<Index> cornersOfPoints(const geo::Mesh& mesh, std::span<const Index> points)

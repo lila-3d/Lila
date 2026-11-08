@@ -65,8 +65,26 @@ LILA_SCENE_API Ids withSymmetry(NodeId node, ComponentMode kind, const Ids& ids)
  * as much on every side drives from it, so the side clicked leads.
  */
 LILA_SCENE_API int pickedWedge(NodeId node);
-/** Replaces everything at once, as one undo step. */
-LILA_SCENE_API void setAll(std::map<NodeId, Ids> points, std::map<NodeId, Ids> edges, std::map<NodeId, Ids> faces);
+/**
+ * UV vertices picked in the UV Editor: corner ids of the node's cage, whole uv vertices, empty when the node's vertex
+ * selection did not come from there. While set, the vertex selection holds exactly their points, so viewport tools see
+ * points as usual and uv tools move just these corners. Any other change to the node's vertex selection clears them.
+ */
+LILA_SCENE_API const Ids& uvCorners(NodeId node);
+LILA_SCENE_API const std::map<NodeId, Ids>& uvCorners();
+/**
+ * Changes the node's picked uv corners and sets its vertex selection to their points. A node whose vertex selection
+ * came from elsewhere starts from every corner of its selected points. Replace clears the other nodes' vertices.
+ */
+LILA_SCENE_API void selectUvCorners(NodeId node, const Ids& corners, Op op = Op::Replace);
+/** uvCorners as face-vertex rows (the rows of Python's Node.uvs_array), sorted. */
+LILA_SCENE_API Ids uvRows(NodeId node);
+/** Corners of the node's cage as face-vertex rows, sorted; dead corners dropped. */
+LILA_SCENE_API Ids uvRows(NodeId node, const Ids& corners);
+
+/** Replaces everything at once, as one undo step. uvCorners must lie on the given points (see uvCorners). */
+LILA_SCENE_API void setAll(std::map<NodeId, Ids> points, std::map<NodeId, Ids> edges, std::map<NodeId, Ids> faces,
+                           std::map<NodeId, Ids> uvCorners = {});
 
 /** Points touched by the node's selection of the current mode (verts as is, edge ends, face corners). */
 LILA_SCENE_API Ids pointsOf(NodeId node);

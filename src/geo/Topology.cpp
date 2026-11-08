@@ -23,6 +23,68 @@ std::vector<uint8_t> makeMask(size_t n, std::span<const Index> ids)
     return mask;
 }
 
+std::vector<Index> uvVertexCorners(const Mesh& mesh, std::string_view uvSet, std::span<const Index> corners)
+{
+    std::span<const glm::vec2> uv = mesh.cornerAttrs().get<glm::vec2>(uvSet);
+    std::span<const bool> seam = mesh.edgeAttrs().get<bool>(attr::kSeam);
+    std::vector<Index> out, stack;
+    std::vector<uint8_t> taken(uv.empty() ? 0 : mesh.cornerCapacity(), 0);
+    for (Index c : corners)
+    {
+        if (!mesh.cornerValid(c))
+            continue;
+        out.push_back(c);
+        if (uv.empty() || taken[c])
+            continue;
+        taken[c] = 1;
+        // Around the point through edges that are not seams, so uvs that only touch across a cut stay behind.
+        const Index p = mesh.cornerPoint(c);
+        stack.assign(1, c);
+        while (!stack.empty())
+        {
+            const Index k = stack.back();
+            stack.pop_back();
+            for (Index e : {mesh.cornerEdge(k), mesh.cornerEdge(mesh.cornerPrev(k))})
+            {
+                if (!seam.empty() && seam[e])
+                    continue;
+                mesh.forEachEdgeCorner(e, [&](Index r) {
+                    const Index at = mesh.cornerPoint(r) == p ? r : mesh.cornerNext(r);
+                    if (!taken[at] && glm::all(glm::lessThanEqual(glm::abs(uv[at] - uv[c]), glm::vec2(1e-6f))))
+                    {
+                        taken[at] = 1;
+                        out.push_back(at);
+                        stack.push_back(at);
+                    }
+                });
+            }
+        }
+    }
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
+std::vector<Index> faceVertexRows(const Mesh& mesh)
+{
+    std::vector<Index> rows(mesh.cornerCapacity(), kInvalid);
+    Index row = 0;
+    for (Index f = 0; f < mesh.faceCapacity(); ++f)
+        if (mesh.faceValid(f))
+            mesh.forEachFaceCorner(f, [&](Index c) { rows[c] = row++; });
+    return rows;
+}
+
+std::vector<Index> faceVertexCorners(const Mesh& mesh)
+{
+    std::vector<Index> corners;
+    corners.reserve(mesh.numCorners());
+    for (Index f = 0; f < mesh.faceCapacity(); ++f)
+        if (mesh.faceValid(f))
+            mesh.forEachFaceCorner(f, [&](Index c) { corners.push_back(c); });
+    return corners;
+}
+
 namespace
 {
 /** The edge at p other than e on face f, kInvalid if f does not hold e at p. */

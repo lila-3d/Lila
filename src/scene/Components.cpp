@@ -9,6 +9,7 @@
 #include "scene/Isolation.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
+#include "uv/Uv.h"
 
 #include <algorithm>
 #include <set>
@@ -23,6 +24,7 @@ struct State
 {
     ComponentMode mode = ComponentMode::Object;
     std::map<NodeId, Ids> sets[3]; // vertex, edge, face
+    std::map<NodeId, Ids> uvCorners;
     /** Picks per kind, newest last; entries may since be deselected or repeated, ordered() sorts that out. */
     std::vector<std::pair<NodeId, uint32_t>> picks[3];
     std::map<int, std::function<void()>> listeners;
@@ -64,12 +66,13 @@ void notify()
 struct Snapshot
 {
     std::map<NodeId, Ids> sets[3];
+    std::map<NodeId, Ids> uvCorners;
 
     size_t bytes() const
     {
         size_t n = 0;
-        for (const auto& set : sets)
-            for (const auto& [id, ids] : set)
+        for (const auto* set : {&sets[0], &sets[1], &sets[2], &uvCorners})
+            for (const auto& [id, ids] : *set)
                 n += 64 + ids.capacity() * sizeof(uint32_t);
         return n;
     }
@@ -80,6 +83,7 @@ Snapshot snapshot()
     Snapshot s;
     for (int i = 0; i < 3; ++i)
         s.sets[i] = st().sets[i];
+    s.uvCorners = st().uvCorners;
     return s;
 }
 
@@ -87,6 +91,7 @@ void restore(const Snapshot& s)
 {
     for (int i = 0; i < 3; ++i)
         st().sets[i] = s.sets[i];
+    st().uvCorners = s.uvCorners;
     notify();
 }
 
@@ -127,6 +132,7 @@ void ensureGraphListener()
         {
             for (auto& s : st().sets)
                 s.clear();
+            st().uvCorners.clear();
             for (auto& p : st().picks)
                 p.clear();
             notify();
@@ -138,6 +144,7 @@ void ensureGraphListener()
             bool any = false;
             for (auto& s : st().sets)
                 any |= s.erase(id) > 0;
+            st().uvCorners.erase(id);
             if (any)
                 notify();
         }
@@ -257,6 +264,13 @@ void select(NodeId node, ComponentMode kind, const Ids& ids, Op op)
 {
     ensureGraphListener();
     Snapshot before = snapshot();
+    if (kind == ComponentMode::Vertex)
+    {
+        if (op == Op::Replace)
+            st().uvCorners.clear();
+        else
+            st().uvCorners.erase(node);
+    }
     auto& sets = st().sets[slot(kind)];
     Ids& cur = sets[node];
     Ids in = sortedUnique(ids);
@@ -328,21 +342,103 @@ void clear()
     Snapshot before = snapshot();
     for (auto& s : st().sets)
         s.clear();
+    st().uvCorners.clear();
     for (auto& p : st().picks)
         p.clear();
     record(std::move(before));
     notify();
 }
 
-void setAll(std::map<NodeId, Ids> points, std::map<NodeId, Ids> edges, std::map<NodeId, Ids> faces)
+void setAll(std::map<NodeId, Ids> points, std::map<NodeId, Ids> edges, std::map<NodeId, Ids> faces, std::map<NodeId, Ids> uvCorners)
 {
     ensureGraphListener();
     Snapshot before = snapshot();
     st().sets[0] = std::move(points);
     st().sets[1] = std::move(edges);
     st().sets[2] = std::move(faces);
+    st().uvCorners = std::move(uvCorners);
     for (auto& p : st().picks)
         p.clear();
+    record(std::move(before));
+    notify();
+}
+
+const std::map<NodeId, Ids>& uvCorners() { return st().uvCorners; }
+
+const Ids& uvCorners(NodeId node)
+{
+    static const Ids empty;
+    auto it = st().uvCorners.find(node);
+    return it == st().uvCorners.end() ? empty : it->second;
+}
+
+Ids uvRows(NodeId node) { return uvRows(node, uvCorners(node)); }
+
+Ids uvRows(NodeId node, const Ids& corners)
+{
+    MeshPtr m = corners.empty() ? nullptr : meshOf(node);
+    if (!m)
+        return {};
+    const std::vector<geo::Index> rows = geo::faceVertexRows(*m);
+    Ids out;
+    for (uint32_t c : corners)
+        if (c < rows.size() && rows[c] != geo::kInvalid)
+            out.push_back(rows[c]);
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+void selectUvCorners(NodeId node, const Ids& corners, Op op)
+{
+    ensureGraphListener();
+    MeshPtr m = meshOf(node);
+    if (!m)
+        return;
+    Snapshot before = snapshot();
+    Ids cur = uvCorners(node);
+    if (cur.empty() && op != Op::Replace)
+        for (uint32_t p : selected(node, ComponentMode::Vertex))
+            if (m->pointValid(p))
+                m->forEachPointCorner(p, [&](geo::Index c) { cur.push_back(c); });
+    cur = sortedUnique(std::move(cur));
+    Ids in;
+    for (uint32_t c : corners)
+        if (m->cornerValid(c))
+            in.push_back(c);
+    in = sortedUnique(std::move(in));
+    Ids out;
+    switch (op)
+    {
+    case Op::Replace: out = std::move(in); break;
+    case Op::Add: std::set_union(cur.begin(), cur.end(), in.begin(), in.end(), std::back_inserter(out)); break;
+    case Op::Remove: std::set_difference(cur.begin(), cur.end(), in.begin(), in.end(), std::back_inserter(out)); break;
+    case Op::Toggle: std::set_symmetric_difference(cur.begin(), cur.end(), in.begin(), in.end(), std::back_inserter(out)); break;
+    }
+    Ids points;
+    for (uint32_t c : out)
+        points.push_back(m->cornerPoint(c));
+    points = sortedUnique(std::move(points));
+    auto& sets = st().sets[slot(ComponentMode::Vertex)];
+    auto& picks = st().picks[slot(ComponentMode::Vertex)];
+    if (op == Op::Replace)
+    {
+        sets.clear();
+        st().uvCorners.clear();
+        picks.clear();
+    }
+    if (out.empty())
+    {
+        sets.erase(node);
+        st().uvCorners.erase(node);
+    }
+    else
+    {
+        sets[node] = points;
+        st().uvCorners[node] = std::move(out);
+    }
+    if (op != Op::Remove)
+        for (uint32_t c : in)
+            picks.emplace_back(node, m->cornerPoint(c));
     record(std::move(before));
     notify();
 }
@@ -609,13 +705,16 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "selectComponents",
-        .doc = "Select vertices, edges or faces of a mesh by id. Ids may be [first, last] ranges. Without add/deselect/toggle "
-               "it replaces the selection of that kind.",
+        .doc = "Select vertices, edges, faces or uvs of a mesh by id. Ids may be [first, last] ranges. Without add/deselect/toggle "
+               "it replaces the selection of that kind. uvs are face-vertex rows (Node.uvs_array's rows), each widened to its whole "
+               "uv vertex; they select in vertex mode, and uv tools then move just those uvs.",
         .positionalDoc = "mesh",
         .flags = {
             {"vertices", "", T::List, nullptr, "Point ids."},
             {"edges", "", T::List, nullptr, "Edge ids."},
             {"faces", "", T::List, nullptr, "Face ids."},
+            {"uvs", "", T::List, nullptr, "Face-vertex rows, as in Node.uvs_array."},
+            {"uvSet", "", T::String, "", "Set whose uv vertices the uvs widen to; empty for the current one."},
             {"add", "", T::Bool, false, "Add to the selection."},
             {"deselect", "", T::Bool, false, "Remove from the selection."},
             {"toggle", "", T::Bool, false, "Toggle."},
@@ -626,7 +725,7 @@ void registerCommands()
             if (objs.empty())
                 throw CommandError("selectComponents: no mesh");
             Node* found = Graph::current().find(objs.back());
-            if (found && pointProvider(*found) && (a.has("edges") || a.has("faces")))
+            if (found && pointProvider(*found) && (a.has("edges") || a.has("faces") || a.has("uvs")))
                 throw CommandError("selectComponents: " + objs.back() + " has only points");
             Node& n = found && pointProvider(*found) ? *found : meshNode(objs.back(), "selectComponents");
             Op op = a.get<bool>("add") ? Op::Add : a.get<bool>("deselect") ? Op::Remove : a.get<bool>("toggle") ? Op::Toggle : Op::Replace;
@@ -641,8 +740,28 @@ void registerCommands()
                         setMode(kind);
                     any = true;
                 }
+            if (a.has("uvs"))
+            {
+                MeshPtr m = meshOf(n.id());
+                if (!m)
+                    throw CommandError("selectComponents: " + objs.back() + " has no mesh");
+                const std::vector<geo::Index> rows = geo::faceVertexCorners(*m);
+                std::vector<geo::Index> corners;
+                for (uint32_t r : idsArg(a.flags["uvs"]))
+                {
+                    if (r >= rows.size())
+                        throw CommandError("selectComponents: uv " + std::to_string(r) + " out of range (" + std::to_string(rows.size()) + " face-vertices)");
+                    corners.push_back(rows[r]);
+                }
+                std::string set = a.get<std::string>("uvSet", "");
+                corners = geo::uvVertexCorners(*m, set.empty() ? uv::currentUvSet() : set, corners);
+                selectUvCorners(n.id(), Ids(corners.begin(), corners.end()), op);
+                if (!any)
+                    setMode(ComponentMode::Vertex);
+                any = true;
+            }
             if (!any)
-                throw CommandError("selectComponents: give vertices=, edges= or faces=");
+                throw CommandError("selectComponents: give vertices=, edges=, faces= or uvs=");
             return nullptr;
         },
     });
@@ -664,7 +783,8 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "componentSelection",
-        .doc = "Selected components: {mesh: {\"vertices\": [...], \"edges\": [...], \"faces\": [...]}}. ordered=True gives a flat list "
+        .doc = "Selected components: {mesh: {\"vertices\": [...], \"edges\": [...], \"faces\": [...], \"uvs\": [...]}}, uvs (face-vertex rows, as in "
+               "Node.uvs_array) only when the vertices were picked as uvs in the UV Editor. ordered=True gives a flat list "
                "[[mesh, kind, id], ...] in pick order instead (kind is vertex, edge or face).",
         .flags = {{"ordered", "", T::Bool, false, "True: a flat list [[mesh, kind, id], ...] in the order the components were picked. False: grouped per mesh and kind, ids sorted "
                                                     "ascending, pick order lost."}},
@@ -685,6 +805,9 @@ void registerCommands()
                 for (auto& [node, ids] : selected(kind))
                     if (Node* n = g.node(node))
                         out[n->path()][key] = ids;
+            for (const auto& [node, corners] : st().uvCorners)
+                if (Node* n = g.node(node))
+                    out[n->path()]["uvs"] = uvRows(node);
             return out;
         },
     });

@@ -60,7 +60,7 @@ UvView::Hit UvView::hitAt(QPointF s, ComponentMode mode) const
                 if (px < bestPx)
                 {
                     bestPx = px;
-                    hit = {mi, mMeshes[mi].mesh->cornerPoint(mMeshes[mi].corner[k])};
+                    hit = {mi, mMeshes[mi].corner[k]};
                 }
             }
     }
@@ -112,18 +112,16 @@ void UvView::drawPreselect(QPainter& p)
     const QColor hot = gray(200);
     // With symmetry the mirror image lights up too, since a click selects both.
     Index mirrorId = geo::kInvalid;
-    if (const geo::SymmetryMap* sym = symmetryOf(mu))
-        mirrorId = mPreselect.mode == ComponentMode::Vertex ? sym->mirrorPoint(mPreselect.id)
-                   : mPreselect.mode == ComponentMode::Edge ? sym->mirrorEdge(m, mPreselect.id)
-                                                             : sym->mirrorFace(m, mPreselect.id);
+    if (const geo::SymmetryMap* sym = symmetryOf(mu); sym && mPreselect.mode != ComponentMode::Vertex)
+        mirrorId = mPreselect.mode == ComponentMode::Edge ? sym->mirrorEdge(m, mPreselect.id) : sym->mirrorFace(m, mPreselect.id);
     auto lit = [&](Index id) { return id == mPreselect.id || (mirrorId != geo::kInvalid && id == mirrorId); };
     if (mPreselect.mode == ComponentMode::Vertex)
     {
         p.setPen(QPen(gray(20), 1.0));
         p.setBrush(hot);
-        for (size_t k = 0; k < mu.uv.size(); ++k)
-            if (lit(m.cornerPoint(mu.corner[k])))
-                p.drawRect(QRectF(toScreen(drawnUv(mi, k)) - QPointF(4.0, 4.0), QSizeF(8.0, 8.0)));
+        for (Index c : uvVertices(mu.node, {mPreselect.id}))
+            if (c < mu.entryOf.size() && mu.entryOf[c] != ~0u)
+                p.drawRect(QRectF(toScreen(drawnUv(mi, mu.entryOf[c])) - QPointF(4.0, 4.0), QSizeF(8.0, 8.0)));
     }
     else if (mPreselect.mode == ComponentMode::Edge)
     {
@@ -201,7 +199,7 @@ void UvView::pickRect(QRectF r, Qt::KeyboardModifiers mods)
         {
             for (size_t k = 0; k < mu.uv.size(); ++k)
                 if (r.contains(toScreen(mu.uv[k])))
-                    out.push_back(m.cornerPoint(mu.corner[k]));
+                    out.push_back(mu.corner[k]);
         }
         else if (mode == ComponentMode::Edge)
         {
@@ -278,7 +276,10 @@ std::optional<bool> UvView::selectedUnder(QPointF s) const
     Hit hit = hitAt(s, mode);
     if (hit.id == geo::kInvalid)
         return std::nullopt;
-    const scene::components::Ids& ids = scene::components::selected(mMeshes[hit.mesh].node, mode);
+    const MeshUv& mu = mMeshes[hit.mesh];
+    if (mode == ComponentMode::Vertex)
+        return hit.id < mu.entryOf.size() && mu.entryOf[hit.id] != ~0u && selectedEntries(mu)[mu.entryOf[hit.id]] != 0;
+    const scene::components::Ids& ids = scene::components::selected(mu.node, mode);
     return std::ranges::find(ids, hit.id) != ids.end();
 }
 
@@ -295,9 +296,13 @@ std::map<scene::NodeId, scene::components::Ids> UvView::componentsUnder(QPointF 
         scene::components::Ids ids;
         if (mode == ComponentMode::Vertex)
         {
+            std::vector<Index> corners;
             for (size_t k = 0; k < mu.uv.size(); ++k)
                 if (QPointF d = toScreen(mu.uv[k]) - s; std::hypot(d.x(), d.y()) <= radiusPx)
-                    ids.push_back(m.cornerPoint(mu.corner[k]));
+                    corners.push_back(mu.corner[k]);
+            if (!corners.empty())
+                for (Index c : uvVertices(mu.node, corners))
+                    ids.push_back(c);
         }
         else if (mode == ComponentMode::Edge)
         {
@@ -381,8 +386,18 @@ void UvView::apply(ComponentMode mode, const std::map<scene::NodeId, std::vector
         scene::Node* n = g.node(id);
         if (!n)
             continue;
-        const std::vector<Index> ids = withMirror(id, mode, picked);
-        json call = {{"args", {n->path()}}, {flag, ids}};
+        json call = {{"args", {n->path()}}};
+        if (mode == ComponentMode::Vertex)
+        {
+            auto mu = std::find_if(mMeshes.begin(), mMeshes.end(), [&](const MeshUv& m) { return m.node == id; });
+            if (mu == mMeshes.end())
+                continue;
+            const std::vector<Index> corners = uvVertices(id, picked);
+            call["uvs"] = scene::components::uvRows(id, scene::components::Ids(corners.begin(), corners.end()));
+            call["uvSet"] = mu->set;
+        }
+        else
+            call[flag] = withMirror(id, mode, picked);
         if (shift && ctrl)
             call["add"] = true;
         else if (ctrl)

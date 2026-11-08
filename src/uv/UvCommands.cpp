@@ -411,15 +411,6 @@ std::vector<double> listArg(const Args& a, std::string_view name, size_t n, doub
     return out;
 }
 
-/** Corners moved by a component selection: faces' uv wedges, or every corner of the selected points. */
-std::vector<Index> cornersOf(const geo::Mesh& m, ComponentMode kind, const Ids& ids, std::string_view uvSet)
-{
-    if (kind == ComponentMode::Face || ids.empty())
-        return uvCornersOfFaces(m, uvSet, ids);
-    Ids pts = scene::components::convert(m, kind, ids, ComponentMode::Vertex);
-    return cornersOfPoints(m, pts);
-}
-
 /** Unmarks the seams and welds the uvs across them, first moving each smaller island onto its neighbour. */
 json sewEdges(geo::Mesh& m, std::span<const Index> edges, std::string_view uvSet, bool move = true)
 {
@@ -653,22 +644,50 @@ UvMeshEditFn symmetricUvEdit(std::string uvSet, UvMeshEditFn fn)
     };
 }
 
-std::vector<Index> withMirrorCorners(const Node& n, const geo::Mesh& m, std::span<const Index> corners)
+std::vector<Index> mirrorCorners(const geo::SymmetryMap& map, const geo::Mesh& m, std::span<const Index> corners)
 {
     std::vector<Index> out(corners.begin(), corners.end());
-    if (std::optional<geo::SymmetryMap> map = uvSymmetryMap(n, m))
-        for (Index c : corners)
+    for (Index c : corners)
+    {
+        if (!m.cornerValid(c))
+            continue;
+        for (int g = 1; g < map.order(); ++g)
         {
-            if (!m.cornerValid(c))
-                continue;
-            Index f = map->mirrorFace(m, m.cornerFace(c)), p = map->mirrorPoint(m.cornerPoint(c));
+            Index f = map.imageFace(m, g, m.cornerFace(c)), p = map.image(g, m.cornerPoint(c));
             if (f != kInvalid && p != kInvalid)
                 if (Index mc = m.findCorner(f, p); mc != kInvalid)
                     out.push_back(mc);
         }
+    }
     std::sort(out.begin(), out.end());
     out.erase(std::unique(out.begin(), out.end()), out.end());
     return out;
+}
+
+std::vector<Index> withMirrorCorners(const Node& n, const geo::Mesh& m, std::span<const Index> corners)
+{
+    if (std::optional<geo::SymmetryMap> map = uvSymmetryMap(n, m))
+        return mirrorCorners(*map, m, corners);
+    std::vector<Index> out(corners.begin(), corners.end());
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
+std::vector<Index> selectionCorners(const geo::Mesh& m, scene::NodeId node, ComponentMode kind, std::span<const uint32_t> ids, std::string_view uvSet)
+{
+    if (kind == ComponentMode::Vertex)
+        if (const Ids& picked = scene::components::uvCorners(node); !picked.empty())
+        {
+            std::vector<Index> out;
+            for (uint32_t c : picked)
+                if (m.cornerValid(c))
+                    out.push_back(c);
+            return out;
+        }
+    if (kind == ComponentMode::Face || ids.empty())
+        return uvCornersOfFaces(m, uvSet, ids);
+    return cornersOfPoints(m, scene::components::convert(m, kind, Ids(ids.begin(), ids.end()), ComponentMode::Vertex));
 }
 
 std::vector<Index> withMirrorEdges(const Node& n, const geo::Mesh& m, std::span<const Index> edges)
@@ -1436,7 +1455,7 @@ void registerCommands()
                         groups.push_back(uvCornersOfFaces(m, set, island));
                 }
                 else
-                    groups.push_back(cornersOf(m, kind, ids, set));
+                    groups.push_back(selectionCorners(m, n.id(), kind, ids, set));
                 std::vector<Index> all;
                 for (const std::vector<Index>& corners : groups)
                     all.insert(all.end(), corners.begin(), corners.end());

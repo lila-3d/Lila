@@ -259,11 +259,13 @@ Stroke::Op Stroke::opFor(Qt::KeyboardModifiers mods, Op plain)
 
 void Stroke::begin(Op op) { begin(op, scene::components::mode()); }
 
-void Stroke::begin(Op op, ComponentMode mode)
+void Stroke::begin(Op op, ComponentMode mode, bool uvs)
 {
     mActive = true;
     mOp = op;
     mMode = mode;
+    mUvs = uvs && mode == ComponentMode::Vertex;
+    mStartUvs = scene::components::uvCorners();
     mTouched.clear();
     mTouchedObjects.clear();
     for (ComponentMode k : {ComponentMode::Vertex, ComponentMode::Edge, ComponentMode::Face})
@@ -318,7 +320,7 @@ void Stroke::restoreStart()
         if (mMode == ComponentMode::Object)
             scene::Graph::current().select(mStartObjects);
         else
-            scene::components::setAll(mStart[0], mStart[1], mStart[2]);
+            scene::components::setAll(mStart[0], mStart[1], mStart[2], mStartUvs);
     });
 }
 
@@ -339,14 +341,17 @@ void Stroke::preview()
         {
             std::map<NodeId, scene::components::Ids> sets[3] = {mStart[0], mStart[1], mStart[2]};
             sets[slot(mMode)].clear();
-            scene::components::setAll(sets[0], sets[1], sets[2]);
+            scene::components::setAll(sets[0], sets[1], sets[2], mMode == ComponentMode::Vertex ? std::map<NodeId, scene::components::Ids>{} : mStartUvs);
             return;
         }
         bool first = true;
         for (auto& [node, ids] : mTouched)
         {
             CO op = mOp == Op::Replace ? (first ? CO::Replace : CO::Add) : mOp == Op::Add ? CO::Add : mOp == Op::Remove ? CO::Remove : CO::Toggle;
-            scene::components::select(node, mMode, scene::components::Ids(ids.begin(), ids.end()), op);
+            if (mUvs)
+                scene::components::selectUvCorners(node, scene::components::Ids(ids.begin(), ids.end()), op);
+            else
+                scene::components::select(node, mMode, scene::components::Ids(ids.begin(), ids.end()), op);
             first = false;
         }
     });
@@ -409,12 +414,19 @@ void Stroke::end()
             const scene::Node* n = g.node(node);
             if (!n)
                 continue;
-            json call = {{"args", {n->path()}}, {flag, scene::components::Ids(ids.begin(), ids.end())}};
+            const scene::components::Ids touched(ids.begin(), ids.end());
+            json call = {{"args", {n->path()}}};
+            if (mUvs)
+                call["uvs"] = scene::components::uvRows(node, touched);
+            else
+                call[flag] = touched;
             flags(call);
             if (mOp == Op::Replace && !first)
                 call["add"] = true;
             first = false;
-            call["symmetric"] = PrefStore::get().value<bool>("general", "/select/symmetric", true);
+            // UV views mirror the uvs they touch themselves.
+            if (!mUvs)
+                call["symmetric"] = PrefStore::get().value<bool>("general", "/select/symmetric", true);
             ops::execute("selectComponents", call, CallSource::UI);
         }
     }

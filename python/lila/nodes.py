@@ -376,6 +376,12 @@ class Node:
         """(C, 2) float32 numpy array of a uv set per face-vertex, in normals_array's order."""
         return _lila.mesh_uv_array(self.path, uv_set, base, out)
 
+    def selected_uvs(self):
+        """uint32 numpy array of the face-vertex rows picked as uvs in the UV Editor, sorted, so
+        uvs_array(base=True)[selected_uvs()] are their uvs. Empty when the vertices were picked in the viewport;
+        selectComponents(mesh, uvs=rows) selects by row."""
+        return _lila.mesh_selected_uvs(self.path)
+
     def attribute_names(self, base=False):
         """[(name, domain, type)] of every mesh attribute: domain point/edge/face/corner, type float..float4/int/bool."""
         return _lila.mesh_attribute_names(self.path, base)

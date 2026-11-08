@@ -1701,7 +1701,7 @@ def componentInfo(*objects: Any, kind: str | None = None, ids: Sequence[Any] | N
     """
 
 def componentSelection(ordered: bool | None = None) -> Any:
-    """Selected components: {mesh: {"vertices": [...], "edges": [...], "faces": [...]}}. ordered=True gives a flat list [[mesh, kind, id], ...] in pick order instead (kind is vertex, edge or face).
+    """Selected components: {mesh: {"vertices": [...], "edges": [...], "faces": [...], "uvs": [...]}}, uvs (face-vertex rows, as in Node.uvs_array) only when the vertices were picked as uvs in the UV Editor. ordered=True gives a flat list [[mesh, kind, id], ...] in pick order instead (kind is vertex, edge or face).
 
     Args:
         ordered: True: a flat list [[mesh, kind, id], ...] in the order the components were picked. False: grouped per mesh and kind, ids sorted ascending, pick order lost. Default False.
@@ -6594,9 +6594,9 @@ def quadRemesh(*objects: Any, preset: str | None = None, method: str | None = No
         useHardEdges: Follow edges marked hard. Default True.
         sharpAngle: Also follow creases sharper than this, degrees; negative disables. Default 40.0.
         symmetry: off, x, y or z: remesh half and mirror, exactly symmetric. The mesh has to be symmetric across that plane through its origin. One of 'off', 'x', 'y', 'z'. Default 'x'.
-        guides: Mesh nodes whose edges are guide curves.
+        guides: Curves, or meshes whose edges trace lines, that the edge flow turns to follow. Draw them on the mesh with Curves > Pencil Curve (S draws on the surface).
         guidePoints: Guide polylines as lists of world [x, y, z].
-        featureGuides: Mesh nodes whose edges get an edge loop laid on them, like a hard edge.
+        featureGuides: Curves, or meshes whose edges trace lines, that get an edge loop laid exactly on them, like a hard edge. Draw them as for guides.
         featureGuidePoints: Feature guide polylines as lists of world [x, y, z].
         densityHandles: Local face size as {position: world [x, y, z], radius, scale}: scale times the edge length at the centre (0.35 to 2.8), easing out to the radius.
         pureQuads: All quads; false allows a few triangles and pentagons. Default True.
@@ -7240,9 +7240,9 @@ def retopoPoles(*objects: Any, preset: str | None = None, method: str | None = N
         useHardEdges: Follow edges marked hard. Default True.
         sharpAngle: Also follow creases sharper than this, degrees; negative disables. Default 40.0.
         symmetry: off, x, y or z: remesh half and mirror, exactly symmetric. The mesh has to be symmetric across that plane through its origin. One of 'off', 'x', 'y', 'z'. Default 'off'.
-        guides: Mesh nodes whose edges are guide curves.
+        guides: Curves, or meshes whose edges trace lines, that the edge flow turns to follow. Draw them on the mesh with Curves > Pencil Curve (S draws on the surface).
         guidePoints: Guide polylines as lists of world [x, y, z].
-        featureGuides: Mesh nodes whose edges get an edge loop laid on them, like a hard edge.
+        featureGuides: Curves, or meshes whose edges trace lines, that get an edge loop laid exactly on them, like a hard edge. Draw them as for guides.
         featureGuidePoints: Feature guide polylines as lists of world [x, y, z].
         densityHandles: Local face size as {position: world [x, y, z], radius, scale}: scale times the edge length at the centre (0.35 to 2.8), easing out to the radius.
         pureQuads: All quads; false allows a few triangles and pentagons. Default True.
@@ -7889,14 +7889,16 @@ def selectByMaterial(*objects: Any, faces: bool | None = None, f: bool | None = 
         faces: Force faces (true) or whole objects (false); unset picks by coverage. Short form f.
     """
 
-def selectComponents(*objects: Any, vertices: Sequence[Any] | None = None, edges: Sequence[Any] | None = None, faces: Sequence[Any] | None = None, add: bool | None = None, deselect: bool | None = None, toggle: bool | None = None, symmetric: bool | None = None) -> Any:
-    """Select vertices, edges or faces of a mesh by id. Ids may be [first, last] ranges. Without add/deselect/toggle it replaces the selection of that kind.
+def selectComponents(*objects: Any, vertices: Sequence[Any] | None = None, edges: Sequence[Any] | None = None, faces: Sequence[Any] | None = None, uvs: Sequence[Any] | None = None, uvSet: str | None = None, add: bool | None = None, deselect: bool | None = None, toggle: bool | None = None, symmetric: bool | None = None) -> Any:
+    """Select vertices, edges, faces or uvs of a mesh by id. Ids may be [first, last] ranges. Without add/deselect/toggle it replaces the selection of that kind. uvs are face-vertex rows (Node.uvs_array's rows), each widened to its whole uv vertex; they select in vertex mode, and uv tools then move just those uvs.
 
     Args:
         objects: mesh.
         vertices: Point ids.
         edges: Edge ids.
         faces: Face ids.
+        uvs: Face-vertex rows, as in Node.uvs_array.
+        uvSet: Set whose uv vertices the uvs widen to; empty for the current one.
         add: Add to the selection. Default False.
         deselect: Remove from the selection. Default False.
         toggle: Toggle. Default False.

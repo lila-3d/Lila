@@ -138,14 +138,6 @@ std::vector<FlagDef> optionFlags()
             {"keepScale", "", T::Bool, true, "Keep each island's size; off solves at 3D scale."}};
 }
 
-/** uv corners a component selection covers: faces' uv wedges, or every corner of the selected points. */
-std::vector<Index> selectionCorners(const geo::Mesh& m, ComponentMode kind, const Ids& ids, std::string_view set)
-{
-    if (kind == ComponentMode::Face || ids.empty())
-        return uvCornersOfFaces(m, set, ids);
-    return cornersOfPoints(m, scene::components::convert(m, kind, ids, ComponentMode::Vertex));
-}
-
 ComponentMode editKind()
 {
     ComponentMode k = scene::components::mode();
@@ -242,7 +234,7 @@ void registerLiveCommands()
                     }
                     if (ids.empty())
                         throw CommandError(std::string(on ? "uvPin" : "uvUnpin") + ": select uv components");
-                    std::vector<Index> corners = withMirrorCorners(n, m, selectionCorners(m, kind, ids, set));
+                    std::vector<Index> corners = withMirrorCorners(n, m, selectionCorners(m, n.id(), kind, ids, set));
                     for (Index c : corners)
                         pin[c] = on;
                     return {{"corners", corners.size()}};
@@ -263,7 +255,7 @@ void registerLiveCommands()
             ComponentMode kind = editKind();
             return editUvMeshes("UV Stiffness", kind, [&](geo::Mesh& m, const Ids& ids, Node& n) -> json {
                 std::span<float> st = m.cornerAttrs().getOrAdd<float>("uvStiffness");
-                std::vector<Index> corners = withMirrorCorners(n, m, selectionCorners(m, kind, ids, set));
+                std::vector<Index> corners = withMirrorCorners(n, m, selectionCorners(m, n.id(), kind, ids, set));
                 for (Index c : corners)
                     st[c] = k;
                 return {{"corners", corners.size()}};

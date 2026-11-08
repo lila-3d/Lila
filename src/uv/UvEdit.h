@@ -61,6 +61,16 @@ LILA_SCENE_API std::vector<geo::Index> mirrorComponents(const geo::SymmetryMap& 
 /** fn under withUvSymmetry (Absolute): islands it re-solves come out symmetric when the node's symmetry is on. */
 LILA_SCENE_API UvMeshEditFn symmetricUvEdit(std::string uvSet, UvMeshEditFn fn);
 
+/** The corners plus their images under the map, sorted and unique. */
+LILA_SCENE_API std::vector<geo::Index> mirrorCorners(const geo::SymmetryMap& map, const geo::Mesh& m, std::span<const geo::Index> corners);
+
+/**
+ * The uv corners a component selection covers: the uv vertices picked in the UV Editor when the vertex selection came
+ * from there, else faces' uv wedges, or every corner of the selected points or edges.
+ */
+LILA_SCENE_API std::vector<geo::Index> selectionCorners(const geo::Mesh& m, scene::NodeId node, scene::ComponentMode kind,
+                                                        std::span<const uint32_t> ids, std::string_view uvSet);
+
 /** The corners, edges or points plus their mirror images when the node's symmetry is on, sorted and unique. */
 LILA_SCENE_API std::vector<geo::Index> withMirrorCorners(const scene::Node& n, const geo::Mesh& m, std::span<const geo::Index> corners);
 LILA_SCENE_API std::vector<geo::Index> withMirrorEdges(const scene::Node& n, const geo::Mesh& m, std::span<const geo::Index> edges);

@@ -3,6 +3,7 @@
 #include "geo/Mesh.h"
 #include "geo/Normals.h"
 #include "ops/Command.h"
+#include "scene/Components.h"
 #include "scene/Graph.h"
 #include "scene/Materials.h"
 #include "scene/MeshNodes.h"
@@ -556,6 +557,18 @@ nb::object uvArray(const std::string& mesh, const std::string& set, bool base, n
     return d.result();
 }
 
+nb::object selectedUvs(const std::string& mesh)
+{
+    requireMainThread("selected_uvs");
+    const scene::components::Ids rows = scene::components::uvRows(meshNode(mesh).id());
+    Dest d(rows.size(), 0, Scalar::U32);
+    d.visit([&]<class O>(O* dst) {
+        for (uint32_t r : rows)
+            *dst++ = O(r);
+    });
+    return d.result();
+}
+
 std::pair<nb::object, std::vector<std::string>> materialArray(const std::string& mesh, bool base, nb::handle out)
 {
     scene::MeshPtr m = meshOf(mesh, base, "material_array");
@@ -741,6 +754,8 @@ void bindMeshArrays(nb::module_& m)
           "[{name, weight, indices, deltas}] of the mesh's morph targets, in-betweens expanded; sparse object-space deltas.");
     m.def("mesh_uv_array", &uvArray, nb::arg("mesh"), nb::arg("uv_set") = "uv0", nb::arg("base") = false, nb::arg("out") = nb::none(),
           "(C, 2) float32 uvs per face-vertex, in mesh_normals_array's order.");
+    m.def("mesh_selected_uvs", &selectedUvs, nb::arg("mesh"),
+          "(K,) uint32 face-vertex rows of the uvs picked in the UV Editor, sorted; empty when the vertices were picked elsewhere.");
     m.def("mesh_material_array", &materialArray, nb::arg("mesh"), nb::arg("base") = false, nb::arg("out") = nb::none(),
           "(slots, names): each face's material slot (F,) uint32 in mesh_face_arrays' face order, and the slot names it indexes.");
     m.def("mesh_uv_sets", &uvSets, nb::arg("mesh"), nb::arg("base") = false, "The mesh's uv set names (uv0, uv1, ...).");

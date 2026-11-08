@@ -5,6 +5,7 @@
 #include "geo/Mesh.h"
 
 #include <span>
+#include <string_view>
 #include <vector>
 
 namespace lila::geo
@@ -56,4 +57,18 @@ LILA_SCENE_API std::vector<Index> uniqueSorted(std::span<const Index> ids);
 
 /** Byte mask of size n with the given ids set. */
 LILA_SCENE_API std::vector<uint8_t> makeMask(size_t n, std::span<const Index> ids);
+
+/**
+ * The corners plus every corner sharing their uv around the same point without crossing a seam: whole uv vertices, so
+ * moving them keeps islands whole and leaves islands that only touch across a cut behind. Sorted, unique.
+ */
+LILA_SCENE_API std::vector<Index> uvVertexCorners(const Mesh& mesh, std::string_view uvSet, std::span<const Index> corners);
+
+/**
+ * Corner id to its face-vertex row (faces in id order, corners around each face from faceCorner), kInvalid for dead
+ * corners. Rows index the per face-vertex arrays Python gets, such as Node.uvs_array.
+ */
+LILA_SCENE_API std::vector<Index> faceVertexRows(const Mesh& mesh);
+/** The inverse: one corner id per face-vertex row. */
+LILA_SCENE_API std::vector<Index> faceVertexCorners(const Mesh& mesh);
 } // namespace lila::geo

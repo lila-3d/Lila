@@ -1,4 +1,5 @@
 #include "TestUtil.h"
+#include "geo/Topology.h"
 #include "ops/Command.h"
 #include "scene/Graph.h"
 #include "scene/LastOp.h"
@@ -535,4 +536,67 @@ TEST_CASE("cut seams survive a planar projection under an auto bevel")
             top.push_back(f);
     REQUIRE(top.size() == 1);
     CHECK(uv::uvCornersOfFaces(*cage, "uv0", top).size() == 4);
+}
+
+TEST_CASE("uv vertex selection moves just the picked uvs of a shared point")
+{
+    run("newScene");
+    std::string cube = made(run("polyCube"));
+    run("select", {{"args", {cube}}});
+    run("uvProject", {{"type", "box"}});
+    const geo::Mesh& m0 = *meshOf(cube);
+    const std::vector<geo::Index> rows = geo::faceVertexCorners(m0);
+    const geo::Index c0 = rows[0], p0 = m0.cornerPoint(c0);
+    std::vector<geo::Index> shared;
+    m0.forEachPointCorner(p0, [&](geo::Index c) { shared.push_back(c); });
+    REQUIRE(shared.size() == 3);
+    const std::vector<glm::vec2> before = uvsOf(cube);
+
+    run("selectComponents", {{"args", {cube}}, {"uvs", {0}}});
+    json sel = run("componentSelection")[cube];
+    CHECK(sel["uvs"] == json::array({0}));
+    CHECK(sel["vertices"] == json::array({p0}));
+    CHECK(run("uvTransform", {{"translate", {0.25, 0.0}}})["corners"] == 1);
+    std::vector<glm::vec2> after = uvsOf(cube);
+    for (geo::Index c : shared)
+        CHECK(after[c].x == doctest::Approx(before[c].x + (c == c0 ? 0.25f : 0.0f)));
+
+    // A vertex pick from anywhere else drops the uvs and moves every corner of the point again.
+    run("selectComponents", {{"args", {cube}}, {"vertices", {p0}}});
+    CHECK_FALSE(run("componentSelection")[cube].contains("uvs"));
+    CHECK(run("uvTransform", {{"translate", {0.25, 0.0}}})["corners"] == 3);
+
+    // Undo brings the uv pick back with the selection.
+    run("undo");
+    run("undo");
+    CHECK(run("componentSelection")[cube]["uvs"] == json::array({0}));
+
+    // Adding a uv to a point selection made elsewhere keeps that point's corners.
+    run("selectComponents", {{"args", {cube}}, {"vertices", {p0}}});
+    run("selectComponents", {{"args", {cube}}, {"uvs", {1}}, {"add", true}});
+    CHECK(run("componentSelection")[cube]["uvs"].size() == 4);
+    run("selectComponents", {{"args", {cube}}, {"uvs", {1}}, {"deselect", true}});
+    CHECK(run("componentSelection")[cube]["uvs"].size() == 3);
+}
+
+TEST_CASE("selecting a uv widens to its whole uv vertex")
+{
+    run("newScene");
+    std::string cube = made(run("polyCube"));
+    run("select", {{"args", {cube}}});
+    run("uvProject", {{"type", "planar"}});
+    geo::Mesh m = *meshOf(cube);
+    const std::vector<geo::Index> rows = geo::faceVertexCorners(m);
+    const geo::Index p0 = m.cornerPoint(rows[0]);
+    std::span<const glm::vec2> uv = m.cornerAttrs().get<glm::vec2>("uv0");
+    const std::vector<geo::Index> group = geo::uvVertexCorners(m, "uv0", std::vector<geo::Index>{rows[0]});
+    for (geo::Index c : group)
+        CHECK(m.cornerPoint(c) == p0);
+    for (geo::Index c : group)
+        CHECK(uv[c] == uv[rows[0]]);
+    run("selectComponents", {{"args", {cube}}, {"uvs", {0}}});
+    CHECK(run("componentSelection")[cube]["uvs"].size() == group.size());
+    const std::vector<geo::Index> back = geo::faceVertexRows(m);
+    for (geo::Index r = 0; r < rows.size(); ++r)
+        CHECK(back[rows[r]] == r);
 }

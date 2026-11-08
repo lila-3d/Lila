@@ -241,6 +241,8 @@ private:
 
     /** ids plus their mirror images while the mesh's symmetry is on. */
     std::vector<Index> withMirror(scene::NodeId node, ComponentMode mode, const std::vector<Index>& ids) const;
+    /** The corners widened to whole uv vertices, plus their mirror images when the mesh's symmetry is on. */
+    std::vector<Index> uvVertices(scene::NodeId node, const std::vector<Index>& corners) const;
 
     bool hasSelection() const;
 

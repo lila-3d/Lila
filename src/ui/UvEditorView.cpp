@@ -312,7 +312,8 @@ void UvView::mousePressEvent(QMouseEvent* e)
     {
         tabSelect::Mode m = tabSelect::modeAtPress(selectedUnder(e->position()), e->modifiers() & Qt::ShiftModifier,
                                                    e->modifiers() & Qt::ControlModifier);
-        mTabStroke.begin(m == tabSelect::Mode::Select ? paintSelect::Stroke::Op::Add : paintSelect::Stroke::Op::Remove, pickMode());
+        mTabStroke.begin(m == tabSelect::Mode::Select ? paintSelect::Stroke::Op::Add : paintSelect::Stroke::Op::Remove, pickMode(),
+                         pickMode() == ComponentMode::Vertex);
         tabPaint(e->position(), e->position());
         return;
     }
@@ -783,12 +784,7 @@ std::vector<uint8_t> UvView::selectedEntries(const MeshUv& mu) const
     const auto& ids = scene::components::selected(mu.node, mode);
     if (ids.empty())
         return mask;
-    std::vector<Index> corners;
-    if (mode == ComponentMode::Face)
-        corners = uv::uvCornersOfFaces(m, mu.set, ids);
-    else
-        corners = uv::cornersOfPoints(m, scene::components::convert(m, mode, ids, ComponentMode::Vertex));
-    for (Index c : corners)
+    for (Index c : uv::selectionCorners(m, mu.node, mode, ids, mu.set))
         if (c < mu.entryOf.size() && mu.entryOf[c] != ~0u)
             mask[mu.entryOf[c]] = 1;
     return mask;
@@ -825,6 +821,18 @@ std::vector<Index> UvView::withMirror(scene::NodeId node, ComponentMode mode, co
     auto it = std::find_if(mMeshes.begin(), mMeshes.end(), [&](const MeshUv& m) { return m.node == node; });
     const geo::SymmetryMap* s = it != mMeshes.end() ? symmetryOf(*it) : nullptr;
     return s ? uv::mirrorComponents(*s, *it->mesh, mode, ids) : ids;
+}
+
+std::vector<Index> UvView::uvVertices(scene::NodeId node, const std::vector<Index>& corners) const
+{
+    auto it = std::find_if(mMeshes.begin(), mMeshes.end(), [&](const MeshUv& m) { return m.node == node; });
+    if (it == mMeshes.end() || !it->mesh)
+        return corners;
+    const geo::Mesh& m = *it->mesh;
+    std::vector<Index> out = geo::uvVertexCorners(m, it->set, corners);
+    if (const geo::SymmetryMap* s = symmetryOf(*it))
+        out = geo::uvVertexCorners(m, it->set, uv::mirrorCorners(*s, m, out));
+    return out;
 }
 
 bool UvView::hasSelection() const

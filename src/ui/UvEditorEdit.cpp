@@ -258,12 +258,10 @@ void UvView::startLiveDrag()
     std::vector<uint8_t> use(mu.corner.size(), 0);
     if (d.mode == ComponentMode::Vertex)
     {
-        for (size_t k = 0; k < mu.corner.size(); ++k)
-        {
-            QPointF q = toScreen(mu.uv[k]) - mPressPos;
-            if (m.cornerPoint(mu.corner[k]) == d.id && std::hypot(q.x(), q.y()) < 12.0)
-                use[k] = 1;
-        }
+        const Index grabbed[] = {d.id};
+        for (Index c : geo::uvVertexCorners(m, mu.set, grabbed))
+            if (c < mu.entryOf.size() && mu.entryOf[c] != ~0u)
+                use[mu.entryOf[c]] = 1;
     }
     else if (d.mode == ComponentMode::Edge)
     {

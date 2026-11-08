@@ -59,8 +59,11 @@ public:
     static Op opFor(Qt::KeyboardModifiers mods, Op plain);
 
     void begin(Op op);
-    /** Begins a component stroke in `mode` whatever the scene's mode, for views that pick their own (the UV editor). */
-    void begin(Op op, scene::ComponentMode mode);
+    /**
+     * Begins a component stroke in `mode` whatever the scene's mode, for views that pick their own (the UV editor). With
+     * uvs the mode is Vertex and the ids touched are uv corners (scene::components::uvCorners).
+     */
+    void begin(Op op, scene::ComponentMode mode, bool uvs = false);
     /** Brushes the segment from a to b (widget pixels). */
     void paint(const ViewInfo& view, QPointF a, QPointF b, double radiusPx);
     /** Adds components picked elsewhere to the stroke. */
@@ -78,7 +81,9 @@ private:
     bool mActive = false;
     Op mOp = Op::Add;
     scene::ComponentMode mMode = scene::ComponentMode::Object;
+    bool mUvs = false;
     std::map<scene::NodeId, scene::components::Ids> mStart[3];
+    std::map<scene::NodeId, scene::components::Ids> mStartUvs;
     std::vector<scene::NodeId> mStartObjects;
     std::map<scene::NodeId, std::set<uint32_t>> mTouched;
     std::set<scene::NodeId> mTouchedObjects;
