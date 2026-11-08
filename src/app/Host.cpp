@@ -25,6 +25,7 @@
 #include "io/FileTypes.h"
 #include "ops/StudioRestrictions.h"
 #include "io/Examples.h"
+#include "io/SceneTemplate.h"
 #include "io/Samples.h"
 #include "io/Recovery.h"
 #include "io/SceneFile.h"
@@ -181,6 +182,7 @@ void startCore()
     io::registerCommands();
     io::recovery::registerCommands();
     io::examples::registerCommands();
+    io::sceneTemplate::registerCommands();
     io::samples::registerCommands();
     gn::registerCommands();
     seq::registerCommands();

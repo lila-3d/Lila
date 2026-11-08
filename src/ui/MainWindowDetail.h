@@ -13,6 +13,7 @@
 #include "io/FileTranslators.h"
 #include "io/SceneFile.h"
 #include "io/SceneHistory.h"
+#include "io/SceneTemplate.h"
 #include "mcp/McpServer.h"
 #include "render/Renderer.h"
 #include "scene/Anim.h"

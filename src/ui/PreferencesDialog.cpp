@@ -7,6 +7,7 @@
 #include "core/PrefStore.h"
 #include "core/TextMatch.h"
 #include "io/FileTypes.h"
+#include "io/SceneTemplate.h"
 #include "scene/Anim.h"
 #include "scene/Ghosts.h"
 #include "scene/Naming.h"
@@ -602,6 +603,7 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         toggleField(general, "Show news on the welcome dialog (downloaded from the Lila site)", news::kEnabledPref, true);
         numberField(general, "Recent scenes to keep", "/recentFilesMax", 20.0, 1.0, 200.0, 1.0, 0);
         sectionHeader(general, "Scene");
+        text(general, "New Scene template", io::sceneTemplate::kPref, "", true);
         choiceField(general, "Up axis", "/scene/upAxis", {{"Y up", "y"}, {"Z up", "z"}}, "y");
         choiceField(general, "Save format", "/scene/defaultFormat", {{"Binary (.lila)", "binary"}, {"Text (.lilaa)", "ascii"}}, "binary");
         numberField(general, "Autosave every (seconds)", "/autosave/intervalSeconds", 30.0, 5.0, 3600.0, 5.0, 0);

@@ -1643,6 +1643,9 @@ def clearLoopKey(*objects: Any, attribute: Any | None = None, at: Any | None = N
 def clearRecoveredScenes() -> Any:
     """Delete every recovered scene kept for File > Recovered Scenes. Returns how many were deleted."""
 
+def clearSceneTemplate() -> Any:
+    """Remove your New Scene template, so new scenes start from the studio's or workspace's template, or empty. Not undoable."""
+
 def clearSimCache(*objects: Any) -> Any:
     """Throw away simulation caches, so the next simulate starts from the start frame.
 
@@ -7492,6 +7495,9 @@ def saveScene(*objects: Any, ifModified: bool | None = None, im: bool | None = N
         ifModified: Skip the write when the file is already up to date: the current file, still on disk, with no changes since. Short form im. Default False.
     """
 
+def saveSceneTemplate() -> Any:
+    """Save the scene as the New Scene template: File > New and launch start from a copy of it, untitled. Later changes to this scene do not change the template. Not undoable."""
+
 def scAdd(*objects: Any, changelist: str | None = None) -> Any:
     """Mark new files for add. Returns {files, warnings}.
 
@@ -7716,6 +7722,9 @@ def sceneScript(*objects: Any, text: str | None = None, runOnOpen: bool | None =
         remove: Delete the script. Short form rm. Default False.
         query: Short form q. Default False.
     """
+
+def sceneTemplate() -> Any:
+    """The New Scene template's path, or None when new scenes start empty."""
 
 def sceneVersions(*objects: Any) -> Any:
     """Backups, autosaves, emergency saves and incremental versions of a scene on disk, newest first.

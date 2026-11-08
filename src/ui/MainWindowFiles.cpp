@@ -247,6 +247,8 @@ void MainWindow::startup(const std::vector<io::recovery::Session>& stale, bool s
     }
     if (!showStartup)
         return;
+    if (io::sceneTemplate::apply())
+        mViewports->frameUnlessRestored();
     const bool welcome = PrefStore::get().value<bool>("general", kShowWelcomePref, true);
     if (welcome || PrefStore::get().value<bool>("general", kShowRecentPref, true))
         showStartupDialog(welcome);

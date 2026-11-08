@@ -4,6 +4,7 @@ lila_module(lila_io Scene
     References.cpp
     Recovery.cpp
     SceneFile.cpp
+    SceneTemplate.cpp
     SceneHistory.cpp
     SceneFormats.cpp
     ScenePreview.cpp

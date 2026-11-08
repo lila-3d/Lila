@@ -1,4 +1,5 @@
 #include "ui/MainWindowDetail.h"
+#include "core/Paths.h"
 #include "ui/ViewportHeaderConfig.h"
 #include "ui/CameraBookmarks.h"
 #include "ui/CreditsDialog.h"
@@ -23,9 +24,35 @@ void MainWindow::registerActions()
 {
     viewportHeader::registerActions();
     actions::add({"file.new", "New Scene", "File", [this] {
-                      if (confirmDiscard())
-                          actions::run(json{{"command", "newScene"}});
-                  }, nullptr, "Clears the scene and starts an empty one, asking to save changes first."});
+                      if (!confirmDiscard())
+                          return;
+                      actions::run(json{{"command", "newScene"}});
+                      if (io::sceneTemplate::apply())
+                          mViewports->frameUnlessRestored();
+                  }, nullptr, "Starts a new scene, from the New Scene template when one is set, asking to save changes first."});
+    actions::add({.id = "file.saveSceneTemplate",
+                  .label = "Save as New Scene Template",
+                  .category = "File",
+                  .run = [] {
+                      const std::filesystem::path p = io::sceneTemplate::saveCurrent();
+                      log::info("Saved the scene as the New Scene template: {}", paths::toUtf8(p));
+                  },
+                  .doc = "New Scene and launch start from a copy of this scene: its objects, cameras, lights and settings.",
+                  .python = "saveSceneTemplate()"});
+    actions::add({.id = "file.clearSceneTemplate",
+                  .label = "Clear New Scene Template",
+                  .category = "File",
+                  .run = [] {
+                      io::sceneTemplate::clear();
+                      const std::filesystem::path p = io::sceneTemplate::path();
+                      if (p.empty())
+                          log::info("New scenes start empty");
+                      else
+                          log::info("New scenes start from the studio or workspace template: {}", paths::toUtf8(p));
+                  },
+                  .enabled = [] { return !io::sceneTemplate::path().empty(); },
+                  .doc = "Removes your New Scene template, so new scenes start empty, or from the studio's or workspace's template.",
+                  .python = "clearSceneTemplate()"});
     actions::add({"file.open", "Open Scene...", "File", [this] { openScene({}); }, nullptr, "Opens a Lila or Maya scene, replacing the current one. An FBX, OBJ or other importable file opens as a new untitled scene with it imported."});
     actions::add({"file.reload", "Reload Scene", "File", [this] { reloadScene(); }, [] { return !io::currentPath().empty(); },
                   "Reopens the scene from its file on disk, discarding unsaved changes after asking."});

@@ -87,7 +87,7 @@ void MainWindow::buildMenus()
                     ->setToolTip(QString::fromStdString(actions::tooltip(id)));
         });
     });
-    menus::addActions("File", {"file.save", "file.saveAs", "file.incrementAndSave", "file.versions", "#Validate", "validate.run", "window.validation", "#Import and Export", "file.import", "file.convertMaya",
+    menus::addActions("File", {"file.save", "file.saveAs", "file.incrementAndSave", "file.versions", "file.saveSceneTemplate", "#Validate", "validate.run", "window.validation", "#Import and Export", "file.import", "file.convertMaya",
                         "file.exportSelection", "file.gameExporter", "file.exportMeshSequence", "file.exportWebViewer", "window.batchRun", "file.createReference", "#Unreal", "unreal.send", "animated.sendOptions", "unreal.sync", "unreal.sendBake",
                         "deform.exportMLDeformer", "unreal.expressionRig", "unreal.connect","#Workspace", "file.openFolder"});
     addSubmenu("File", "Recent Folders", [this](QMenu* recent) {
