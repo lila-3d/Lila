@@ -20,33 +20,6 @@ namespace
 {
 using namespace detail;
 
-/** Per-triangle target singular values for a mode, from the current ones (s2 taken unsigned). */
-std::pair<double, double> targetStretch(OptimizeMode mode, double mix, double s1, double s2)
-{
-    s2 = std::max(std::abs(s2), 1e-9);
-    s1 = std::max(s1, s2);
-    const double conformal = 0.5 * (s1 + s2);
-    if (mode == OptimizeMode::Conformal)
-        return {conformal, conformal};
-    // Nearest (e^x, e^-x) to (s1, s2) by Newton on x.
-    double x = 0.5 * std::log(s1 / s2);
-    for (int it = 0; it < 8; ++it)
-    {
-        double ep = std::exp(x), em = std::exp(-x);
-        double g = 2.0 * (ep - s1) * ep - 2.0 * (em - s2) * em;
-        double h = 2.0 * (2.0 * ep * ep - s1 * ep) + 2.0 * (2.0 * em * em - s2 * em);
-        double dx = h > 1e-12 ? -g / h : -0.1 * g;
-        x += std::clamp(dx, -1.0, 1.0);
-        if (std::abs(dx) < 1e-12)
-            break;
-    }
-    const double t1 = std::exp(x), t2 = std::exp(-x);
-    if (mode == OptimizeMode::Authalic)
-        return {t1, t2};
-    const double m = std::clamp(mix, 0.0, 1.0);
-    return {(1.0 - m) * conformal + m * t1, (1.0 - m) * conformal + m * t2};
-}
-
 /** Stiffness matrix sum(area * g_p . g_q) over the free vertices, factorised once. */
 class Poisson
 {

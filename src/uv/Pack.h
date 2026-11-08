@@ -3,6 +3,7 @@
 #include "core/Export.h"
 
 #include "uv/Chart.h"
+#include "uv/FinalMesh.h"
 
 #include <glm/glm.hpp>
 
@@ -119,6 +120,8 @@ struct PackResult
     double seconds = 0.0;
     /** Layouts tried. */
     int attempts = 0;
+    /** Meshes whose density was measured on the cage because their modifiers' uvs can't be followed, one line each. */
+    std::vector<std::string> warnings;
 };
 
 /** Packs the charts' uvs. Deterministic (without a time limit); parallel; cancellable through the current progress scope. */
@@ -136,6 +139,8 @@ struct PackTarget
     std::vector<Index> fixedFaces;
     /** Object to world, so surface area (and so texel density) is measured in world space across objects. */
     glm::dmat3 linear{1.0};
+    /** The mesh's modifiers as exported: when they move the surface, island density is measured on their output. */
+    Stack stack;
 };
 
 /** Packs the islands of several meshes into one layout and writes them back; nothing is written unless it succeeds. */

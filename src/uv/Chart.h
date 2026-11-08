@@ -33,11 +33,15 @@ struct LILA_SCENE_API Chart
     std::vector<uint8_t> pinned;           // per vertex, 1 keeps uv fixed in solves
     std::vector<std::array<Index, 3>> tris; // chart vertices, wound like the faces
     std::vector<Index> triFace;            // mesh face per triangle
+    /** Surface area texel density is measured against; 0 uses area3d(). Set when the exported mesh differs from the cage. */
+    double densityArea = 0.0;
 
     Index vertexCount() const { return Index(pos.size()); }
     Index triangleCount() const { return Index(tris.size()); }
 
     double area3d() const;
+    /** densityArea when set, else area3d(). */
+    double surfaceArea() const { return densityArea > 0.0 ? densityArea : area3d(); }
     /** Signed; positive when the island is not mirrored. */
     double areaUv() const;
     /** Ordered boundary loops of chart vertices, longest (by 3D length) first. */

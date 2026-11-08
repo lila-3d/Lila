@@ -1,0 +1,384 @@
+#include "geo/Ops.h"
+#include "geo/Primitives.h"
+#include "uv/FinalMesh.h"
+#include "uv/LiveSolver.h"
+#include "uv/Pack.h"
+#include "uv/Unwrap.h"
+#include "uv/Project.h"
+#include "uv/Uv.h"
+
+#include <doctest/doctest.h>
+
+#include <chrono>
+#include <cmath>
+#include <string>
+#include <utility>
+
+using namespace lila;
+using geo::Index;
+
+namespace
+{
+/** A 10 x 10 cm plate 0.4 cm thick, box projected: each side a thin strip island next to the big top and bottom. */
+geo::Mesh plate(double thick = 0.4, int grid = 6)
+{
+    geo::CubeOptions co;
+    co.width = 10.0;
+    co.height = thick;
+    co.depth = 10.0;
+    co.subdivX = grid;
+    co.subdivZ = grid;
+    geo::Mesh m = geo::makeCube(co);
+    uv::ProjectOptions po;
+    po.type = uv::Projection::Box;
+    REQUIRE(uv::project(m, {}, "uv0", po));
+    // Box projection stacks the islands; packed apart they no longer share uvs at shared points.
+    REQUIRE(uv::packIslands(m, {}, "uv0").ok);
+    return m;
+}
+
+/**
+ * The plate unfolded like a box lid: the top and its four thin sides in one island (seams round the bottom and up the
+ * corners), the bottom in another, packed. The sides are thin strips beside the big top, as on a game-art panel.
+ */
+geo::Mesh lidPlate(double thick = 0.4, int grid = 6)
+{
+    geo::CubeOptions co;
+    co.width = 10.0;
+    co.height = thick;
+    co.depth = 10.0;
+    co.subdivX = grid;
+    co.subdivZ = grid;
+    geo::Mesh m = geo::makeCube(co);
+    std::span<bool> seam = m.edgeAttrs().getOrAdd<bool>(geo::attr::kSeam);
+    for (Index e = 0; e < m.edgeCapacity(); ++e)
+    {
+        if (!m.edgeValid(e))
+            continue;
+        const glm::dvec3 a = m.position(m.edgePoint(e, 0)), b = m.position(m.edgePoint(e, 1));
+        const bool bottom = a.y < 0.0 && b.y < 0.0 && (std::abs(a.x) > 4.99 || std::abs(a.z) > 4.99) &&
+                            (std::abs(b.x) > 4.99 || std::abs(b.z) > 4.99) && (std::abs(a.x - b.x) < 1e-9 || std::abs(a.z - b.z) < 1e-9) &&
+                            ((std::abs(a.x) > 4.99 && std::abs(b.x) > 4.99 && std::abs(a.x - b.x) < 1e-9) ||
+                             (std::abs(a.z) > 4.99 && std::abs(b.z) > 4.99 && std::abs(a.z - b.z) < 1e-9));
+        const bool corner = std::abs(a.x) > 4.99 && std::abs(a.z) > 4.99 && std::abs(b.x) > 4.99 && std::abs(b.z) > 4.99 && glm::length(glm::dvec2(a.x - b.x, a.z - b.z)) < 1e-9;
+        seam[e] = bottom || corner;
+    }
+    uv::UnwrapFacesOptions uo;
+    REQUIRE(uv::unwrapFaces(m, {}, "uv0", uo).islands == 2);
+    REQUIRE(uv::packIslands(m, {}, "uv0").ok);
+    return m;
+}
+
+/** Every edge bevelled 0.13 cm, then two levels of Catmull-Clark: the game-art stack that drags rim islands. */
+uv::Stack bevelSubdivStack(double offset = 0.13, int segments = 1, int levels = 2)
+{
+    uv::Stack s;
+    s.push_back({"bevel", [=](const geo::Mesh& in) {
+                     geo::Mesh m = in;
+                     std::vector<Index> edges;
+                     for (Index e = 0; e < m.edgeCapacity(); ++e)
+                         if (m.edgeValid(e) && uv::dihedralAngle(m, e) > 30.0)
+                             edges.push_back(e);
+                     geo::BevelOptions o;
+                     o.offset = offset;
+                     o.segments = segments;
+                     geo::bevelEdges(m, edges, o);
+                     return m;
+                 }});
+    s.push_back({"subdivide", [=](const geo::Mesh& in) {
+                     geo::SubdivideOptions o;
+                     o.levels = levels;
+                     return geo::subdivide(in, o);
+                 }});
+    return s;
+}
+
+std::vector<uv::Chart> islandsOf(const geo::Mesh& m)
+{
+    uv::ChartOptions co;
+    co.source = uv::IslandSource::Uvs;
+    return uv::buildCharts(m, {}, co);
+}
+
+/** Area weighted angle distortion of the exported triangles, each capped at 1. */
+double cappedAngle(const uv::FinalIsland& isl, const uv::Chart& ch, double* areaOut = nullptr)
+{
+    const std::vector<glm::dvec2> y = isl.uvs(ch);
+    const double density = std::abs(isl.areaUv(ch)) / std::max(isl.area3d(), 1e-300);
+    double a = 0.0, w = 0.0, ar = 0.0;
+    for (const auto& t : isl.tris)
+    {
+        const glm::dvec3 p0 = isl.pos[t[0]], e1 = isl.pos[t[1]] - p0, e2 = isl.pos[t[2]] - p0;
+        const double l1 = glm::length(e1), area = 0.5 * glm::length(glm::cross(e1, e2));
+        if (l1 <= 0.0 || area <= 1e-12)
+            continue;
+        const glm::dvec3 x = e1 / l1;
+        const double qx = glm::dot(e2, x), qy = 2.0 * area / l1;
+        const glm::dvec2 d1 = y[t[1]] - y[t[0]], d2 = y[t[2]] - y[t[0]];
+        const glm::dvec2 c0 = d1 / l1, c1 = (d2 - qx * c0) / qy;
+        const double E = glm::dot(c0, c0), F = glm::dot(c0, c1), G = glm::dot(c1, c1);
+        const double disc = std::sqrt(std::max(0.0, (E - G) * (E - G) + 4.0 * F * F));
+        const double s1 = std::sqrt(std::max(0.0, 0.5 * (E + G + disc))), s2 = std::sqrt(std::max(0.0, 0.5 * (E + G - disc)));
+        a += area * std::min(1.0, s2 > 1e-12 ? s1 / s2 - 1.0 : 1.0);
+        ar += area * std::min(2.0, std::abs(std::log2(std::max(s1 * s2 / density, 1e-6))));
+        w += area;
+    }
+    if (areaOut)
+        *areaOut = w > 0.0 ? ar / w : 0.0;
+    return w > 0.0 ? a / w : 0.0;
+}
+
+struct ExportState
+{
+    size_t collapsed = 0;
+    double angle = 0.0; // area weighted
+    size_t folded = 0;
+    double capped = 0.0; // area weighted, each triangle's angle distortion capped at 1 so slivers don't swamp it
+    double area = 0.0;   // area weighted |log2| of each triangle's area against the island's density, capped at 2
+};
+
+ExportState exportState(const geo::Mesh& cage, const uv::Stack& stack)
+{
+    uv::FinalMap map = uv::buildFinalMap(cage, "uv0", stack);
+    INFO(map.warning);
+    REQUIRE(map.active());
+    std::vector<uv::Chart> charts = islandsOf(cage);
+    std::vector<uv::FinalIsland> isl = uv::finalIslands(map, cage, charts, "uv0");
+    ExportState s;
+    double w = 0.0;
+    for (size_t i = 0; i < charts.size(); ++i)
+    {
+        if (isl[i].tris.empty())
+            continue;
+        s.collapsed += uv::collapsedTriangles(isl[i], charts[i]);
+        uv::ChartStats st = uv::finalStats(isl[i], charts[i]);
+        s.folded += st.folded;
+        s.angle += isl[i].area3d() * st.angle;
+        w += isl[i].area3d();
+        double ar = 0.0;
+        s.capped += cappedAngle(isl[i], charts[i], &ar) * isl[i].area3d();
+        s.area += ar * isl[i].area3d();
+    }
+    s.angle /= std::max(w, 1e-300);
+    s.capped /= std::max(w, 1e-300);
+    s.area /= std::max(w, 1e-300);
+    return s;
+}
+
+/** Angle distortion of the exported mesh unwrapped on its own islands: the best a cage solve can hope to approach. */
+double exportUnwrapAngle(const geo::Mesh& exported)
+{
+    std::vector<uv::Chart> charts = islandsOf(exported);
+    double a = 0.0, w = 0.0;
+    for (uv::Chart& ch : charts)
+    {
+        uv::unwrapChart(ch);
+        uv::ChartStats st = uv::chartStats(ch);
+        a += ch.area3d() * st.angle;
+        w += ch.area3d();
+    }
+    return a / std::max(w, 1e-300);
+}
+} // namespace
+
+TEST_CASE("final mesh: the map reproduces the exported uvs")
+{
+    geo::Mesh m = plate();
+    uv::FinalMap map = uv::buildFinalMap(m, "uv0", bevelSubdivStack());
+    INFO(map.warning);
+    REQUIRE(map.active());
+    CHECK(map.warning.empty());
+    CHECK(map.rings >= 2);
+    const std::span<const glm::vec2> cageUv = m.cornerAttrs().get<glm::vec2>("uv0");
+    const std::span<const glm::vec2> exUv = map.exported->cornerAttrs().get<glm::vec2>("uv0");
+    double worst = 0.0;
+    for (Index f = 0; f < map.exported->faceCapacity(); ++f)
+        if (map.exported->faceValid(f))
+            map.exported->forEachFaceCorner(f, [&](Index c) {
+                glm::dvec2 s(0.0);
+                for (Index k = map.rowStart[c]; k < map.rowStart[c + 1]; ++k)
+                    s += map.weights[k] * glm::dvec2(cageUv[map.cols[k]]);
+                worst = std::max(worst, glm::length(s - glm::dvec2(exUv[c])));
+            });
+    CHECK(worst < 1e-4);
+}
+
+TEST_CASE("final mesh: a dragged rim island is re-solved until nothing collapses")
+{
+    // 0.4 cm plate, its sides in the top's island; three-segment 0.13 cm bevels, then two levels of subdivision.
+    geo::Mesh m = lidPlate(0.4, 2);
+    const uv::Stack stack = bevelSubdivStack(0.13, 3, 2);
+    const ExportState before = exportState(m, stack);
+    MESSAGE("collapsed before " << before.collapsed << ", folded " << before.folded << ", angle " << before.capped << ", area " << before.area);
+    CHECK(before.collapsed > 0);
+
+    uv::FinalRefineResult r = uv::refineFinal(m, {}, "uv0", stack);
+    CHECK(r.method == uv::FinalMethod::Probed);
+    CHECK(r.collapsedBefore == before.collapsed);
+    const ExportState after = exportState(m, stack);
+    const double reference = exportUnwrapAngle(*uv::buildFinalMap(m, "uv0", stack).exported);
+    MESSAGE("collapsed after " << after.collapsed << ", folded " << after.folded << ", angle " << after.capped << ", area " << after.area << ", export unwrap " << reference);
+    CHECK(after.collapsed == 0);
+    CHECK(after.folded <= before.folded);
+    // Opening the slivers costs some evenness elsewhere: the cage's few uvs per island can't match an unwrap of the export.
+    CHECK(after.capped < 0.6);
+    CHECK(after.area < 0.6);
+}
+
+TEST_CASE("final mesh: islands stay where they were")
+{
+    geo::Mesh m = plate();
+    std::vector<uv::Chart> before = islandsOf(m);
+    uv::refineFinal(m, {}, "uv0", bevelSubdivStack());
+    std::vector<uv::Chart> after = islandsOf(m);
+    REQUIRE(before.size() == after.size());
+    for (size_t i = 0; i < before.size(); ++i)
+    {
+        // Islands that grew past the tile border are moved back inside it.
+        CHECK(glm::length(before[i].uvCentroid() - after[i].uvCentroid()) < 0.2);
+        CHECK(glm::all(glm::greaterThanEqual(after[i].uvMin(), glm::dvec2(-1e-6))));
+        CHECK(glm::all(glm::lessThanEqual(after[i].uvMax(), glm::dvec2(1.0 + 1e-6))));
+    }
+}
+
+TEST_CASE("final mesh: a stack that leaves the surface alone changes nothing")
+{
+    geo::Mesh m = plate();
+    const geo::Mesh orig = m;
+    uv::Stack same;
+    same.push_back({"identity", [](const geo::Mesh& in) { return in; }});
+    uv::FinalRefineResult r = uv::refineFinal(m, {}, "uv0", same);
+    CHECK(r.method == uv::FinalMethod::Cage);
+    CHECK(r.warning.empty());
+    const std::span<const glm::vec2> a = orig.cornerAttrs().get<glm::vec2>("uv0"), b = std::as_const(m).cornerAttrs().get<glm::vec2>("uv0");
+    REQUIRE(a.size() == b.size());
+    for (size_t i = 0; i < a.size(); ++i)
+        CHECK(a[i] == b[i]);
+    CHECK(uv::refineFinal(m, {}, "uv0", {}).method == uv::FinalMethod::Cage);
+}
+
+TEST_CASE("final mesh: a stack that rewrites uvs is reported and left on the cage")
+{
+    geo::Mesh m = plate();
+    uv::Stack stack = bevelSubdivStack();
+    stack.push_back({"planarUvs", [](const geo::Mesh& in) {
+                         geo::Mesh out = in;
+                         std::span<glm::vec2> uv = out.cornerAttrs().get<glm::vec2>("uv0");
+                         for (Index c = 0; c < out.cornerCapacity(); ++c)
+                             if (c < uv.size())
+                                 uv[c] = glm::vec2(out.position(out.cornerPoint(c)).x * 0.1, out.position(out.cornerPoint(c)).z * 0.1);
+                         return out;
+                     }});
+    uv::FinalMap map = uv::buildFinalMap(m, "uv0", stack);
+    CHECK_FALSE(map.active());
+    CHECK(map.warning.find("planarUvs") != std::string::npos);
+}
+
+TEST_CASE("final mesh: pins hold")
+{
+    geo::Mesh m = plate();
+    std::vector<uv::Chart> charts = islandsOf(m);
+    // Pin two vertices of the largest island.
+    size_t big = 0;
+    for (size_t i = 1; i < charts.size(); ++i)
+        if (charts[i].area3d() > charts[big].area3d())
+            big = i;
+    std::span<bool> pin = m.cornerAttrs().getOrAdd<bool>("uvPin");
+    const uv::Chart& ch = charts[big];
+    const Index v0 = ch.cornerVertex[0], v1 = ch.cornerVertex[2];
+    for (size_t k = 0; k < ch.corners.size(); ++k)
+        if (ch.cornerVertex[k] == v0 || ch.cornerVertex[k] == v1)
+            pin[ch.corners[k]] = true;
+    const glm::dvec2 p0 = ch.uv[v0], p1 = ch.uv[v1];
+    uv::refineFinal(m, {}, "uv0", bevelSubdivStack());
+    std::vector<uv::Chart> after = islandsOf(m);
+    bool found = false;
+    for (const uv::Chart& a : after)
+        for (size_t k = 0; k < a.corners.size(); ++k)
+            if (a.corners[k] == ch.corners[0])
+            {
+                found = true;
+                CHECK(glm::length(a.uv[a.cornerVertex[k]] - p0) < 1e-6);
+            }
+    CHECK(found);
+    (void)p1;
+}
+
+TEST_CASE("final mesh: pack measures density on the exported mesh")
+{
+    // Two 10 cm quads side by side; the stack scales the right one up 2x, so its export has 4x the cage area.
+    const glm::dvec3 pts[8] = {{0, 0, 0}, {10, 0, 0}, {10, 0, 10}, {0, 0, 10}, {20, 0, 0}, {30, 0, 0}, {30, 0, 10}, {20, 0, 10}};
+    const Index sizes[2] = {4, 4};
+    const Index idx[8] = {0, 3, 2, 1, 4, 7, 6, 5};
+    geo::Mesh m = geo::Mesh::fromPolygons(pts, sizes, idx);
+    uv::ProjectOptions po;
+    po.axis = uv::ProjectAxis::Y;
+    REQUIRE(uv::project(m, {}, "uv0", po));
+    uv::Stack stack;
+    stack.push_back({"grow", [](const geo::Mesh& in) {
+                         geo::Mesh out = in;
+                         for (Index p = 0; p < out.pointCapacity(); ++p)
+                             if (out.pointValid(p) && out.position(p).x > 15.0)
+                                 out.setPosition(p, glm::dvec3(25.0, 0.0, 5.0) + (out.position(p) - glm::dvec3(25.0, 0.0, 5.0)) * 2.0);
+                         return out;
+                     }});
+    std::vector<uv::Chart> charts = islandsOf(m);
+    REQUIRE(charts.size() == 2);
+    uv::FinalMap map = uv::applyDensityAreas(m, charts, "uv0", stack);
+    REQUIRE(map.active());
+    uv::PackOptions pk;
+    REQUIRE(uv::packCharts(charts, pk).ok);
+    uv::writeCharts(m, charts, "uv0");
+    // Density on the export: uv area over exported surface area, per island.
+    uv::FinalMap after = uv::buildFinalMap(m, "uv0", stack);
+    std::vector<uv::Chart> c2 = islandsOf(m);
+    std::vector<uv::FinalIsland> isl = uv::finalIslands(after, m, c2, "uv0");
+    const double d0 = std::abs(isl[0].areaUv(c2[0])) / isl[0].area3d(), d1 = std::abs(isl[1].areaUv(c2[1])) / isl[1].area3d();
+    MESSAGE("export densities " << d0 << " " << d1);
+    CHECK(std::abs(std::sqrt(d0 / d1) - 1.0) < 0.1);
+}
+
+TEST_CASE("final mesh: solve time on a big export" * doctest::skip())
+{
+    geo::CubeOptions co;
+    co.width = 10.0;
+    co.height = 0.4;
+    co.depth = 10.0;
+    co.subdivX = 40;
+    co.subdivZ = 40;
+    geo::Mesh m = geo::makeCube(co);
+    uv::ProjectOptions po;
+    po.type = uv::Projection::Box;
+    REQUIRE(uv::project(m, {}, "uv0", po));
+    uv::Stack stack = bevelSubdivStack();
+    auto t0 = std::chrono::steady_clock::now();
+    uv::FinalMap map = uv::buildFinalMap(m, "uv0", stack);
+    auto t1 = std::chrono::steady_clock::now();
+    uv::refineFinal(m, {}, "uv0", stack);
+    auto t2 = std::chrono::steady_clock::now();
+    MESSAGE("export faces " << map.exported->numFaces() << ", map " << std::chrono::duration<double>(t1 - t0).count() << " s, refine "
+                            << std::chrono::duration<double>(t2 - t1).count() << " s");
+    // Live relax: one session's islands, stepped as the uv editor does.
+    for (int final = 0; final < 2; ++final)
+    {
+        std::vector<uv::LiveIsland> islands = uv::liveIslands(m, {}, "uv0");
+        auto a0 = std::chrono::steady_clock::now();
+        if (final)
+            uv::attachFinal(islands, m, "uv0", stack);
+        auto a1 = std::chrono::steady_clock::now();
+        for (uv::LiveIsland& is : islands)
+        {
+            is.wake();
+            is.step();
+        }
+        auto a2 = std::chrono::steady_clock::now();
+        for (int k = 0; k < 10; ++k)
+            for (uv::LiveIsland& is : islands)
+                is.step();
+        auto a3 = std::chrono::steady_clock::now();
+        const std::string label = final ? "live on export" : "live on cage";
+        MESSAGE(label << ": attach " << std::chrono::duration<double>(a1 - a0).count() << " s, first step "
+                      << std::chrono::duration<double>(a2 - a1).count() * 1000.0 << " ms, step " << std::chrono::duration<double>(a3 - a2).count() * 100.0
+                      << " ms");
+    }
+}

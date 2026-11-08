@@ -295,7 +295,7 @@ size_t foldedTriangles(const Chart& ch)
 
 void matchSurfaceArea(Chart& ch)
 {
-    double a3 = ch.area3d(), au = std::abs(ch.areaUv());
+    double a3 = ch.surfaceArea(), au = std::abs(ch.areaUv());
     if (a3 <= 0.0 || au <= 0.0)
         return;
     double s = std::sqrt(a3 / au);

@@ -159,10 +159,36 @@ size_t triangleOverlaps(std::span<const Tri2> tris, std::vector<uint8_t>& flags,
     return pairs;
 }
 
-std::vector<FaceDistortion> faceDistortion(const geo::Mesh& mesh, std::string_view uvSet, std::span<const Index> faces)
+std::vector<FaceDistortion> faceDistortion(const geo::Mesh& mesh, std::string_view uvSet, std::span<const Index> faces, const FinalMap* final)
 {
     LILA_ZONE();
 
+    if (final && final->exported && !final->sourceFace.empty())
+    {
+        // The exported faces' own distortion, gathered onto the cage faces they came from.
+        const geo::Mesh& ex = *final->exported;
+        const std::vector<FaceDistortion> each = faceDistortion(ex, uvSet, exportedFaces(*final, faces));
+        std::vector<FaceDistortion> out(mesh.faceCapacity());
+        std::vector<double> w(mesh.faceCapacity(), 0.0), area(mesh.faceCapacity(), 0.0), angle(mesh.faceCapacity(), 0.0);
+        for (Index f = 0; f < ex.faceCapacity() && f < final->sourceFace.size(); ++f)
+        {
+            const Index src = final->sourceFace[f];
+            if (!ex.faceValid(f) || src >= out.size())
+                continue;
+            const double a = ex.faceArea(f);
+            w[src] += a;
+            area[src] += a * each[f].area;
+            angle[src] += a * each[f].angle;
+            out[src].folded |= each[f].folded;
+        }
+        for (Index f = 0; f < out.size(); ++f)
+            if (w[f] > 0.0)
+            {
+                out[f].area = float(area[f] / w[f]);
+                out[f].angle = float(angle[f] / w[f]);
+            }
+        return out;
+    }
     std::vector<FaceDistortion> out(mesh.faceCapacity());
     if (mesh.cornerAttrs().get<glm::vec2>(uvSet).empty())
         return out;
@@ -297,8 +323,14 @@ bool chartOverlaps(const Chart& ch)
     return triangleOverlaps(tris, flags, ch.triFace, true) > 0;
 }
 
-double texelDensity(const geo::Mesh& mesh, std::string_view uvSet, std::span<const Index> faces, double resolution, const glm::dmat3& linear)
+double texelDensity(const geo::Mesh& mesh, std::string_view uvSet, std::span<const Index> faces, double resolution, const glm::dmat3& linear,
+                    const FinalMap* final)
 {
+    if (final && final->exported && !final->sourceFace.empty())
+    {
+        const std::vector<Index> ex = exportedFaces(*final, faces);
+        return ex.empty() ? 0.0 : texelDensity(*final->exported, uvSet, ex, resolution, linear);
+    }
     std::span<const glm::vec2> uv = mesh.cornerAttrs().get<glm::vec2>(uvSet);
     if (uv.empty())
         return 0.0;
@@ -312,7 +344,7 @@ double texelDensity(const geo::Mesh& mesh, std::string_view uvSet, std::span<con
 }
 
 void setTexelDensity(geo::Mesh& mesh, std::string_view uvSet, std::span<const Index> faces, double resolution, double density,
-                     const glm::dmat3& linear)
+                     const glm::dmat3& linear, const FinalMap* final)
 {
     LILA_ZONE();
 
@@ -325,7 +357,8 @@ void setTexelDensity(geo::Mesh& mesh, std::string_view uvSet, std::span<const In
     std::span<glm::vec2> uv = uvLayer(mesh, uvSet);
     for (const std::vector<Index>& isl : islands)
     {
-        double cur = texelDensity(mesh, uvSet, isl, resolution, linear);
+        // Scaling an island about any point scales its exported uvs the same way, so the export's density is set exactly.
+        double cur = texelDensity(mesh, uvSet, isl, resolution, linear, final);
         if (cur <= 0.0)
             continue;
         float s = float(density / cur);

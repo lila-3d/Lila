@@ -3,6 +3,7 @@
 #include "core/Export.h"
 
 #include "uv/Chart.h"
+#include "uv/FinalMesh.h"
 
 #include <glm/glm.hpp>
 
@@ -34,8 +35,12 @@ struct DistortionSummary
     size_t folded = 0;
 };
 
-/** Per face capacity; faces outside the set (or without uvs) stay zero. All live faces when empty. */
-LILA_SCENE_API std::vector<FaceDistortion> faceDistortion(const geo::Mesh& mesh, std::string_view uvSet, std::span<const Index> faces = {});
+/**
+ * Per face capacity; faces outside the set (or without uvs) stay zero. All live faces when empty. With an active final
+ * map, each face reports the exported faces it became (area weighted), so modifiers that move the surface count.
+ */
+LILA_SCENE_API std::vector<FaceDistortion> faceDistortion(const geo::Mesh& mesh, std::string_view uvSet, std::span<const Index> faces = {},
+                                                          const FinalMap* final = nullptr);
 LILA_SCENE_API DistortionSummary summarize(const geo::Mesh& mesh, std::span<const FaceDistortion> d, std::span<const Index> faces = {});
 
 /** One number per face for display: 0 perfect, towards 1 badly stretched. */
@@ -60,12 +65,12 @@ LILA_SCENE_API bool chartOverlaps(const Chart& chart);
 
 /** px per 3D unit for a texture of the given resolution: sqrt(uv area / surface area) * resolution. */
 LILA_SCENE_API double texelDensity(const geo::Mesh& mesh, std::string_view uvSet, std::span<const Index> faces, double resolution,
-                    const glm::dmat3& linear = glm::dmat3(1.0));
+                    const glm::dmat3& linear = glm::dmat3(1.0), const FinalMap* final = nullptr);
 
 /**
  * Scales each uv island (about its centre) so it has the given density, as Maya's Set Texel Density does.
  * linear maps object to world space so density counts world size.
  */
 LILA_SCENE_API void setTexelDensity(geo::Mesh& mesh, std::string_view uvSet, std::span<const Index> faces, double resolution, double density,
-                     const glm::dmat3& linear = glm::dmat3(1.0));
+                     const glm::dmat3& linear = glm::dmat3(1.0), const FinalMap* final = nullptr);
 } // namespace lila::uv

@@ -3,6 +3,7 @@
 #include "core/Export.h"
 
 #include "uv/Chart.h"
+#include "uv/FinalMesh.h"
 
 #include <condition_variable>
 #include <cstdint>
@@ -36,6 +37,8 @@ struct LiveOptions
     double tolerance = 2e-5;
     /** Iterations per wake before an island gives up and settles anyway. */
     int maxIterations = 3000;
+    /** Sessions relax the exported mesh's triangles when the mesh's modifiers move its surface. */
+    bool finalMesh = true;
 };
 
 enum class LiveBrush : uint8_t
@@ -141,6 +144,13 @@ public:
     /** Rest scale: uv units per 3D unit. */
     double restScale() const { return mScale; }
 
+    /**
+     * Relaxes the island's exported triangles (where the mesh's modifiers put its uvs) instead of its own; null goes
+     * back to the chart's. Brushes, pins and targets still act on the chart's vertices.
+     */
+    void setFinal(std::shared_ptr<const FinalIsland> island);
+    bool hasFinal() const { return mFinal != nullptr; }
+
 private:
     struct Frame
     {
@@ -153,6 +163,10 @@ private:
     void ensureFactor();
     void markDirty() { mMatrixDirty = true; }
     double maxStep(const std::vector<glm::dvec2>& dir) const;
+    void prepareFinal();
+    void factorFinal();
+    std::vector<glm::dvec2> finalUvs(const std::vector<glm::dvec2>& x, bool offsets) const;
+    double finalStep(std::vector<double>& bu, std::vector<double>& bv) const;
     void pushToChart();
     void touched();
     void restoreCentroid(glm::dvec2 c);
@@ -169,6 +183,8 @@ private:
     double mSign = 1.0; // -1 for mirrored islands, solved flipped
     double mLength = 1.0;
     std::vector<Frame> mFrames;
+    std::shared_ptr<const FinalIsland> mFinal;
+    std::vector<Frame> mFinalFrames;
     std::vector<float> mStiff;
     std::vector<glm::dvec2> mX;
     std::vector<glm::dvec2> mPinAt;
@@ -200,6 +216,12 @@ private:
 LILA_SCENE_API std::vector<LiveIsland> liveIslands(const geo::Mesh& mesh, std::span<const Index> faces, std::string_view uvSet, const LiveOptions& opts = {});
 
 /** Writes uvs, and with pinsAndStiffness the "uvPin" and "uvStiffness" corner attributes, of the islands back to the mesh. */
+/**
+ * Points each island at its exported triangles, so it relaxes them (LiveIsland::setFinal). Returns the map used; a
+ * cage map (with a warning when the stack changes the surface) leaves the islands on their own triangles.
+ */
+LILA_SCENE_API FinalMap attachFinal(std::span<LiveIsland> islands, const geo::Mesh& cage, std::string_view uvSet, const Stack& stack);
+
 LILA_SCENE_API void writeLiveIslands(geo::Mesh& mesh, std::span<const LiveIsland> islands, std::string_view uvSet, bool pinsAndStiffness = true);
 
 /** Edge flags (per edge capacity) of the mesh's "seam" attribute, for ChartOptions::extraSeams. */

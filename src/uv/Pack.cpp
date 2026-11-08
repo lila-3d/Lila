@@ -1432,6 +1432,7 @@ PackResult packMeshes(std::span<PackTarget> targets, std::string_view uvSet, con
     std::vector<Chart> charts;
     std::vector<PackChartInfo> info;
     std::vector<size_t> owner;
+    std::vector<std::string> warnings;
     std::map<std::string, int> groupIds;
     auto groupId = [&](const std::string& key) { return groupIds.emplace(key, int(groupIds.size())).first->second; };
     for (size_t t = 0; t < targets.size(); ++t)
@@ -1452,6 +1453,9 @@ PackResult packMeshes(std::span<PackTarget> targets, std::string_view uvSet, con
                 keep[f] = 1;
         const bool wholeMesh = tg.othersFixed || !tg.fixedFaces.empty();
         std::vector<Chart> local = buildCharts(mesh, wholeMesh ? std::span<const Index>{} : std::span<const Index>(live), co);
+        if (!tg.stack.empty())
+            if (FinalMap map = applyDensityAreas(mesh, local, uvSet, tg.stack); !map.warning.empty())
+                warnings.push_back(map.warning);
         std::span<const int32_t> material = mesh.faceAttrs().get<int32_t>(geo::attr::kMaterial);
         std::span<const int32_t> userGroup = mesh.faceAttrs().get<int32_t>(opts.groupAttr);
         for (Chart& ch : local)
@@ -1495,10 +1499,16 @@ PackResult packMeshes(std::span<PackTarget> targets, std::string_view uvSet, con
             unwrapChart(ch);
         const glm::dmat3& lin = targets[owner[i]].linear;
         if (lin != glm::dmat3(1.0))
+        {
+            const double before = ch.area3d();
             for (glm::dvec3& p : ch.pos)
                 p = lin * p;
+            if (before > 0.0)
+                ch.densityArea *= ch.area3d() / before;
+        }
     });
     PackResult r = packCharts(charts, opts, info);
+    r.warnings = std::move(warnings);
     if (!r.ok)
         return r;
     for (size_t t = 0; t < targets.size(); ++t)

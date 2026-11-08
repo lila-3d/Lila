@@ -63,6 +63,6 @@ LILA_SCENE_API double chartDistortion(const Chart& chart);
 /** Triangles whose uv winding disagrees with the chart's overall orientation, or are degenerate. */
 LILA_SCENE_API size_t foldedTriangles(const Chart& chart);
 
-/** Uniform scale about the origin so uv area equals 3D area. */
+/** Uniform scale about the origin so uv area equals surface area (Chart::surfaceArea, the exported mesh's when set). */
 LILA_SCENE_API void matchSurfaceArea(Chart& chart);
 } // namespace lila::uv
