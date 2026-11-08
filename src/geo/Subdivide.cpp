@@ -27,7 +27,21 @@ struct UvRefine
     std::vector<glm::vec2> point, edge, face;
 };
 
-template <class Sharpness> UvRefine refineUvs(const Mesh& src, const Attribute& layer, Sharpness&& sharpness)
+/**
+ * The layer whose islands a uv layer is refined within: its own, or for a layer named "<anything>@<set>" the Float2
+ * layer <set>, so a layer derived from a uv set is smoothed exactly as that set is.
+ */
+const Attribute& islandLayer(const Mesh& src, const Attribute& layer)
+{
+    const std::string& name = layer.name();
+    const size_t at = name.rfind('@');
+    if (at == std::string::npos)
+        return layer;
+    const Attribute* set = src.cornerAttrs().find(std::string_view(name).substr(at + 1));
+    return set && set->type() == AttrType::Float2 ? *set : layer;
+}
+
+template <class Sharpness> UvRefine refineUvs(const Mesh& src, const Attribute& layer, const Attribute& islands, Sharpness&& sharpness)
 {
     LILA_ZONE();
 
@@ -48,7 +62,8 @@ template <class Sharpness> UvRefine refineUvs(const Mesh& src, const Attribute& 
                 r.face[f] = sum / float(n);
             }
     });
-    auto same = [&](Index a, Index b) { return glm::all(glm::lessThanEqual(glm::abs(uv[a] - uv[b]), glm::vec2(1e-6f))); };
+    const std::span<const glm::vec2> key = islands.values<glm::vec2>();
+    auto same = [&](Index a, Index b) { return glm::all(glm::lessThanEqual(glm::abs(key[a] - key[b]), glm::vec2(1e-6f))); };
     // The corner at point p of the face holding corner c.
     auto cornerAt = [&](Index c, Index p) { return src.cornerPoint(c) == p ? c : src.cornerNext(c); };
     // Whether e joins its two faces' uvs, so it lies inside an island.
@@ -385,7 +400,7 @@ Mesh subdivideOnce(const Mesh& src, const SubdivideOptions& opts, SubdivideMap* 
     std::vector<UvRefine> uvs;
     for (size_t l = 0; l < src.cornerAttrs().layerCount(); ++l)
         if (const Attribute& a = src.cornerAttrs().layer(l); a.type() == AttrType::Float2)
-            uvs.push_back(refineUvs(src, a, sharpness));
+            uvs.push_back(refineUvs(src, a, islandLayer(src, a), sharpness));
 
     if (std::optional<Mesh> built = buildQuads(src, pos, pId, eId, fId, crease, uvs, map))
         return std::move(*built);

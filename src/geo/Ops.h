@@ -284,7 +284,8 @@ struct SubdivideMap
 
 /**
  * Catmull-Clark subdivision. Edge "crease" of 1 or more is sharp (and drops by one per level),
- * fractions blend between smooth and sharp. Corner uvs and colours are interpolated linearly per face.
+ * fractions blend between smooth and sharp. Uv layers are smoothed within their islands (a layer named "<name>@<set>" uses
+ * the islands of uv set <set>); colours are interpolated linearly per face.
  */
 LILA_SCENE_API Mesh subdivide(const Mesh& mesh, const SubdivideOptions& opts = {}, SubdivideMap* map = nullptr);
 
