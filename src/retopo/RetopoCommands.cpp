@@ -7,6 +7,8 @@
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "core/Progress.h"
+#include "curve/CurveNodes.h"
+#include "curve/Tessellate.h"
 #include "geo/Ops.h"
 #include "geo/Symmetry.h"
 #include "geo/Topology.h"
@@ -145,8 +147,8 @@ std::vector<glm::dvec3> vecList(const json& j, const char* cmd)
 }
 
 /**
- * Guide polylines in the source's object space: edge chains of the mesh nodes in nodesFlag, or point lists given directly
- * in world space in pointsFlag.
+ * Guide polylines in the source's object space: the curves and the mesh edge chains of the nodes in nodesFlag, or point
+ * lists given directly in world space in pointsFlag.
  */
 std::vector<std::vector<glm::dvec3>> guidesFor(const Args& a, const Node& src, const char* nodesFlag = "guides", const char* pointsFlag = "guidePoints")
 {
@@ -157,6 +159,23 @@ std::vector<std::vector<glm::dvec3>> guidesFor(const Args& a, const Node& src, c
         {
             if (!g.is_string())
                 continue;
+            Node* c = Graph::current().find(g.get<std::string>());
+            if (c && c->type().isA("curve"))
+            {
+                Graph::current().evaluate();
+                for (const curve::Spline& sp : curve::splinesOf(c->value(curve::CurveShape::kWorldSpace)))
+                {
+                    const curve::Polyline pl = curve::tessellate(sp);
+                    std::vector<glm::dvec3> line;
+                    for (const glm::dvec3& p : pl.points)
+                        line.push_back(glm::dvec3(toLocal * glm::dvec4(p, 1.0)));
+                    if (pl.closed && !line.empty())
+                        line.push_back(line.front());
+                    if (line.size() >= 2)
+                        out.push_back(std::move(line));
+                }
+                continue;
+            }
             Node& n = meshArg(g.get<std::string>(), "quadRemesh");
             geo::Mesh m = meshInSpaceOf(n, src);
             std::vector<Index> edges;
@@ -304,9 +323,15 @@ std::vector<FlagDef> remeshFlags(const char* symmetry)
             {"sharpAngle", "", T::Float, 40.0, "Also follow creases sharper than this, degrees; negative disables.", {}, {}, {}, 180.0},
             {"symmetry", "", T::String, symmetry, "off, x, y or z: remesh half and mirror, exactly symmetric. The mesh has to be symmetric across that plane through its origin.",
              {"off", "x", "y", "z"}},
-            nodeFlag({"guides", "", T::List, nullptr, "Mesh nodes whose edges are guide curves."}, "mesh"),
+            nodeFlag({"guides", "", T::List, nullptr,
+                      "Curves, or meshes whose edges trace lines, that the edge flow turns to follow. Draw them on the mesh with Curves > "
+                      "Pencil Curve (S draws on the surface)."},
+                     "curve|mesh"),
             {"guidePoints", "", T::List, nullptr, "Guide polylines as lists of world [x, y, z]."},
-            nodeFlag({"featureGuides", "", T::List, nullptr, "Mesh nodes whose edges get an edge loop laid on them, like a hard edge."}, "mesh"),
+            nodeFlag({"featureGuides", "", T::List, nullptr,
+                      "Curves, or meshes whose edges trace lines, that get an edge loop laid exactly on them, like a hard edge. Draw them "
+                      "as for guides."},
+                     "curve|mesh"),
             {"featureGuidePoints", "", T::List, nullptr, "Feature guide polylines as lists of world [x, y, z]."},
             {"densityHandles", "", T::List, nullptr,
              "Local face size as {position: world [x, y, z], radius, scale}: scale times the edge length at the centre (0.35 to 2.8), easing out to the radius."},
