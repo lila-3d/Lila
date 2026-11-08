@@ -175,6 +175,15 @@ QDockWidget* sculptDock(bool create)
     return dock;
 }
 
+/** Entering opened the panel, so leaving sculpt mode closes it again. */
+bool gClosesOnExit = false;
+
+bool dockOpen()
+{
+    QDockWidget* d = sculptDock(false);
+    return d && d->isVisible();
+}
+
 void showDock()
 {
     if (QDockWidget* d = sculptDock(true))
@@ -200,8 +209,10 @@ void enterSculpt()
         log::warn("Enter Sculpt: select a mesh");
         return;
     }
+    const bool wasOpen = dockOpen();
     if (runActionWithOptions("sculptEnter", {{"args", {meshes.back()}}, {"mode", st.proxyMode}, {"levels", st.levels}, {"resolution", st.resolution}}))
     {
+        gClosesOnExit = !wasOpen;
         showDock();
         startSculptTool();
     }
@@ -611,9 +622,11 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     eform->addRow("High Level", mHighLevel);
     // Right under the session, since it decides what the sculpt turns into.
     col->insertWidget(col->indexOf(session) + 1, controls::section("On Exit", exitBox, this, kSections, false, &mExitHeader));
+    std::vector<QWidget*> lowButtons = {controls::push("sculpt.duplicateLowPoly", this), controls::push("mesh.relaxKeepForm", this),
+                                        controls::push("mesh.reproject", this), controls::push("mesh.transferShape", this)};
+    col->insertWidget(col->indexOf(session) + 2, controls::section("Low Poly", controls::grid(lowButtons, 2, this), this, kSections));
 
     col->addWidget(referenceOverlays::createSculptSection(this));
-    col->addWidget(controls::overflow({"sculpt.duplicateLowPoly", "mesh.relaxKeepForm", "mesh.reproject", "mesh.transferShape"}, this));
     col->addStretch(1);
 
     syncFromSettings();
@@ -1069,12 +1082,12 @@ void registerSculptUi()
 {
     installSculptDrawer();
     addLazyDock(kSculptDock, [] { return sculptDock(true); });
-    // Leaving sculpt mode, however it is left, closes the panel entering opened.
+    // Leaving sculpt mode, however it is left, closes the panel if entering opened it.
     sculpt::addListener([] {
         QTimer::singleShot(0, QCoreApplication::instance(), [] {
             static bool wasActive = false;
             const bool active = sculpt::active() != nullptr;
-            if (QDockWidget* d = sculptDock(false); wasActive && !active && d && d->isVisible())
+            if (QDockWidget* d = sculptDock(false); wasActive && !active && gClosesOnExit && d && d->isVisible())
                 d->close();
             wasActive = active;
         });
@@ -1122,6 +1135,7 @@ void registerSculptUi()
                   .run = [] {
                       if (sculpt::active() && sculptToolActive())
                           return exitSculpt();
+                      const bool wasOpen = dockOpen();
                       showDock();
                       if (!sculpt::active())
                       {
@@ -1131,6 +1145,7 @@ void registerSculptUi()
                               return;
                           }
                           enterSculpt();
+                          gClosesOnExit = !wasOpen;
                       }
                       startSculptTool();
                   },
