@@ -44,11 +44,11 @@ def config_and_rest(args):
     return "RelWithDebInfo", args
 
 
-def configure_no_unity(build_dir):
+def configure(build_dir, extra=()):
     if os.path.exists(os.path.join(build_dir, "CMakeCache.txt")):
-        command = ["cmake", build_dir, "-DLILA_UNITY_BUILD=OFF"]
+        command = ["cmake", build_dir, *extra]
     else:
-        command = ["cmake", "--preset", "windows", "-B", build_dir, "-DLILA_UNITY_BUILD=OFF"]
+        command = ["cmake", "--preset", "windows", "-B", build_dir, *extra]
     os.makedirs(build_dir, exist_ok=True)
     code, lines, _ = run(command, os.path.join(build_dir, "last_configure.log"))
     if code != 0:
@@ -60,7 +60,11 @@ def configure_no_unity(build_dir):
 def build(build_dir, args):
     if "-nounity" in args:
         args = [a for a in args if a != "-nounity"]
-        code = configure_no_unity(build_dir)
+        code = configure(build_dir, ["-DLILA_UNITY_BUILD=OFF"])
+        if code != 0:
+            return code
+    elif not os.path.exists(os.path.join(build_dir, "CMakeCache.txt")):
+        code = configure(build_dir)
         if code != 0:
             return code
     config, targets = config_and_rest(args)
