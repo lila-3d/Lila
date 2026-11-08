@@ -348,12 +348,13 @@ def applyBakeTarget(*objects: Any, project: str | None = None, optional: bool | 
         overrideGroups: Give every existing group the target's group defaults, including settings made on a group by hand. Short form og. Default False.
     """
 
-def applyLayout(*objects: Any, name: str | None = None, n: str | None = None) -> Any:
-    """Arrange the window's panels, viewports and shelf as the named layout. UI only.
+def applyLayout(*objects: Any, name: str | None = None, reset: bool | None = None, n: str | None = None, r: bool | None = None) -> Any:
+    """Arrange the window's panels, viewports and shelf as the named layout, as it was last left. reset=True applies its saved or built-in arrangement instead. UI only.
 
     Args:
         objects: name.
         name: Layout name. Short form n.
+        reset: Apply the saved or built-in arrangement, dropping how it was last left. Short form r. Default False.
     """
 
 def applyLibraryMaterial(*objects: Any, faces: Sequence[Any] | None = None, slot: str | None = None, set: str | None = None, preset: str | None = None, values: Any | None = None, scale: bool | None = None, tiles: float | None = None, layer: bool | None = None, f: Sequence[Any] | None = None) -> Any:
@@ -7763,7 +7764,7 @@ def sculptCorrective(*objects: Any) -> Any:
     """
 
 def sculptDeleteHigher() -> Any:
-    """Delete the levels above the one being sculpted, and their detail. Returns {level, levels, points, faces}."""
+    """Delete the levels above the one being sculpted, and their detail; at level 0, every level. Returns {level, levels, points, faces}."""
 
 def sculptDuplicateLowPoly(method: str | None = None, level: int | None = None, name: str | None = None) -> Any:
     """Without leaving sculpt mode, duplicate the mesh as the low poly sculptExit would leave with this method at this level, next to it. The copy keeps the mesh's materials, transform and modifiers. Returns its name.
