@@ -6495,6 +6495,19 @@ def polyTriangulate(beauty: bool | None = None, quadSplit: str | None = None) ->
         quadSplit: Quads split along the shorter diagonal (what display, export and MikkTSpace use) or always from the first corner. One of 'shortest', 'first'. Default 'shortest'.
     """
 
+def polyUVSet(*objects: Any, delete: bool | None = None, copy: bool | None = None, query: bool | None = None, uvSet: str | None = None, newUvSet: str | None = None, moveTo: int | None = None) -> Any:
+    """Delete, copy or reorder a mesh's uv sets, or query them. Meshes without uvSet are skipped. Sets stay numbered uv0, uv1, ... with no gaps: deleting or moving one renumbers the sets after it. Returns {sets} for the last mesh, and for copy {created}: each mesh's new set, which differs between meshes with different set counts.
+
+    Args:
+        objects: meshes.
+        delete: Remove uvSet. Default False.
+        copy: Copy uvSet into newUvSet (made or overwritten); a new set at the end when empty. Default False.
+        query: Only report the sets. Default False.
+        uvSet: UV set; the current one (uvSetCurrent) when not given.
+        newUvSet: copy: the set to write.
+        moveTo: Move uvSet to this position (0 is the set textures and exporters use first). Default -1.
+    """
+
 def polyUnlockNormals() -> Any:
     """Drop the stored split normals of the selected meshes, so shading comes from the hard and soft edges again."""
 

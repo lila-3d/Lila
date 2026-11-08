@@ -59,6 +59,43 @@ TEST_CASE("uv commands on a cube")
     run("uvAutoSeams");
 }
 
+TEST_CASE("polyUVSet deletes, copies and reorders sets without leaving gaps")
+{
+    run("newScene");
+    std::string cube = run("polyCube")[0];
+    run("select", {{"args", {cube}}});
+    run("uvLightmap", {{"resolution", 64}});
+    using Sets = std::vector<std::string>;
+    CHECK(run("polyUVSet", {{"query", true}})["sets"].get<Sets>() == Sets{"uv0", "uv1"});
+
+    CHECK(run("polyUVSet", {{"copy", true}, {"uvSet", "uv1"}})["sets"].get<Sets>() == Sets{"uv0", "uv1", "uv2"});
+    CHECK(run("uvLayout", {{"uvSet", "uv2"}})["overlappingFaces"] == 0);
+
+    run("uvSetCurrent", {{"args", {"uv2"}}});
+    CHECK(run("polyUVSet", {{"delete", true}, {"uvSet", "uv0"}})["sets"].get<Sets>() == Sets{"uv0", "uv1"});
+    CHECK(run("uvSetCurrent") == "uv0");
+    run("undo");
+    CHECK(run("polyUVSet", {{"query", true}})["sets"].get<Sets>() == Sets{"uv0", "uv1", "uv2"});
+
+    CHECK(run("polyUVSet", {{"moveTo", 0}, {"uvSet", "uv2"}})["sets"].get<Sets>() == Sets{"uv0", "uv1", "uv2"});
+    CHECK(run("uvLayout", {{"uvSet", "uv0"}})["overlappingFaces"] == 0);
+    CHECK_THROWS(run("polyUVSet", {{"delete", true}, {"uvSet", "uv7"}}));
+
+    std::string plain = run("polyCube")[0];
+    run("select", {{"args", {cube, plain}}});
+    run("polyUVSet", {{"delete", true}, {"uvSet", "uv2"}});
+    CHECK(run("polyUVSet", {{"args", {cube}}, {"query", true}})["sets"].get<Sets>() == Sets{"uv0", "uv1"});
+
+    json made = run("polyUVSet", {{"copy", true}, {"uvSet", "uv0"}})["created"];
+    REQUIRE(made.size() == 2);
+    Sets numbers;
+    for (const auto& [mesh, set] : made.items())
+        numbers.push_back(set.get<std::string>());
+    std::ranges::sort(numbers);
+    CHECK(numbers == Sets{"uv1", "uv2"});
+    CHECK(run("polyUVSet", {{"args", {plain}}, {"query", true}})["sets"].get<Sets>() == Sets{"uv0", "uv1"});
+}
+
 TEST_CASE("uvPack packs every selected mesh into one layout and stacks")
 {
     run("newScene");

@@ -386,11 +386,22 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     setRow->setSpacing(6);
     setRow->addWidget(new QLabel("UV Set", setBox));
     mSet = new QComboBox(setBox);
-    mSet->setEditable(true);
     mSet->setMinimumContentsLength(4);
     mSet->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     mSet->setToolTip("UV Set: the set the editor and tools work on (uvSetCurrent)");
     setRow->addWidget(mSet, 1);
+    mAddSet = new QToolButton(setBox);
+    mAddSet->setIcon(icon("plus"));
+    mAddSet->setToolTip("New UV Set: a copy of the current set on the selected meshes (polyUVSet)");
+    mAddSet->setAccessibleName("New UV Set");
+    controls::setRole(mAddSet, "push");
+    setRow->addWidget(mAddSet);
+    mDeleteSet = new QToolButton(setBox);
+    mDeleteSet->setIcon(icon("trash"));
+    mDeleteSet->setToolTip("Delete UV Set: removes the set from the selected meshes; later sets renumber (polyUVSet)");
+    mDeleteSet->setAccessibleName("Delete UV Set");
+    controls::setRole(mDeleteSet, "push");
+    setRow->addWidget(mDeleteSet);
     QToolButton* children = uvKitPush("Children", QString::fromStdString(actions::tooltip("uv.includeChildren")), setBox, true,
                                       uv::includeChildren());
     children->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
@@ -674,10 +685,36 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
         udim->setEnabled(!on);
         mView->setPackPreview(on);
     });
-    connect(mSet, &QComboBox::textActivated, this, [this](const QString& s) {
-        if (!s.isEmpty())
+    connect(mSet, &QComboBox::activated, this, [this](int i) {
+        if (QString s = mSet->itemData(i).toString(); !s.isEmpty())
             UvView::safeRun("uvSetCurrent", {{"args", {s.toStdString()}}}, CallSource::UI);
         mView->invalidate();
+        refreshSets();
+    });
+    connect(mAddSet, &QToolButton::clicked, this, [this] {
+        json r = runCommand("polyUVSet", {{"copy", true}, {"uvSet", uv::currentUvSet()}});
+        if (!r.is_object() || !r.contains("created") || r["created"].empty())
+            return;
+        std::map<std::string, std::vector<std::string>> byName;
+        for (const auto& [mesh, set] : r["created"].items())
+            byName[set.get<std::string>()].push_back(mesh);
+        // Different set counts number the copies differently; the current set follows the most meshes.
+        auto most = std::ranges::max_element(byName, {}, [](const auto& e) { return e.second.size(); });
+        UvView::safeRun("uvSetCurrent", {{"args", {most->first}}}, CallSource::UI);
+        if (byName.size() > 1)
+        {
+            std::string where;
+            for (const auto& [set, meshes] : byName)
+                for (const std::string& m : meshes)
+                    where += (where.empty() ? "" : ", ") + m + " " + set;
+            log::warn("New UV Set: the meshes had different set counts, so the copy got different numbers: {}", where);
+        }
+        mView->invalidate();
+        refreshSets();
+    });
+    connect(mDeleteSet, &QToolButton::clicked, this, [this] {
+        runCommand("polyUVSet", {{"delete", true}, {"uvSet", uv::currentUvSet()}});
+        refreshSets();
     });
     connect(getTd, &QToolButton::clicked, this, [this] {
         json r = runCommand("uvTexelDensity", {{"resolution", mResolution->value()}});
@@ -808,16 +845,37 @@ json UvEditor::runCommand(const char* command, const json& call)
     return r;
 }
 
-QStringList uvSetNames()
+namespace
 {
-    std::set<std::string> names{uv::currentUvSet(), "uv0", "uv1"};
+/** The uv sets on the meshes the editor shows, each with how many of those meshes have it. */
+struct ShownSets
+{
+    std::map<std::string, int> sets;
+    int meshes = 0;
+};
+
+ShownSets shownUvSets()
+{
+    ShownSets out;
     scene::Graph& g = scene::Graph::current();
     for (scene::NodeId id : UvView::shownMeshes())
         if (scene::Node* n = g.node(id); n && n->type().isA("mesh"))
             if (scene::MeshPtr m = scene::modifiers::cage(g, id))
+            {
+                ++out.meshes;
                 for (const std::string& name : m->cornerAttrs().names())
                     if (const geo::Attribute* a = m->cornerAttrs().find(name); a && a->type() == geo::AttrType::Float2)
-                        names.insert(name);
+                        ++out.sets[name];
+            }
+    return out;
+}
+} // namespace
+
+QStringList uvSetNames()
+{
+    std::set<std::string> names{uv::currentUvSet(), "uv0", "uv1"};
+    for (const auto& [name, count] : shownUvSets().sets)
+        names.insert(name);
     QStringList items;
     for (const std::string& n : names)
         items << QString::fromStdString(n);
@@ -826,22 +884,36 @@ QStringList uvSetNames()
 
 void UvEditor::refreshSets()
 {
-    const QStringList items = uvSetNames();
-    QString cur = QString::fromStdString(uv::currentUvSet());
-    QStringList existing;
-    for (int i = 0; i < mSet->count(); ++i)
-        existing << mSet->itemText(i);
-    if (existing != items)
+    const ShownSets shown = shownUvSets();
+    // Switch off a set none of the shown meshes have, so the box only ever names a real set.
+    if (!shown.sets.empty() && !shown.sets.contains(uv::currentUvSet()))
     {
-        QSignalBlocker block(mSet);
+        uv::setCurrentUvSet(shown.sets.begin()->first);
+        mView->invalidate();
+    }
+    const std::string cur = uv::currentUvSet();
+    const bool exists = shown.sets.contains(cur);
+    std::vector<std::pair<QString, QString>> items; // display text, set name
+    for (const auto& [name, count] : shown.sets)
+        items.emplace_back(count < shown.meshes ? QString("%1 (%2/%3)").arg(QString::fromStdString(name)).arg(count).arg(shown.meshes)
+                                                : QString::fromStdString(name),
+                           QString::fromStdString(name));
+    if (!exists)
+        items.emplace_back(QString::fromStdString(cur), QString::fromStdString(cur));
+    bool same = int(items.size()) == mSet->count();
+    for (int i = 0; same && i < mSet->count(); ++i)
+        same = mSet->itemText(i) == items[size_t(i)].first && mSet->itemData(i).toString() == items[size_t(i)].second;
+    QSignalBlocker block(mSet);
+    if (!same)
+    {
         mSet->clear();
-        mSet->addItems(items);
+        for (const auto& [text, name] : items)
+            mSet->addItem(text, name);
     }
-    if (mSet->currentText() != cur)
-    {
-        QSignalBlocker block(mSet);
-        mSet->setCurrentText(cur);
-    }
+    mSet->setCurrentIndex(mSet->findData(QString::fromStdString(cur)));
+    mSet->setEnabled(exists);
+    mAddSet->setEnabled(exists);
+    mDeleteSet->setEnabled(exists);
 }
 
 void UvEditor::showToolkit()

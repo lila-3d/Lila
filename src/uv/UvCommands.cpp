@@ -61,6 +61,35 @@ std::string uvSetArg(const Args& a)
     return a.has("uvSet") ? a.get<std::string>("uvSet") : currentUvSet();
 }
 
+/** The mesh's uv sets (uv0, uv1, ...) in number order. */
+std::vector<std::string> uvSetNames(const geo::Mesh& m)
+{
+    std::vector<std::pair<int, std::string>> found;
+    for (const std::string& name : m.cornerAttrs().names())
+    {
+        const geo::Attribute* at = m.cornerAttrs().find(name);
+        if (!at || at->type() != geo::AttrType::Float2 || name.size() < 3 || !name.starts_with("uv")
+            || !std::all_of(name.begin() + 2, name.end(), [](char c) { return c >= '0' && c <= '9'; }))
+            continue;
+        found.emplace_back(std::stoi(name.substr(2)), name);
+    }
+    std::ranges::sort(found);
+    std::vector<std::string> out;
+    for (auto& [index, name] : found)
+        out.push_back(std::move(name));
+    return out;
+}
+
+/** Renames the sets so order[i] becomes uv<i>; renderers and exporters stop at the first missing number. */
+void renumberUvSets(geo::Mesh& m, const std::vector<std::string>& order)
+{
+    geo::AttributeSet& corners = m.cornerAttrs();
+    for (size_t i = 0; i < order.size(); ++i)
+        corners.rename(order[i], "~uvset" + std::to_string(i));
+    for (size_t i = 0; i < order.size(); ++i)
+        corners.rename("~uvset" + std::to_string(i), geo::attr::uvName(int(i)));
+}
+
 /** Meshes to work on: the component selection converted to kind, or whole selected meshes in object mode. */
 std::vector<NodeId> selectedMeshes(const Graph& g)
 {
@@ -1413,6 +1442,89 @@ void registerCommands()
             if (!a.positional.empty())
                 setCurrentUvSet(a.positional[0].get<std::string>());
             return currentUvSet();
+        },
+    });
+
+    ops::registerCommand({
+        .name = "polyUVSet",
+        .doc = "Delete, copy or reorder a mesh's uv sets, or query them. Meshes without uvSet are skipped. Sets stay numbered uv0, uv1, ... with no gaps: deleting "
+               "or moving one renumbers the sets after it. Returns {sets} for the last mesh, and for copy {created}: each mesh's new set, which differs between meshes with different set counts.",
+        .positionalDoc = "meshes",
+        .flags = {{"delete", "", T::Bool, false, "Remove uvSet."},
+                  {"copy", "", T::Bool, false, "Copy uvSet into newUvSet (made or overwritten); a new set at the end when empty."},
+                  {"query", "", T::Bool, false, "Only report the sets."},
+                  uvSetFlag(),
+                  {"newUvSet", "", T::String, "", "copy: the set to write."},
+                  {"moveTo", "", T::Int, -1, "Move uvSet to this position (0 is the set textures and exporters use first).", {}, {}, -1.0}},
+        .run = [](const Args& a) -> json {
+            Graph& g = graph();
+            json sets = json::array();
+            int found = 0;
+            json created = json::object();
+            UndoChunk chunk("UV Set");
+            for (const std::string& name : scene::meshObjects(a, "polyUVSet"))
+            {
+                Node* n = g.find(name);
+                if (!n || !n->type().isA("mesh"))
+                    throw CommandError("polyUVSet: " + name + " is not a mesh");
+                g.evaluate();
+                if (a.get<bool>("query"))
+                {
+                    MeshPtr m = scene::modifiers::cage(g, n->id());
+                    sets = m ? json(uvSetNames(*m)) : json::array();
+                    continue;
+                }
+                scene::PlugRef base = basePlug(*n);
+                g.evaluate();
+                MeshPtr cur = std::get<MeshPtr>(g.storedValue(base));
+                if (!cur)
+                    continue;
+                auto m = std::make_shared<geo::Mesh>(*cur);
+                const std::string set = uvSetArg(a);
+                std::vector<std::string> names = uvSetNames(*m);
+                auto at = std::find(names.begin(), names.end(), set);
+                if (at == names.end())
+                    continue;
+                ++found;
+                int index = int(at - names.begin());
+                std::string to;
+                if (a.get<bool>("copy"))
+                {
+                    to = a.get<std::string>("newUvSet", "");
+                    if (to.empty())
+                        to = geo::attr::uvName(int(names.size()));
+                    if (to != set)
+                    {
+                        auto from = m->cornerAttrs().get<glm::vec2>(set);
+                        std::vector<glm::vec2> copy(from.begin(), from.end());
+                        std::ranges::copy(copy, m->cornerAttrs().getOrAdd<glm::vec2>(to).begin());
+                    }
+                    names = uvSetNames(*m);
+                }
+                if (a.get<bool>("delete"))
+                {
+                    m->cornerAttrs().remove(set);
+                    names.erase(names.begin() + index);
+                    index = -1;
+                }
+                if (int pos = a.get<int>("moveTo", -1); pos >= 0 && index >= 0)
+                {
+                    pos = std::min(pos, int(names.size()) - 1);
+                    std::string moved = names[size_t(index)];
+                    names.erase(names.begin() + index);
+                    names.insert(names.begin() + pos, moved);
+                }
+                renumberUvSets(*m, names);
+                if (auto made = std::ranges::find(names, to); !to.empty() && made != names.end())
+                    created[name] = geo::attr::uvName(int(made - names.begin()));
+                sets = uvSetNames(*m);
+                g.setValue(base, MeshPtr(std::move(m)));
+            }
+            if (!a.get<bool>("query") && found == 0)
+                throw CommandError("polyUVSet: no given mesh has uv set " + uvSetArg(a));
+            if (!a.get<bool>("query") && std::ranges::find(sets, json(currentUvSet())) == sets.end())
+                setCurrentUvSet(geo::attr::uvName(0));
+            return a.get<bool>("copy") ? json{{"sets", sets}, {"created", created}} : json{{"sets", sets}};
         },
     });
 

@@ -82,6 +82,8 @@ private:
     QBoxLayout* mSectionColumn[2] = {};
     std::vector<QWidget*> mSections;
     QComboBox* mSet = nullptr;
+    QToolButton* mAddSet = nullptr;
+    QToolButton* mDeleteSet = nullptr;
     QComboBox* mDisplay = nullptr;
     QSpinBox* mResolution = nullptr;
     QDoubleSpinBox* mPadding = nullptr;
