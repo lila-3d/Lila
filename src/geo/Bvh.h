@@ -72,6 +72,8 @@ public:
     Bounds bounds() const;
     Index triangleCount() const { return Index(mTris.faces.size()); }
     const Triangulation& triangles() const { return mTris; }
+    /** Corners of a triangle in the positions the tree was built or refit from. */
+    void trianglePoints(Index t, glm::dvec3& a, glm::dvec3& b, glm::dvec3& c) const { triPoints(t, a, b, c); }
 
     /** Nearest hit along origin + t * dir for t in [0, tMax]. dir need not be unit length. */
     bool raycast(const glm::dvec3& origin, const glm::dvec3& dir, BvhHit& hit,

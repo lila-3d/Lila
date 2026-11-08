@@ -5,6 +5,7 @@ add_executable(lila_geo_tests
     test_bounding.cpp
     test_bvh.cpp
     test_cross_section.cpp
+    test_intersect.cpp
     test_knife.cpp
     test_loop_tools.cpp
     test_mesh.cpp

@@ -13,6 +13,7 @@ lila_module(lila_geo Scene
     CrossSection.cpp
     FoldEdges.cpp
     Heightfield.cpp
+    Intersect.cpp
     LoopTools.cpp
     Mesh.cpp
     Normals.cpp
