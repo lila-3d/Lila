@@ -264,6 +264,10 @@ public:
     /** Every Simulate node making the output stepped on to `frame` from its last frame, in either cacheMode; the
      * inputs are put back as the last evaluation had them. */
     groomlab::SimRun simulateTo(int frame, const groomlab::SimProgress& progress = {});
+    /** Steps the Simulate nodes an evaluation at `seconds` would step (live, stepping on, no bake covering it) on to the
+     * last frame before `seconds` through the feed, so the frame at `seconds` is stepped from there as when playing.
+     * The inputs are put back. */
+    groomlab::SimRun simulateBefore(double seconds);
     /** Drops a node's frames ("": every node's); a bake stays. */
     void invalidateSimulation(const std::string& node = {});
     std::vector<groomlab::SimStatus> simulationStatus() const;

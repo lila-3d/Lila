@@ -369,6 +369,19 @@ TEST_CASE("groomStrands: Simulate steps frame by frame, scrubbing back reads its
     {
         const tbb::global_control cap(tbb::global_control::max_allowed_parallelism, size_t(threads));
         CHECK_MESSAGE(played(movingScene(simulateGraph()), 8) == bits, threads, " threads");
-    }
 
+        // Jumped straight to a frame: each skipped frame steps with the scalp where it was then, as when played.
+        const StrandsScene jumped = movingScene(simulateGraph());
+        setFrame(8.0);
+        CHECK_MESSAGE(bitsOf(jumped.grown()) == bits.back(), threads, " threads");
+        CHECK(scene::Graph::current().time() == doctest::Approx(scene::anim::secondsOf(8.0)));
+        setFrame(5.0);
+        CHECK_MESSAGE(bitsOf(jumped.grown()) == bits[4], threads, " threads");
+
+        // Played a little, then jumped ahead.
+        const StrandsScene partly = movingScene(simulateGraph());
+        played(partly, 3);
+        setFrame(8.0);
+        CHECK_MESSAGE(bitsOf(partly.grown()) == bits.back(), threads, " threads");
+    }
 }

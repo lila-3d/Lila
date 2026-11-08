@@ -187,9 +187,10 @@ public:
     void compute(const EvalContext& ctx) override
     {
         LILA_ZONE();
+        bool first = false;
         {
             std::lock_guard lock(registry().mutex);
-            registry().nodes.insert(id());
+            first = registry().nodes.insert(id()).second;
         }
         using namespace groomLabBridge;
         const MeshPtr& m = as<MeshPtr>(idx(*this, "inMesh"));
@@ -226,6 +227,7 @@ public:
                 evaluator.setScalpHistory(historyAt(ctx.time));
                 const GroomEvaluator::Result& result = evaluateAt(evaluator, seconds);
                 mMissedHistory = !historyAt(ctx.time) && evaluator.scalpHistoryFrames() > 0;
+                mMissedFeed = first && steppedPast(evaluator);
                 // A frame that grows the same strands (nothing in the graph moves) hands on the same curve data.
                 if (result.strands != mGrownFrom || !mGrown)
                 {
@@ -324,10 +326,86 @@ public:
         return changed;
     }
 
+    /**
+     * Before an evaluation at `now`: steps the graph's Simulate nodes over the frames before `now` they haven't stepped,
+     * moving the scene's time to each and reading the scalp and guides there, so a jump ahead simulates as playing does.
+     * True when it stepped any.
+     */
+    bool feedSimulation(Graph& g, double now)
+    {
+        mMissedFeed = false;
+        if (!b(*this, "useSceneTime"))
+            return false;
+        if (!mEvaluator)
+            mEvaluator = std::make_unique<GroomEvaluator>();
+        try
+        {
+            mEvaluator->setGraphJson(s(*this, "graph"));
+        }
+        catch (const std::exception&)
+        {
+            return false;
+        }
+        const std::optional<PlugRef> meshSource = g.source({id(), idx(*this, "inMesh"), -1});
+        if (!meshSource)
+            return false;
+        const std::optional<PlugRef> matrixSource = g.source({id(), idx(*this, "meshMatrix"), -1});
+        const std::optional<PlugRef> guideSource = g.source({id(), idx(*this, "inCurve"), -1});
+        std::vector<NodeId> reads{meshSource->node};
+        if (matrixSource)
+            reads.push_back(matrixSource->node);
+        if (guideSource)
+            reads.push_back(guideSource->node);
+        GroomEvaluator& evaluator = *mEvaluator;
+        evaluator.setFramesPerSecond(anim::playback().fps);
+        bool moved = false;
+        evaluator.setSimulationFeed([&](double seconds) {
+            moved = true;
+            g.setTime(seconds, false);
+            g.evaluateUpstream(reads);
+            const Node* source = g.node(meshSource->node);
+            const MeshPtr mesh = source ? source->as<MeshPtr>(meshSource->attr) : MeshPtr();
+            if (!mesh || mesh->numFaces() == 0)
+                return false;
+            const Node* matrixNode = matrixSource ? g.node(matrixSource->node) : nullptr;
+            const auto scalp =
+                groomLabBridge::scalpMesh(*mesh, matrixNode ? matrixNode->as<glm::dmat4>(matrixSource->attr) : glm::dmat4(1.0));
+            const Node* guideNode = guideSource ? g.node(guideSource->node) : nullptr;
+            static const Splines none;
+            const Splines& curves = guideNode ? curve::splinesOf(guideNode->value(guideSource->attr)) : none;
+            evaluator.setScalp(scalp);
+            evaluator.setGuides(curves.empty() ? nullptr : groomLabBridge::guideSet(curves, *scalp));
+            return true;
+        });
+        const groomlab::SimRun run = evaluator.simulateBefore(now);
+        evaluator.setSimulationFeed({});
+        if (moved)
+            g.setTime(now, false);
+        return run.frames > 0;
+    }
+
     /** The last compute needed the scalp's earlier frames and had none (its first, before the hook knew its graph). */
     bool missedHistory() const { return mMissedHistory; }
 
+    /** The node's first compute stepped its Simulate nodes over earlier frames without the scalp there: they start again
+     * through feedSimulation. */
+    bool missedFeed() const { return mMissedFeed; }
+
+    void restartSimulation()
+    {
+        if (mEvaluator)
+            mEvaluator->invalidateSimulation();
+    }
+
 private:
+    static bool steppedPast(const GroomEvaluator& evaluator)
+    {
+        for (const groomlab::SimStatus& status : evaluator.simulationStatus())
+            if (status.frames > 1)
+                return true;
+        return false;
+    }
+
     groomlab::ScalpHistoryPtr historyAt(double now) const { return mHistory && mHistoryAt == now ? mHistory : nullptr; }
 
     bool dropHistory()
@@ -352,11 +430,13 @@ private:
     groomlab::ScalpHistoryPtr mHistory;
     double mHistoryAt = 0.0;
     bool mMissedHistory = false;
+    bool mMissedFeed = false;
 };
 
 /**
- * Before each evaluation every groomStrands node whose graph reads the scalp's earlier frames gets them; after it, a
- * node that computed without them gets them and computes again.
+ * Before each evaluation every groomStrands node whose graph reads the scalp's earlier frames gets them and its Simulate
+ * nodes step the frames skipped; after it, a node that computed without them (its first compute) gets them and computes
+ * again.
  */
 void sampleHistories(Graph& g, bool after)
 {
@@ -375,9 +455,14 @@ void sampleHistories(Graph& g, bool after)
         if (!n || n->type().name != "groomStrands")
             continue;
         auto* node = static_cast<GroomStrandsNode*>(n);
-        if (after && !node->missedHistory())
+        const bool missedFeed = node->missedFeed();
+        if (after && !node->missedHistory() && !missedFeed)
             continue;
-        if (node->sampleHistory(g, now))
+        const bool sampled = node->sampleHistory(g, now);
+        if (after && missedFeed)
+            node->restartSimulation();
+        const bool fed = (!after || missedFeed) && node->feedSimulation(g, now);
+        if (fed || sampled || (after && missedFeed))
         {
             g.touch(id);
             touched = true;

@@ -2211,6 +2211,34 @@ SimRun GroomEvaluator::simulateTo(int frame, const SimProgress& progress)
     return run;
 }
 
+SimRun GroomEvaluator::simulateBefore(double seconds)
+{
+    SimRun run;
+    if (!mDoc || hasPreview() || !mSimStepping || !mSimFeed)
+        return run;
+    double w = 0.0;
+    const int f0 = groomEvaluator::frameAt(seconds, mFps, &w);
+    const int f1 = w > 0.0 ? f0 + 1 : f0;
+    const int target = f1 - 1;
+    std::vector<SimRef> refs;
+    for (SimRef& ref : simRefs({}))
+    {
+        const SimNode& node = *ref.node;
+        if (f0 >= node.cache.startFrame() && !bakeUsable(node, seconds) && node.cache.settings().live &&
+            !(node.cache.has(f0) && node.cache.has(f1)))
+            refs.push_back(ref);
+    }
+    try
+    {
+        advanceSimulations(refs, target, seconds, {}, run);
+    }
+    catch (const std::exception& e)
+    {
+        run.errors.push_back(std::string("simulation: ") + e.what());
+    }
+    return run;
+}
+
 void GroomEvaluator::invalidateSimulation(const std::string& node)
 {
     for (auto& [name, sim] : mSims)
