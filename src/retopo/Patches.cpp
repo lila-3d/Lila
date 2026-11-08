@@ -1687,8 +1687,16 @@ Extracted buildPatchMesh(const Layout& lay, const std::vector<uint8_t>& blocked,
         for (int k = 0; k < 2; ++k)
         {
             const double a = latticeLength(shape.sides[k]), b = latticeLength(shape.sides[k + 2]);
-            if (std::abs(a - b) > std::max(1.5, 0.5 * std::max(a, b)))
+            // Sides two steps apart are held however short: a pattern fills that difference with a valence 6 and two
+            // valence 3. Not a near-triangle (a side almost gone), nor a short side on the border, which holding would
+            // pull inside.
+            const Side& shorter = a < b ? shape.sides[k] : shape.sides[k + 2];
+            const bool borderSliver = std::min(a, b) < 1.0 && std::all_of(shorter.arcs.begin(), shorter.arcs.end(), [&](const auto& sa) { return arcs[sa.first].border; });
+            const double held = borderSliver || std::min(a, b) < 0.3 ? 0.0 : 2.0;
+            if (std::abs(a - b) > std::max({1.5, held, 0.5 * std::max(a, b)}))
                 unequal[p] = 1;
+            else if (debug && std::getenv("LILA_PATCH_LIST") && std::abs(a - b) > std::max(1.5, 0.5 * std::max(a, b)))
+                std::fprintf(stderr, "held patch %d: sides %.2f %.2f\n", int(p), a, b);
         }
     }
     for (Index p = 0; p < np; ++p)
@@ -2394,6 +2402,13 @@ Extracted buildPatchMesh(const Layout& lay, const std::vector<uint8_t>& blocked,
                     quadPatch.push_back(p);
                 }
             ++patterned;
+            if (listHoles)
+            {
+                std::fprintf(stderr, "pattern patch %d: %zu poles,", int(p), r.poles.size());
+                for (Index pl : r.poles)
+                    std::fprintf(stderr, " (%.2f %.2f %.2f)", r.positions[pl].x, r.positions[pl].y, r.positions[pl].z);
+                reportHole(p, "pattern");
+            }
             continue;
         }
         const PatchShape& shape = shapes[p];
