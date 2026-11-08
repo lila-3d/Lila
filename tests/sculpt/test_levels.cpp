@@ -134,6 +134,21 @@ TEST_CASE("adding a level subdivides the finest and keeps its shape; deleting hi
     ops::execute("sculptCancel", json::object());
 }
 
+TEST_CASE("enter starts on the cage and exit without levels keeps no high poly")
+{
+    makeMesh("lvBare", geo::makeCube({.subdivX = 4, .subdivY = 4, .subdivZ = 4}));
+    json r = ops::execute("sculptEnter", {{"args", {"lvBare"}}});
+    CHECK(r["levels"].get<int>() == 0);
+    CHECK(r["faces"].get<int>() == 6 * 16);
+    bump({0.0, 0.0, 50.0}, 20.0);
+    const std::vector<glm::dvec3> sculpted = positions();
+    ops::execute("sculptExit", json::object());
+    scene::Graph& g = scene::Graph::current();
+    CHECK_FALSE(g.find("lvBare_high"));
+    const auto& mesh = *std::get<scene::MeshPtr>(g.storedValue({g.find("lvBare")->id(), scene::MeshNode::kInMesh, -1}));
+    CHECK(maxGap(sculpted, {mesh.positions().begin(), mesh.positions().end()}) < 1e-6);
+}
+
 TEST_CASE("exit from a lower level fits the cage to the finest level")
 {
     makeMesh("lvExit", geo::makeCube({}));

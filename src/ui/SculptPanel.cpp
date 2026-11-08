@@ -210,9 +210,18 @@ void exitSculpt()
     if (!sculpt::active())
         return;
     const SculptSettings& st = sculptSettings();
-    if (runActionWithOptions("sculptExit", {{"method", st.exitMethod}, {"lowLevel", st.lowLevel}, {"high", st.highPoly}, {"highLevel", st.highLevel}}) &&
-        sculptToolActive())
+    const scene::NodeId node = sculpt::active()->node;
+    if (!runActionWithOptions("sculptExit", {{"method", st.exitMethod}, {"lowLevel", st.lowLevel}, {"high", st.highPoly}, {"highLevel", st.highLevel}}))
+        return;
+    if (sculptToolActive())
         viewportTools::set(nullptr);
+    // The low poly alone can look like the sculpt was lost: say where the detail went.
+    scene::Graph& g = scene::Graph::current();
+    scene::Node* n = g.node(node);
+    if (const std::optional<sculpt::KeptSculpt> kept = n ? sculpt::keptSculpt(*n) : std::nullopt)
+        if (scene::Node* k = g.node(kept->node))
+            viewportToast::showActive(QString("Sculpt kept in hidden %1. Sculpt %2 again to resume it.")
+                                          .arg(QString::fromStdString(k->name()), QString::fromStdString(n->name())), 5000);
 }
 
 QToolButton* sculptActionButton(const std::string& id, const QString& iconName, QWidget* parent)
@@ -314,8 +323,8 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     mMode->setToolTip("What you sculpt on. The mesh keeps its topology and UVs whichever you pick.");
     setSegmentedDefault(mMode, proxyModeId(defaults.proxyMode), QStringList{"Levels", "Voxels", "Mesh"}[proxyModeId(defaults.proxyMode)]);
     sform->addRow("Sculpt On", mMode);
-    mLevels = sculptSlider(sessionFields, 1, 6, 0);
-    mLevels->setToolTip("Levels: subdivision levels to start with; each has four times the faces. Add or step between them while sculpting.");
+    mLevels = sculptSlider(sessionFields, 0, 6, 0);
+    mLevels->setToolTip("Levels: subdivision levels to start with; each has four times the faces. 0 sculpts the mesh's own faces until you Add a level.");
     setSpinDefault(mLevels, defaults.levels);
     sform->addRow("Levels", mLevels);
     mLevelRow = new QWidget(sessionFields);
@@ -1066,7 +1075,7 @@ void registerSculptUi()
                   .category = "Sculpt",
                   .run = enterSculpt,
                   .doc = "Sculpt the selected mesh on a high-resolution copy; the mesh keeps its topology (settings in the Sculpt panel).",
-                  .python = ops::toPython("sculptEnter", {{"mode", "subdivide"}, {"levels", 2}})});
+                  .python = ops::toPython("sculptEnter", {{"mode", "subdivide"}})});
     auto levelAction = [](std::string id, std::string label, std::string command, json args, std::string doc) {
         actions::add({.id = id,
                       .label = label,

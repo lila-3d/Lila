@@ -411,7 +411,7 @@ void buildProxy(Session& s, const Args& a, Node& n)
 
     Graph& g = graph();
     const std::string mode = a.get<std::string>("mode", "subdivide");
-    const int levels = std::clamp(a.get<int>("levels", 2), 1, 6);
+    const int levels = std::clamp(a.get<int>("levels", 0), 0, 6);
     s.subdivide.levels = levels;
     geo::Mesh proxy;
     bool resumed = false;
@@ -602,7 +602,8 @@ std::vector<glm::dvec3> exitPositions(Session& s, const std::string& method, int
     LILA_ZONE();
 
     const geo::Mesh& proxy = s.sculpt.mesh();
-    if (s.mode == ProxyMode::Direct)
+    // With no levels above the cage the proxy is the cage, point for point.
+    if (s.mode == ProxyMode::Direct || (s.stack && s.stack->top() == 0))
         return {proxy.positions().begin(), proxy.positions().end()};
     const Node* n = graph().node(s.node);
     const std::optional<geo::SymmetrySpec> spec = n ? scene::symmetrySpec(*n) : std::nullopt;
@@ -699,7 +700,7 @@ void registerCommands()
                "exit kept (<mesh>_high). Returns {mesh, mode, level, levels, points, faces}.",
         .positionalDoc = "mesh",
         .flags = {{"mode", "", T::String, "subdivide", "subdivide, remesh or direct.", {"subdivide", "remesh", "direct"}},
-                  {"levels", "", T::Int, 2, "Subdivision levels to start with, 1 to 6.", {}, {}, 1.0, 6.0},
+                  {"levels", "", T::Int, 0, "Subdivision levels to start with, 0 to 6: 0 sculpts the cage until sculptAddLevel adds some.", {}, {}, 0.0, 6.0},
                   {"resolution", "", T::Int, 192, "Voxels along the longest side, for mode='remesh'.", {}, {}, 16.0, 2048.0},
                   {"resume", "", T::Bool, true, "Continue from the mesh's kept high poly when it has one."}},
         .run = [](const Args& a) -> json {
@@ -800,7 +801,8 @@ void registerCommands()
             if (!kept)
                 kept = keptProxy(n);
             json keptOut = nullptr;
-            if (high != "none" && s->mode != ProxyMode::Direct)
+            // With no levels above the cage the mesh is the sculpt, so there is nothing to keep.
+            if (high != "none" && s->mode != ProxyMode::Direct && !(s->stack && s->stack->top() == 0))
             {
                 if (!kept)
                 {

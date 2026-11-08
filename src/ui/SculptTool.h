@@ -57,7 +57,7 @@ struct SculptSettings
     /** A sculptMaterials() id. */
     std::string material = "clay";
     std::string proxyMode = "subdivide";
-    int levels = 2;
+    int levels = 0;
     int resolution = 192;
     std::string exitMethod = "closest";
     /** sculptExit's high: highest, belowHighest, level or none. */

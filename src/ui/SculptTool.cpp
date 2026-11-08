@@ -65,7 +65,7 @@ SculptSettings loadSettings()
     s.frontFacesOnly = p.value<bool>("general", "/sculpt/frontFacesOnly", s.frontFacesOnly);
     s.showCage = p.value<bool>("general", "/sculpt/showCage", s.showCage);
     s.proxyMode = p.value<std::string>("general", "/sculpt/proxyMode", s.proxyMode);
-    s.levels = std::clamp(p.value<int>("general", "/sculpt/levels", s.levels), 1, 6);
+    s.levels = std::clamp(p.value<int>("general", "/sculpt/startLevels", s.levels), 0, 6);
     s.resolution = std::clamp(p.value<int>("general", "/sculpt/resolution", s.resolution), 16, 2048);
     s.exitMethod = p.value<std::string>("general", "/sculpt/exitMethod", s.exitMethod);
     s.highPoly = p.value<std::string>("general", "/sculpt/highPoly", s.highPoly);
@@ -800,7 +800,7 @@ void sculptSettingsChanged()
     p.set("general", "/sculpt/frontFacesOnly", s.frontFacesOnly);
     p.set("general", "/sculpt/showCage", s.showCage);
     p.set("general", "/sculpt/proxyMode", s.proxyMode);
-    p.set("general", "/sculpt/levels", s.levels);
+    p.set("general", "/sculpt/startLevels", s.levels);
     p.set("general", "/sculpt/resolution", s.resolution);
     p.set("general", "/sculpt/exitMethod", s.exitMethod);
     p.set("general", "/sculpt/highPoly", s.highPoly);
