@@ -98,11 +98,24 @@ void extents(const Polygon& p, Vec2 o, Vec2 u, Vec2 v, double& u0, double& u1, d
     }
 }
 
+/**
+ * True when a half-plane cut left one piece. Cutting a concave polygon can leave several, joined by edges running along
+ * the cut line outside the polygon; such a piece has more than one edge on the line.
+ */
+bool onePiece(const Polygon& piece, Vec2 at, Vec2 n)
+{
+    int onLine = 0;
+    for (size_t k = 0; k < piece.size(); ++k)
+        if (std::abs(glm::dot(piece.pts[k] - at, n)) < 1.0 && std::abs(glm::dot(piece.pts[(k + 1) % piece.size()] - at, n)) < 1.0)
+            ++onLine;
+    return onLine <= 1;
+}
+
 /** Both halves of p either side of the line, each still facing a street. */
 bool splitFacing(const Polygon& p, Vec2 at, Vec2 n, std::vector<Polygon>& todo)
 {
     Polygon a = clipHalfPlane(p, at, n), b = clipHalfPlane(p, at, -n);
-    if (!usable(a) || !usable(b) || !facesStreet(a) || !facesStreet(b))
+    if (!usable(a) || !usable(b) || !facesStreet(a) || !facesStreet(b) || !onePiece(a, at, n) || !onePiece(b, at, n))
         return false;
     todo.push_back(std::move(a));
     todo.push_back(std::move(b));
@@ -194,7 +207,8 @@ std::vector<Polygon> obbCut(const Polygon& start, double target, double minWidth
                     continue;
                 const Vec2 at = c + axis * (rng.range(-0.1, 0.1) * half);
                 Polygon a = clipHalfPlane(poly, at, axis), b = clipHalfPlane(poly, at, -axis);
-                if (usable(a) && usable(b) && facesStreet(a) && facesStreet(b) && area(a) > 0.3 * target && area(b) > 0.3 * target)
+                if (usable(a) && usable(b) && facesStreet(a) && facesStreet(b) && area(a) > 0.3 * target && area(b) > 0.3 * target &&
+                    onePiece(a, at, axis) && onePiece(b, at, axis))
                 {
                     todo.push_back(std::move(a));
                     todo.push_back(std::move(b));
@@ -291,7 +305,7 @@ bool skeletonCut(const Polygon& block, double width, double depth, BlockRandom& 
         {
             const Vec2 at = a + u * (u0 + (u1 - u0) * (double(i) + rng.range(-0.1, 0.1)) / n);
             Polygon left = clipHalfPlane(rest, at, -u), right = clipHalfPlane(rest, at, u);
-            if (usable(left) && usable(right) && facesStreet(left) && facesStreet(right))
+            if (usable(left) && usable(right) && facesStreet(left) && facesStreet(right) && onePiece(left, at, u) && onePiece(right, at, u))
             {
                 pieces.push_back(std::move(left));
                 rest = std::move(right);
