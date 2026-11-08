@@ -10208,12 +10208,13 @@ def uvAlignToEdge(uvSet: str | None = None, axis: str | None = None) -> Any:
         axis: u, v, or nearest. One of 'nearest', 'u', 'v'. Default 'nearest'.
     """
 
-def uvAuto(uvSet: str | None = None, iterations: int | None = None, hardAngle: float | None = None, useHardEdges: bool | None = None, keepSeams: bool | None = None, maxDistortion: float | None = None, visibility: bool | None = None, merge: bool | None = None, method: str | None = None, distortionBound: float | None = None, seamWeight: float | None = None, useViews: bool | None = None, views: Sequence[Any] | None = None, resolution: int | None = None, padding: float | None = None, margin: float | None = None, paddingMips: int | None = None, rotateStep: int | None = None, angles: Sequence[Any] | None = None, freeRotation: bool | None = None, flip: bool | None = None, orient: bool | None = None, scaleMode: str | None = None, normalize: bool | None = None, stack: bool | None = None, stackMirrored: bool | None = None, stackTolerance: float | None = None, tilesU: int | None = None, tilesV: int | None = None, region: Sequence[Any] | None = None, texelsPerUnit: float | None = None, effort: int | None = None, timeLimit: float | None = None, workingResolution: int | None = None) -> Any:
+def uvAuto(uvSet: str | None = None, iterations: int | None = None, finalMesh: bool | None = None, hardAngle: float | None = None, useHardEdges: bool | None = None, keepSeams: bool | None = None, maxDistortion: float | None = None, visibility: bool | None = None, merge: bool | None = None, method: str | None = None, distortionBound: float | None = None, seamWeight: float | None = None, useViews: bool | None = None, views: Sequence[Any] | None = None, resolution: int | None = None, padding: float | None = None, margin: float | None = None, paddingMips: int | None = None, rotateStep: int | None = None, angles: Sequence[Any] | None = None, freeRotation: bool | None = None, flip: bool | None = None, orient: bool | None = None, scaleMode: str | None = None, normalize: bool | None = None, stack: bool | None = None, stackMirrored: bool | None = None, stackTolerance: float | None = None, tilesU: int | None = None, tilesV: int | None = None, region: Sequence[Any] | None = None, texelsPerUnit: float | None = None, effort: int | None = None, timeLimit: float | None = None, workingResolution: int | None = None, *, fm: bool | None = None) -> Any:
     """Automatic uvs: seams, low-stretch unwrap and pack, in one step.
 
     Args:
         uvSet: UV set; the current one (uvSetCurrent) when not given.
         iterations: SLIM iterations. Default 12.
+        finalMesh: Measure and solve on the mesh as exported, after modifiers that move its surface (bevel, subdivision); False works on the base mesh alone. Short form fm. Default True.
         hardAngle: Edges sharper than this always get a seam, degrees. Default 60.0.
         useHardEdges: Edges marked hard always get a seam. Default True.
         keepSeams: Keep the seams already there. Default False.
@@ -10265,7 +10266,7 @@ def uvAutoSeams(hardAngle: float | None = None, useHardEdges: bool | None = None
         views: Cameras, locators or planes seams hide from; every seam view in the scene when not given. A plane (any mesh) sees along its normal, like an orthographic camera.
     """
 
-def uvBff(uvSet: str | None = None, boundary: str | None = None, cones: int | None = None, exactLengths: bool | None = None, pack: bool | None = None) -> Any:
+def uvBff(uvSet: str | None = None, boundary: str | None = None, cones: int | None = None, exactLengths: bool | None = None, pack: bool | None = None, finalMesh: bool | None = None, *, fm: bool | None = None) -> Any:
     """Boundary First Flattening of the selected faces' islands: conformal, with the boundary chosen first. free keeps the boundary lengths (least area distortion), disk makes a circle, rectangle straight sides between four corners (the selected vertices, else the sharpest), polygon one straight side per selected corner. cones adds automatic cone points that cut the island open to cut area distortion. Islands keep their place unless pack=True or they had no uvs.
 
     Args:
@@ -10274,6 +10275,7 @@ def uvBff(uvSet: str | None = None, boundary: str | None = None, cones: int | No
         cones: Cone points placed automatically (free boundary only); each adds a short seam. Default 0.
         exactLengths: free boundary: bend rather than stretch to close it, so its lengths are exact. Default False.
         pack: Pack the islands into 0-1 afterwards. Default False.
+        finalMesh: Measure and solve on the mesh as exported, after modifiers that move its surface (bevel, subdivision); False works on the base mesh alone. Short form fm. Default True.
     """
 
 def uvCut(*objects: Any, uvSet: str | None = None, edges: Sequence[Any] | None = None, relax: bool | None = None, iterations: int | None = None, balance: float | None = None) -> Any:
@@ -10298,7 +10300,7 @@ def uvDelete(uvSet: str | None = None) -> Any:
         uvSet: UV set; the current one (uvSetCurrent) when not given.
     """
 
-def uvHose(uvSet: str | None = None, maxAspect: float | None = None, maxLength: float | None = None, visibility: bool | None = None, keepSeams: bool | None = None, useViews: bool | None = None, views: Sequence[Any] | None = None, pack: bool | None = None, resolution: int | None = None, padding: float | None = None, margin: float | None = None, paddingMips: int | None = None, rotateStep: int | None = None, angles: Sequence[Any] | None = None, freeRotation: bool | None = None, flip: bool | None = None, orient: bool | None = None, scaleMode: str | None = None, normalize: bool | None = None, stack: bool | None = None, stackMirrored: bool | None = None, stackTolerance: float | None = None, tilesU: int | None = None, tilesV: int | None = None, region: Sequence[Any] | None = None, texelsPerUnit: float | None = None, effort: int | None = None, timeLimit: float | None = None, workingResolution: int | None = None) -> Any:
+def uvHose(uvSet: str | None = None, maxAspect: float | None = None, maxLength: float | None = None, visibility: bool | None = None, keepSeams: bool | None = None, useViews: bool | None = None, views: Sequence[Any] | None = None, pack: bool | None = None, finalMesh: bool | None = None, resolution: int | None = None, padding: float | None = None, margin: float | None = None, paddingMips: int | None = None, rotateStep: int | None = None, angles: Sequence[Any] | None = None, freeRotation: bool | None = None, flip: bool | None = None, orient: bool | None = None, scaleMode: str | None = None, normalize: bool | None = None, stack: bool | None = None, stackMirrored: bool | None = None, stackTolerance: float | None = None, tilesU: int | None = None, tilesV: int | None = None, region: Sequence[Any] | None = None, texelsPerUnit: float | None = None, effort: int | None = None, timeLimit: float | None = None, workingResolution: int | None = None, *, fm: bool | None = None) -> Any:
     """Uvs for pipes, hoses, cables and rings: each tube is cut once along its least seen side and straightened into a strip, runs longer than maxAspect are cut across where least seen, and ends and rims are projected flat. Faces that are neither get auto seams. Works from the quad topology, so any swept tube qualifies.
 
     Args:
@@ -10310,6 +10312,7 @@ def uvHose(uvSet: str | None = None, maxAspect: float | None = None, maxLength: 
         useViews: Keep seams out of sight of the views. Default True.
         views: Cameras, locators or planes seams hide from; every seam view in the scene when not given. A plane (any mesh) sees along its normal, like an orthographic camera.
         pack: Pack the islands into 0-1 afterwards. Default True.
+        finalMesh: Measure and solve on the mesh as exported, after modifiers that move its surface (bevel, subdivision); False works on the base mesh alone. Short form fm. Default True.
         resolution: Target texture size, px. Padding and margin are in its texels. Default 1024.
         padding: Texels between islands, held exactly (the search never lets two islands closer). Default 4.0.
         margin: Texels from the tile (or region) border; negative is half the padding. Default -1.0.
@@ -10333,12 +10336,13 @@ def uvHose(uvSet: str | None = None, maxAspect: float | None = None, maxLength: 
         workingResolution: Search raster cells across a tile; 0 uses the resolution up to 4096. Default 0.
     """
 
-def uvLayout(uvSet: str | None = None, resolution: int | None = None) -> Any:
+def uvLayout(uvSet: str | None = None, resolution: int | None = None, finalMesh: bool | None = None, *, fm: bool | None = None) -> Any:
     """UV report for the selection: islands, overlapping and folded faces, distortion and texel density. Faces mapped onto a trim sheet share texels on purpose: their overlaps count in trimOverlapFaces, not overlappingFaces (trimCheck checks them against their sheet).
 
     Args:
         uvSet: UV set; the current one (uvSetCurrent) when not given.
         resolution: Texture size for the density, px. Default 1024.
+        finalMesh: Measure and solve on the mesh as exported, after modifiers that move its surface (bevel, subdivision); False works on the base mesh alone. Short form fm. Default True.
     """
 
 def uvLightmap(uvSet: str | None = None, source: str | None = None, resolution: int | None = None, padding: float | None = None, effort: int | None = None, rotateStep: int | None = None) -> Any:
@@ -10360,7 +10364,7 @@ def uvLiveCommit(live: int | None = None) -> Any:
         live: Token of the staged result.
     """
 
-def uvLiveRelax(uvSet: str | None = None, iterations: int | None = None, flatten: bool | None = None, pins: bool | None = None, balance: float | None = None, boundarySmooth: float | None = None, slim: int | None = None, keepScale: bool | None = None) -> Any:
+def uvLiveRelax(uvSet: str | None = None, iterations: int | None = None, flatten: bool | None = None, pins: bool | None = None, finalMesh: bool | None = None, balance: float | None = None, boundarySmooth: float | None = None, slim: int | None = None, keepScale: bool | None = None, *, fm: bool | None = None) -> Any:
     """Relax the selected faces' uv islands with the live solver (ARAP with a stretch/compress balance, stiffness and pins), as the UV editor's Relax does, but synchronously. Never folds a triangle that was not folded.
 
     Args:
@@ -10368,13 +10372,14 @@ def uvLiveRelax(uvSet: str | None = None, iterations: int | None = None, flatten
         iterations: Most local/global iterations; it stops once settled. Default 200.
         flatten: Solve from scratch first (LSCM/SLIM), keeping size and placement. Default False.
         pins: Respect pinned uvs (uvPin). Default True.
+        finalMesh: Measure and solve on the mesh as exported, after modifiers that move its surface (bevel, subdivision); False works on the base mesh alone. Short form fm. Default True.
         balance: Stretch against compression, -1..1: positive tolerates stretch and fixes compression, negative the reverse. Default 0.0.
         boundarySmooth: Pull of the borders towards a smooth outline, 0..1. Default 0.0.
         slim: SLIM iterations once settled, for a fold-free low-distortion finish. Default 0.
         keepScale: Keep each island's size; off solves at 3D scale. Default True.
     """
 
-def uvMosaic(uvSet: str | None = None, threshold: float | None = None, visibility: bool | None = None, mode: str | None = None, mix: float | None = None, iterations: int | None = None) -> Any:
+def uvMosaic(uvSet: str | None = None, threshold: float | None = None, visibility: bool | None = None, mode: str | None = None, mix: float | None = None, iterations: int | None = None, finalMesh: bool | None = None, *, fm: bool | None = None) -> Any:
     """Split the selected uv islands that cannot flatten below threshold along short, hidden, creased cuts, then re-solve every piece with the optimise mode. Pieces keep the island's scale; the largest stays in place, the rest line up beside it.
 
     Args:
@@ -10384,9 +10389,10 @@ def uvMosaic(uvSet: str | None = None, threshold: float | None = None, visibilit
         mode: conformal keeps angles, authalic keeps areas, blend mixes them by mix, isometric is SLIM (symmetric Dirichlet). One of 'conformal', 'authalic', 'blend', 'isometric'. Default 'blend'.
         mix: Blend only: 0 keeps angles, 1 keeps areas. Default 0.5.
         iterations: Solver iterations. Default 20.
+        finalMesh: Measure and solve on the mesh as exported, after modifiers that move its surface (bevel, subdivision); False works on the base mesh alone. Short form fm. Default True.
     """
 
-def uvOptimize(uvSet: str | None = None, mode: str | None = None, mix: float | None = None, iterations: int | None = None, pins: bool | None = None) -> Any:
+def uvOptimize(uvSet: str | None = None, mode: str | None = None, mix: float | None = None, iterations: int | None = None, pins: bool | None = None, finalMesh: bool | None = None, *, fm: bool | None = None) -> Any:
     """Optimise the selected uv islands from where they are: conformal (keep angles), authalic (keep areas), blend (both, weighted by mix) or isometric (SLIM). Islands keep their place, size and pins, and never fold.
 
     Args:
@@ -10395,6 +10401,7 @@ def uvOptimize(uvSet: str | None = None, mode: str | None = None, mix: float | N
         mix: Blend only: 0 keeps angles, 1 keeps areas. Default 0.5.
         iterations: Solver iterations. Default 20.
         pins: Respect pinned uvs (corner attribute uvPin). Default True.
+        finalMesh: Measure and solve on the mesh as exported, after modifiers that move its surface (bevel, subdivision); False works on the base mesh alone. Short form fm. Default True.
     """
 
 def uvOrient(uvSet: str | None = None, mode: str | None = None) -> Any:
@@ -10405,11 +10412,12 @@ def uvOrient(uvSet: str | None = None, mode: str | None = None) -> Any:
         mode: bbox, principal or edge. One of 'bbox', 'principal', 'edge'. Default 'bbox'.
     """
 
-def uvPack(uvSet: str | None = None, resolution: int | None = None, padding: float | None = None, margin: float | None = None, paddingMips: int | None = None, rotateStep: int | None = None, angles: Sequence[Any] | None = None, freeRotation: bool | None = None, flip: bool | None = None, orient: bool | None = None, scaleMode: str | None = None, normalize: bool | None = None, stack: bool | None = None, stackMirrored: bool | None = None, stackTolerance: float | None = None, tilesU: int | None = None, tilesV: int | None = None, region: Sequence[Any] | None = None, texelsPerUnit: float | None = None, effort: int | None = None, timeLimit: float | None = None, workingResolution: int | None = None, layout: str | None = None, groupBy: str | None = None, groupAttr: str | None = None, keep: str | None = None, fixPinned: bool | None = None, perObject: bool | None = None) -> Any:
+def uvPack(uvSet: str | None = None, finalMesh: bool | None = None, resolution: int | None = None, padding: float | None = None, margin: float | None = None, paddingMips: int | None = None, rotateStep: int | None = None, angles: Sequence[Any] | None = None, freeRotation: bool | None = None, flip: bool | None = None, orient: bool | None = None, scaleMode: str | None = None, normalize: bool | None = None, stack: bool | None = None, stackMirrored: bool | None = None, stackTolerance: float | None = None, tilesU: int | None = None, tilesV: int | None = None, region: Sequence[Any] | None = None, texelsPerUnit: float | None = None, effort: int | None = None, timeLimit: float | None = None, workingResolution: int | None = None, layout: str | None = None, groupBy: str | None = None, groupAttr: str | None = None, keep: str | None = None, fixPinned: bool | None = None, perObject: bool | None = None, *, fm: bool | None = None) -> Any:
     """Pack the uv islands of the selected faces (or whole meshes) into 0-1 with padding for a texture size. Every selected mesh goes into one shared layout, or each into its own with perObject. Islands are packed by their real shapes, into the holes of other islands, with rotations, optional mirroring and stacking of identical islands; the densest of several island orders wins. Returns the density reached (percent of the used tiles covered) and the texel density. Runs on worker threads and can be cancelled from the progress bar.
 
     Args:
         uvSet: UV set; the current one (uvSetCurrent) when not given.
+        finalMesh: Measure and solve on the mesh as exported, after modifiers that move its surface (bevel, subdivision); False works on the base mesh alone. Short form fm. Default True.
         resolution: Target texture size, px. Padding and margin are in its texels. Default 1024.
         padding: Texels between islands, held exactly (the search never lets two islands closer). Default 4.0.
         margin: Texels from the tile (or region) border; negative is half the padding. Default -1.0.
@@ -10548,7 +10556,7 @@ def uvStraightenEdges(uvSet: str | None = None, iterations: int | None = None) -
         iterations: SLIM iterations for the re-solve. Default 12.
     """
 
-def uvTexelDensity(uvSet: str | None = None, resolution: int | None = None, density: float | None = None, worldSpace: bool | None = None, trims: str | None = None) -> Any:
+def uvTexelDensity(uvSet: str | None = None, resolution: int | None = None, density: float | None = None, worldSpace: bool | None = None, trims: str | None = None, finalMesh: bool | None = None, *, fm: bool | None = None) -> Any:
     """Texel density of the selection in px/cm for a texture size. With density=, scales each island to it (world space). Faces mapped onto a trim sheet take their density from the sheet: trims='skip' (the default) leaves their islands on their trims and reports how many were skipped, 'rescale' scales them too and clears their trim mapping.
 
     Args:
@@ -10557,6 +10565,7 @@ def uvTexelDensity(uvSet: str | None = None, resolution: int | None = None, dens
         density: Set to this many px/cm.
         worldSpace: Measure world size, with the mesh's scale. Default True.
         trims: Trim-mapped faces: skip keeps them on their trims, rescale scales them off. One of 'skip', 'rescale'. Default 'skip'.
+        finalMesh: Measure and solve on the mesh as exported, after modifiers that move its surface (bevel, subdivision); False works on the base mesh alone. Short form fm. Default True.
     """
 
 def uvTransform(uvSet: str | None = None, translate: Sequence[Any] | None = None, rotate: float | None = None, scale: Sequence[Any] | None = None, pivot: Sequence[Any] | None = None, perIsland: bool | None = None) -> Any:
@@ -10579,7 +10588,7 @@ def uvUnpin(uvSet: str | None = None, all: bool | None = None) -> Any:
         all: Unpin every uv of the meshes. Default False.
     """
 
-def uvUnwrap(uvSet: str | None = None, method: str | None = None, iterations: int | None = None, pins: bool | None = None, pack: bool | None = None, openIslands: bool | None = None, resolution: int | None = None, padding: float | None = None, margin: float | None = None, paddingMips: int | None = None, rotateStep: int | None = None, angles: Sequence[Any] | None = None, freeRotation: bool | None = None, flip: bool | None = None, orient: bool | None = None, scaleMode: str | None = None, normalize: bool | None = None, stack: bool | None = None, stackMirrored: bool | None = None, stackTolerance: float | None = None, tilesU: int | None = None, tilesV: int | None = None, region: Sequence[Any] | None = None, texelsPerUnit: float | None = None, effort: int | None = None, timeLimit: float | None = None, workingResolution: int | None = None) -> Any:
+def uvUnwrap(uvSet: str | None = None, method: str | None = None, iterations: int | None = None, pins: bool | None = None, pack: bool | None = None, openIslands: bool | None = None, finalMesh: bool | None = None, resolution: int | None = None, padding: float | None = None, margin: float | None = None, paddingMips: int | None = None, rotateStep: int | None = None, angles: Sequence[Any] | None = None, freeRotation: bool | None = None, flip: bool | None = None, orient: bool | None = None, scaleMode: str | None = None, normalize: bool | None = None, stack: bool | None = None, stackMirrored: bool | None = None, stackTolerance: float | None = None, tilesU: int | None = None, tilesV: int | None = None, region: Sequence[Any] | None = None, texelsPerUnit: float | None = None, effort: int | None = None, timeLimit: float | None = None, workingResolution: int | None = None, *, fm: bool | None = None) -> Any:
     """Unwrap the selected faces' islands along their seams (LSCM, refined with SLIM for low stretch). Closed or holed islands are an error unless openIslands=True cuts them open. Islands keep their place unless pack=True or they had no uvs.
 
     Args:
@@ -10589,6 +10598,7 @@ def uvUnwrap(uvSet: str | None = None, method: str | None = None, iterations: in
         pins: Respect pinned uvs (corner attribute uvPin). Default True.
         pack: Pack the unwrapped islands into 0-1. Default False.
         openIslands: Cut closed or holed islands open where they cannot unfold, instead of stopping. Default False.
+        finalMesh: Measure and solve on the mesh as exported, after modifiers that move its surface (bevel, subdivision); False works on the base mesh alone. Short form fm. Default True.
         resolution: Target texture size, px. Padding and margin are in its texels. Default 1024.
         padding: Texels between islands, held exactly (the search never lets two islands closer). Default 4.0.
         margin: Texels from the tile (or region) border; negative is half the padding. Default -1.0.
