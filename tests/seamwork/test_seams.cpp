@@ -269,3 +269,72 @@ TEST_CASE("seams: creases between stacked boxes come from occlusion")
             most = std::max(most, v);
     CHECK(most > 0.0f);
 }
+
+#include <Scatter.h>
+
+TEST_CASE("scatter: placements sit on the join, wedge along the bisector and repeat exactly")
+{
+    const std::vector<Object> objs = {object("Wall", box({-200, -20, -10}, {200, 280, 10}))};
+    const Ground g = flatGround();
+    const Result r = findSeams(objs, &g, quick());
+    ScatterOptions o;
+    o.density = 5.0;
+    o.clump = 1;
+    o.clumpRadius = 0.0;
+    o.spread = 0.0;
+    o.sink = 0.0;
+    o.tilt = 0.0;
+    const std::vector<AssetShape> shapes = {{10.0, 5.0}};
+    const auto placed = distribute(r, shapes, o);
+    CHECK(placed.size() == 42);
+    const SegmentIndex idx(r);
+    for (const Placement& p : placed)
+    {
+        CHECK(idx.distance(glm::dvec3(p.world[3]), 1e9) < 1e-6);
+        // Up (the asset's Y) leans out of the 90 degree wedge at 45 degrees.
+        const glm::dvec3 y = glm::normalize(glm::dvec3(p.world[1]));
+        CHECK(y.y == doctest::Approx(std::sqrt(0.5)).epsilon(0.01));
+    }
+    const auto again = distribute(r, shapes, o);
+    REQUIRE(again.size() == placed.size());
+    for (size_t i = 0; i < placed.size(); ++i)
+        CHECK(again[i].world == placed[i].world);
+
+    o.spread = 50.0;
+    o.clumpRadius = 10.0;
+    o.clump = 3;
+    for (const Placement& p : distribute(r, shapes, o))
+        CHECK(idx.distance(p.base, 1e9) <= 60.0 + 1e-6);
+    o.angleMax = 45.0;
+    CHECK(distribute(r, shapes, o).empty());
+}
+
+TEST_CASE("scatter: proximity rules repel, shrink, tilt and cull")
+{
+    Object door = object("Door", box({-50, 0, -50}, {50, 200, 50}));
+    ProximityRule repel{RuleKind::Repel, door, 100.0, 1.0};
+    const glm::dmat4 at = glm::translate(glm::dmat4(1.0), glm::dvec3(80, 0, 0));
+    RuleOutcome r = applyRules(at, {repel}, {0, 1, 0});
+    CHECK(r.world[3].x == doctest::Approx(150.0));
+    ProximityRule shrink{RuleKind::Shrink, door, 100.0, 0.5};
+    r = applyRules(at, {shrink}, {0, 1, 0});
+    CHECK(glm::length(glm::dvec3(r.world[0])) == doctest::Approx(0.5 + 0.5 * 0.3));
+    ProximityRule cull{RuleKind::CullInside, door, 0.0, 0.0};
+    CHECK(applyRules(glm::translate(glm::dmat4(1.0), glm::dvec3(0, 100, 0)), {cull}, {0, 1, 0}).culled);
+    CHECK_FALSE(applyRules(at, {cull}, {0, 1, 0}).culled);
+    ProximityRule tilt{RuleKind::Tilt, door, 100.0, 30.0};
+    r = applyRules(at, {tilt}, {0, 1, 0});
+    CHECK(glm::degrees(std::acos(glm::normalize(glm::dvec3(r.world[1])).y)) == doctest::Approx(30.0 * 0.7).epsilon(0.01));
+    CHECK(r.world[1].x > 0.0);
+}
+
+TEST_CASE("scatter: every preset builds its assets")
+{
+    for (const Preset& p : presets())
+        for (int k = 0; k < p.variants; ++k)
+        {
+            const Mesh m = p.asset(k, 1);
+            CHECK(m.numFaces() > 0);
+            CHECK(m.bounds().min.y >= -1e-6);
+        }
+}

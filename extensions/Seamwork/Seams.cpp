@@ -21,7 +21,6 @@ using lila::geo::kInvalid;
 
 namespace
 {
-constexpr double kPi = std::numbers::pi;
 
 glm::dmat3 normalMatrix(const glm::dmat4& m) { return glm::transpose(glm::inverse(glm::dmat3(m))); }
 

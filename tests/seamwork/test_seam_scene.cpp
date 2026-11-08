@@ -143,3 +143,24 @@ TEST_CASE("seamFind: tags leave objects out and seamCheck reports floating and o
     CHECK(r["ignored"].size() == 1);
     CHECK(r["curves"].get<int>() == 0);
 }
+
+TEST_CASE("seamScatter: rubble along a wall settles clean")
+{
+    load();
+    run("newScene");
+    const json t = run("terrainCreate", {{"flat", true}, {"size", json::array({4000, 4000})}, {"resolution", 81}, {"name", "Ground"}});
+    const std::string wall = box("Wall", {-200, -20, -10}, {200, 280, 10});
+    const json r = run("seamFind", {{"args", {wall}}, {"terrain", t["mesh"]}, {"field", "none"}});
+    const json s = run("seamScatter", {{"args", {r["seam"]}}, {"preset", "rubble"}, {"density", 1.0}, {"clump", 2}, {"settle", true}});
+    CHECK(s["instances"].get<int>() > 10);
+    CHECK(s["farthestFromContact"].get<double>() < 40.0 + 15.0 + 10.0);
+    CHECK(s["dressCheck"]["ok"].get<bool>());
+    // The scatter covers the contact now.
+    const json c = run("seamCheck", {{"args", {r["seam"]}}});
+    CHECK(c["ok"].get<bool>());
+    // Rules on it: nothing left inside a box over half the wall.
+    const std::string zone = box("Zone", {-300, -100, -200}, {0, 100, 200});
+    const json p = run("scatterProximity", {{"args", {s["group"]}}, {"rules", {{{"kind", "cullInside"}, {"target", zone}}}}});
+    CHECK(p["removed"].size() > 0);
+    CHECK(p["kept"].get<int>() > 0);
+}

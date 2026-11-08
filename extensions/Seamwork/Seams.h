@@ -22,6 +22,8 @@ using lila::geo::Heightfield;
 using lila::geo::Mesh;
 using lila::geo::MeshBvh;
 
+inline constexpr double kPi = 3.14159265358979323846;
+
 enum class Kind : uint8_t
 {
     Ground,

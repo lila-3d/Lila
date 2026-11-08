@@ -275,8 +275,10 @@ std::vector<std::string> coverOf(Graph& g, NodeId seam, const SeamData& d, const
                     if (Node* m = g.node(mid); m && m->type().name == kFieldModifier)
                         by.push_back("field");
     for (NodeId id : g.nodes())
-        if (Node* n = g.node(id); n && userBool(*n, "seamScatter") && userInt(*n, "seamSource") == int64_t(seam))
-            by.push_back("scatter");
+        if (Node* n = g.node(id); n && userBool(*n, "seamScatter"))
+            if (const int i = n->type().attrIndex("seamSource"); i >= 0)
+                if (const auto* s = std::get_if<std::string>(&n->value(i)); s && g.find(*s) && g.find(*s)->id() == seam)
+                    by.push_back("scatter");
     std::sort(by.begin(), by.end());
     by.erase(std::unique(by.begin(), by.end()), by.end());
     return by;

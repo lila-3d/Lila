@@ -100,6 +100,9 @@ void registerSkirtCommands(lila::ext::Context& ctx);
 void registerExportCommands(lila::ext::Context& ctx);
 void registerUi(lila::ext::Context& ctx);
 
+/** The nearest surface of the data's objects or terrain along dir within range. */
+bool raySurface(const SeamData& d, const glm::dvec3& from, const glm::dvec3& dir, glm::dvec3& hit, glm::dvec3& normal, double range);
+
 /** json [x, y, z]. */
 inline json v3(const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); }
 /** An object's display name in the data, "terrain" for kTerrain, "" for kNone. */
