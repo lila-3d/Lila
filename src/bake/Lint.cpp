@@ -13,6 +13,7 @@
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
+#include "uv/Chart.h"
 
 #include <tbb/parallel_for.h>
 
@@ -737,10 +738,70 @@ void lintScene(scene::Graph& g, const BakeInputs& in, LintReport& r, const LintO
     }
 }
 
+namespace
+{
+/** Triangles of the mesh's uv0 squeezed under kCollapsedFraction of what their island's density gives them. */
+size_t collapsedUvTriangles(const geo::Mesh& m)
+{
+    if (m.cornerAttrs().get<glm::vec2>("uv0").empty())
+        return 0;
+    uv::ChartOptions co;
+    co.source = uv::IslandSource::Uvs;
+    co.pinAttr = {};
+    size_t n = 0;
+    for (const uv::Chart& ch : uv::buildCharts(m, {}, co))
+    {
+        const double a3 = ch.area3d(), density = a3 > 0.0 ? std::abs(ch.areaUv()) / a3 : 0.0;
+        for (const auto& t : ch.tris)
+        {
+            const glm::dvec3 p0 = ch.pos[t[0]];
+            const double area = 0.5 * glm::length(glm::cross(ch.pos[t[1]] - p0, ch.pos[t[2]] - p0));
+            const glm::dvec2 e1 = ch.uv[t[1]] - ch.uv[t[0]], e2 = ch.uv[t[2]] - ch.uv[t[0]];
+            if (area > 1e-12 * a3 && 0.5 * std::abs(e1.x * e2.y - e1.y * e2.x) < area * density * kCollapsedFraction)
+                ++n;
+        }
+    }
+    return n;
+}
+
+/**
+ * A uvMissing collapse the base mesh doesn't have comes from the mesh's modifiers moving the surface under islands whose
+ * uvs they only blend. Says so, and that Relax or Unwrap (which solve on the exported mesh) fix it.
+ */
+void explainDraggedUvs(scene::Graph& g, LintReport& r)
+{
+    for (LintIssue& i : r.issues)
+    {
+        if (i.check != "uvMissing" || !i.data.contains("count"))
+            continue;
+        scene::Node* n = g.find(i.mesh);
+        if (!n || !n->type().isA("mesh"))
+            continue;
+        std::vector<std::string> mods;
+        for (scene::NodeId id : scene::modifiers::stack(g, n->id()))
+            if (const scene::ModifierNode* m = scene::modifiers::asModifier(g.node(id)); m && scene::modifiers::exportEnabled(*m))
+                mods.push_back(m->name());
+        const scene::MeshPtr cage = mods.empty() ? nullptr : scene::modifiers::cage(g, n->id());
+        if (!cage || collapsedUvTriangles(*cage) > 0)
+            continue;
+        std::string names;
+        for (const std::string& m : mods)
+            names += (names.empty() ? "" : ", ") + m;
+        const size_t count = i.data["count"].get<size_t>();
+        i.message = std::to_string(count) + " triangle(s) are collapsed in UV on the exported mesh only: its modifiers (" + names +
+                    ") move the surface under UVs they keep; the base mesh's UVs are fine. Relax or Unwrap the mesh to solve its UVs on the "
+                    "exported mesh";
+        i.data["fromModifiers"] = mods;
+    }
+}
+
+} // namespace
+
 LintReport lint(scene::Graph& g, const BakeInputs& in, const ProjectSettings& ps, const Backend* backend, const LintOptions& o)
 {
     LintReport r = lintInputs(in, ps, backend, o);
     lintScene(g, in, r, o);
+    explainDraggedUvs(g, r);
     return r;
 }
 } // namespace lila::bake

@@ -29,4 +29,4 @@ lila_module(lila_bake Scene
     Targets.cpp
     TexelRaster.cpp)
 
-target_link_libraries(lila_bake PUBLIC lila_scene lila_brush)
+target_link_libraries(lila_bake PUBLIC lila_scene lila_brush lila_uv)
