@@ -421,7 +421,8 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     QWidget* unwrapPush = controls::grid({controls::split("uv.autoSeams", {"uv.autoSeams2"}, body, "Seams"), push("uv.weld", "Weld"),
                                           controls::split("uv.bff", {"uv.bffDisk", "uv.bffRectangle", "uv.bffCones"}, body, "Conformal"),
                                           controls::split("uv.unwrapSymmetric", {"uv.unwrapSymmetricStack"}, body, "Symmetric"),
-                                          push("uv.lightmap", "Lightmap"), controls::overflow({"uv.seamView", "uv.delete"}, body)},
+                                          push("uv.lightmap", "Lightmap"), push("mesh.transferAttributes", "Transfer"),
+                                          controls::overflow({"uv.seamView", "uv.delete"}, body)},
                                          2, body);
     addSection(collapsibleSection("Unwrap", stacked(body, {unwrapTiles, unwrapPush}), body, kUvCollapsed));
 
