@@ -8,6 +8,7 @@
 #include "scene/HudStats.h"
 #include "scene/Isolation.h"
 #include "scene/MeshNodes.h"
+#include "scene/Modifiers.h"
 #include "scene/Relocate.h"
 #include "scene/SoftSelect.h"
 #include "scene/Transform.h"
@@ -19,6 +20,7 @@
 #include "ui/ViewportWidget.h"
 #include "uv/Metrics.h"
 #include "uv/Uv.h"
+#include "uv/UvEdit.h"
 
 #include <QActionGroup>
 #include <QApplication>
@@ -300,7 +302,14 @@ public:
             std::span<const uint32_t> faces;
             if (mode == scene::ComponentMode::Face)
                 faces = scene::components::selected(lead->id(), mode);
-            mValue = uv::texelDensity(*mesh, uvSet, faces, double(resolution), linear);
+            // Selected face ids are the cage's; with modifiers the density is measured on the export, per cage face.
+            if (const scene::MeshPtr cage = uv::exportStack(*lead).empty() ? nullptr : scene::modifiers::cage(g, lead->id()))
+            {
+                const uv::FinalMap trace = uv::exportTraceOf(*cage, *lead, true);
+                mValue = uv::texelDensity(*cage, uvSet, faces, double(resolution), linear, &trace);
+            }
+            else
+                mValue = uv::texelDensity(*mesh, uvSet, faces, double(resolution), linear);
             mNode = lead->id();
             mMesh = mesh;
             mLinear = linear;

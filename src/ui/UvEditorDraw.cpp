@@ -1,5 +1,6 @@
 #include "ui/UvEditorInternal.h"
 #include "ui/ViewportDisplay.h"
+#include "uv/UvEdit.h"
 
 namespace lila::ui
 {
@@ -55,7 +56,11 @@ void UvView::drawFaces(QPainter& p)
             continue;
         if (mDisplay == Display::Distortion && !mu.distortionValid)
         {
-            std::vector<uv::FaceDistortion> d = uv::faceDistortion(*mu.mesh, mu.set);
+            // Measured where the mesh's modifiers put the uvs, so a bevel or subdivision that stretches them shows.
+            uv::FinalMap trace;
+            if (scene::Node* n = scene::Graph::current().node(mu.node))
+                trace = uv::exportTraceOf(*mu.mesh, *n, true);
+            std::vector<uv::FaceDistortion> d = uv::faceDistortion(*mu.mesh, mu.set, {}, &trace);
             mu.distortion.resize(mu.faces.size());
             for (size_t i = 0; i < mu.faces.size(); ++i)
                 mu.distortion[i] = uv::distortionValue(d[mu.faces[i]]);
