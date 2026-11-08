@@ -97,6 +97,9 @@ public static class LilaTerrainImporter
             // Resolution before size: setting the resolution rescales the size.
             data.heightmapResolution = res;
             data.size = new Vector3(s.tileSize[0], s.tileSize[1], s.tileSize[2]);
+            string tileName = s.name + "_x" + t.x + "_y" + t.y;
+            // An asset before its layers: Unity saves the alpha maps only of a TerrainData that is already one.
+            AssetDatabase.CreateAsset(data, assets + "/" + tileName + ".asset");
             data.SetHeights(0, 0, ReadHeights(Path.Combine(folder, t.heightmap), res));
             if (layers.Length > 0 && !string.IsNullOrEmpty(t.splatmap))
             {
@@ -104,8 +107,7 @@ public static class LilaTerrainImporter
                 data.terrainLayers = layers;
                 data.SetAlphamaps(0, 0, ReadSplat(Path.Combine(folder, t.splatmap), s.alphamapResolution, layers.Length));
             }
-            string tileName = s.name + "_x" + t.x + "_y" + t.y;
-            AssetDatabase.CreateAsset(data, assets + "/" + tileName + ".asset");
+            EditorUtility.SetDirty(data);
             GameObject go = Terrain.CreateTerrainGameObject(data);
             go.name = tileName;
             go.transform.SetParent(root.transform, false);
