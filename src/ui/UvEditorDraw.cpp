@@ -1,4 +1,5 @@
 #include "ui/UvEditorInternal.h"
+#include "ui/ViewportDisplay.h"
 
 namespace lila::ui
 {
@@ -90,9 +91,14 @@ void UvView::drawFaces(QPainter& p)
                 poly << toScreen(drawnUv(mi, k));
             if (mDisplay == Display::Distortion)
             {
-                // Lightness only: even faces stay dark, stretched ones turn bright.
-                int v = 58 + int(mu.distortion[fi] * 170.0f);
-                p.setBrush(QColor(v, v, v, 220));
+                const float t = std::clamp(mu.distortion[fi], 0.0f, 1.0f);
+                if (viewportDisplay::monotone())
+                {
+                    int v = 58 + int(t * 170.0f);
+                    p.setBrush(QColor(v, v, v, 220));
+                }
+                else
+                    p.setBrush(QColor(235 - int(t * 15.0f), 235 - int(t * 195.0f), 235 - int(t * 195.0f), 220));
                 p.drawPolygon(poly);
             }
             if (sel)
