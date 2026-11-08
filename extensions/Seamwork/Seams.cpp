@@ -46,7 +46,7 @@ struct Ray
 };
 
 /** A world ray in an object's space; its parameter stays the world distance when dir is unit. */
-Ray toLocal(const Object& o, const glm::dmat4& inv, const glm::dvec3& origin, const glm::dvec3& dir)
+Ray toLocal(const glm::dmat4& inv, const glm::dvec3& origin, const glm::dvec3& dir)
 {
     return {xformPoint(inv, origin), glm::dmat3(inv) * dir};
 }
@@ -147,7 +147,7 @@ bool anyBlocks(std::span<const Object> objects, const Prepared& p, const Ground*
     {
         if (!rayBox(origin, dir, range, p.lo[i], p.hi[i]))
             continue;
-        const Ray r = toLocal(objects[i], p.inv[i], origin, dir);
+        const Ray r = toLocal(p.inv[i], origin, dir);
         if (objects[i].bvh->occluded(r.origin, r.dir, range))
             return true;
     }
@@ -286,7 +286,7 @@ double depthAt(std::span<const Object> objects, const Prepared& prep, int a, int
     constexpr double kMax = 1e5;
     const Object& oa = objects[size_t(a)];
     const glm::dvec3 dir = -nb;
-    const Ray ra = toLocal(oa, prep.inv[size_t(a)], p - na * kEps, dir);
+    const Ray ra = toLocal(prep.inv[size_t(a)], p - na * kEps, dir);
     lila::geo::BvhHit hit;
     if (!oa.bvh->raycast(ra.origin, ra.dir, hit, kMax))
         return 0.0;
@@ -294,7 +294,7 @@ double depthAt(std::span<const Object> objects, const Prepared& prep, int a, int
     if (b >= 0)
     {
         const Object& ob = objects[size_t(b)];
-        const Ray rb = toLocal(ob, prep.inv[size_t(b)], p - nb * kEps, dir);
+        const Ray rb = toLocal(prep.inv[size_t(b)], p - nb * kEps, dir);
         lila::geo::BvhHit hb;
         if (ob.bvh->raycast(rb.origin, rb.dir, hb, kMax))
             depth = std::min(depth, hb.t + kEps);

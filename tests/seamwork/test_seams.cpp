@@ -338,3 +338,44 @@ TEST_CASE("scatter: every preset builds its assets")
             CHECK(m.bounds().min.y >= -1e-6);
         }
 }
+
+#include <Strip.h>
+
+TEST_CASE("strips: ribbons lie on the ground beside the wall, faded and facing up")
+{
+    const std::vector<Object> objs = {object("Wall", box({-200, -20, -10}, {200, 280, 10}))};
+    const Ground g = flatGround();
+    const Result r = findSeams(objs, &g, quick());
+    StripOptions o;
+    o.width = 40.0;
+    o.divisions = 4;
+    o.offset = 0.5;
+    o.band.falloff = Falloff::Linear;
+    size_t strips = 0;
+    const Mesh m = buildStrips(r, o, {}, &strips);
+    CHECK(strips == 1);
+    REQUIRE(m.numFaces() > 0);
+    const auto col = lila::geo::colors::values(m, "Col");
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        CHECK(m.position(p).y == doctest::Approx(0.5));
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f))
+            CHECK(m.faceNormal(f).y > 0.99);
+    float lo = 1.0f, hi = 0.0f;
+    for (Index c = 0; c < m.cornerCapacity(); ++c)
+        if (m.cornerValid(c))
+        {
+            lo = std::min(lo, col[c].a);
+            hi = std::max(hi, col[c].a);
+        }
+    CHECK(lo == doctest::Approx(0.0));
+    CHECK(hi == doctest::Approx(1.0));
+
+    o.side = Side::Both;
+    const Mesh v = buildStrips(r, o, {});
+    bool wallUp = false;
+    for (Index p = 0; p < v.pointCapacity(); ++p)
+        wallUp |= v.position(p).y > 39.0;
+    CHECK(wallUp);
+    CHECK(decalBoxes(r, o, 100.0).size() > 16);
+}

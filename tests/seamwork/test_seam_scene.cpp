@@ -197,3 +197,25 @@ TEST_CASE("contacts feed terrain layer rules and export to JSON and USD")
     CHECK(usd.find("def BasisCurves \"curve_0\"") != std::string::npos);
     CHECK(usd.find("primvars:exposure") != std::string::npos);
 }
+
+TEST_CASE("seamDecal: a live strip mesh that follows the wall and covers the contact")
+{
+    load();
+    run("newScene");
+    const json t = run("terrainCreate", {{"flat", true}, {"size", json::array({4000, 4000})}, {"resolution", 81}, {"name", "Ground"}});
+    const std::string wall = box("Wall", {-200, -20, -10}, {200, 280, 10});
+    const json r = run("seamFind", {{"args", {wall}}, {"terrain", t["mesh"]}, {"field", "none"}});
+    const json s = run("seamDecal", {{"args", {r["seam"]}}, {"side", "both"}});
+    CHECK(s["stats"]["strips"].get<int>() == 1);
+    CHECK(s["warning"] == "");
+    const size_t before = evaluatedMesh(s["mesh"]).numFaces();
+    CHECK(before > 0);
+    CHECK(run("seamCheck", {{"args", {r["seam"]}}})["ok"].get<bool>());
+    moveTo(wall, {300, 0, 0});
+    double maxX = -1e9;
+    const geo::Mesh& m = evaluatedMesh(s["mesh"]);
+    for (geo::Index p = 0; p < m.pointCapacity(); ++p)
+        if (m.pointValid(p))
+            maxX = std::max(maxX, m.position(p).x);
+    CHECK(maxX > 400.0);
+}
