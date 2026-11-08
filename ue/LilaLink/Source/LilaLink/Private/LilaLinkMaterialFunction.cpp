@@ -7,6 +7,7 @@
 #include "IAssetTools.h"
 #include "MaterialEditingLibrary.h"
 #include "Materials/Material.h"
+#include "Materials/MaterialExpressionFeatureLevelSwitch.h"
 #include "Materials/MaterialExpressionFunctionOutput.h"
 #include "Materials/MaterialExpressionMaterialFunctionCall.h"
 #include "Materials/MaterialExpressionScalarParameter.h"
@@ -123,6 +124,17 @@ void LilaLink::FFunctionGraph::Output(UMaterialExpression* From, const TCHAR* Na
 	E->SortPriority = OutputPriority++;
 	E->Description = Description;
 	E->A.Connect(FromOutput, From);
+}
+
+UMaterialExpression* LilaLink::FFunctionGraph::FeatureLevelSwitch(UMaterialExpression* Full, UMaterialExpression* Mobile,
+	int32 FullOutput, int32 MobileOutput)
+{
+	auto* E = New<UMaterialExpressionFeatureLevelSwitch>(200);
+	E->Default.Connect(FullOutput, Full);
+	E->Inputs[ERHIFeatureLevel::SM5].Connect(FullOutput, Full);
+	E->Inputs[ERHIFeatureLevel::SM6].Connect(FullOutput, Full);
+	E->Inputs[ERHIFeatureLevel::ES3_1].Connect(Mobile ? MobileOutput : FullOutput, Mobile ? Mobile : Full);
+	return E;
 }
 
 void LilaLink::FFunctionGraph::Finish()

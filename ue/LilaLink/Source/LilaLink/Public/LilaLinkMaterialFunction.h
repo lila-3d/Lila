@@ -68,6 +68,12 @@ struct LILALINK_API FFunctionGraph
 	UMaterialExpressionFunctionInput* TextureInput(const TCHAR* Name, UTexture* Value, EMaterialSamplerType Type, const TCHAR* Group,
 		const TCHAR* Description);
 	void Output(UMaterialExpression* From, const TCHAR* Name, const TCHAR* Description, int32 FromOutput = 0);
+	/**
+	 * Full on SM5/SM6, Mobile on ES3.1 (mobile forward and mobile deferred), so one function carries its cheap mobile
+	 * path. Mobile null uses Full everywhere.
+	 */
+	UMaterialExpression* FeatureLevelSwitch(UMaterialExpression* Full, UMaterialExpression* Mobile, int32 FullOutput = 0,
+		int32 MobileOutput = 0);
 
 	/** Marks the function changed and recompiles the materials that call it. */
 	void Finish();

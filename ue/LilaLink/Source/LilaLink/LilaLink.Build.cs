@@ -53,6 +53,7 @@ public class LilaLink : ModuleRules
 			"StaticMeshEditor",
 			"EditorSubsystem",
 			"RenderCore",
+			"RHI",
 			"LilaLinkRuntime",
 			"AnimGraph",
 			"BlueprintGraph",
