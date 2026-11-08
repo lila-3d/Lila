@@ -165,51 +165,73 @@ private:
             menu->removeAction(f.header);
             f.header->deleteLater();
         }
+        f.header.clear();
+        f.label.clear();
     }
 
+    /** Shows only the rows matching the text, changing just the rows whose state differs so the menu does not flash. */
     static void apply(QMenu* menu, Filter& f)
     {
-        restore(menu, f);
         if (f.text.isEmpty())
         {
+            restore(menu, f);
             menu->setActiveAction(nullptr);
             return;
         }
         if (!f.width)
             f.width = menu->width();
+        auto ours = [&f](QAction* a) { return std::find(f.hidden.begin(), f.hidden.end(), a) != f.hidden.end(); };
         QList<QAction*> rows = menu->actions();
+        rows.removeAll(f.header.data());
         std::vector<QAction*> shown;
         for (QAction* a : rows)
-            if (a->isVisible() && !a->isSeparator() && matches(a, f.text))
+            if ((a->isVisible() || ours(a)) && !a->isSeparator() && matches(a, f.text))
                 shown.push_back(a);
 
-        // The menu resizes as rows hide, so the header needs its text and width before then, or a search with no
-        // match shrinks the menu to nothing.
-        f.label = new QLabel(shown.empty() ? QString("No match: %1").arg(f.text) : QString("Search: %1").arg(f.text), menu);
-        f.label->setContentsMargins(10, 4, 10, 4);
-        f.label->setEnabled(false);
-        const int frame = 2 * (menu->style()->pixelMetric(QStyle::PM_MenuPanelWidth, nullptr, menu) +
-                               menu->style()->pixelMetric(QStyle::PM_MenuHMargin, nullptr, menu));
-        f.label->setMinimumWidth(std::max(0, f.width - frame));
-        f.header = new QWidgetAction(menu);
-        f.header->setDefaultWidget(f.label);
-        menu->insertAction(rows.value(0), f.header);
+        const QString title = shown.empty() ? QString("No match: %1").arg(f.text) : QString("Search: %1").arg(f.text);
+        if (f.label)
+            f.label->setText(title);
+        else
+        {
+            // The menu resizes as rows hide, so the header needs its text and width before then, or a search with no
+            // match shrinks the menu to nothing.
+            f.label = new QLabel(title, menu);
+            f.label->setContentsMargins(10, 4, 10, 4);
+            f.label->setEnabled(false);
+            const int frame = 2 * (menu->style()->pixelMetric(QStyle::PM_MenuPanelWidth, nullptr, menu) +
+                                   menu->style()->pixelMetric(QStyle::PM_MenuHMargin, nullptr, menu));
+            f.label->setMinimumWidth(std::max(0, f.width - frame));
+            f.header = new QWidgetAction(menu);
+            f.header->setDefaultWidget(f.label);
+            menu->insertAction(rows.value(0), f.header);
+        }
 
+        menu->setUpdatesEnabled(false);
         QAction* first = nullptr;
         for (QAction* a : rows)
         {
-            if (!a->isVisible())
+            const bool hiddenByUs = ours(a);
+            if (!a->isVisible() && !hiddenByUs)
                 continue;
             if (std::find(shown.begin(), shown.end(), a) == shown.end())
             {
-                a->setVisible(false);
-                f.hidden.emplace_back(a);
+                if (!hiddenByUs)
+                {
+                    a->setVisible(false);
+                    f.hidden.emplace_back(a);
+                }
                 continue;
+            }
+            if (hiddenByUs)
+            {
+                a->setVisible(true);
+                std::erase(f.hidden, QPointer<QAction>(a));
             }
             // Highlighting a submenu row would pop it open, so Enter goes to the first plain row.
             if (!first && a->isEnabled() && !a->menu())
                 first = a;
         }
+        menu->setUpdatesEnabled(true);
         menu->setActiveAction(first);
     }
 
