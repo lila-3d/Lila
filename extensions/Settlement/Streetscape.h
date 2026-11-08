@@ -141,4 +141,118 @@ struct FurniturePlacement
  */
 std::vector<FurniturePlacement> placeFurniture(const Layout& l, const RoadNetwork& net, const Ground& ground, const std::vector<FurnitureSet>& sets);
 
+// ---------------------------------------------------------------------------------------------------------------------
+// Lane graph and transit
+
+enum class LaneMode : uint8_t
+{
+    Vehicle,
+    Pedestrian, // two-way: sidewalks, footpaths, and the edge of streets without sidewalks
+};
+
+const char* laneModeName(LaneMode m);
+
+struct Lane
+{
+    int id = 0;
+    LaneMode mode = LaneMode::Vehicle;
+    int line = 0;     // RoadNetwork line
+    int dir = 1;      // +1 along the line's points, -1 against; 0 for two-way pedestrian lanes
+    int index = 0;    // 0 innermost (by the centre or median)
+    int side = 0;     // pedestrian: +1 right of the line's direction, -1 left, 0 middle
+    std::vector<glm::dvec3> pts; // in travel direction (line direction for pedestrian lanes)
+    double width = 0.0;
+    double speed = 0.0; // km/h
+    double length = 0.0; // cm
+    uint64_t street = 0;
+    bool exit = false;  // ends at the settlement's edge: traffic leaves here
+    bool entry = false; // starts at the settlement's edge: traffic arrives here
+};
+
+enum class Movement : uint8_t
+{
+    Through,
+    Left,
+    Right,
+    UTurn,  // turning round at a dead end
+    Corner, // pedestrian: round a corner
+    Crosswalk,
+    Crossing,   // pedestrian: across a road without a marked crosswalk
+    LaneChange, // to the next lane the same way along a road
+};
+
+const char* movementName(Movement m);
+
+/** A connection from the end of one lane to the start of another (pedestrian links go both ways). */
+struct LaneLink
+{
+    int from = 0, to = 0;
+    int junction = -1; // RoadNetwork junction, -1 at a plain node or dead end
+    Movement move = Movement::Through;
+    int phase = -1;      // signal phase it moves in, -1 unsignalled
+    bool yields = false; // moves on green but gives way (left turns across an opposing approach)
+};
+
+struct TransitStop
+{
+    uint64_t id = 0;
+    int lane = 0;
+    glm::dvec3 p{0.0};
+    std::string name;
+};
+
+/** A bus or tram route one way: lanes in order and its stops. Routes come in pairs, out and back. */
+struct TransitRoute
+{
+    uint64_t id = 0;
+    std::string mode; // bus or tram
+    std::string name;
+    std::string direction; // out or back
+    std::vector<int> lanes;
+    std::vector<TransitStop> stops;
+    double length = 0.0; // cm
+    bool reachable = false; // every lane leads to the next, and the far end leads back to the start
+    std::string note;       // why it is missing or what it fell back to
+};
+
+struct LaneGraph
+{
+    std::vector<Lane> lanes;
+    std::vector<LaneLink> links;
+    std::vector<TransitRoute> routes;
+    int surfaceLinesSkipped = 0; // walkable-surface paths: not in the street network
+};
+
+/**
+ * Lanes per road per direction (two-way single-lane roads get one each way), pedestrian lanes on sidewalks, links for
+ * allowed movements at junctions (no U-turns except at dead ends, minor alleys turn right only onto arterials at
+ * unsignalised junctions), corners, crosswalks and unmarked crossings, each signalised movement with its phase.
+ */
+LaneGraph laneGraph(const Layout& l, const RoadNetwork& net);
+
+struct TransitOptions
+{
+    int busRoutes = -1;  // -1: from the style (none in medieval styles, else one per two districts, at most 4)
+    int tramRoutes = -1; // -1: one in cities with arterials, none otherwise
+    double busStopSpacing = 40000.0;  // cm
+    double tramStopSpacing = 60000.0; // cm
+};
+
+/**
+ * Bus routes along arterials and collectors and tram routes along arterials' inner lanes, between districts across the
+ * centre, out and back, stops by spacing. Appended to g.routes; each says whether it is reachable.
+ */
+void addTransit(LaneGraph& g, const Layout& l, const RoadNetwork& net, const TransitOptions& o = {});
+
+/**
+ * The lane graph's checks: per mode, strongly connected components (every lane reachable from every other), lanes that
+ * cannot reach an exit and exits that cannot be reached; per signalised junction, pairs of protected movements green in
+ * the same phase whose paths cross or merge; transit routes that are not reachable. ok is true when all are empty.
+ * This is what settlementCheck reads.
+ */
+json checkLaneGraph(const LaneGraph& g, const RoadNetwork& net);
+/** The lane graph of a layout with its transit, checked. */
+json checkLanes(const Layout& l, const Ground& ground, const TransitOptions& o = {});
+
+json toJson(const LaneGraph& g, bool lanes);
 } // namespace settlement

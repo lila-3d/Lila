@@ -71,6 +71,6 @@ void registerUi(lila::ext::Context& ctx);
 void registerExportCommands(lila::ext::Context& ctx);
 /** Appends the placements flag's entries (a list or its JSON text) to the layout's placements; CommandError naming cmd when malformed. */
 void addPlacements(Layout& l, const lila::Args& a, const char* cmd);
-/** settlementRoadMesh, settlementFurniture and settlementNames. */
+/** settlementRoadMesh, settlementFurniture, settlementNames, settlementLanes and settlementTransit. */
 void registerStreetscapeCommands(lila::ext::Context& ctx);
 } // namespace settlement

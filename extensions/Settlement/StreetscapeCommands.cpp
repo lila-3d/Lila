@@ -1,5 +1,6 @@
 // settlementRoadMesh builds road, sidewalk and crosswalk meshes; settlementFurniture places street furniture (through
-// the Set Dressing extension's place command when realized); settlementNames names streets and districts.
+// the Set Dressing extension's place command when realized); settlementNames names streets and districts;
+// settlementLanes and settlementTransit return the lane graph, bus and tram routes and their checks.
 
 #include "Settlement.h"
 #include "Streetscape.h"
@@ -100,6 +101,25 @@ std::map<uint64_t, std::string> terrainStreetRoads(const Rebuilt& r, std::string
     if (out.empty())
         *why = "the terrain has no roads laid for this settlement's streets (ids " + prefix + "<street id>)";
     return out;
+}
+
+std::vector<FlagDef> laneFlags()
+{
+    return {{"busRoutes", "br", T::Int, int64_t(-1), "Bus routes (each out and back); -1 from the style: none in medieval ones, else one per two districts, at most 4."},
+            {"tramRoutes", "tr", T::Int, int64_t(-1), "Tram routes on the arterials' inner lanes; -1: one in cities with arterials."},
+            {"busStopSpacing", "bs", T::Float, 40000.0, "cm between bus stops.", {}, {}, 2000.0},
+            {"tramStopSpacing", "ts", T::Float, 60000.0, "cm between tram stops.", {}, {}, 2000.0},
+            {"lanes", "ln", T::Bool, false, "Also every lane (points, mode, direction, street) and link (movement, phase)."}};
+}
+
+TransitOptions transitOptions(const Args& a)
+{
+    TransitOptions o;
+    o.busRoutes = int(a.get<int64_t>("busRoutes", -1));
+    o.tramRoutes = int(a.get<int64_t>("tramRoutes", -1));
+    o.busStopSpacing = a.get<double>("busStopSpacing", 40000.0);
+    o.tramStopSpacing = a.get<double>("tramStopSpacing", 60000.0);
+    return o;
 }
 
 json namesJson(const Layout& l)
@@ -413,6 +433,58 @@ void registerStreetscapeCommands(ext::Context& ctx)
         },
         .examples = {"settlementNames('Settlement', culture='french')['streets'][0]['name']",
                      "d = settlementNames('Settlement')['districts'][0]['id']\nsettlementNames('Settlement', district=d, name='Old Town')"},
+    });
+
+    ctx.registerCommand({
+        .name = "settlementLanes",
+        .doc = "The lane graph a traffic system reads: lanes per road per direction, pedestrian lanes on sidewalks and "
+               "footpaths, links for the movements junctions allow (through, left, right, U-turns at dead ends, corners, "
+               "crosswalks, unmarked crossings) with each signalised movement's phase, and bus and tram routes. checks: per "
+               "mode the strongly connected components, lanes that cannot reach an exit and exits that cannot be reached, "
+               "conflicting greens (protected movements of one phase that cross or merge), unphased approaches and "
+               "unreachable transit routes; ok when all are empty. Changes nothing.",
+        .positionalDoc = "settlement mesh or its modifier",
+        .flags = laneFlags(),
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            const char* cmd = "settlementLanes";
+            const Rebuilt r = rebuildSettlement(Graph::current(), settlementOf(a, cmd), cmd);
+            const RoadNetwork net = roadNetwork(r.layout, r.ground);
+            LaneGraph lanes = laneGraph(r.layout, net);
+            addTransit(lanes, r.layout, net, transitOptions(a));
+            json out = toJson(lanes, a.get<bool>("lanes", false));
+            out["checks"] = checkLaneGraph(lanes, net);
+            return out;
+        },
+        .examples = {"c = settlementLanes('Settlement')['checks']\nc['ok'], c['modes']['vehicle']['components']"},
+    });
+
+    ctx.registerCommand({
+        .name = "settlementTransit",
+        .doc = "Bus and tram routes through the lane graph: buses along arterials and collectors, trams on the arterials' "
+               "inner lanes, each between two districts across the centre, out and back, with stops by spacing named by "
+               "their street. Each route says whether it is reachable (every lane leads to the next, and its far end leads "
+               "back to the start) and notes any fallback (a bus route that had to use minor streets). Changes nothing.",
+        .positionalDoc = "settlement mesh or its modifier",
+        .flags = laneFlags(),
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            const char* cmd = "settlementTransit";
+            const Rebuilt r = rebuildSettlement(Graph::current(), settlementOf(a, cmd), cmd);
+            const RoadNetwork net = roadNetwork(r.layout, r.ground);
+            LaneGraph lanes = laneGraph(r.layout, net);
+            addTransit(lanes, r.layout, net, transitOptions(a));
+            const json all = toJson(lanes, false);
+            size_t stops = 0;
+            for (const TransitRoute& t : lanes.routes)
+                stops += t.stops.size();
+            return {{"routes", all["routes"]}, {"stops", stops}, {"unreachable", checkLaneGraph(lanes, net)["unreachableRoutes"]}};
+        },
+        .examples = {"t = settlementTransit('Settlement', busRoutes=2, tramRoutes=1)\n[(r['name'], len(r['stops'])) for r in t['routes']]"},
     });
 }
 } // namespace settlement

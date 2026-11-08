@@ -1,4 +1,5 @@
-// Settlement streetscape: road and sidewalk meshes, furniture per road profile, street and district names.
+// Settlement streetscape: road and sidewalk meshes, furniture per road profile, street and district names, the lane
+// graph's checks and transit routes.
 
 #include "TestUtil.h"
 #include "SettlementCore.h"
@@ -316,7 +317,94 @@ TEST_CASE("settlement streetscape: street and district names are stable by id, o
     CHECK(toJson(a)["districts"].size() == a.districts.size());
 }
 
-TEST_CASE("settlement streetscape: commands mesh roads, place furniture, name streets and districts, and undo")
+TEST_CASE("settlement streetscape: lane graph is strongly connected per mode, greens never conflict, transit routes are reachable")
+{
+    const Layout l = build(Site{.size = 160000.0}, Ground::plane(), styled("europeanCity", false));
+    const RoadNetwork net = roadNetwork(l, Ground::plane());
+    LaneGraph g = laneGraph(l, net);
+    int vehicle = 0, pedestrian = 0;
+    for (const Lane& x : g.lanes)
+        (x.mode == LaneMode::Vehicle ? vehicle : pedestrian)++;
+    CHECK(vehicle > 50);
+    CHECK(pedestrian > 50);
+    std::map<Movement, int> moves;
+    for (const LaneLink& k : g.links)
+        ++moves[k.move];
+    CHECK(moves[Movement::Through] > 0);
+    CHECK(moves[Movement::Left] > 0);
+    CHECK(moves[Movement::Right] > 0);
+    CHECK(moves[Movement::Corner] > 0);
+
+    addTransit(g, l, net);
+    int bus = 0, tram = 0;
+    for (const TransitRoute& r : g.routes)
+    {
+        INFO(r.name, " ", r.note);
+        CHECK(r.reachable);
+        CHECK(r.stops.size() >= 2);
+        CHECK(r.length > 0.0);
+        bus += r.mode == "bus";
+        tram += r.mode == "tram";
+        for (const TransitStop& s : r.stops)
+            CHECK(std::ranges::find(r.lanes, s.lane) != r.lanes.end());
+    }
+    CHECK(bus >= 2);
+    CHECK(tram == 2); // one route, out and back
+
+    const json c = checkLaneGraph(g, net);
+    INFO(c.dump());
+    CHECK(c["modes"]["vehicle"]["components"] == 1);
+    CHECK(c["modes"]["pedestrian"]["components"] == 1);
+    CHECK(c["modes"]["vehicle"]["cannotReachExit"].empty());
+    CHECK(c["conflictingGreens"].empty());
+    CHECK(c["unphasedApproaches"].empty());
+    CHECK(c["ok"] == true);
+    CHECK(checkLanes(l, Ground::plane())["ok"] == true);
+
+    // Two crossing approaches given green together are caught.
+    RoadNetwork bad = net;
+    bool merged = false;
+    for (Junction& j : bad.junctions)
+        if (j.control == Control::Signal && j.phases.size() >= 2 && !merged)
+        {
+            j.phases[0].insert(j.phases[0].end(), j.phases[1].begin(), j.phases[1].end());
+            j.phases.erase(j.phases.begin() + 1);
+            merged = true;
+        }
+    REQUIRE(merged);
+    const json cb = checkLaneGraph(laneGraph(l, bad), bad);
+    CHECK_FALSE(cb["conflictingGreens"].empty());
+    CHECK(cb["ok"] == false);
+
+    // A one-way street cut off at a dead end: its lanes cannot get out.
+    Options o = styled("europeanCity", false);
+    Site oneWay{.size = 160000.0};
+    SitePath spur;
+    spur.id = 1;
+    spur.cls = StreetClass::Local;
+    spur.profile = "spur";
+    spur.pts = {{3000, std::nan(""), 3000}, {3000, std::nan(""), -9000}};
+    oneWay.paths.push_back(spur);
+    RoadProfile p;
+    REQUIRE(builtinRoadProfile("street", &p));
+    p.name = "spur";
+    p.oneWay = true;
+    oneWay.roadProfiles.push_back(p);
+    const Layout lw = build(oneWay, Ground::plane(), o);
+    const json cw = checkLanes(lw, Ground::plane(), {.busRoutes = 0, .tramRoutes = 0});
+    CHECK(cw["ok"] == false);
+    CHECK(cw["modes"]["vehicle"]["components"].get<int>() > 1);
+
+    // Medieval styles run no buses or trams by default.
+    const Layout ml = build(Site{.size = 60000.0}, Ground::plane(), styled("medievalTown", false));
+    const RoadNetwork mnet = roadNetwork(ml, Ground::plane());
+    LaneGraph mg = laneGraph(ml, mnet);
+    addTransit(mg, ml, mnet);
+    CHECK(mg.routes.empty());
+    CHECK(checkLaneGraph(mg, mnet)["modes"]["vehicle"]["components"] == 1);
+}
+
+TEST_CASE("settlement streetscape: commands mesh roads, place furniture, name streets and districts, undo, and report lanes")
 {
     if (!gn::findDecl("Settlement"))
         REQUIRE(extensions::ExtensionManager::get().load(LILA_TEST_SETTLEMENT_PACKAGE) == "Settlement");
@@ -378,5 +466,11 @@ TEST_CASE("settlement streetscape: commands mesh roads, place furniture, name st
     std::error_code ec;
     std::filesystem::remove(path, ec);
 
+    const json lanes = run("settlementLanes", {{"args", {mesh}}});
+    CHECK(lanes["checks"]["ok"] == true);
+    CHECK(lanes["lanes"]["vehicle"].get<int>() > 0);
+    const json transit = run("settlementTransit", {{"args", {mesh}}, {"busRoutes", 1}});
+    CHECK(transit["routes"].size() >= 2);
+    CHECK(transit["unreachable"].empty());
 }
 

@@ -8,6 +8,7 @@
 #include <cmath>
 #include <map>
 #include <numeric>
+#include <tuple>
 
 namespace settlement
 {
@@ -644,28 +645,29 @@ void controlJunction(Junction& j, const RoadNetwork& net)
         j.control = Control::Yield;
     if (j.control == Control::Signal)
     {
-        std::vector<char> used(j.ends.size(), 0);
+        // Approaches pair with the one most nearly opposite, the straightest pairs first, so a road that runs on
+        // through the junction is never paired across a side road.
+        std::vector<std::tuple<double, int, int>> pairs;
+        for (size_t a = 0; a < j.ends.size(); ++a)
+            for (size_t b = a + 1; b < j.ends.size(); ++b)
+                if (j.ends[a].vehicle && j.ends[b].vehicle)
+                    if (const double d = -glm::dot(j.ends[a].out, j.ends[b].out); d > 0.7)
+                        pairs.emplace_back(-d, int(a), int(b));
+        std::sort(pairs.begin(), pairs.end());
+        std::vector<int> partner(j.ends.size(), -1);
+        for (const auto& [d, a, b] : pairs)
+            if (partner[size_t(a)] < 0 && partner[size_t(b)] < 0)
+            {
+                partner[size_t(a)] = b;
+                partner[size_t(b)] = a;
+            }
         for (size_t a = 0; a < j.ends.size(); ++a)
         {
-            if (used[a] || !j.ends[a].vehicle)
+            if (!j.ends[a].vehicle || (partner[a] >= 0 && partner[a] < int(a)))
                 continue;
-            used[a] = 1;
             std::vector<int> phase = {int(a)};
-            // The approach most nearly opposite this one goes with it.
-            int best = -1;
-            double opposite = 0.7;
-            for (size_t b = 0; b < j.ends.size(); ++b)
-                if (!used[b] && j.ends[b].vehicle)
-                    if (const double d = -glm::dot(j.ends[a].out, j.ends[b].out); d > opposite)
-                    {
-                        opposite = d;
-                        best = int(b);
-                    }
-            if (best >= 0)
-            {
-                used[size_t(best)] = 1;
-                phase.push_back(best);
-            }
+            if (partner[a] >= 0)
+                phase.push_back(partner[a]);
             j.phases.push_back(std::move(phase));
         }
     }
