@@ -174,11 +174,37 @@ std::vector<DecalBox> decalBoxes(const Result& r, const StripOptions& o, double 
         const Curve& c = r.curves[ci];
         if (!(o.kinds & (1 << int(c.kind))))
             continue;
-        const std::vector<Row> rows = resample(c, std::max(1.0, segment));
-        for (size_t k = 0; k + 1 < rows.size() + (c.closed ? 1 : 0); ++k)
+        // Boxes never straddle a corner of the curve: runs between corners are cut on their own.
+        const size_t np = c.points.size();
+        const size_t segs = c.closed && np > 2 ? np : np - 1;
+        std::vector<size_t> corners{0};
+        for (size_t s = 1; s < segs; ++s)
         {
-            const Row& a = rows[k];
-            const Row& b = rows[(k + 1) % rows.size()];
+            const glm::dvec3 d0 = c.points[s] - c.points[s - 1], d1 = c.points[(s + 1) % np] - c.points[s];
+            if (glm::length(d0) > 1e-9 && glm::length(d1) > 1e-9 && glm::dot(glm::normalize(d0), glm::normalize(d1)) < std::cos(glm::radians(15.0)))
+                corners.push_back(s);
+        }
+        corners.push_back(segs);
+        std::vector<std::pair<Row, Row>> spans;
+        for (size_t ri = 0; ri + 1 < corners.size(); ++ri)
+        {
+            const glm::dvec3 p0 = c.points[corners[ri]], p1 = c.points[corners[ri + 1] % np];
+            const double len = glm::length(p1 - p0);
+            const int pieces = std::max(1, int(std::ceil(len / std::max(1.0, segment))));
+            const size_t i0 = corners[ri], i1 = corners[ri + 1] % np;
+            for (int k = 0; k < pieces; ++k)
+            {
+                auto at = [&](double t) {
+                    return Row{p0 + (p1 - p0) * t, unitOr(p1 - p0, {1, 0, 0}), unitOr(c.normalA[i0] * (1.0 - t) + c.normalA[i1] * t, c.normalA[i0]),
+                               unitOr(c.normalB[i0] * (1.0 - t) + c.normalB[i1] * t, c.normalB[i0]), 0.0};
+                };
+                spans.emplace_back(at(double(k) / pieces), at(double(k + 1) / pieces));
+            }
+        }
+        for (size_t k = 0; k < spans.size(); ++k)
+        {
+            const Row& a = spans[k].first;
+            const Row& b = spans[k].second;
             const glm::dvec3 mid = (a.p + b.p) * 0.5;
             const double len = glm::length(b.p - a.p);
             if (len < 1e-6)
