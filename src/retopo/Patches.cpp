@@ -509,8 +509,10 @@ Traces trace(const Layout& lay, const std::vector<ExtraStart>& extras = {}, cons
                 const double phi = std::fmod(dir * kQuarter - start + 2.0 * glm::two_pi<double>(), glm::two_pi<double>());
                 if (phi >= span)
                     continue;
-                // Along a wall the line is already there.
-                if ((phi < 1e-3 && lay.wall[lay.triEdge[t][c]]) || (span - phi < 1e-3 && lay.wall[lay.triEdge[t][(c + 2) % 3]]))
+                // Along a wall the line is already there. A round crease leaves its corner a few degrees off the field,
+                // and a line traced beside it would wall off a sliver.
+                const double alongWall = glm::radians(15.0);
+                if ((phi < alongWall && lay.wall[lay.triEdge[t][c]]) || (span - phi < alongWall && lay.wall[lay.triEdge[t][(c + 2) % 3]]))
                     continue;
                 const glm::dvec3 d3 = lay.dir[t] * axis(dir).x + glm::cross(s.triNormal[t], lay.dir[t]) * axis(dir).y;
                 bool dup = false;
@@ -2806,13 +2808,15 @@ Extracted buildPatchMesh(const Layout& lay, const std::vector<uint8_t>& blocked,
 }
 
 /**
- * Slivers: patches thinner than half a row along most of their length, between two lines that run side by side. Of
- * each pair the line whose length is mostly in slivers is left out (marked in `dropped`), so the lines it stopped run
- * on and the other carries the row. Returns how many lines it left out.
+ * Slivers: patches thinner than half a row along most of their length, between two lines that run side by side, or a
+ * line beside a wall (a crease, the border). Of each pair of lines the one whose length is mostly in slivers is left out
+ * (marked in `dropped`), so the lines it stopped run on and the other carries the row; beside a wall the line goes.
+ * Returns how many lines it left out.
  */
 size_t dropSlivers(const Layout& lay, const Traces& tr, const std::vector<Piece>& pieces, const std::vector<Index>& patchOf, Index np, std::vector<uint8_t>& dropped)
 {
     constexpr double kThin = 0.4;
+    const Index wallLine = Index(tr.end.size()); // every wall counts as one line, which can't be left out
     std::vector<double> area(np, 0.0);
     std::vector<std::map<Index, double>> along(np);
     for (Index pi = 0; pi < Index(pieces.size()); ++pi)
@@ -2826,10 +2830,12 @@ size_t dropSlivers(const Layout& lay, const Traces& tr, const std::vector<Piece>
             a += cross2(u, v);
             if (P.side[k] >= kSegSide)
                 along[patchOf[pi]][tr.segments[P.side[k] - kSegSide].tracer] += glm::length(v - u);
+            else if (const Index e = lay.triEdge[P.tri][P.side[k]]; e != kInvalid && lay.wall[e])
+                along[patchOf[pi]][wallLine] += glm::length(v - u);
         }
         area[patchOf[pi]] += 0.5 * std::abs(a);
     }
-    std::vector<double> length(tr.end.size(), 0.0), inSlivers(tr.end.size(), 0.0);
+    std::vector<double> length(tr.end.size() + 1, 0.0), inSlivers(tr.end.size() + 1, 0.0);
     for (const Segment& g : tr.segments)
         length[g.tracer] += glm::length(g.b - g.a);
     std::vector<std::pair<Index, Index>> pairs;
@@ -2872,14 +2878,26 @@ size_t dropSlivers(const Layout& lay, const Traces& tr, const std::vector<Piece>
     size_t count = 0;
     for (auto [a, b] : pairs)
     {
-        if (dropped[a] || dropped[b])
+        if ((a != wallLine && dropped[a]) || (b != wallLine && dropped[b]))
             continue;
-        auto weight = [&](Index t) { return tr.sourceOf[t] == kInvalid || blockedDrop(t) ? -1.0 : inSlivers[t] / std::max(length[t], 1e-9); };
+        auto weight = [&](Index t) {
+            return t == wallLine || tr.sourceOf[t] == kInvalid || blockedDrop(t) ? -1.0 : inSlivers[t] / std::max(length[t], 1e-9);
+        };
         Index drop = weight(a) >= weight(b) ? a : b;
         if (weight(drop) < 0.0)
         {
             if (std::getenv("LILA_PATCH_LIST"))
-                std::fprintf(stderr, "sliver kept: lines %d (source %d) and %d (source %d)\n", int(a), int(tr.sourceOf[a]), int(b), int(tr.sourceOf[b]));
+                for (Index t : {a, b})
+                    if (t != wallLine)
+                    {
+                        const Index src = tr.sourceOf[t];
+                        std::fprintf(stderr, "sliver kept: line %d of %d (wall pair %d), source %d", int(t), int(t == a ? b : a), int(a == wallLine || b == wallLine),
+                                     int(src));
+                        if (src != kInvalid)
+                            std::fprintf(stderr, " at %.2f %.2f %.2f singular %d lines %zu", lay.s.pos[src].x, lay.s.pos[src].y, lay.s.pos[src].z,
+                                         int(lay.singular[src]), linesOf[src].size());
+                        std::fprintf(stderr, "\n");
+                    }
             continue;
         }
         dropped[drop] = 1;
