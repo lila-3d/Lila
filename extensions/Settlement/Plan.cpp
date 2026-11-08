@@ -1,6 +1,7 @@
 // Settlement: main roads booked from the terrain router, the pinned plan kept in the edits, and re-planning only the
 // regions of ground that changed.
 
+#include "Parcels.h"
 #include "SettlementTerrain.h"
 
 #include <lila/Profile.h>
@@ -507,6 +508,39 @@ void applySnapshot(Layout& l, const PlanSnapshot& s)
     l.bridges = s.bridges;
 }
 
+/**
+ * A pinned plan's buildings stood on the ground it was planned on; grading (pads, cut and fill) moves that ground. Each
+ * envelope keeps its footprint, floors and foundation depth and is set on the ground now under it.
+ */
+static void reseatEnvelopes(Layout& l, const Site& site, const Ground& ground)
+{
+    for (Envelope& e : l.envelopes)
+    {
+        if (e.footprint.pts.empty())
+            continue;
+        double lo = 0.0, hi = 0.0;
+        envelopeGround(e.footprint, ground, lo, hi);
+        if (auto it = site.foundations.find(e.key); it != site.foundations.end())
+        {
+            lo = std::min(lo, it->second.min);
+            hi = std::max(hi, it->second.max);
+        }
+        const double below = e.ground - e.base, rise = hi + e.height - e.top;
+        // Ground that didn't move (beyond sampling noise) leaves the building as planned, byte for byte.
+        if (std::abs(lo - e.ground) < 5.0 && std::abs(rise) < 5.0)
+            continue;
+        e.ground = lo;
+        e.base = lo - below;
+        e.top = hi + e.height;
+        e.foundationDepth = hi - e.base;
+        for (size_t t = 0; t < e.tiers.size(); ++t)
+        {
+            e.tiers[t].bottom = t == 0 ? e.base : e.tiers[t].bottom + rise;
+            e.tiers[t].top += rise;
+        }
+    }
+}
+
 Layout buildPlanned(const Site& site, const Ground& ground, const Options& o, const WalkSurface* walk)
 {
     LILA_ZONE();
@@ -518,6 +552,7 @@ Layout buildPlanned(const Site& site, const Ground& ground, const Options& o, co
         if (site.plan->key == planKey(site, o))
         {
             applySnapshot(l, *site.plan);
+            reseatEnvelopes(l, site, ground);
             l.plan = "pinned";
         }
         else

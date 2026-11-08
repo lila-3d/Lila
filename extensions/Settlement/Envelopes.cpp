@@ -617,4 +617,5 @@ json parcelStats(const Layout& l)
             {"partyWallSides", party},
             {"warnings", l.parcelWarnings}};
 }
+void envelopeGround(const Polygon& footprint, const Ground& g, double& lo, double& hi) { groundUnder(footprint, g, lo, hi); }
 } // namespace settlement

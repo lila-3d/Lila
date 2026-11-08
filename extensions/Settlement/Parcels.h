@@ -78,6 +78,8 @@ Placement libraryPlacement(const Envelope& env, const LibraryPick& pick);
 Polygon joinPolygons(const Polygon& a, const Polygon& b, double tolerance = 2.0);
 /** Marks footprint sides that coincide with a neighbour's as party walls on both, with the lot across. */
 void matchPartyWalls(std::vector<Envelope>& envelopes);
+/** The lowest and highest ground under a footprint, sampled as envelopes are: corners, centre and a grid inside. */
+void envelopeGround(const Polygon& footprint, const Ground& g, double& lo, double& hi);
 
 json blockJson(const Block& b);
 /** The lot fields beyond toJson's base set. */
