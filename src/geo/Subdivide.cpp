@@ -792,6 +792,8 @@ struct BorderBlend
 constexpr double kBunched = 0.2;
 /** A bunched run takes in its neighbours until it has this share of its surface length in uv. */
 constexpr double kRespaced = 0.6;
+/** Margin edges per window edge over which a respaced window eases into the spacing beside it. */
+constexpr double kRespaceTaper = 1.0;
 
 /**
  * Where an island's border bunches up in uv (a bevel's corner points all carry the one cage uv of the corner they
@@ -871,53 +873,90 @@ std::vector<BorderBlend> respaceBorder(const Mesh& m, const Islands& is, Index i
                 start = i;
         if (bad(start))
             continue;
+        // Edges are counted from start from here on.
+        auto at = [&](size_t k) { return (start + k) % n; };
         std::vector<uint8_t> covered(n, 0);
-        covered[start] = 1;
+        covered[0] = 1;
+        std::vector<std::pair<size_t, size_t>> windows;
         for (size_t k = 1; k < n; ++k)
         {
-            const size_t i = (start + k) % n;
-            if (covered[i] || !bad(i))
+            if (covered[k] || !bad(at(k)))
                 continue;
-            // Edges lo..hi (counted from start), grown both ways over uncovered edges until spaced enough.
+            // Edges lo..hi, grown both ways over uncovered edges until spaced enough.
             size_t lo = k, hi = k;
-            double L = l[i], U = u[i];
+            double L = l[at(k)], U = u[at(k)];
             while (U < kRespaced * L)
             {
-                const bool back = lo > 1 && !covered[(start + lo - 1) % n], fwd = hi + 1 < n && !covered[(start + hi + 1) % n];
+                const bool back = lo > 1 && !covered[lo - 1], fwd = hi + 1 < n && !covered[hi + 1];
                 if (!back && !fwd)
                     break;
                 if (back)
                 {
                     --lo;
-                    L += l[(start + lo) % n];
-                    U += u[(start + lo) % n];
+                    L += l[at(lo)];
+                    U += u[at(lo)];
                 }
                 if (fwd)
                 {
                     ++hi;
-                    L += l[(start + hi) % n];
-                    U += u[(start + hi) % n];
+                    L += l[at(hi)];
+                    U += u[at(hi)];
                 }
             }
             for (size_t j = lo; j <= hi; ++j)
-                covered[(start + j) % n] = 1;
-            if (U <= 0.0 || L <= 0.0)
-                continue;
-            // Vertices lo+1..hi move to their share of the window's surface length along its uv polyline.
-            double along = 0.0, segStart = 0.0;
-            size_t seg = lo;
-            for (size_t v = lo + 1; v <= hi; ++v)
+                covered[j] = 1;
+            windows.push_back({lo, hi});
+        }
+        std::sort(windows.begin(), windows.end());
+        std::vector<double> share, targets;
+        for (size_t w = 0; w < windows.size(); ++w)
+        {
+            // Offsets shifted by n, so margins can run back past the start edge (the window before is the last one).
+            const size_t lo = windows[w].first + n, hi = windows[w].second + n;
+            const size_t prevHi = w > 0 ? windows[w - 1].second + n : windows.back().second;
+            const size_t nextLo = w + 1 < windows.size() ? windows[w + 1].first + n : windows.front().first + 2 * n;
+            // Each window eases into the spacing beside it over margins of the free edges it shares with its neighbours.
+            const size_t width = size_t(double(hi - lo + 1) * kRespaceTaper);
+            const size_t mL = std::min(width, (lo - prevHi - 1) / 2), mR = std::min(width, (nextLo - hi) / 2);
+            const size_t a = lo - mL, b = hi + mR;
+            auto ease = [](double x) { return x * x * (3.0 - 2.0 * x); };
+            share.assign(b - a + 1, 1.0);
+            for (size_t q = 0; q < mL; ++q)
+                share[q] = ease(double(q + 1) / double(mL + 1));
+            for (size_t q = 0; q < mR; ++q)
+                share[b - a - q] = ease(double(q + 1) / double(mR + 1));
+            // The window's edges and each margin edge's share take one spacing p; the rest keep their own spacing.
+            double U = 0.0, kept = 0.0, eased = 0.0;
+            for (size_t j = a; j <= b; ++j)
             {
-                along += l[(start + v - 1) % n];
-                const double target = along / L * U;
-                while (seg < hi && segStart + u[(start + seg) % n] < target)
+                U += u[at(j)];
+                kept += (1.0 - share[j - a]) * u[at(j)];
+                eased += share[j - a] * l[at(j)];
+            }
+            if (U <= 0.0 || eased <= 0.0)
+                continue;
+            const double p = (U - kept) / eased;
+            // Vertices a+1..b move to their new distance along the region's uv polyline.
+            targets.assign(b - a + 2, 0.0);
+            for (size_t v = a + 1; v <= b; ++v)
+            {
+                const double s = share[v - 1 - a];
+                targets[v - a] = targets[v - 1 - a] + (1.0 - s) * u[at(v - 1)] + s * p * l[at(v - 1)];
+            }
+            targets[b + 1 - a] = U;
+            double segStart = 0.0;
+            size_t seg = a;
+            for (size_t v = a + 1; v <= b; ++v)
+            {
+                const double target = targets[v - a];
+                while (seg < b && segStart + u[at(seg)] < target)
                 {
-                    segStart += u[(start + seg) % n];
+                    segStart += u[at(seg)];
                     ++seg;
                 }
-                const double len = u[(start + seg) % n];
+                const double len = u[at(seg)];
                 const double t = len > 0.0 ? std::clamp((target - segStart) / len, 0.0, 1.0) : 0.0;
-                out.push_back({loop[(start + v) % n], loop[(start + seg) % n], loop[(start + seg + 1) % n], t});
+                out.push_back({loop[at(v)], loop[at(seg)], loop[at(seg + 1)], t});
             }
         }
     }

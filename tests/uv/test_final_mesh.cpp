@@ -10,6 +10,7 @@
 #include <doctest/doctest.h>
 
 #include <chrono>
+#include <map>
 #include <cmath>
 #include <string>
 #include <utility>
@@ -234,6 +235,70 @@ TEST_CASE("final mesh: fit surface opens the rim that blend collapses, before an
     CHECK(blend.collapsed > 0);
     CHECK(fit.collapsed == 0);
     CHECK(fit.folded == 0);
+}
+
+/**
+ * Along every uv border of the mesh away from its corners, the steps between neighbouring edges' uv per surface length
+ * that change it by more than a factor of two, and the largest such change (log2).
+ */
+std::pair<size_t, double> borderSpacingJumps(const geo::Mesh& m)
+{
+    const std::span<const glm::vec2> uv = m.cornerAttrs().get<glm::vec2>("uv0");
+    auto cornerAt = [&](Index c, Index p) { return m.cornerPoint(c) == p ? c : m.cornerNext(c); };
+    auto same = [&](Index a, Index b) { return glm::length(uv[a] - uv[b]) < 1e-6f; };
+    std::map<Index, std::pair<Index, double>> next; // border corner -> next border corner and the edge's uv per length
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f))
+            m.forEachFaceCorner(f, [&](Index c) {
+                const Index cn = m.cornerNext(c), e = m.cornerEdge(c);
+                if (m.isManifoldEdge(e))
+                {
+                    const Index ec = m.edgeCorner(e), rc = m.cornerFace(ec) == f ? m.cornerRadial(ec) : ec;
+                    if (same(cornerAt(rc, m.cornerPoint(c)), c) && same(cornerAt(rc, m.cornerPoint(cn)), cn))
+                        return;
+                }
+                const double l = glm::length(m.position(m.cornerPoint(cn)) - m.position(m.cornerPoint(c)));
+                next[c] = {cn, l > 0.0 ? glm::length(glm::dvec2(uv[cn]) - glm::dvec2(uv[c])) / l : 0.0};
+            });
+    // The border corner leaving the point where an edge arrives: same point, same uv.
+    std::map<Index, std::vector<Index>> leaving;
+    for (const auto& [c, unused] : next)
+        leaving[m.cornerPoint(c)].push_back(c);
+    size_t jumps = 0;
+    double worst = 0.0;
+    for (const auto& [c, nx] : next)
+    {
+        Index follow = geo::kInvalid;
+        for (Index o : leaving[m.cornerPoint(nx.first)])
+            if (same(o, nx.first))
+                follow = o;
+        if (follow == geo::kInvalid || nx.second <= 0.0 || next[follow].second <= 0.0)
+            continue;
+        // Island corners turn the border; spacing may change there.
+        const glm::dvec2 d0 = glm::dvec2(uv[nx.first]) - glm::dvec2(uv[c]), d1 = glm::dvec2(uv[next[follow].first]) - glm::dvec2(uv[follow]);
+        if (std::atan2(std::abs(d0.x * d1.y - d0.y * d1.x), glm::dot(d0, d1)) > 0.5)
+            continue;
+        const double step = std::abs(std::log2(next[follow].second / nx.second));
+        worst = std::max(worst, step);
+        jumps += step > 1.0;
+    }
+    return {jumps, worst};
+}
+
+TEST_CASE("final mesh: respaced borders ease into the spacing beside them")
+{
+    // Bevel corners bunch the border; respaced runs must not end in a step the interior fill shears against.
+    for (auto [grid, segments] : {std::pair{2, 1}, std::pair{3, 3}, std::pair{6, 3}})
+    {
+        const uv::Stack stack = bevelSubdivStack(0.13, segments, 2);
+        for (const geo::Mesh& m : {lidPlate(0.4, grid), plate(0.4, grid)})
+        {
+            const auto [jumps, worst] = borderSpacingJumps(uv::runStack(m, stack));
+            INFO("grid " << grid << ", segments " << segments << ", worst " << worst);
+            CHECK(jumps == 0);
+            CHECK(worst < 0.6);
+        }
+    }
 }
 
 TEST_CASE("final mesh: a fit surface map reaches across whole islands")
