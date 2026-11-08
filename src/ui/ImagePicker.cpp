@@ -12,15 +12,21 @@
 #include "ui/Icons.h"
 #include "ui/TexturePicker.h"
 
+#include <QApplication>
+#include <QClipboard>
+#include <QContextMenuEvent>
 #include <QDesktopServices>
+#include <QDir>
 #include <QDropEvent>
 #include <QLineEdit>
 #include <QMimeData>
+#include <QMouseEvent>
 #include <QHBoxLayout>
 #include <QImage>
 #include <QMenu>
 #include <QPixmap>
 #include <QPointer>
+#include <QTimer>
 #include <QToolButton>
 #include <QUrl>
 
@@ -265,7 +271,18 @@ ImagePicker::ImagePicker(const imagePicker::Library* library, QString title, QWi
     row->addWidget(mName, 1);
     row->addWidget(mOpen);
     row->addWidget(mClear);
-    for (QToolButton* b : {mThumb, mName, mOpen})
+    // A click on the thumbnail waits out the double-click interval, since a double-click opens the image instead.
+    mThumbClick = new QTimer(this);
+    mThumbClick->setSingleShot(true);
+    mThumbClick->setInterval(QApplication::doubleClickInterval());
+    connect(mThumbClick, &QTimer::timeout, this, [this] { open(); });
+    connect(mThumb, &QToolButton::clicked, this, [this] {
+        if (mFile.empty())
+            open();
+        else
+            mThumbClick->start();
+    });
+    for (QToolButton* b : {mName, mOpen})
         connect(b, &QToolButton::clicked, this, [this] { open(); });
     connect(mClear, &QToolButton::clicked, this, [this] { choose({}); });
     connect(mPath, &QLineEdit::editingFinished, this, [this] {
@@ -361,6 +378,7 @@ void ImagePicker::refresh()
 {
     QString name, tip;
     QIcon thumb;
+    mFile.clear();
     if (mValue.empty())
         name = QString();
     else
@@ -378,6 +396,8 @@ void ImagePicker::refresh()
         std::error_code ec;
         const bool exists = !file.empty() && fs::exists(file, ec);
         thumb = imagePicker::thumbnail(file);
+        if (exists)
+            mFile = file;
         // Library images show their name; files show their path, as typed or stored.
         name = found ? found->name : QString::fromStdString(mValue);
         const std::string problem = !exists ? std::string("missing") : mProblem ? mProblem(file) : std::string();
@@ -395,7 +415,7 @@ void ImagePicker::refresh()
     mName->setText(mValue.empty() ? QString("None") : name);
     mName->setToolTip(tip);
     mThumb->setIcon(thumb.isNull() ? icon(mValue.empty() ? "photo-off" : "photo-x") : thumb);
-    mThumb->setToolTip(tip.isEmpty() ? QString("Pick an image: type to filter") : tip);
+    mThumb->setToolTip(tip.isEmpty() ? QString("Pick an image: type to filter") : tip + "\nDouble-click to open, right-click for more");
     mClear->setEnabled(!mValue.empty());
 }
 
@@ -403,6 +423,17 @@ bool ImagePicker::eventFilter(QObject* watched, QEvent* event)
 {
     switch (event->type())
     {
+    case QEvent::MouseButtonDblClick:
+        if (watched != mThumb || static_cast<QMouseEvent*>(event)->button() != Qt::LeftButton || mFile.empty())
+            break;
+        mThumbClick->stop();
+        openFile();
+        return true;
+    case QEvent::ContextMenu:
+        if (watched != mThumb && watched != mName)
+            break;
+        contextMenu()->popup(static_cast<QContextMenuEvent*>(event)->globalPos());
+        return true;
     case QEvent::DragEnter:
     case QEvent::DragMove:
     {
@@ -474,6 +505,29 @@ void ImagePicker::open()
         const bool file = !value.empty() && fs::path(paths::fromUtf8(value)).is_absolute() && fs::exists(paths::fromUtf8(value), ec);
         self->choose(file ? paths::storedPath(paths::fromUtf8(value)) : value);
     });
+}
+
+void ImagePicker::openFile() const
+{
+    if (!mFile.empty())
+        QDesktopServices::openUrl(QUrl::fromLocalFile(QString::fromStdString(paths::toUtf8(mFile))));
+}
+
+QMenu* ImagePicker::contextMenu()
+{
+    auto* m = new QMenu(this);
+    m->setObjectName("imagePickerMenu");
+    m->setAttribute(Qt::WA_DeleteOnClose);
+    const bool has = !mFile.empty();
+    const QString file = QString::fromStdString(paths::toUtf8(mFile));
+    m->addAction(icon("external-link"), "Open", m, [this] { openFile(); })->setEnabled(has);
+    m->addAction(icon("folder-search"), "Open Containing Folder", m, [file] { fileOps::reveal(file); })->setEnabled(has);
+    m->addAction(icon("copy"), "Copy Path", m, [file] { QApplication::clipboard()->setText(QDir::toNativeSeparators(file)); })->setEnabled(has);
+    m->addSeparator();
+    m->addAction("Pick...", m, [this] { open(); });
+    if (mClear->isVisibleTo(this))
+        m->addAction(icon("x"), "None", m, [this] { choose({}); })->setEnabled(!mValue.empty());
+    return m;
 }
 
 void ImagePicker::addTo(const fs::path& dir)

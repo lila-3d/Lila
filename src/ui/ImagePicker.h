@@ -13,6 +13,8 @@
 #include <vector>
 
 class QLineEdit;
+class QMenu;
+class QTimer;
 class QMimeData;
 class QToolButton;
 
@@ -74,7 +76,9 @@ LILA_UI_API QImage thumbnailImage(const std::filesystem::path& file, int size);
  * Lila's image field, wherever a texture is picked (image attrs such as the dome light, material maps, texture graph
  * images, brush alphas): the image's thumbnail, its path to type or paste over, a button opening texturePicker (None,
  * the library by group, the project's textures, Browse...; type to filter), a clear button, image files dropped on it,
- * and with a library a button to add images to it or open its folders. Each part can be switched off.
+ * and with a library a button to add images to it or open its folders. Double-clicking the thumbnail opens the image
+ * in the system's viewer; right-clicking it or the name lists Open, Open Containing Folder, Copy Path, Pick and None.
+ * Each part can be switched off.
  */
 class LILA_UI_API ImagePicker final : public QWidget
 {
@@ -110,6 +114,8 @@ private:
     void open();
     void addTo(const std::filesystem::path& dir);
     void choose(const std::string& value);
+    void openFile() const;
+    QMenu* contextMenu();
 
     const imagePicker::Library* mLibrary;
     QString mTitle;
@@ -118,7 +124,10 @@ private:
     QToolButton* mName;
     QToolButton* mOpen;
     QToolButton* mClear;
+    QTimer* mThumbClick;
     std::string mValue;
+    /** The resolved file of the value; empty when unset or missing. */
+    std::filesystem::path mFile;
     /** What the path box shows for the value, to tell an edit from an untouched name. */
     QString mShown;
     bool mEditable = true;
