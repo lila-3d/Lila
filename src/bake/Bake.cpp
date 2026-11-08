@@ -544,6 +544,9 @@ BakeResult runBake(const BakeInputs& in, const ProjectSettings& ps, const BakeOp
             tex->format = t.ext;
             const int bits = m.settings.bits ? m.settings.bits : os.bits;
             tex->bits = formatBits(t.ext, bits);
+            if (tex->bits < bits)
+                result.warnings.push_back(paths::toUtf8(file.filename()) + ": " + t.ext + " holds " + std::to_string(tex->bits) + " bits, not the " +
+                                          std::to_string(bits) + " asked for; use png, tif or exr for more");
             if (m.hidden)
                 hiddenKeys.insert(key);
             if (t.ext == "psd")

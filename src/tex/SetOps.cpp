@@ -423,13 +423,17 @@ json exportSet(scene::Node& set, const ExportOptions& options)
         job.suffix = !ms.suffix.empty() ? ms.suffix : def ? def->suffix : ms.map;
         job.format = ms.format.empty() ? format : ms.format;
         job.linear = !def || def->linear;
-        int bits = ms.bits > 0 ? ms.bits : outBits;
+        const int asked = ms.bits > 0 ? ms.bits : outBits;
+        int bits = asked;
         for (const bake::PackChannel& pc : job.layout)
             if (const Channel* ch = pc.map.empty() ? nullptr : s.channel(pc.map); ch && ms.bits <= 0)
                 bits = std::max(bits, std::min(ch->bits, 16));
         if (fromHeight && ms.map == "height")
             bits = std::max(bits, 16);
         job.bits = bitsFor(job.format, bits);
+        // Only a depth the preset asks for warns; a deeper channel is written at what the format holds.
+        if (job.bits < asked)
+            warnings.push_back(ms.map + ": " + job.format + " holds " + std::to_string(job.bits) + " bits, not " + std::to_string(asked) + "; use png, tif or exr for more");
         jobs.push_back(std::move(job));
     }
     // Only a normal map has a green convention; a reader flips the green of any map marked opengl.
