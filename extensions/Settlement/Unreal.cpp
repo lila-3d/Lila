@@ -20,9 +20,11 @@
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <map>
 #include <set>
+#include <string_view>
 
 using namespace lila;
 
@@ -564,6 +566,9 @@ json sendToUnreal(const Args& a)
         }
         throw CommandError(std::string(cmd) + ": no sender for " + i.kind);
     };
+    // Placements of an asset the project doesn't have are one finding per asset, not one error per cell.
+    std::map<std::string, int> missingAssets;
+    constexpr std::string_view kNoMesh = "no static mesh at ";
     for (const std::vector<std::string>* keys : {&d.added, &d.changed})
         for (const std::string& k : *keys)
             try
@@ -573,7 +578,11 @@ json sendToUnreal(const Args& a)
             catch (const std::exception& e)
             {
                 failed.insert(k);
-                errors.push_back(k + ": " + e.what());
+                const std::string what = e.what();
+                if (const size_t at = what.find(kNoMesh); byKey[k]->kind == "place" && at != std::string::npos)
+                    ++missingAssets[what.substr(at + kNoMesh.size())];
+                else
+                    errors.push_back(k + ": " + what);
             }
 
     // What the last send made that this layout no longer has.
@@ -634,6 +643,13 @@ json sendToUnreal(const Args& a)
     out["sent"] = sent;
     out["removed"] = removed;
     out["errors"] = errors;
+    if (!missingAssets.empty())
+    {
+        out["missingAssets"] = missingAssets;
+        out["warnings"] = json::array({std::format("placements of {} assets not sent: the project has no static mesh at those paths (missingAssets); "
+                                                   "name the project's assets with settlementFurniture(engineAssets=...) or add them, then send again",
+                                                   missingAssets.size())});
+    }
     out["manifest"] = manifestPath.generic_string();
     return out;
 }
