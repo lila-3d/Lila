@@ -321,16 +321,21 @@ TEST_CASE("bakeLint finds each problem and bake lists its warnings first")
         CHECK(issues(lintOnly(p, "uvOverlap"), "uvOverlap").empty());
     }
 
-    SUBCASE("texel density outliers")
+    SUBCASE("texel density outliers within a mesh, not between meshes")
     {
         newScene();
-        const std::string p = smallProject(dir, 32, "{mesh}_{map}");
+        // One face of "shrunk" is its own island at a quarter of the scale of the rest of the mesh.
+        geo::Mesh shrunk = plane(2);
+        const geo::Index f0 = shrunk.cornerFace(0);
+        for (geo::Index c : shrunk.faceCorners(f0))
+            shrunk.cornerAttrs().get<glm::vec2>("uv0")[c] *= 0.25f;
+        const std::string p = smallProject(dir, 64, "{mesh}_{map}");
         ops::execute("bakeGroup", {{"args", {"g"}},
-                                   {"lows", {addMesh("d1", plane()), addMesh("d2", plane()), addMesh("tiny", plane(1, {0.0f, 0.0f}, {0.1f, 0.1f}))}},
+                                   {"lows", {addMesh("d1", plane()), addMesh("small", plane(1, {0.0f, 0.0f}, {0.1f, 0.1f})), addMesh("shrunk", shrunk)}},
                                    {"self", true}});
         const auto found = issues(lintOnly(p, "texelDensity"), "texelDensity");
         REQUIRE(found.size() == 1);
-        CHECK(found[0]["mesh"] == "tiny");
+        CHECK(found[0]["mesh"] == "shrunk");
     }
 
     SUBCASE("folded and mirrored islands")
@@ -349,6 +354,33 @@ TEST_CASE("bakeLint finds each problem and bake lists its warnings first")
         const auto found = issues(lintOnly(p, "mirroredTangents"), "mirroredTangents");
         CHECK(std::ranges::any_of(found, [](const json& i) { return i["mesh"] == "folded" && i["message"].get<std::string>().find("fold") != std::string::npos; }));
         CHECK(std::ranges::none_of(found, [](const json& i) { return i["mesh"] == "mirrored" || i["mesh"] == "plain"; }));
+    }
+
+    SUBCASE("problems too small to show in the map are left out")
+    {
+        newScene();
+        // Islands packed edge to edge, and overlapping by less than a texel at 32 x 32, all in one texture.
+        const std::string p = smallProject(dir, 32, "{project}_{map}");
+        ops::execute("bakeGroup", {{"args", {"g"}},
+                                   {"lows", {addMesh("left", plane(1, {0.0f, 0.0f}, {0.5f, 1.0f})), addMesh("right", plane(1, {0.5f, 0.0f}, {1.0f, 1.0f})),
+                                             addMesh("sliver", plane(1, {0.99f, 0.0f}, {1.49f, 1.0f}))}},
+                                   {"self", true}});
+        CHECK(issues(lintOnly(p, "uvOverlap"), "uvOverlap").empty());
+
+        newScene();
+        // The centre point's UV pushed a hair past the top edge: the slivers above it turn over by under a texel.
+        geo::Mesh nudged = plane(2);
+        for (geo::Index c = 0; c < nudged.cornerCapacity(); ++c)
+            if (glm::length(nudged.position(nudged.cornerPoint(c))) < 1e-6)
+                nudged.cornerAttrs().get<glm::vec2>("uv0")[c] = {0.5f, 1.002f};
+        geo::Mesh bent = plane(1);
+        bent.setPosition(0, bent.position(0) + glm::dvec3(0.0, 20.0, 0.0));
+        const std::string p2 = smallProject(dir, 32, "{mesh}_{map}");
+        ops::execute("bakeGroup", {{"args", {"g"}}, {"lows", {addMesh("nudged", nudged), addMesh("bent", bent)}}, {"self", true}});
+        const json r = ops::execute("bakeLint", {{"project", p2}, {"highs", false}});
+        CHECK(std::ranges::none_of(issues(r, "mirroredTangents"), [](const json& i) { return i["message"].get<std::string>().find("fold") != std::string::npos; }));
+        // Lila's exports triangulate as the bake does, so non-planar faces are only checked when asked for.
+        CHECK(issues(r, "triangulation").empty());
     }
 
     SUBCASE("lows with no high in range, and highs outside the cage")

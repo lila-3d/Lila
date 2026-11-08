@@ -17,13 +17,13 @@ class Graph;
  * bakeLint: problems that spoil a bake, found before it runs. bake() lints first and lists what it finds in its warnings.
  *
  *   hardEdges        hard edges that are not UV seams (the normal map can't hide the shading split)
- *   uvOverlap        UV islands overlapping within a texture, including across groups writing the same file
- *   uvMissing        lows without uv0, triangles with no UV area
- *   texelDensity     islands whose texels per cm are far from the project's median
- *   mirroredTangents triangles whose UV winding disagrees with their tangent sign (a mirrored island baked as unmirrored)
+ *   uvOverlap        UV islands overlapping within a texture by more than a texel, including across groups writing the same file
+ *   uvMissing        lows without uv0, triangles big enough to see collapsed to a sliver of UV
+ *   texelDensity     islands whose texels per cm are far from the rest of their mesh
+ *   mirroredTangents triangles whose UV winding disagrees with their tangent sign (a mirrored island baked as unmirrored), islands folding over themselves
  *   highRange        lows whose rays find no high (or few) within the frontal and rear distances
  *   cageContainment  high points outside the cage (beyond frontal) or deeper than rear
- *   triangulation    non-planar faces whose triangles depend on the exporter's split
+ *   triangulation    non-planar faces whose triangles depend on the exporter's split (only when named)
  *   cageTopology     an editable cage that doesn't match its low
  */
 namespace lila::bake
@@ -60,7 +60,7 @@ LILA_SCENE_API const std::vector<std::string>& lintChecks();
 
 struct LintOptions
 {
-    /** Checks to run; empty runs all. */
+    /** Checks to run; empty runs all but triangulation. */
     std::vector<std::string> checks;
     /** Islands whose density is beyond median x this (or below median / this) are outliers. */
     double densityTolerance = 2.0;

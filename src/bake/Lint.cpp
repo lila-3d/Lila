@@ -21,6 +21,7 @@
 #include <cmath>
 #include <map>
 #include <set>
+#include <tuple>
 
 namespace lila::bake
 {
@@ -31,8 +32,17 @@ using detail::shortName;
 
 /** Component ids an issue lists for selecting them; the count it reports has no cap. */
 constexpr size_t kMaxComponents = 100000;
+/** Under a texel of UV area a triangle's winding and tangent sign don't show in the bake. */
+constexpr double kMinTexels = 1.0;
+/** Texels an island must have wound against the rest before it counts as folded. */
+constexpr double kFoldTexels = 4.0;
+/** A collapsed triangle smaller than this at its island's density is too small to see. */
+constexpr double kVisibleTexels = 16.0;
+/** UV area, as a fraction of what its island's density would give it, under which a triangle counts as collapsed. */
+constexpr double kCollapsedFraction = 0.02;
 
-bool wanted(const LintOptions& o, const char* check) { return o.checks.empty() || std::ranges::find(o.checks, check) != o.checks.end(); }
+bool named(const LintOptions& o, const char* check) { return std::ranges::find(o.checks, check) != o.checks.end(); }
+bool wanted(const LintOptions& o, const char* check) { return o.checks.empty() || named(o, check); }
 
 double uvArea(const glm::vec2* uv) { return 0.5 * (double(uv[1].x - uv[0].x) * (uv[2].y - uv[0].y) - double(uv[2].x - uv[0].x) * (uv[1].y - uv[0].y)); }
 double area3(const glm::vec3* p) { return 0.5 * double(glm::length(glm::cross(p[1] - p[0], p[2] - p[0]))); }
@@ -90,7 +100,32 @@ void hardEdges(const GroupInputs& gi, const LowInput& low, LintReport& r)
                             {{"count", count}, {"positions", where}, {"edgePoints", edgePoints}}});
 }
 
-void uvMissing(const GroupInputs& gi, const LowInput& low, LintReport& r)
+/** Texels per cm2 each island of a low gets; an island with no UV area takes the low's overall density. */
+std::vector<double> islandDensities(const LowInput& low, double texels)
+{
+    const MeshSoup& s = low.soup;
+    std::vector<double> uvA(low.islandCount, 0.0), worldA(low.islandCount, 0.0);
+    double uvAll = 0.0, worldAll = 0.0;
+    for (size_t t = 0; t < s.triangleCount(); ++t)
+    {
+        const double u = std::abs(uvArea(&s.uvs[t * 3])), w = area3(&s.positions[t * 3]);
+        uvAll += u;
+        worldAll += w;
+        if (t < low.islands.size() && low.islands[t] < low.islandCount)
+        {
+            uvA[low.islands[t]] += u;
+            worldA[low.islands[t]] += w;
+        }
+    }
+    const double overall = worldAll > 0.0 ? uvAll * texels / worldAll : 0.0;
+    std::vector<double> out(low.islandCount, overall);
+    for (uint32_t i = 0; i < low.islandCount; ++i)
+        if (worldA[i] > 0.0 && uvA[i] * texels >= kMinTexels)
+            out[i] = uvA[i] * texels / worldA[i];
+    return out;
+}
+
+void uvMissing(const GroupInputs& gi, const LowInput& low, const ProjectSettings& ps, LintReport& r)
 {
     const MeshSoup& s = low.soup;
     if (s.uvs.empty())
@@ -98,38 +133,56 @@ void uvMissing(const GroupInputs& gi, const LowInput& low, LintReport& r)
         r.issues.push_back({"uvMissing", "warning", gi.name, s.name, "has no uv0; it bakes nothing", json::object()});
         return;
     }
-    size_t degenerate = 0;
+    const double texels = double(ps.output.width) * ps.output.height;
+    double uvAll = 0.0;
+    for (size_t t = 0; t < s.triangleCount(); ++t)
+        uvAll += std::abs(uvArea(&s.uvs[t * 3]));
+    if (uvAll * texels < kMinTexels)
+    {
+        r.issues.push_back({"uvMissing", "warning", gi.name, s.name, "its uv0 has no area; it bakes nothing", json::object()});
+        return;
+    }
+    const std::vector<double> density = islandDensities(low, texels);
+    size_t collapsed = 0;
     std::set<uint32_t> faces;
     for (size_t t = 0; t < s.triangleCount(); ++t)
-        if (std::abs(uvArea(&s.uvs[t * 3])) < 1e-12 && area3(&s.positions[t * 3]) > 1e-10)
+    {
+        const uint32_t island = t < low.islands.size() ? low.islands[t] : 0u;
+        const double expected = area3(&s.positions[t * 3]) * (island < density.size() ? density[island] : 0.0);
+        // Only a triangle that would cover enough texels to show, squeezed to a sliver of them, smears in the bake.
+        if (expected >= kVisibleTexels && std::abs(uvArea(&s.uvs[t * 3])) * texels < expected * kCollapsedFraction)
         {
-            ++degenerate;
+            ++collapsed;
             if (t < low.faces.size() && faces.size() < kMaxComponents)
                 faces.insert(low.faces[t]);
         }
-    if (degenerate)
-        r.issues.push_back({"uvMissing", "warning", gi.name, s.name, std::to_string(degenerate) + " triangle(s) have no UV area and get no texels",
-                            {{"count", degenerate}, {"faces", faces}}});
+    }
+    if (collapsed)
+        r.issues.push_back({"uvMissing", "warning", gi.name, s.name,
+                            std::to_string(collapsed) + " triangle(s) are collapsed in UV; their texels smear into a line",
+                            {{"count", collapsed}, {"faces", faces}}});
 }
 
-void mirroredTangents(const GroupInputs& gi, const LowInput& low, LintReport& r)
+void mirroredTangents(const GroupInputs& gi, const LowInput& low, const ProjectSettings& ps, LintReport& r)
 {
     const MeshSoup& s = low.soup;
     if (s.uvs.empty() || low.tangents.size() != s.positions.size())
         return;
+    const double texels = double(ps.output.width) * ps.output.height;
     size_t mismatched = 0, mirrored = 0;
     std::set<uint32_t> faces;
-    // Per island: triangles wound each way, to find islands folding over themselves.
-    std::vector<std::array<size_t, 2>> winding(low.islandCount);
+    // Per island: texels wound each way, to find islands folding over themselves.
+    std::vector<std::array<double, 2>> winding(low.islandCount);
     for (size_t t = 0; t < s.triangleCount(); ++t)
     {
         const double a = uvArea(&s.uvs[t * 3]);
-        if (std::abs(a) < 1e-12)
+        // Slivers under a texel have no reliable winding and MikkTSpace takes their tangents from neighbours.
+        if (std::abs(a) * texels < kMinTexels)
             continue;
         const bool flipped = a < 0.0;
         mirrored += flipped;
         if (t < low.islands.size() && low.islands[t] < winding.size())
-            ++winding[low.islands[t]][flipped];
+            winding[low.islands[t]][flipped] += std::abs(a) * texels;
         for (int k = 0; k < 3; ++k)
             if ((low.tangents[t * 3 + size_t(k)].w < 0.0f) != flipped)
             {
@@ -145,7 +198,7 @@ void mirroredTangents(const GroupInputs& gi, const LowInput& low, LintReport& r)
                             {{"count", mismatched}, {"mirroredTriangles", mirrored}, {"faces", faces}}});
     size_t folded = 0;
     for (const auto& w : winding)
-        if (w[0] && w[1])
+        if (std::min(w[0], w[1]) >= kFoldTexels)
             ++folded;
     if (folded)
         r.issues.push_back({"mirroredTangents", "warning", gi.name, s.name,
@@ -165,7 +218,10 @@ void uvOverlap(const BakeInputs& in, const ProjectSettings& ps, LintReport& r)
     };
     std::vector<Owner> lows;
     std::map<std::pair<std::string, int>, std::vector<uint64_t>> grids;
-    std::map<std::pair<uint64_t, uint64_t>, size_t> conflicts;
+    // Cells two owners claim, with the pair; only those whose neighbours are contested too count, so islands packed edge
+    // to edge or overlapping by less than a cell, which padding covers, aren't reported.
+    std::map<std::pair<std::string, int>, std::vector<uint8_t>> contested;
+    std::vector<std::tuple<std::vector<uint8_t>*, size_t, std::pair<uint64_t, uint64_t>>> claims;
     for (size_t g = 0; g < in.groups.size(); ++g)
         for (size_t l = 0; l < in.groups[g].lows.size(); ++l)
         {
@@ -193,8 +249,12 @@ void uvOverlap(const BakeInputs& in, const ProjectSettings& ps, LintReport& r)
                 tok.udim = udimOf(tu, tv);
                 const std::string file = expandName(ps.output.name, tok, true);
                 std::vector<uint64_t>& grid = grids[{file, tok.udim}];
+                std::vector<uint8_t>& clash = contested[{file, tok.udim}];
                 if (grid.empty())
+                {
                     grid.assign(size_t(R) * size_t(R), 0);
+                    clash.assign(size_t(R) * size_t(R), 0);
+                }
                 const uint64_t me = ((lowIndex << 32) | (t < low.islands.size() ? low.islands[t] : 0u)) + 1;
                 glm::dvec2 p[3];
                 for (int k = 0; k < 3; ++k)
@@ -209,14 +269,26 @@ void uvOverlap(const BakeInputs& in, const ProjectSettings& ps, LintReport& r)
                         const glm::dvec2 q(x + 0.5, y + 0.5);
                         if (sign * edge(p[0], p[1], q) < 0.0 || sign * edge(p[1], p[2], q) < 0.0 || sign * edge(p[2], p[0], q) < 0.0)
                             continue;
-                        uint64_t& cell = grid[size_t(y) * size_t(R) + size_t(x)];
+                        const size_t at = size_t(y) * size_t(R) + size_t(x);
+                        uint64_t& cell = grid[at];
                         if (cell == 0)
                             cell = me;
                         else if (cell != me)
-                            ++conflicts[{std::min(cell, me), std::max(cell, me)}];
+                        {
+                            clash[at] = 1;
+                            claims.emplace_back(&clash, at, std::pair{std::min(cell, me), std::max(cell, me)});
+                        }
                     }
             }
         }
+    std::map<std::pair<uint64_t, uint64_t>, size_t> conflicts;
+    for (const auto& [clash, at, pair] : claims)
+    {
+        const size_t x = at % size_t(R), y = at / size_t(R);
+        const std::vector<uint8_t>& c = *clash;
+        if (x > 0 && x + 1 < size_t(R) && y > 0 && y + 1 < size_t(R) && c[at - 1] && c[at + 1] && c[at - size_t(R)] && c[at + size_t(R)])
+            ++conflicts[pair];
+    }
     // Per pair of lows: overlapping cells and island pairs.
     std::map<std::pair<uint64_t, uint64_t>, std::pair<size_t, size_t>> perLows;
     for (const auto& [pair, cells] : conflicts)
@@ -271,27 +343,37 @@ void texelDensity(const BakeInputs& in, const ProjectSettings& ps, const LintOpt
                 worldA[low.islands[t]] += area3(&s.positions[t * 3]);
             }
             for (uint32_t i = 0; i < low.islandCount; ++i)
-                if (worldA[i] > 1e-8 && uvA[i] > 1e-14)
+                if (worldA[i] > 1e-8 && uvA[i] * texels >= kVisibleTexels)
                     islands.push_back({g, l, i, std::sqrt(uvA[i] * texels / worldA[i])});
         }
-    if (islands.size() < 2)
-        return;
-    std::vector<double> d;
+    // Against each mesh's own median: meshes deliberately get different densities (text, small trim, big glass), but
+    // islands of one mesh far off the rest are usually a scaling slip.
+    std::map<std::pair<size_t, size_t>, std::vector<double>> perMesh;
     for (const Island& i : islands)
-        d.push_back(i.density);
-    std::ranges::nth_element(d, d.begin() + std::ptrdiff_t(d.size() / 2));
-    const double median = d[d.size() / 2];
-    if (median <= 0.0)
-        return;
-    std::map<std::pair<size_t, size_t>, std::vector<double>> outliers;
-    for (const Island& i : islands)
-        if (i.density > median * o.densityTolerance || i.density < median / o.densityTolerance)
-            outliers[{i.group, i.low}].push_back(i.density);
-    for (const auto& [key, ds] : outliers)
+        perMesh[{i.group, i.low}].push_back(i.density);
+    std::map<std::pair<size_t, size_t>, std::pair<std::vector<double>, double>> outliers;
+    for (auto& [key, d] : perMesh)
     {
+        if (d.size() < 2)
+            continue;
+        std::vector<double> sorted = d;
+        std::ranges::nth_element(sorted, sorted.begin() + std::ptrdiff_t(sorted.size() / 2));
+        const double median = sorted[sorted.size() / 2];
+        if (median <= 0.0)
+            continue;
+        for (double v : d)
+            if (v > median * o.densityTolerance || v < median / o.densityTolerance)
+            {
+                outliers[key].first.push_back(v);
+                outliers[key].second = median;
+            }
+    }
+    for (const auto& [key, entry] : outliers)
+    {
+        const auto& [ds, median] = entry;
         const auto [lo, hi] = std::ranges::minmax(ds);
         char buf[160];
-        std::snprintf(buf, sizeof buf, "%zu UV island(s) at %.3g to %.3g texels/cm against the project median of %.3g", ds.size(), lo, hi, median);
+        std::snprintf(buf, sizeof buf, "%zu UV island(s) at %.3g to %.3g texels/cm against the rest of the mesh at %.3g", ds.size(), lo, hi, median);
         const GroupInputs& gi = in.groups[key.first];
         r.issues.push_back({"texelDensity", "warning", gi.name, gi.lows[key.second].soup.name, buf,
                             {{"islands", ds.size()}, {"min", lo}, {"max", hi}, {"median", median}}});
@@ -626,11 +708,11 @@ LintReport lintInputs(const BakeInputs& in, const ProjectSettings& ps, const Bac
         for (const LowInput& low : gi.lows)
         {
             if (wanted(o, "uvMissing"))
-                uvMissing(gi, low, r);
+                uvMissing(gi, low, ps, r);
             if (wanted(o, "hardEdges"))
                 hardEdges(gi, low, r);
             if (wanted(o, "mirroredTangents"))
-                mirroredTangents(gi, low, r);
+                mirroredTangents(gi, low, ps, r);
         }
     if (wanted(o, "uvOverlap"))
         uvOverlap(in, ps, r);
@@ -647,7 +729,8 @@ void lintScene(scene::Graph& g, const BakeInputs& in, LintReport& r, const LintO
 {
     for (const GroupInputs& gi : in.groups)
     {
-        if (wanted(o, "triangulation"))
+        // Lila's FBX and Unreal exports triangulate exactly as the bake does, so this only matters when asked for.
+        if (named(o, "triangulation"))
             triangulation(g, gi, r);
         if (wanted(o, "cageTopology"))
             cageTopology(g, gi, r);
