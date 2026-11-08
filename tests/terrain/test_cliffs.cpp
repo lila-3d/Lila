@@ -403,6 +403,7 @@ TEST_CASE("cliffs: terrainCliffs, terrainCliffMesh, terrainCheck and terrainSend
     }
     json list = run("terrainCliffs", {{"args", {t["mesh"]}}, {"list", true}});
     CHECK(list["cliffs"].size() == 1);
+    CHECK(list["regions"].contains("cliff_1"));
 }
 
 TEST_CASE("cliffs: a terrain spec's cliffs entry finds and meshes the cliffs")
@@ -422,4 +423,23 @@ TEST_CASE("cliffs: a terrain spec's cliffs entry finds and meshes the cliffs")
     for (const json& s : r["steps"])
         meshed = meshed || s.value("step", std::string()) == "cliffs.mesh";
     CHECK(meshed);
+}
+
+TEST_CASE("cliffs: terrainCliffExtrude raises a live wall and stamps the plateau behind it")
+{
+    loadTerrain();
+    json t = run("terrainCreate", {{"size", {12800.0, 12800.0}}, {"resolution", 129}, {"flat", true}, {"name", "Ledge"}});
+    const json cv = run("curve", {{"points", {{-5000.0, 0.0, 0.0}, {5000.0, 0.0, 0.0}}}, {"type", "poly"}, {"name", "LedgeEdge"}});
+    json e = run("terrainCliffExtrude", {{"args", {t["mesh"]}}, {"curve", cv}, {"height", 1200.0}, {"profile", "battered"}});
+    INFO(e.dump().substr(0, 1500));
+    CHECK(e["ground"]["stamped"].get<int>() > 0);
+    const double a = heightAt(t, 0.0, -600.0), b = heightAt(t, 0.0, 600.0);
+    CHECK(std::max(a, b) == doctest::Approx(1200.0).epsilon(0.02));
+    CHECK(std::min(a, b) == doctest::Approx(0.0).epsilon(0.02));
+    CHECK(e["wall"]["walls"][0]["triangles"].get<int>() > 100);
+    // Live: moving the curve moves the plateau.
+    run("move", {{"args", {cv}}, {"by", {0.0, 0.0, 2000.0}}});
+    const double a2 = heightAt(t, 0.0, 2000.0 - 600.0), b2 = heightAt(t, 0.0, 2000.0 + 600.0);
+    CHECK(std::max(a2, b2) == doctest::Approx(1200.0).epsilon(0.02));
+    CHECK(std::min(a2, b2) == doctest::Approx(0.0).epsilon(0.02));
 }

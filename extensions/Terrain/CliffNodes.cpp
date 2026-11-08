@@ -95,7 +95,7 @@ gn::NodeDecl cliffsDecl()
             "Writes masks cliff, cliffTalus (below cliffs, for scree) and cliffTop (along their tops). terrainCliffMesh and "
             "terrainCliffExtrude write it.";
     d.props = {{.id = "cliffs", .defaultValue = "[]", .doc = "Cliffs, JSON: [{name, kind, mesh, mode, rings, depth, recess, blend, margin, talusWidth}] in the heightfield's own space."},
-               {.id = "walls", .defaultValue = "[]", .doc = "Walls, JSON: [{name, source (an Object Info node), height, plateau, cut, falloff, flip, stamp}]."}};
+               {.id = "walls", .defaultValue = "[]", .doc = "Walls, JSON: [{name, object (an Object Info node), height, plateau, cut, falloff, flip, stamp}]."}};
     d.sockets = {.inputs = {{.id = "heightfield", .type = gn::SocketType::Geometry}}, .outputs = {{.id = "heightfield", .type = gn::SocketType::Geometry}}};
     d.exec = [](gn::ExecContext& c) {
         LILA_ZONE();
@@ -115,7 +115,7 @@ gn::NodeDecl cliffsDecl()
         {
             if (!w.is_object() || !w.value("stamp", true))
                 continue;
-            for (auto& line : curveLines(c, w.value("source", std::string()), toLocal))
+            for (auto& line : curveLines(c, w.value("object", std::string()), toLocal))
             {
                 WallStamp s;
                 s.name = w.value("name", std::string());

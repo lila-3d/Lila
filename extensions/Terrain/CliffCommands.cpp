@@ -91,7 +91,7 @@ void writeState(const TerrainTarget& t, CliffState s, const std::map<std::string
     gn::GNode& n = edit::chainNode(e.group, kCliffsNode, kCliffsType, kCliffsAfter, 160.0, cmd);
     for (json& w : s.walls)
         if (auto it = wallSources.find(w.value("name", std::string())); it != wallSources.end())
-            w["source"] = edit::sourceNode(e.group, kCurvePrefix, it->second);
+            w["object"] = edit::sourceNode(e.group, kCurvePrefix, it->second);
     n.values["cliffs"] = s.cliffs.dump();
     n.values["walls"] = s.walls.dump();
     edit::dropUnusedSources(e.group, kCurvePrefix, kCliffsType, {"walls"});
@@ -307,7 +307,8 @@ std::vector<std::string> regionNames(const std::string& terrain, const json& fla
     std::vector<std::string> out;
     if (flag.is_string() && flag.get<std::string>() == "all")
     {
-        for (const auto& [n, r] : storedRegions(terrain).items())
+        const json stored = storedRegions(terrain);
+        for (const auto& [n, r] : stored.items())
             if (n.starts_with("cliff_"))
                 out.push_back(n);
         std::sort(out.begin(), out.end(), [](const std::string& a, const std::string& b) {
@@ -339,7 +340,8 @@ json runCliffs(const Args& a)
     {
         const CliffState s = readState(t, cmd);
         json regions = json::object();
-        for (const auto& [n, r] : storedRegions(path).items())
+        const json stored = storedRegions(path);
+        for (const auto& [n, r] : stored.items())
             if (n.starts_with("cliff_"))
                 regions[n] = r.value("cliff", json::object());
         return {{"regions", regions}, {"cliffs", s.cliffs}, {"walls", s.walls}};
@@ -558,6 +560,7 @@ json runCliffMesh(const Args& a)
     for (const std::string& w : warnings)
         log::warn("{}: {}", cmd, w);
     json ground2 = json::object();
+    edit::findTerrain(g, path, cmd);
     if (t.modifier)
         if (json r = cliffNodeResult(t.modifier->id(), kCliffsNode); !r.is_null())
             ground2 = r;
@@ -679,8 +682,11 @@ json runCliffExtrude(const Args& a)
     for (scene::NodeId m : scene::modifiers::stack(g, host->id()))
         if (Node* mod = g.node(m); mod && gn::isGnModifier(*mod))
             out["wall"] = cliffNodeResult(mod->id(), "Wall");
-    if (t.modifier)
-        out["ground"] = cliffNodeResult(t.modifier->id(), kCliffsNode);
+    // Reading the terrain makes it evaluate with the new stamp before its result is read.
+    const TerrainTarget after = edit::findTerrain(g, path, cmd);
+    if (after.modifier)
+        if (json r = cliffNodeResult(after.modifier->id(), kCliffsNode); !r.is_null())
+            out["ground"] = r;
     return out;
 }
 
@@ -1044,7 +1050,7 @@ json runSendCliffs(const Args& a)
     if (!client)
         throw CommandError(cmd + ": not connected to Unreal");
     auto call = [&](const char* method, const json& params) {
-        link::RpcResult r = client->call(method, params, {});
+        link::RpcResult r = client->call(method, params, 300000);
         if (!r.ok)
             throw std::runtime_error(std::string(method) + ": " + r.error);
         return r.result;
@@ -1061,7 +1067,9 @@ json runSendCliffs(const Args& a)
         // Without Nanite the collision comes from the last LOD: simplified, and its borders still meet the neighbours'.
         if (!p.tile.nanite && p.tile.lods.size() > 1)
             options["lodForCollision"] = int64_t(p.tile.lods.size() - 1);
-        it.mapping = {{"contentPath", content + "/" + p.name}, {"kind", "static"}, {"options", options}};
+        it.mapping = options;
+        it.mapping["contentPath"] = content + "/" + p.name;
+        it.mapping["kind"] = "static";
         it.write = [&p, &folder]() {
             const fs::path file = folder / (p.name + ".fbx");
             writeTileFbx(p.tile, file, p.name);

@@ -661,8 +661,8 @@ TSharedPtr<FJsonValue> PlaceInstances(const TSharedPtr<FJsonObject>& Params, FSt
 	FString HlodPath;
 	if (Params->TryGetStringField(TEXT("hlodLayer"), HlodPath) && !HlodPath.IsEmpty())
 	{
-		const FString ObjectPath = HlodPath.Contains(TEXT(".")) ? HlodPath : HlodPath + TEXT(".") + FPackageName::GetShortName(HlodPath);
-		if (UHLODLayer* Layer = LoadObject<UHLODLayer>(nullptr, *ObjectPath, nullptr, LOAD_NoWarn | LOAD_Quiet))
+		const FString HlodObject = HlodPath.Contains(TEXT(".")) ? HlodPath : HlodPath + TEXT(".") + FPackageName::GetShortName(HlodPath);
+		if (UHLODLayer* Layer = LoadObject<UHLODLayer>(nullptr, *HlodObject, nullptr, LOAD_NoWarn | LOAD_Quiet))
 		{
 			for (AActor* Actor : TaggedActors(World, GroupTag(Group)))
 			{

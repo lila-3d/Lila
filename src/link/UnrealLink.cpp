@@ -51,7 +51,7 @@ constexpr int kImportIdleTimeoutMs = 60 * 1000;
 const char* const kOptionKeys[] = {
     "skeleton", "importMaterials", "importTextures", "combineMeshes", "autoCollision", "collision", "generateLightmapUVs",
     "normals",  "lodGroup",        "existing",       "nanite",        "importAnimations", "reapplyOptions", "save",
-    "materialFolder", "keepMaterials", "lodScreenSizes", "materialCurves", "facing",
+    "materialFolder", "keepMaterials", "lodScreenSizes", "materialCurves", "facing", "lodForCollision",
 };
 
 std::string lower(std::string s)

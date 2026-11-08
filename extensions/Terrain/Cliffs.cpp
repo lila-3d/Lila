@@ -990,23 +990,34 @@ std::vector<DisplaceSample> displaceMesh(TriMesh& m, const MeshParams& p, const 
     return samples;
 }
 
-/** Levels of refinement fitted to the budget: the edge length asked for, or longer with a warning. */
-double edgeForBudget(double area, double edge, size_t maxTriangles, std::vector<std::string>& warnings)
+/** Triangles refine(m, edge) makes: each triangle splits about (longest edge / edge) squared times. */
+double refinedCount(const TriMesh& m, double edge)
 {
-    const double tris = 2.3 * area / std::max(1e-9, edge * edge);
-    if (tris <= double(maxTriangles))
-        return edge;
-    const double e = std::sqrt(2.3 * area / double(maxTriangles));
-    warnings.push_back("detail lowered to stay under " + std::to_string(maxTriangles) + " triangles (edge " + std::to_string(int(std::round(e))) + " cm)");
-    return e;
+    double n = 0.0;
+    for (const glm::uvec3& t : m.t)
+    {
+        const double l = std::max({glm::length(m.p[t[0]] - m.p[t[1]]), glm::length(m.p[t[1]] - m.p[t[2]]), glm::length(m.p[t[2]] - m.p[t[0]])});
+        const double k = std::max(1.0, std::exp2(std::ceil(std::log2(std::max(1.0, l / edge)))));
+        n += k * k;
+    }
+    return n;
 }
 
-double surfaceArea(const TriMesh& m)
+/** The edge length asked for, or the shortest that stays under the budget, with a warning. */
+double edgeForBudget(const TriMesh& m, double edge, size_t maxTriangles, std::vector<std::string>& warnings)
 {
-    double a = 0.0;
-    for (const glm::uvec3& t : m.t)
-        a += 0.5 * glm::length(glm::cross(m.p[t[1]] - m.p[t[0]], m.p[t[2]] - m.p[t[0]]));
-    return a;
+    if (refinedCount(m, edge) <= double(maxTriangles))
+        return edge;
+    double lo = edge, hi = edge;
+    while (refinedCount(m, hi) > double(maxTriangles) && hi < 1e7)
+        hi *= 2.0;
+    for (int i = 0; i < 24; ++i)
+    {
+        const double mid = 0.5 * (lo + hi);
+        (refinedCount(m, mid) > double(maxTriangles) ? lo : hi) = mid;
+    }
+    warnings.push_back("detail lowered to stay under " + std::to_string(maxTriangles) + " triangles (edge " + std::to_string(int(std::round(hi))) + " cm)");
+    return hi;
 }
 
 void setCornerNormal(TriMesh& m, uint32_t v, const glm::dvec3& n)
@@ -1074,7 +1085,7 @@ CliffMesh buildFromRegion(const Heightfield& ground, const std::vector<std::vect
     }
     const std::vector<uint8_t> border = borderVertices(m);
     double edge = ground.cell / std::max(0.25, p.detail);
-    edge = edgeForBudget(surfaceArea(m), edge, p.maxTriangles, out.stats.warnings);
+    edge = edgeForBudget(m, edge, p.maxTriangles, out.stats.warnings);
     out.stats.detail = ground.cell / edge;
     refine(m, edge);
     std::vector<uint8_t> isBorder = borderVertices(m);
@@ -1233,7 +1244,7 @@ CliffMesh buildFromMesh(const geo::Mesh& blockout, const Heightfield* ground, co
     for (size_t v = 0; v < m.p.size(); ++v)
         m.vattr(v)[heightAt] = float((m.p[v].y - low) / range);
     double edge = ground ? ground->cell / std::max(0.25, p.detail) : std::max(10.0, p.shape.strataHeight / std::max(0.25, p.detail));
-    edge = edgeForBudget(surfaceArea(m), edge, p.maxTriangles, out.stats.warnings);
+    edge = edgeForBudget(m, edge, p.maxTriangles, out.stats.warnings);
     out.stats.detail = p.detail;
     refine(m, edge);
     // Open borders keep the blockout's silhouette: no displacement there.
@@ -1797,20 +1808,10 @@ void slicePlane(TriMesh& m, int axis, double value)
         cut[k] = uint32_t(v);
         return uint32_t(v);
     };
-    TriMesh next;
-    next.vertexStride = m.vertexStride;
-    next.cornerStride = m.cornerStride;
-    next.vertexNames = m.vertexNames;
-    next.cornerNames = m.cornerNames;
-    std::vector<float> nextCa;
+    // Triangles that cross are replaced in place by their first piece, the other pieces appended; the rest stay put.
     const size_t triCount = m.t.size();
-    std::vector<glm::uvec3> tris;
-    struct Pending
-    {
-        size_t src;
-        LocalPoint a, b, c;
-    };
-    std::vector<Pending> pending;
+    const int cs = m.cornerStride;
+    std::vector<float> src(size_t(3 * cs));
     for (size_t ti = 0; ti < triCount; ++ti)
     {
         const glm::uvec3 tri = m.t[ti];
@@ -1820,14 +1821,10 @@ void slicePlane(TriMesh& m, int axis, double value)
             const double d = coord(tri[c]) - value;
             side[c] = d > 1e-9 ? 1 : d < -1e-9 ? -1 : 0;
         }
-        LocalPoint corner[3] = {{tri[0], {1, 0, 0}}, {tri[1], {0, 1, 0}}, {tri[2], {0, 0, 1}}};
-        const bool crosses = (side[0] * side[1] < 0) || (side[1] * side[2] < 0) || (side[2] * side[0] < 0);
-        if (!crosses)
-        {
-            pending.push_back({ti, corner[0], corner[1], corner[2]});
+        if (!((side[0] * side[1] < 0) || (side[1] * side[2] < 0) || (side[2] * side[0] < 0)))
             continue;
-        }
-        // The polygon on each side: walk the corners, adding a cut vertex on every edge that changes side.
+        std::copy_n(m.ca.data() + ti * 3 * size_t(cs), 3 * cs, src.data());
+        LocalPoint corner[3] = {{tri[0], {1, 0, 0}}, {tri[1], {0, 1, 0}}, {tri[2], {0, 0, 1}}};
         std::vector<LocalPoint> poly[2];
         for (int c = 0; c < 3; ++c)
         {
@@ -1845,16 +1842,26 @@ void slicePlane(TriMesh& m, int axis, double value)
                 poly[1].push_back(lp);
             }
         }
+        bool first = true;
         for (const auto& pl : poly)
             for (size_t k = 1; k + 1 < pl.size(); ++k)
-                pending.push_back({ti, pl[0], pl[k], pl[k + 1]});
+            {
+                const LocalPoint* lps[3] = {&pl[0], &pl[k], &pl[k + 1]};
+                const size_t at = first ? ti : m.t.size();
+                if (first)
+                    m.t[ti] = {lps[0]->v, lps[1]->v, lps[2]->v};
+                else
+                {
+                    m.t.push_back({lps[0]->v, lps[1]->v, lps[2]->v});
+                    m.ca.resize(m.ca.size() + size_t(3 * cs));
+                }
+                for (int c = 0; c < 3; ++c)
+                    for (int k2 = 0; k2 < cs; ++k2)
+                        m.ca[(at * 3 + size_t(c)) * size_t(cs) + size_t(k2)] =
+                            float(lps[c]->bary.x * src[size_t(k2)] + lps[c]->bary.y * src[size_t(cs + k2)] + lps[c]->bary.z * src[size_t(2 * cs + k2)]);
+                first = false;
+            }
     }
-    next.p = m.p;
-    next.va = m.va;
-    for (const Pending& pd : pending)
-        emit(next, nextCa, m, pd.src, pd.a, pd.b, pd.c);
-    next.ca = std::move(nextCa);
-    m = std::move(next);
 }
 } // namespace
 
