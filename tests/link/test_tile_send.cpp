@@ -8,6 +8,8 @@
 #include <atomic>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
+#include <set>
 
 using namespace lila::link;
 using json = nlohmann::json;
@@ -139,4 +141,103 @@ TEST_CASE("sendTiles: a cancelled send resumes where it stopped; a failed tile d
     r = sendTiles(client, tiles(dir, 5), o);
     CHECK(r.skipped == 4);
     CHECK(r.failed == 1);
+}
+
+TEST_CASE("sendTiles: unchanged tiles Unreal lost are imported or placed again")
+{
+    std::mutex m;
+    std::set<std::string> assets, groups;
+    std::atomic<int> imports{0};
+    FakeServer server([&](const json& req) -> std::optional<json> {
+        std::scoped_lock lock(m);
+        const std::string method = req.value("method", "");
+        const json& p = req["params"];
+        if (method == "importAsset")
+        {
+            ++imports;
+            const std::string path = p.value("contentPath", "");
+            const std::string asset = path + "." + path.substr(path.find_last_of('/') + 1);
+            assets.insert(asset);
+            return FakeServer::reply(req, {{"assets", json::array({asset})}});
+        }
+        if (method == "listAssets")
+        {
+            json out = json::array();
+            for (const std::string& a : assets)
+                if (a.starts_with(p.value("path", "") + "/"))
+                    out.push_back({{"path", a}, {"class", "StaticMesh"}});
+            return FakeServer::reply(req, out);
+        }
+        if (method == "listPlacements")
+        {
+            json out = json::array();
+            for (const json& g : p["groups"])
+                if (groups.count(g.get<std::string>()))
+                    out.push_back({{"group", g}, {"actor", g}});
+            return FakeServer::reply(req, out);
+        }
+        return FakeServer::reply(req, nullptr);
+    });
+    RpcClient client;
+    REQUIRE(client.connect("127.0.0.1", server.port(), 1000));
+    const fs::path dir = scratch("verify");
+    TileSendOptions o;
+    o.manifest = "cliffs";
+    o.manifestDir = dir;
+    o.collectEvery = 0;
+    int placements = 0;
+    auto items = [&] {
+        std::vector<TileItem> out = tiles(dir, 3);
+        for (TileItem& t : out)
+        {
+            t.group = t.key;
+            t.after = [&, key = t.key](const std::string&) {
+                std::scoped_lock lock(m);
+                ++placements;
+                groups.insert(key);
+            };
+        }
+        return out;
+    };
+
+    TileSendResult r = sendTiles(client, items(), o);
+    CHECK(r.sent == 3);
+    CHECK(placements == 3);
+    r = sendTiles(client, items(), o);
+    CHECK(r.skipped == 3);
+    CHECK(r.warnings.empty());
+
+    {
+        std::scoped_lock lock(m);
+        assets.erase("/Game/Cliffs/SM_Tile_0.SM_Tile_0");
+        groups.erase("cliff/x0");
+        groups.erase("cliff/x2");
+    }
+    r = sendTiles(client, items(), o);
+    CHECK(r.restored == 1);
+    CHECK(r.sent == 1);
+    CHECK(r.replaced == 1);
+    CHECK(r.skipped == 1);
+    CHECK(imports == 4);
+    CHECK(placements == 5);
+
+    r = sendTiles(client, items(), o);
+    CHECK(r.skipped == 3);
+}
+
+TEST_CASE("sendTiles: an Unreal that can't list assets skips unchanged tiles with a warning")
+{
+    std::atomic<int> imports{0}, collects{0};
+    FakeServer server(importer(imports, collects));
+    RpcClient client;
+    REQUIRE(client.connect("127.0.0.1", server.port(), 1000));
+    const fs::path dir = scratch("noverify");
+    TileSendOptions o;
+    o.manifest = "cliffs";
+    o.manifestDir = dir;
+    o.collectEvery = 0;
+    sendTiles(client, tiles(dir, 2), o);
+    const TileSendResult r = sendTiles(client, tiles(dir, 2), o);
+    CHECK(r.skipped == 2);
+    CHECK(r.warnings.size() == 1);
 }

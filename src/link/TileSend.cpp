@@ -46,6 +46,44 @@ std::string hex(uint64_t h)
     std::snprintf(buf, sizeof(buf), "%016llx", static_cast<unsigned long long>(h));
     return buf;
 }
+
+/** What Unreal still holds of the tiles the manifest calls sent: asset object paths and placement groups. */
+struct Present
+{
+    std::set<std::string> assets, groups;
+    bool assetsKnown = false, groupsKnown = false;
+};
+
+Present askUnreal(RpcClient& client, const std::set<std::string>& assets, const std::set<std::string>& groups)
+{
+    Present p;
+    std::set<std::string> folders;
+    for (const std::string& a : assets)
+        folders.insert(a.substr(0, a.find_last_of('/')));
+    p.assetsKnown = !folders.empty();
+    for (const std::string& f : folders)
+    {
+        const RpcResult r = client.call("listAssets", {{"path", f}, {"recursive", false}}, 60000);
+        if (!r.ok || !r.result.is_array())
+        {
+            p.assetsKnown = false;
+            break;
+        }
+        for (const json& e : r.result)
+            if (e.is_object())
+                p.assets.insert(e.value("path", std::string()));
+    }
+    if (!groups.empty())
+    {
+        const RpcResult r = client.call("listPlacements", {{"groups", groups}}, 60000);
+        p.groupsKnown = r.ok && r.result.is_array();
+        if (p.groupsKnown)
+            for (const json& e : r.result)
+                if (e.is_object())
+                    p.groups.insert(e.value("group", std::string()));
+    }
+    return p;
+}
 } // namespace
 
 uint64_t hashBytes(const void* data, size_t size, uint64_t seed)
@@ -81,6 +119,28 @@ TileSendResult sendTiles(RpcClient& client, const std::vector<TileItem>& items, 
     if (!r.stale.empty())
         writeManifest(path, tiles);
 
+    auto unchanged = [&](const TileItem& item) {
+        return !opts.force && tiles.contains(item.key) && tiles[item.key].value("hash", std::string()) == hex(item.hash);
+    };
+    Present present;
+    if (opts.verify && !opts.force)
+    {
+        std::set<std::string> assets, groups;
+        for (const TileItem& item : items)
+            if (unchanged(item))
+            {
+                assets.insert(tiles[item.key].value("asset", std::string()));
+                if (!item.group.empty())
+                    groups.insert(item.group);
+            }
+        assets.erase(std::string());
+        present = askUnreal(client, assets, groups);
+        if (!assets.empty() && !present.assetsKnown)
+            r.warnings.push_back("Unreal didn't list the sent tile assets, so unchanged tiles were skipped without checking they still exist; force=True resends them");
+        if (!groups.empty() && !present.groupsKnown)
+            r.warnings.push_back("Unreal didn't list placements, so unchanged tiles were not checked for lost actors; force=True places them again");
+    }
+
     int sinceCollect = 0;
     for (size_t i = 0; i < items.size(); ++i)
     {
@@ -90,11 +150,33 @@ TileSendResult sendTiles(RpcClient& client, const std::vector<TileItem>& items, 
             r.cancelled = true;
             break;
         }
-        if (!opts.force && tiles.contains(item.key) && tiles[item.key].value("hash", std::string()) == hex(item.hash))
+        bool restore = false;
+        if (unchanged(item))
         {
-            r.assets[i] = tiles[item.key].value("asset", std::string());
-            ++r.skipped;
-            continue;
+            const std::string asset = tiles[item.key].value("asset", std::string());
+            restore = present.assetsKnown && !present.assets.count(asset);
+            if (!restore)
+            {
+                const bool lostPlacement = present.groupsKnown && !item.group.empty() && !present.groups.count(item.group);
+                if (lostPlacement && item.after)
+                {
+                    try
+                    {
+                        item.after(asset);
+                        ++r.replaced;
+                    }
+                    catch (const std::exception& e)
+                    {
+                        ++r.failed;
+                        r.errors.push_back(item.key + ": " + e.what());
+                        log::warn("sendTiles: {}: {}", item.key, e.what());
+                    }
+                }
+                else
+                    ++r.skipped;
+                r.assets[i] = asset;
+                continue;
+            }
         }
         try
         {
@@ -120,6 +202,7 @@ TileSendResult sendTiles(RpcClient& client, const std::vector<TileItem>& items, 
             tiles[item.key] = {{"hash", hex(item.hash)}, {"asset", asset}};
             writeManifest(path, tiles);
             ++r.sent;
+            r.restored += restore;
         }
         catch (const std::exception& e)
         {
