@@ -558,6 +558,12 @@ void MainWindow::buildStatusBar()
         folderMenu->addAction(icon("folder-open"), "Open Folder...", this, [this] { openFolder(); });
         if (mRecentMenu)
             folderMenu->addMenu(mRecentMenu);
+        if (Workspace::get().isOpen())
+        {
+            const QString root = QString::fromStdWString(Workspace::get().root().wstring());
+            folderMenu->addSeparator();
+            folderMenu->addAction(icon("folder-search"), "Open Containing Folder", this, [root] { fileOps::reveal(root); });
+        }
     });
     mWorkspaceLabel->setMenu(folderMenu);
     // With no folder open a click opens one; with one open it offers another or a recent one.
