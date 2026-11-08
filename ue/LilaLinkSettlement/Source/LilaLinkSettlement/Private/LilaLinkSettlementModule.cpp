@@ -10,11 +10,13 @@ public:
 	virtual void StartupModule() override
 	{
 		LilaLinkSettlement::RegisterMethods();
+		LilaLinkSettlement::RegisterCellMethods();
 	}
 
 	virtual void ShutdownModule() override
 	{
 		LilaLink::UnregisterFeature(LilaLinkSettlement::Feature);
+		LilaLink::UnregisterFeature(LilaLinkSettlement::CellsFeature);
 	}
 };
 

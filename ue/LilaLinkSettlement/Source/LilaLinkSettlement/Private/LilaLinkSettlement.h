@@ -1,6 +1,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Dom/JsonObject.h"
+#include "Dom/JsonValue.h"
 
 /**
  * Methods behind Lila's settlementSendToUnreal and road profile commands, registered with LilaLink under the feature
@@ -28,9 +30,23 @@
  * readRoadGrammar {asset} reads a road definition's slots: from such a data asset, or from any asset holding arrays of
  * structs with a name (Symbol, Name, Slot, Id) and a size (Size, Width), and a Grammar string if it has one. Replies
  * {asset, class, modules: [{symbol, size}], grammar}.
+ *
+ * Under the feature "settlementCells", for World Partition:
+ *
+ * setSettlementCell {id, cell, asset, label, center, size, graph?, lots, envelopes, roads, intersections, parking} writes the
+ * cell's PCG data asset as setSettlementData does, then makes or updates the cell's actor (tagged by id and cell, at
+ * center, a box of size across giving it the cell's bounds) with a PCG component; given a graph, the component runs it
+ * with the asset as its SettlementData parameter. Replies {asset, lots, envelopes, roads, actor, spawned, generated,
+ * warnings}.
+ *
+ * removeSettlementCells {id, cells?: ["x_z", ...]} deletes those cell actors, or every cell of id. Replies {removed}.
  */
 namespace LilaLinkSettlement
 {
 inline const FString Feature = TEXT("settlement");
+inline const FString CellsFeature = TEXT("settlementCells");
 void RegisterMethods();
+void RegisterCellMethods();
+/** setSettlementData's work: writes the PCG data asset Params name. Null with OutError set on failure. */
+TSharedPtr<FJsonValue> WriteSettlementData(const TSharedPtr<FJsonObject>& Params, FString& OutError);
 } // namespace LilaLinkSettlement

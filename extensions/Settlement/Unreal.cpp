@@ -1,7 +1,9 @@
 // settlementGrade shapes a Terrain under the settlement through the terrain contract's commands (roads as road features,
 // lots as pads, squares as region stamps); settlementSendToUnreal sends roads (landscape splines, spline actors or ribbon
-// meshes), lots and envelopes as a PCG data asset, and the lane graph as ZoneGraph shapes.
+// meshes), massing and placements per World Partition cell, lots and envelopes as PCG data, and the lane graph as
+// ZoneGraph shapes, resending only what changed since the last send.
 
+#include "Export.h"
 #include "Settlement.h"
 
 #include <lila/Command.h>
@@ -12,10 +14,14 @@
 #include <lila/Profile.h>
 #include <lila/UnrealLink.h>
 
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <set>
 
@@ -26,6 +32,7 @@ namespace settlement
 namespace
 {
 using Arg = ArgType;
+namespace fs = std::filesystem;
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Grading through the terrain contract
@@ -302,17 +309,35 @@ json lanesOf(const RoadProfile& p)
     return lanes;
 }
 
-/** The PCG data: lots and envelopes in Unreal space with their attributes, and road centrelines. */
-json pcgData(const Rebuilt& r, const RoadNetwork& net)
+/** Indices 0..n-1, or the subset when one is given. */
+template <class F> void eachIndex(const std::vector<int>* subset, size_t n, F&& f)
+{
+    if (subset)
+        for (int k : *subset)
+            f(size_t(k));
+    else
+        for (size_t k = 0; k < n; ++k)
+            f(k);
+}
+
+/**
+ * The PCG data: lots and envelopes in Unreal space with their attributes, and road centrelines; only what lies in one
+ * cell when only is given (roads cut at its borders).
+ */
+json pcgData(const Rebuilt& r, const RoadNetwork& net, const CellContents* only = nullptr)
 {
     const Layout& l = r.layout;
-    json lots = json::array();
+    std::map<int, std::string> lotKeyOf;
     for (const Lot& lot : l.lots)
-    {
+        lotKeyOf[lot.id] = lotKey(lot);
+    json lots = json::array();
+    eachIndex(only ? &only->lots : nullptr, l.lots.size(), [&](size_t k) {
+        const Lot& lot = l.lots[k];
         double lo = std::numeric_limits<double>::max();
         for (const Vec2& q : lot.outline.pts)
             lo = std::min(lo, r.ground.height(q));
         lots.push_back({{"id", lot.id},
+                        {"key", lotKeyOf[lot.id]},
                         {"block", lot.block},
                         {"outline", ueRing(lot.outline, lo)},
                         {"use", useName(lot.use)},
@@ -321,15 +346,17 @@ json pcgData(const Rebuilt& r, const RoadNetwork& net)
                         {"corner", lot.corner},
                         {"frontClass", className(lot.frontClass)},
                         {"seed", int64_t(lot.random * 1e6)}});
-    }
+    });
     json envelopes = json::array();
-    for (const Envelope& e : l.envelopes)
-    {
+    eachIndex(only ? &only->envelopes : nullptr, l.envelopes.size(), [&](size_t k) {
+        const Envelope& e = l.envelopes[k];
         const Vec2 c = centroid(e.footprint);
         json sides = json::array();
         for (int t : e.footprint.tag)
             sides.push_back(t == 0 ? "street" : t == 1 ? "party" : "open");
+        const auto key = lotKeyOf.find(e.lot);
         envelopes.push_back({{"lot", e.lot},
+                             {"key", key != lotKeyOf.end() ? "envelope:" + key->second.substr(4) : std::string()},
                              {"footprint", ueRing(e.footprint, e.ground)},
                              {"sides", sides},
                              {"center", ue({c.x, e.ground, c.y})},
@@ -346,13 +373,13 @@ json pcgData(const Rebuilt& r, const RoadNetwork& net)
                              {"era", 0},
                              {"style", l.profile.name},
                              {"seed", int64_t(e.random * 1e6)}});
-    }
+    });
     json roads = json::array();
-    for (size_t k = 0; k < net.lines.size(); ++k)
-    {
+    auto road = [&](size_t k, std::span<const glm::dvec3> pts) {
         const StreetLine& s = net.lines[k];
         const RoadProfile& p = l.roads[size_t(s.profile)];
         roads.push_back({{"id", int(k)},
+                         {"key", roadKey(s)},
                          {"class", className(s.cls)},
                          {"profile", p.name},
                          {"width", s.width},
@@ -360,18 +387,29 @@ json pcgData(const Rebuilt& r, const RoadNetwork& net)
                          {"street", s.street},
                          {"surface", s.surface},
                          {"path", s.path},
-                         {"points", uePoints(s.pts)}});
-    }
+                         {"points", uePoints(pts)}});
+    };
+    if (only)
+        for (const RoadPiece& piece : only->roads)
+            road(size_t(piece.line), piece.pts);
+    else
+        for (size_t k = 0; k < net.lines.size(); ++k)
+            road(k, net.lines[k].pts);
     json intersections = json::array();
-    for (const Junction& j : net.junctions)
+    eachIndex(only ? &only->junctions : nullptr, net.junctions.size(), [&](size_t k) {
+        const Junction& j = net.junctions[k];
         intersections.push_back({{"center", ue(j.p)},
+                                 {"key", junctionKey(j)},
                                  {"control", controlName(j.control)},
                                  {"approaches", int64_t(j.ends.size())},
                                  {"phases", int64_t(j.phases.size())},
                                  {"radius", j.radius}});
+    });
     json parking = json::array();
-    for (const ParkingSpot& p : net.parking)
+    eachIndex(only ? &only->parking : nullptr, net.parking.size(), [&](size_t k) {
+        const ParkingSpot& p = net.parking[k];
         parking.push_back({{"position", ue(p.p)}, {"forward", ue(p.dir)}, {"length", p.length}, {"width", p.width}});
+    });
     return {{"lots", lots}, {"envelopes", envelopes}, {"roads", roads}, {"intersections", intersections}, {"parking", parking}};
 }
 
@@ -439,125 +477,333 @@ std::string assetName(const std::string& s)
     return out.empty() ? std::string("Settlement") : out;
 }
 
-/** Road ribbons cut into square cells of side cell, each recentred on its cell's middle. */
-std::vector<std::pair<glm::dvec3, geo::Mesh>> ribbonChunks(const geo::Mesh& m, double cell)
+/** An asset's object path: a package path gets ".<name>" when it has no object name. */
+std::string objectPath(const std::string& asset)
 {
-    std::map<std::pair<int64_t, int64_t>, std::vector<geo::Index>> byCell;
-    for (geo::Index f = 0; f < m.faceCapacity(); ++f)
-    {
-        if (!m.faceValid(f))
-            continue;
-        glm::dvec3 c(0.0);
-        const std::vector<geo::Index> pts = m.facePoints(f);
-        for (geo::Index p : pts)
-            c += m.position(p);
-        c /= double(pts.size());
-        byCell[{int64_t(std::floor(c.x / cell)), int64_t(std::floor(c.z / cell))}].push_back(f);
-    }
-    std::vector<std::pair<glm::dvec3, geo::Mesh>> out;
-    for (const auto& [key, faces] : byCell)
-    {
-        const glm::dvec3 centre((double(key.first) + 0.5) * cell, 0.0, (double(key.second) + 0.5) * cell);
-        geo::Mesh chunk;
-        std::map<geo::Index, geo::Index> remap;
-        for (geo::Index f : faces)
-        {
-            std::vector<geo::Index> ids;
-            for (geo::Index p : m.facePoints(f))
-            {
-                auto [it, fresh] = remap.try_emplace(p, 0);
-                if (fresh)
-                    it->second = chunk.addPoint(m.position(p) - centre);
-                ids.push_back(it->second);
-            }
-            chunk.addFace(ids);
-        }
-        out.push_back({centre, std::move(chunk)});
-    }
-    return out;
+    const size_t slash = asset.find_last_of('/');
+    const std::string last = slash == std::string::npos ? asset : asset.substr(slash + 1);
+    return last.find('.') != std::string::npos ? asset : asset + "." + last;
 }
 
-json sendRoads(link::RpcClient& c, const Rebuilt& r, const Args& a, const std::string& key, const std::string& label,
-               const char* cmd)
+/** A placeInstances placement: Unreal space location, quaternion and scale. */
+json placementJson(const Placement& p)
+{
+    const glm::dquat q(p.rotation.w, p.rotation.x, p.rotation.y, p.rotation.z);
+    const glm::dmat4 world = glm::translate(glm::dmat4(1.0), p.position) * glm::mat4_cast(q) * glm::scale(glm::dmat4(1.0), p.scale);
+    const math::Transform t = math::toUnreal(math::Transform(math::Matrix(world)));
+    return {{"id", p.id},
+            {"name", p.id},
+            {"location", json::array({t.translation.x, t.translation.y, t.translation.z})},
+            {"rotation", json::array({t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w})},
+            {"scale", json::array({t.scale3d.x, t.scale3d.y, t.scale3d.z})}};
+}
+
+/** Writes a mesh (positions about the cell centre) as FBX, imports it as a static mesh and places it as one actor at centre. */
+json sendCellMesh(link::RpcClient& c, const geo::Mesh& mesh, const std::string& name, const std::string& group, const glm::dvec3& centre,
+                  const std::string& folder, const fs::path& dir, const char* cmd)
+{
+    const fs::path file = dir / (name + ".fbx");
+    fbx::ExportScene scene;
+    fbx::ExportNode node;
+    node.name = name;
+    node.mesh = std::make_shared<const geo::Mesh>(mesh);
+    scene.nodes.push_back(std::move(node));
+    std::string err;
+    if (!fbx::writeFbx(scene, file, fbx::ExportOptions{}, &err))
+        throw CommandError(std::string(cmd) + ": writing " + file.string() + ": " + err);
+    const json imported = call(c, "importAsset", link::importParams(file, {{"contentPath", folder + "/" + name}, {"kind", "static"}, {"reapplyOptions", true}}), cmd);
+    std::error_code ec;
+    fs::remove(file, ec);
+    std::string asset = folder + "/" + name + "." + name;
+    if (const json made = imported.value("assets", json::array()); made.is_array() && !made.empty() && made[0].is_string())
+        asset = made[0].get<std::string>();
+    return call(c, "placeInstances",
+                {{"group", group},
+                 {"label", name},
+                 {"mesh", asset},
+                 {"mode", "actors"},
+                 {"placements", json::array({{{"id", group}, {"name", name}, {"location", ue(centre)}, {"rotation", json::array({0, 0, 0, 1})}, {"scale", json::array({1, 1, 1})}}})}},
+                cmd);
+}
+
+/** Ground roads (surface=false) on the landscape or as one spline actor, or the surface paths as their own actor. */
+json sendSplines(link::RpcClient& c, const Rebuilt& r, const Args& a, const std::string& key, const std::string& label, bool surface,
+                 const char* cmd)
 {
     LILA_ZONE();
 
-    const std::string mode = a.get<std::string>("roads", "landscape");
-    json out = json::object();
-    if (mode == "none")
-        return out;
-    if (mode == "meshes")
-    {
-        const MeshParts parts = toMeshes(r.layout, r.ground);
-        const std::string folder = a.get<std::string>("folder", "/Game/Lila/Settlement") + "/" + assetName(label);
-        const std::filesystem::path dir = link::cacheDir() / "settlement" / assetName(label);
-        std::error_code ec;
-        std::filesystem::create_directories(dir, ec);
-        int k = 0;
-        json groups = json::array();
-        for (const auto& [centre, mesh] : ribbonChunks(parts.streets, std::max(1000.0, a.get<double>("cell", 51200.0))))
-        {
-            const std::string name = "SM_" + assetName(label) + "_Roads_" + std::to_string(k++);
-            const std::filesystem::path file = dir / (name + ".fbx");
-            fbx::ExportScene scene;
-            fbx::ExportNode node;
-            node.name = name;
-            node.mesh = std::make_shared<const geo::Mesh>(mesh);
-            scene.nodes.push_back(std::move(node));
-            std::string err;
-            if (!fbx::writeFbx(scene, file, fbx::ExportOptions{}, &err))
-                throw CommandError(std::string(cmd) + ": writing " + file.string() + ": " + err);
-            const json imported = call(c, "importAsset", link::importParams(file, {{"contentPath", folder + "/" + name}, {"kind", "static"}}), cmd);
-            std::string asset = folder + "/" + name + "." + name;
-            if (const json made = imported.value("assets", json::array()); made.is_array() && !made.empty() && made[0].is_string())
-                asset = made[0].get<std::string>();
-            const std::string group = key + "/roads/" + std::to_string(k - 1);
-            call(c, "placeInstances",
-                 {{"group", group},
-                  {"label", name},
-                  {"mesh", asset},
-                  {"mode", "actors"},
-                  {"placements", json::array({{{"id", group}, {"name", name}, {"location", ue(centre)}, {"rotation", json::array({0, 0, 0, 1})}, {"scale", json::array({1, 1, 1})}}})}},
-                 cmd);
-            groups.push_back(group);
-        }
-        out["meshes"] = groups;
-        return out;
-    }
-    // Splines: ground roads together (on the landscape, or as one actor), surface paths as their own actor.
-    curve::Splines ground, surface;
+    curve::Splines splines;
     for (const StreetLine& s : streetLines(r.layout, r.ground))
-        (s.surface ? surface : ground).push_back(smoothSpline(s.pts, 0.5 * s.width / 100.0));
-    const bool landscape = mode == "landscape";
-    if (!ground.empty())
+        if (s.surface == surface)
+            splines.push_back(smoothSpline(s.pts, 0.5 * s.width / 100.0));
+    const bool landscape = !surface && a.get<std::string>("roads", "landscape") == "landscape";
+    json params = {{"id", key + (surface ? "/paths" : "/roads")},
+                   {"label", label + (surface ? "_Paths" : "_Roads")},
+                   {"mode", landscape ? "landscape" : "actor"},
+                   {"location", json::array({0, 0, 0})},
+                   {"splines", link::splinePoints(splines, glm::dvec3(0.0))},
+                   {"folder", "Lila/Settlement"}};
+    if (!surface)
     {
-        json params = {{"id", key + "/roads"},
-                       {"label", label + "_Roads"},
-                       {"mode", landscape ? "landscape" : "actor"},
-                       {"location", json::array({0, 0, 0})},
-                       {"splines", link::splinePoints(ground, glm::dvec3(0.0))},
-                       {"width", 100.0},
-                       {"join", true},
-                       {"deformTerrain", a.get<bool>("deformTerrain", true)},
-                       {"folder", "Lila/Settlement"}};
+        params["width"] = 100.0;
+        params["join"] = true;
+        params["deformTerrain"] = a.get<bool>("deformTerrain", true);
         if (a.has("landscape"))
             params["landscape"] = a.get<std::string>("landscape");
-        if (a.has("roadMesh"))
-            params["mesh"] = {{"asset", a.get<std::string>("roadMesh")}, {"forwardAxis", "x"}};
-        out["roads"] = call(c, "setSpline", params, cmd);
     }
-    if (!surface.empty())
+    if (a.has("roadMesh"))
+        params["mesh"] = {{"asset", a.get<std::string>("roadMesh")}, {"forwardAxis", "x"}};
+    return call(c, "setSpline", params, cmd);
+}
+
+json readJsonFile(const fs::path& path)
+{
+    std::ifstream f(path, std::ios::binary);
+    if (!f)
+        return json();
+    try
     {
-        json params = {{"id", key + "/paths"},
-                       {"label", label + "_Paths"},
-                       {"mode", "actor"},
-                       {"location", json::array({0, 0, 0})},
-                       {"splines", link::splinePoints(surface, glm::dvec3(0.0))},
-                       {"folder", "Lila/Settlement"}};
-        if (a.has("roadMesh"))
-            params["mesh"] = {{"asset", a.get<std::string>("roadMesh")}, {"forwardAxis", "x"}};
-        out["paths"] = call(c, "setSpline", params, cmd);
+        return json::parse(f);
     }
+    catch (const std::exception&)
+    {
+        return json();
+    }
+}
+
+/** The cell named at the end of an item key ("<key>/pcg/<x>_<z>"). */
+std::string cellNameOf(const std::string& itemKey) { return itemKey.substr(itemKey.find_last_of('/') + 1); }
+
+json sendToUnreal(const Args& a)
+{
+    LILA_ZONE();
+
+    const char* cmd = "settlementSendToUnreal";
+    std::vector<std::string> names = a.objects();
+    if (names.size() != 1)
+        throw CommandError(std::string(cmd) + ": give one settlement");
+    Rebuilt r = rebuildSettlement(scene::Graph::current(), names[0], cmd);
+    addPlacements(r.layout, a, cmd);
+    const std::string key = r.mesh.empty() ? r.modifier : r.mesh;
+    std::string label = key;
+    if (const size_t slash = label.find_last_of("|/"); slash != std::string::npos)
+        label = label.substr(slash + 1);
+    const std::string mode = a.get<std::string>("roads", "landscape");
+    if (mode != "landscape" && mode != "splines" && mode != "meshes" && mode != "none")
+        throw CommandError(std::string(cmd) + ": roads is landscape, splines, meshes or none, not '" + mode + "'");
+    const std::string placeMode = a.get<std::string>("placeMode", "hism");
+    if (placeMode != "hism" && placeMode != "ism" && placeMode != "actors")
+        throw CommandError(std::string(cmd) + ": placeMode is hism, ism or actors, not '" + placeMode + "'");
+    const double cellSize = std::max(1000.0, a.get<double>("cell", 12800.0));
+    const std::string folder = a.get<std::string>("folder", "/Game/Lila/Settlement");
+    const std::string cellFolder = folder + "/" + assetName(label);
+    const std::string graph = a.get<std::string>("pcgGraph", "");
+
+    const RoadNetwork net = roadNetwork(r.layout, r.ground);
+    const std::map<Cell, CellContents> cells = partition(r.layout, net, cellSize);
+    std::map<Cell, geo::Mesh> roadMeshes;
+    std::map<Cell, uint64_t> roadHashes;
+    if (mode == "meshes")
+    {
+        roadMeshes = meshByCell(toMeshes(r.layout, r.ground).streets, cellSize);
+        for (const auto& [cell, m] : roadMeshes)
+            roadHashes[cell] = meshHash(m);
+    }
+    SyncOptions o;
+    o.key = key;
+    o.roads = mode;
+    o.massing = a.get<bool>("massing", true);
+    o.pcg = a.get<bool>("pcg", true);
+    o.partition = a.get<bool>("partition", true);
+    o.zoneGraph = a.get<bool>("zoneGraph", true);
+    o.settings = json({{"folder", folder},
+                       {"cell", cellSize},
+                       {"placeMode", placeMode},
+                       {"pcgGraph", graph},
+                       {"landscape", a.get<std::string>("landscape", "")},
+                       {"roadMesh", a.get<std::string>("roadMesh", "")},
+                       {"deformTerrain", a.get<bool>("deformTerrain", true)}})
+                     .dump();
+    const std::vector<SyncItem> items = syncItems(r.layout, net, cells, o, roadHashes);
+    const std::map<std::string, uint64_t> elements = elementHashes(r.layout, net);
+
+    // One manifest per settlement and Unreal project: what was last sent there, for the diff.
+    const std::string project = link::Link::get().connected() ? link::Link::get().status().value("project", std::string()) : std::string();
+    const fs::path manifestPath = link::cacheDir() / "settlement" / ("sync_" + assetName(project) + "_" + assetName(key) + ".json");
+    const json previous = a.get<bool>("resend", false) ? json() : readJsonFile(manifestPath);
+    const SyncDiff d = diffSync(previous, items, elements);
+    json kinds = json::object();
+    for (const SyncItem& i : items)
+        kinds[i.kind] = kinds.value(i.kind, 0) + 1;
+    json out = {{"cells", cells.size()}, {"cellSize", cellSize}, {"items", items.size()}, {"kinds", kinds}, {"diff", toJson(d)}};
+    if (a.get<bool>("dryRun", false))
+    {
+        out["dryRun"] = true;
+        out["manifest"] = manifestPath.generic_string();
+        return out;
+    }
+
+    std::map<std::string, const SyncItem*> byKey;
+    for (const SyncItem& i : items)
+        byKey[i.key] = &i;
+    std::vector<const char*> features;
+    bool splines = false, settlement = false, cellData = false;
+    for (const std::vector<std::string>* keys : {&d.added, &d.changed})
+        for (const std::string& k : *keys)
+        {
+            const std::string& kind = byKey[k]->kind;
+            splines |= (kind == "roads" && mode != "meshes") || kind == "paths";
+            settlement |= kind == "pcg" || kind == "zoneGraph";
+            cellData |= kind == "pcg" && o.partition;
+        }
+    if (splines)
+        features.push_back(link::kSplineFeature);
+    if (settlement)
+        features.push_back("settlement");
+    std::shared_ptr<link::RpcClient> c = client(cmd, std::initializer_list<const char*>{});
+    for (const char* f : features)
+        client(cmd, {f});
+    if (cellData)
+    {
+        const json have = link::Link::get().status().value("features", json::array());
+        if (!have.is_array() || std::ranges::find(have, json("settlementCells")) == have.end())
+            throw CommandError(std::string(cmd) + ": the LilaLinkSettlement plugin in Unreal predates PCG cells; rebuild it from Lila's "
+                                                  "ue/LilaLinkSettlement, or send with partition=False");
+    }
+
+    const fs::path dir = link::cacheDir() / "settlement" / assetName(label);
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    std::map<Cell, geo::Mesh> massingCells;
+    if (o.massing)
+        massingCells = massingByCell(r.layout, cellSize);
+    json sent = json::object(), errors = json::array();
+    std::set<std::string> failed;
+    auto send = [&](const SyncItem& i) -> json {
+        const Vec2 mid = i.cell.center(cellSize);
+        if (i.kind == "roads" && mode == "meshes")
+            return sendCellMesh(*c, roadMeshes.at(i.cell), "SM_" + assetName(label) + "_Roads_" + i.cell.name(), i.key,
+                                {mid.x, 0.0, mid.y}, cellFolder, dir, cmd);
+        if (i.kind == "roads" || i.kind == "paths")
+            return sendSplines(*c, r, a, key, label, i.kind == "paths", cmd);
+        if (i.kind == "massing")
+            return sendCellMesh(*c, massingCells.at(i.cell), "SM_" + assetName(label) + "_Massing_" + i.cell.name(), i.key,
+                                {mid.x, 0.0, mid.y}, cellFolder, dir, cmd);
+        if (i.kind == "pcg" && o.partition)
+        {
+            json params = pcgData(r, net, &cells.at(i.cell));
+            params["id"] = key;
+            params["cell"] = i.cell.name();
+            params["asset"] = cellFolder + "/PCG_" + assetName(label) + "_" + i.cell.name();
+            params["label"] = label + "_Cell_" + i.cell.name();
+            params["center"] = ue({mid.x, r.ground.height(mid), mid.y});
+            params["size"] = cellSize;
+            if (!graph.empty())
+                params["graph"] = graph;
+            return call(*c, "setSettlementCell", params, cmd);
+        }
+        if (i.kind == "pcg")
+        {
+            json params = pcgData(r, net);
+            params["id"] = key;
+            params["asset"] = folder + "/PCG_" + assetName(label);
+            params["label"] = label;
+            return call(*c, "setSettlementData", params, cmd);
+        }
+        if (i.kind == "place")
+        {
+            json list = json::array();
+            for (int k : cells.at(i.cell).placements)
+                if (r.layout.placements[size_t(k)].asset == i.asset)
+                    list.push_back(placementJson(r.layout.placements[size_t(k)]));
+            return call(*c, "placeInstances",
+                        {{"group", i.key},
+                         {"label", label + "_" + safeName(i.asset.substr(i.asset.find_last_of('/') + 1)) + "_" + i.cell.name()},
+                         {"mesh", objectPath(i.asset)},
+                         {"mode", placeMode},
+                         {"placements", list}},
+                        cmd, 600000);
+        }
+        if (i.kind == "zoneGraph")
+        {
+            json params = zoneData(r, net);
+            params["id"] = key;
+            params["label"] = label + "_Lanes";
+            return call(*c, "setZoneGraph", params, cmd);
+        }
+        throw CommandError(std::string(cmd) + ": no sender for " + i.kind);
+    };
+    for (const std::vector<std::string>* keys : {&d.added, &d.changed})
+        for (const std::string& k : *keys)
+            try
+            {
+                sent[k] = send(*byKey[k]);
+            }
+            catch (const std::exception& e)
+            {
+                failed.insert(k);
+                errors.push_back(k + ": " + e.what());
+            }
+
+    // What the last send made that this layout no longer has.
+    const json before = previous.is_object() ? previous.value("items", json::object()) : json::object();
+    json groups = json::array(), pcgCells = json::array(), removed = json::object();
+    std::set<std::string> keptRemoved;
+    for (const std::string& k : d.removed)
+    {
+        const std::string kind = before[k].value("kind", std::string());
+        try
+        {
+            if (kind == "massing" || kind == "place" || (kind == "roads" && k.find("/roads/") != std::string::npos))
+                groups.push_back(k);
+            else if (kind == "roads" || kind == "paths")
+                removed[k] = call(*c, "removeSpline", {{"id", k}}, cmd);
+            else if (kind == "pcg" && k.find("/pcg/") != std::string::npos)
+                pcgCells.push_back(cellNameOf(k));
+            else if (kind == "zoneGraph")
+                removed[k] = call(*c, "removeSettlement", {{"id", key}}, cmd);
+        }
+        catch (const std::exception& e)
+        {
+            keptRemoved.insert(k);
+            errors.push_back(k + ": " + e.what());
+        }
+    }
+    auto removeBatch = [&](const json& list, const char* method, json params, const char* field) {
+        if (list.empty())
+            return;
+        try
+        {
+            removed[field] = call(*c, method, params, cmd);
+        }
+        catch (const std::exception& e)
+        {
+            for (const json& k : list)
+                keptRemoved.insert(k.get<std::string>().find('/') != std::string::npos ? k.get<std::string>() : key + "/pcg/" + k.get<std::string>());
+            errors.push_back(std::string(method) + ": " + e.what());
+        }
+    };
+    removeBatch(groups, "removePlacements", {{"groups", groups}}, "placements");
+    removeBatch(pcgCells, "removeSettlementCells", {{"id", key}, {"cells", pcgCells}}, "pcgCells");
+
+    // The manifest records what Unreal holds now: failed sends keep their old hash (or none) so the next send retries them.
+    std::vector<SyncItem> held;
+    for (const SyncItem& i : items)
+        if (!failed.contains(i.key))
+            held.push_back(i);
+    json manifest = syncManifest(held, elements);
+    for (const std::string& k : failed)
+        if (before.contains(k))
+            manifest["items"][k] = before[k];
+    for (const std::string& k : keptRemoved)
+        manifest["items"][k] = before[k];
+    fs::create_directories(manifestPath.parent_path(), ec);
+    std::ofstream(manifestPath, std::ios::binary) << manifest.dump(1);
+
+    out["sent"] = sent;
+    out["removed"] = removed;
+    out["errors"] = errors;
+    out["manifest"] = manifestPath.generic_string();
     return out;
 }
 } // namespace
@@ -592,62 +838,44 @@ void registerUnrealCommands(ext::Context& ctx)
 
     ctx.registerCommand({
         .name = "settlementSendToUnreal",
-        .doc = "Sends a settlement to the connected Unreal editor, updating what it sent before. Roads go as landscape splines "
-               "(roads='landscape', joined at junctions, shaping the landscape), as spline actors (roads='splines', with spline "
-               "meshes of roadMesh along them), as ribbon meshes cut into cells (roads='meshes') or not at all; paths on the "
-               "walkable mesh always go as a spline actor. pcg=True writes a PCG data asset (Load PCG Data Asset reads it) with "
-               "pins Lots (polygons, attributes id, use, area, frontages, corner, frontClass, seed), Envelopes (footprint "
-               "polygons with MaxHeight, Floors, FloorHeight, Base, Ground, Use, Roof, Era, Style, Seed), EnvelopePoints (one "
-               "point per envelope, bounds the footprint and height, the same attributes) and Roads (splines with class, "
-               "profile, width, lanes). zoneGraph=True writes ZoneGraph shapes: a spline per road with a lane profile made from "
-               "its cross-section (tags Vehicle, Pedestrian), a polygon per junction, then rebuilds the ZoneGraph. Returns what "
-               "Unreal made.",
+        .doc = "Sends a settlement to the connected Unreal editor and keeps it in sync: each send compares what it would make "
+               "with what the last send to that project made (a manifest keyed by stable ids: streets, lots, envelopes, "
+               "junctions, placements) and sends only the objects whose contents changed, removing those that are gone. "
+               "Everything spatial is cut into World Partition cells of side cell, one actor per cell, so the level streams "
+               "it. Roads go as landscape splines (roads='landscape', joined at junctions, shaping the landscape), as spline "
+               "actors (roads='splines', with spline meshes of roadMesh along them), as ribbon meshes per cell "
+               "(roads='meshes') or not at all; paths on the walkable mesh go as a spline actor. massing=True sends each "
+               "cell's envelopes as a static mesh. pcg=True writes PCG data: per cell (partition=True) a data asset and a cell "
+               "actor whose PCG component runs pcgGraph with the asset as its SettlementData parameter, else one data asset "
+               "for the whole settlement. Pins: Lots (polygons: Key, Use, Area, Frontages, Corner, FrontClass, Seed), "
+               "Envelopes (footprints: MaxHeight, Floors, FloorHeight, Base, Ground, Use, Roof, Era, Style, Seed), "
+               "EnvelopePoints, Roads (splines: Key, Class, Profile, Width, Lanes), Intersections and ParkingSpots. "
+               "zoneGraph=True writes ZoneGraph lane shapes and rebuilds the ZoneGraph. The settlement's placements (library "
+               "buildings, furniture, and the placements flag) go as HISM instances per cell and asset. dryRun=True only "
+               "returns the cells and the diff. Returns the diff, what Unreal made and removed, and any errors.",
         .positionalDoc = "settlement mesh or its modifier",
         .flags = {{"roads", "rd", Arg::String, "landscape", "How roads go.", {"landscape", "splines", "meshes", "none"}},
                   {"roadMesh", "rm", Arg::String, nullptr, "Static mesh asset laid along road splines, such as /Game/Roads/SM_Road."},
                   {"landscape", "ls", Arg::String, nullptr, "roads='landscape': the landscape's label (default the first one)."},
                   {"deformTerrain", "dt", Arg::Bool, true, "roads='landscape': the splines shape the landscape."},
-                  {"cell", "ce", Arg::Float, 51200.0, "roads='meshes': side of the cells ribbons are cut into, cm.", {}, {}, 1000.0},
-                  {"pcg", "pc", Arg::Bool, true, "Lots, envelopes and roads as a PCG data asset."},
+                  {"cell", "ce", Arg::Float, 12800.0, "World Partition cell side, cm: road meshes, massing, PCG data and placements are cut by it.",
+                   {}, {}, 1000.0},
+                  {"massing", "ma", Arg::Bool, true, "Envelopes as a static mesh per cell."},
+                  {"pcg", "pc", Arg::Bool, true, "Lots, envelopes and roads as PCG data."},
+                  {"partition", "pt", Arg::Bool, true, "PCG data per cell (a data asset and a cell actor each); off for one asset."},
+                  {"pcgGraph", "pg", Arg::String, nullptr, "PCG graph each cell actor runs; it reads the cell's data asset from its SettlementData parameter."},
                   {"zoneGraph", "zg", Arg::Bool, true, "Lanes as ZoneGraph shapes, for Mass traffic and crowds."},
+                  {"placeMode", "pm", Arg::String, "hism", "How placements go.", {"hism", "ism", "actors"}},
+                  {"placements", "pl", Arg::Any, nullptr,
+                   "Extra placements, a list or its JSON text: [{id, asset, position: [x, y, z], rotation: [x, y, z, w], scale, tags}], cm."},
+                  {"resend", "rs", Arg::Bool, false, "Send everything, ignoring what the last send made (after the level was reset)."},
+                  {"dryRun", "dr", Arg::Bool, false, "Return the cells and the diff without sending."},
                   {"folder", "f", Arg::String, "/Game/Lila/Settlement", "Content folder for assets."}},
         .undoable = false,
-        .run = [](const Args& a) -> json {
-            LILA_ZONE();
-
-            const char* cmd = "settlementSendToUnreal";
-            std::vector<std::string> names = a.objects();
-            if (names.size() != 1)
-                throw CommandError(std::string(cmd) + ": give one settlement");
-            const Rebuilt r = rebuildSettlement(scene::Graph::current(), names[0], cmd);
-            const bool pcg = a.get<bool>("pcg", true), zone = a.get<bool>("zoneGraph", true);
-            std::shared_ptr<link::RpcClient> c =
-                pcg || zone ? client(cmd, {link::kSplineFeature, "settlement"}) : client(cmd, {link::kSplineFeature});
-            const std::string key = r.mesh.empty() ? r.modifier : r.mesh;
-            std::string label = key;
-            if (const size_t slash = label.find_last_of("|/"); slash != std::string::npos)
-                label = label.substr(slash + 1);
-            const RoadNetwork net = roadNetwork(r.layout, r.ground);
-            json out = sendRoads(*c, r, a, key, label, cmd);
-            const std::string folder = a.get<std::string>("folder", "/Game/Lila/Settlement");
-            if (pcg)
-            {
-                json params = pcgData(r, net);
-                params["id"] = key;
-                params["asset"] = folder + "/PCG_" + assetName(label);
-                params["label"] = label;
-                out["pcg"] = call(*c, "setSettlementData", params, cmd);
-            }
-            if (zone)
-            {
-                json params = zoneData(r, net);
-                params["id"] = key;
-                params["label"] = label + "_Lanes";
-                out["zoneGraph"] = call(*c, "setZoneGraph", params, cmd);
-            }
-            return out;
-        },
-        .examples = {"settlementSendToUnreal('Settlement', roads='landscape', pcg=True, zoneGraph=True)"},
+        .run = [](const Args& a) -> json { return sendToUnreal(a); },
+        .examples = {"settlementSendToUnreal('Settlement', roads='landscape', pcg=True, zoneGraph=True)",
+                     "settlementSendToUnreal('Settlement', roads='meshes', cell=12800, pcgGraph='/Game/PCG/PCG_Buildings')",
+                     "settlementSendToUnreal('Settlement', dryRun=True)['diff']"},
     });
 
     ctx.registerCommand({

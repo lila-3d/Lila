@@ -1047,6 +1047,11 @@ TSharedPtr<FJsonValue> ReadRoadGrammar(const TSharedPtr<FJsonObject>& Params, FS
 }
 } // namespace
 
+TSharedPtr<FJsonValue> LilaLinkSettlement::WriteSettlementData(const TSharedPtr<FJsonObject>& Params, FString& OutError)
+{
+	return SetSettlementData(Params, OutError);
+}
+
 void LilaLinkSettlement::RegisterMethods()
 {
 	LilaLink::RegisterMethod(TEXT("setSettlementData"), &SetSettlementData, Feature);
