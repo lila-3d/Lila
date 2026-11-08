@@ -1,6 +1,7 @@
 // Settlement: measures and checks for agents, the layout as JSON, and meshes for the viewport and export.
 
 #include "SettlementCore.h"
+#include "Parcels.h"
 
 #include <lila/Profile.h>
 
@@ -271,6 +272,13 @@ const char* useName(Use u)
     case Use::Civic: return "civic";
     case Use::Plaza: return "plaza";
     case Use::Open: return "open";
+    case Use::Market: return "market";
+    case Use::Religious: return "religious";
+    case Use::Industrial: return "industrial";
+    case Use::Port: return "port";
+    case Use::Farm: return "farm";
+    case Use::Park: return "park";
+    case Use::Cemetery: return "cemetery";
     }
     return "open";
 }
@@ -307,7 +315,10 @@ json toJson(const Layout& l)
     }
     json blocks = json::array();
     for (const Block& b : l.blocks)
+    {
         blocks.push_back({{"id", b.id}, {"use", useName(b.use)}, {"areaM2", b.area}, {"outline", ring(b.outline)}});
+        blocks.back().update(blockJson(b));
+    }
     json lots = json::array();
     for (const Lot& lot : l.lots)
     {
@@ -324,6 +335,7 @@ json toJson(const Layout& l)
                         {"outline", ring(lot.outline)},
                         {"sideStreets", sides},
                         {"random", lot.random}});
+        lots.back().update(lotExtras(lot));
     }
     json envelopes = json::array();
     for (const Envelope& env : l.envelopes)
@@ -344,6 +356,7 @@ json toJson(const Layout& l)
                              {"roof", env.roof},
                              {"front", xz(env.front)},
                              {"random", env.random}});
+        envelopes.back().update(envelopeExtras(env));
     }
     json water = json::array();
     for (const WaterLine& w : l.water)
@@ -500,6 +513,16 @@ MeshParts toMeshes(const Layout& l, const Ground& ground, const OutputOptions& o
     std::vector<int32_t> envLot, envUse, envFloors, envPart;
     for (const Envelope& env : l.envelopes)
     {
+        if (env.route == BuildingRoute::Massing)
+        {
+            appendMassing(env, l, out.envelopes, [&](int part) {
+                envLot.push_back(env.lot);
+                envUse.push_back(int32_t(env.use));
+                envFloors.push_back(env.floors);
+                envPart.push_back(part);
+            });
+            continue;
+        }
         const size_t n = env.footprint.size();
         std::vector<geo::Index> lo, hi;
         for (const Vec2& q : env.footprint.pts)

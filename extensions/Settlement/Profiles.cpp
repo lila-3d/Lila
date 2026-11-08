@@ -1,6 +1,7 @@
 // Settlement: the built-in styles and their JSON form.
 
 #include "SettlementCore.h"
+#include "Parcels.h"
 
 #include <algorithm>
 #include <cctype>
@@ -37,6 +38,7 @@ constexpr DoubleField kDoubles[] = {
     {"sideSetback", &Profile::sideSetback},     {"buildDepth", &Profile::buildDepth},
     {"floorHeight", &Profile::floorHeight},     {"foundation", &Profile::foundation},
     {"commercial", &Profile::commercial},
+    {"windAngle", &Profile::windAngle},
 };
 
 constexpr IntField kInts[] = {
@@ -208,6 +210,9 @@ bool builtinProfile(std::string_view name, Profile* out)
 json toJson(const Profile& p)
 {
     json j = {{"name", p.name}, {"pattern", patternName(p.pattern)}, {"plaza", p.plaza}, {"roof", p.roof}};
+    j["era"] = eraOf(p);
+    j["blockType"] = p.blockType;
+    j["lotMethod"] = p.lotMethod;
     for (const DoubleField& f : kDoubles)
         j[f.name] = p.*f.member;
     for (const IntField& f : kInts)
@@ -246,6 +251,12 @@ void applyJson(Profile& p, const json& j)
             p.roof = v.get<std::string>();
         else if (k == "plaza" && v.is_boolean())
             p.plaza = v.get<bool>();
+        else if (k == "era" && v.is_string())
+            p.era = v.get<std::string>();
+        else if (k == "blockType" && v.is_string())
+            p.blockType = v.get<std::string>();
+        else if (k == "lotMethod" && v.is_string())
+            p.lotMethod = v.get<std::string>();
         else if (k == "pattern" && v.is_string())
         {
             if (!parsePattern(v.get<std::string>(), &p.pattern))
@@ -254,6 +265,7 @@ void applyJson(Profile& p, const json& j)
         else
             throw std::runtime_error("unknown or mistyped profile field '" + k + "'");
     }
+    validateParcelProfile(p);
 }
 
 double streetWidth(const Profile& p, StreetClass c)

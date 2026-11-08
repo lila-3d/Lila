@@ -317,6 +317,10 @@ struct Profile
     double foundation = 50.0; // cm below the lowest ground under a footprint
     std::string roof = "gable";
     double commercial = 0.35; // lots on main streets within this fraction of the radius are commercial
+    std::string era;                // medieval, early, industrial, modern or future; empty takes it from the style's name and pattern
+    std::string blockType = "auto"; // the type ordinary blocks take (blockTypeName), auto chooses by era and block shape
+    std::string lotMethod = "auto"; // how ordinary blocks are cut into lots (lotMethodName), auto chooses by block type and era
+    double windAngle = 0.0;         // degrees: the prevailing wind blows toward this heading (0 is +X); industry goes downwind
 };
 
 /** The built-in styles, by name. */
@@ -441,6 +445,82 @@ struct StreetOverride
 /** Generated street ids carry this bit, so they never collide with edit ids. */
 inline constexpr uint64_t kStreetIdBit = 1ull << 48;
 
+/** What a block is for, which decides how it is cut into lots and what stands on them. */
+enum class BlockType : uint8_t
+{
+    Perimeter,  // buildings along every street side, filling the block
+    Courtyard,  // a ring of buildings along the streets around an open courtyard
+    Open,       // detached buildings standing free on their lots
+    Row,        // row houses sharing party walls
+    Superblock, // a few very large lots: towers in open ground
+    Park,
+    Plaza,
+    Market,     // the market square
+    Churchyard, // the church, its graveyard around it
+    Field,      // farm strips outside the town
+};
+
+/** How a block is cut into lots. Every method gives each lot a street side. */
+enum class LotMethod : uint8_t
+{
+    Frontage, // lots along the longest street side, back to back when deep
+    Obb,      // recursive splits across the long side of each piece's oriented box
+    Skeleton, // strips off each street side along the straight skeleton, then cut across
+    Burgage,  // narrow deep plots behind the main street
+    Voronoi,  // irregular cells around seeds along the streets
+    Strips,   // long farm strips
+    Whole,    // the block is one lot
+};
+
+/** What builds the buildings on a lot. */
+enum class BuildingRoute : uint8_t
+{
+    Outline, // envelopes only: footprint curves and the envelope volume
+    Massing, // greybox blocks with roofs from the envelopes
+    Library, // prebuilt assets placed through Stagehand
+    Masonry, // stone buildings through Masonry
+    Unreal,  // envelopes sent as PCG data for Unreal to build
+};
+
+/** A change to a block found by its stable id: another type, another lot method. */
+struct BlockOverride
+{
+    uint64_t block = 0;
+    bool hasType = false, hasMethod = false;
+    BlockType type = BlockType::Perimeter;
+    LotMethod method = LotMethod::Frontage;
+};
+
+/** A change to a lot found by its stable id: another use, or reserved as a landmark under a name. */
+struct LotOverride
+{
+    uint64_t lot = 0;
+    bool hasUse = false;
+    uint8_t use = 0; // Use
+    std::string landmark;
+};
+
+/** The building route of the whole settlement (no polygon) or of the lots whose centre lies in the polygon. */
+struct RouteRegion
+{
+    BuildingRoute route = BuildingRoute::Outline;
+    std::string name;
+    std::vector<Vec2> polygon;
+};
+
+/** The library asset settlementBuildings fitted to a lot: its id, its engine path, and the heading its front faces at rest (degrees). */
+struct LibraryPick
+{
+    std::string asset, unreal;
+    double assetHeading = 0.0;
+};
+
+/** Ground under a lot's footprint as measured on a Terrain (terrainRegionStats), world Y. */
+struct Foundation
+{
+    double min = 0.0, max = 0.0;
+};
+
 /** What the user gives: an outline, fixed streets and roads, water, a centre and attractors, exclusions and edits. */
 struct Site
 {
@@ -457,6 +537,11 @@ struct Site
     std::vector<StreetOverride> overrides;
     std::string culture; // naming culture (cultureNames); empty for the profile's
     std::vector<std::pair<uint64_t, std::string>> districtNames; // given district names, by district id
+    std::vector<BlockOverride> blockOverrides;
+    std::vector<LotOverride> lotOverrides;
+    std::vector<RouteRegion> buildingRoutes;              // later ones win where they overlap
+    std::unordered_map<uint64_t, Foundation> foundations; // by stable lot id (settlementFoundations)
+    std::unordered_map<uint64_t, LibraryPick> libraryPicks; // by stable lot id (settlementBuildings route=library)
 };
 
 /**
@@ -487,6 +572,13 @@ enum class Use : uint8_t
     Civic,
     Plaza,
     Open, // too small or too odd to build on
+    Market,
+    Religious,
+    Industrial,
+    Port,
+    Farm,
+    Park,
+    Cemetery,
 };
 
 const char* useName(Use u);
@@ -497,6 +589,12 @@ struct Block
     Polygon outline; // inside the street edges; tag = class of the street on that side, -1 none
     double area = 0.0;
     Use use = Use::Residential;
+    uint64_t key = 0; // stable id: the same block keeps it while its streets stay
+    BlockType type = BlockType::Perimeter;
+    LotMethod method = LotMethod::Frontage;
+    std::vector<Polygon> courtyards; // open ground inside a courtyard block, in no lot
+    bool water = false;              // a side on a river or canal
+    std::vector<std::string> reasons;
 };
 
 struct Lot
@@ -510,6 +608,12 @@ struct Lot
     StreetClass frontClass = StreetClass::Local;
     Use use = Use::Residential;
     float random = 0.0f;
+    uint64_t key = 0;   // stable id while its block and the block's lot method stay
+    int wealth = 1;     // residential tier: 0 low, 1 middle, 2 high
+    double access = 0.0; // 0 to 1: integration and betweenness of the streets it faces
+    std::string landmark; // a reserved landmark's name (market_square, church, castle, axis_end_1), empty for none
+    std::vector<std::string> reasons; // why a landmark is where it is
+    BuildingRoute route = BuildingRoute::Outline;
 };
 
 /** The space a building may fill on its lot, and what it is for. Buildings themselves are made elsewhere. */
@@ -526,6 +630,28 @@ struct Envelope
     std::string roof;
     Vec2 front{0.0, 1.0}; // facing the street
     float random = 0.0f;
+    uint64_t key = 0; // the lot's stable id
+    /** A step of the volume: its footprint from bottom to top (world Y). The first starts at base; each next one is stepped in. */
+    struct Tier
+    {
+        Polygon footprint;
+        double bottom = 0.0, top = 0.0;
+    };
+    std::vector<Tier> tiers;
+    std::vector<int> partyWith;    // per footprint side: the lot across a party wall, -1 none
+    double frontSetback = 0.0;     // kept from the lot's street sides
+    double sideSetback = 0.0;      // kept from its other sides
+    Vec2 ridge{1.0, 0.0};          // along the roof's ridge
+    double roofHeight = 0.0;       // from the wall top to the ridge or dome top
+    std::vector<Vec2> entrances;   // on the street sides, the main one first
+    Use groundUse = Use::Residential;
+    std::string corner = "none";   // none, wrap, chamfer or tower
+    double foundationDepth = 0.0;  // from the highest ground under the footprint to the bottom of the foundation
+    std::string foundationSource;  // terrainRegionStats or ground
+    std::string landmark;
+    std::string era;
+    int wealth = 1;
+    BuildingRoute route = BuildingRoute::Outline;
 };
 
 /** A path off the ground: on the walkable surface, across ramps, terraces and floors at any height. */
@@ -598,6 +724,8 @@ struct Layout
     std::string culture;                            // the naming culture used
     std::unordered_map<uint64_t, std::string> streetNames; // by stable street id
     std::vector<District> districts;
+    std::vector<double> edgeAccess;       // per graph edge, 0 to 1 (streetAccess)
+    std::vector<std::string> parcelWarnings; // what blocks, lots and envelopes fell back to and why
 };
 
 /** Old English, Latin, French, Spanish, numbered US grid and sci-fi sector codes, as culture names. */

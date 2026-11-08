@@ -1,6 +1,7 @@
 // Settlement: the user's edits (streets, routes, exclusions, road profiles) read from their JSON form.
 
 #include "SettlementCore.h"
+#include "Parcels.h"
 
 #include <algorithm>
 #include <charconv>
@@ -151,5 +152,6 @@ void applyEdits(Site& site, const json& edits)
     }
     // Paths keep their order by id, so the network does not depend on how the JSON was written.
     std::stable_sort(site.paths.begin(), site.paths.end(), [](const SitePath& a, const SitePath& b) { return a.id < b.id; });
+    applyParcelEdits(site, edits);
 }
 } // namespace settlement

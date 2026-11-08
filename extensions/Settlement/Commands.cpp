@@ -4,6 +4,7 @@
 
 #include "Settlement.h"
 #include "Streetscape.h"
+#include "Parcels.h"
 
 #include <lila/Command.h>
 #include <lila/Curves.h>
@@ -1266,5 +1267,6 @@ void registerCommands(ext::Context& ctx)
     registerUnrealCommands(ctx);
     registerExportCommands(ctx);
     registerStreetscapeCommands(ctx);
+    registerLotCommands(ctx);
 }
 } // namespace settlement

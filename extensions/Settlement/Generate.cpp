@@ -1,6 +1,7 @@
 // Settlement: streets grown or laid out over the ground, then blocks, lots and building envelopes inside them.
 
 #include "SettlementCore.h"
+#include "Parcels.h"
 
 #include <lila/Profile.h>
 
@@ -1651,93 +1652,7 @@ Layout build(const Site& site, const Ground& g, const Options& in, const WalkSur
     if (!o.blocks)
         return l;
 
-    // Blocks: faces of the street graph, pulled in by half of each street's width.
-    int blockId = 0;
-    for (const Face& f : layoutFaces(l))
-    {
-        Polygon src = f.outline;
-        std::vector<double> d(src.size());
-        for (size_t k = 0; k < src.size(); ++k)
-        {
-            const StreetClass c = l.graph.edges[size_t(src.tag[k])].cls;
-            d[k] = 0.5 * edgeWidth(l, src.tag[k]);
-            src.tag[k] = c >= StreetClass::Boundary ? -1 : int(c);
-        }
-        Polygon inner = inset(src, d);
-        if (inner.pts.empty() || area(inner) < p.minLot * kM2)
-            continue;
-        Block b;
-        b.id = blockId++;
-        b.area = area(inner) / kM2;
-        b.outline = std::move(inner);
-        l.blocks.push_back(std::move(b));
-    }
-
-    // The market square: the block at the centre, kept open.
-    int plaza = -1;
-    if (p.plaza)
-        for (const Block& b : l.blocks)
-            if (contains(b.outline.pts, l.center))
-                plaza = b.id;
-
-    for (Block& b : l.blocks)
-    {
-        if (b.id == plaza)
-        {
-            b.use = Use::Plaza;
-            Lot lot;
-            lot.id = int(l.lots.size());
-            lot.block = b.id;
-            lot.outline = b.outline;
-            lot.area = b.area;
-            lot.use = Use::Plaza;
-            l.lots.push_back(std::move(lot));
-            continue;
-        }
-        std::vector<Lot> lots = subdivide(b, o, int(l.lots.size()));
-        l.lots.insert(l.lots.end(), lots.begin(), lots.end());
-    }
-
-    // Uses: open ground where nothing fits, shops on main streets near the centre, one civic building.
-    int civic = -1;
-    double civicScore = 0.0;
-    for (Lot& lot : l.lots)
-    {
-        if (lot.use == Use::Plaza)
-            continue;
-        const Vec2 c = centroid(lot.outline);
-        const double dist = glm::length(c - l.center) / std::max(l.radius, 1.0);
-        double u0 = 1e300, u1 = -1e300, v0 = 1e300, v1 = -1e300;
-        for (const Vec2& q : lot.outline.pts)
-            u0 = std::min(u0, q.x), u1 = std::max(u1, q.x), v0 = std::min(v0, q.y), v1 = std::max(v1, q.y);
-        const double fill = lot.area * kM2 / std::max((u1 - u0) * (v1 - v0), 1e-9);
-        if (lot.area < p.minLot || lot.frontages == 0 || fill < 0.3)
-            lot.use = Use::Open;
-        else if (lot.frontClass <= StreetClass::Collector && dist < p.commercial)
-            lot.use = Use::Commercial;
-        else
-            lot.use = Use::Residential;
-        if (lot.use != Use::Open && dist < 0.3 && lot.frontClass <= StreetClass::Collector)
-        {
-            const double score = lot.area * (1.0 - dist);
-            if (score > civicScore)
-            {
-                civicScore = score;
-                civic = lot.id;
-            }
-        }
-    }
-    if (civic >= 0)
-        l.lots[size_t(civic)].use = Use::Civic;
-
-    if (o.buildings)
-        for (const Lot& lot : l.lots)
-            if (lot.use == Use::Residential || lot.use == Use::Commercial || lot.use == Use::Civic)
-            {
-                Envelope env = envelopeFor(lot, l, g, o);
-                if (!env.footprint.pts.empty())
-                    l.envelopes.push_back(std::move(env));
-            }
+    planParcels(l, site, g, o);
     return l;
 }
 } // namespace settlement
