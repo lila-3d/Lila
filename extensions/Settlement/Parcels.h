@@ -59,6 +59,11 @@ std::vector<double> streetAccess(const StreetGraph& g);
 
 /** Blocks, their types, lots, landmarks, land use and envelopes, into the layout. */
 void planParcels(Layout& l, const Site& site, const Ground& g, const Options& o);
+/**
+ * planParcels again after the street graph changed inside lo-hi: blocks are remade everywhere, but a block whose stable id
+ * survives outside the region keeps its lots and envelopes as they were. Landmarks are not re-placed. Returns the blocks cut afresh.
+ */
+int replanParcels(Layout& l, const Site& site, const Ground& g, const Options& o, Vec2 lo, Vec2 hi);
 
 /** The lots a block's method cuts it into. Side tags are street edge ids (-1 none), as planParcels keeps them until uses are set. */
 std::vector<Polygon> cutBlock(const Block& b, const Layout& l, const Options& o, std::vector<Polygon>* courtyards = nullptr,

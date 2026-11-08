@@ -1667,7 +1667,7 @@ Layout build(const Site& site, const Ground& g, const Options& in, const WalkSur
         return l;
 
     planParcels(l, site, g, o);
-    afterLots(l, g, o);
+    afterLots(l, site, g, o);
     return l;
 }
 } // namespace settlement

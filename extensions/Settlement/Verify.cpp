@@ -2,6 +2,7 @@
 // layout (determinism checks), and blocks, lots and envelopes remade only where the street graph changed.
 
 #include "Generators.h"
+#include "Parcels.h"
 
 #include <lila/Profile.h>
 
@@ -59,33 +60,6 @@ uint64_t mixGraph(uint64_t h, const StreetGraph& g)
         h = mixd(mix(mix(h, e.street), e.moat), e.width);
     }
     return h;
-}
-
-/** A point just inside the face, off its longest side. */
-Vec2 insidePoint(const Polygon& f)
-{
-    const double sign = signedArea(f.pts) >= 0.0 ? 1.0 : -1.0;
-    size_t best = 0;
-    double len = -1.0;
-    for (size_t k = 0; k < f.size(); ++k)
-        if (const double d = glm::length(f.pts[(k + 1) % f.size()] - f.pts[k]); d > len)
-        {
-            len = d;
-            best = k;
-        }
-    const Vec2 a = f.pts[best], b = f.pts[(best + 1) % f.size()];
-    return (a + b) * 0.5 + leftNormal((b - a) / std::max(len, 1e-12)) * sign * std::min(1.0, 0.01 * len);
-}
-
-bool overlaps(const Polygon& p, Vec2 lo, Vec2 hi)
-{
-    Vec2 a(std::numeric_limits<double>::max()), b(-std::numeric_limits<double>::max());
-    for (const Vec2& q : p.pts)
-    {
-        a = glm::min(a, q);
-        b = glm::max(b, q);
-    }
-    return a.x <= hi.x && b.x >= lo.x && a.y <= hi.y && b.y >= lo.y;
 }
 } // namespace
 
@@ -176,124 +150,12 @@ uint64_t layoutHash(const Layout& l)
     return h;
 }
 
-int updateBlocks(Layout& l, const Ground& g, const Options& in, Vec2 lo, Vec2 hi)
+int updateBlocks(Layout& l, const Site& site, const Ground& g, const Options& in, Vec2 lo, Vec2 hi)
 {
     LILA_ZONE();
 
     Options o = in;
     o.profile = l.profile;
-    const Profile& p = o.profile;
-    std::vector<Polygon> faces;
-    for (Face& f : planarFaces(l.graph))
-        if (overlaps(f.outline, lo, hi))
-        {
-            const Vec2 q = insidePoint(f.outline);
-            if (contains(l.outline.pts, q) && !excluded(l, q))
-                faces.push_back(std::move(f.outline));
-        }
-
-    // Out go the blocks the changed faces now cover, and any left in the region from streets that are gone.
-    std::vector<char> drop(l.blocks.size(), 0);
-    for (size_t b = 0; b < l.blocks.size(); ++b)
-    {
-        const Polygon& out = l.blocks[b].outline;
-        if (overlaps(out, lo, hi))
-            drop[b] = 1;
-        else
-            for (const Polygon& f : faces)
-                if (contains(f.pts, insidePoint(out)))
-                {
-                    drop[b] = 1;
-                    break;
-                }
-    }
-    std::vector<Block> blocks;
-    std::vector<int> blockMap(l.blocks.size(), -1);
-    for (size_t b = 0; b < l.blocks.size(); ++b)
-        if (!drop[b])
-        {
-            blockMap[b] = int(blocks.size());
-            blocks.push_back(std::move(l.blocks[b]));
-            blocks.back().id = blockMap[b];
-        }
-    std::vector<Lot> lots;
-    std::vector<int> lotMap(l.lots.size(), -1);
-    for (size_t k = 0; k < l.lots.size(); ++k)
-        if (const int b = l.lots[k].block; b >= 0 && b < int(blockMap.size()) && blockMap[size_t(b)] >= 0)
-        {
-            lotMap[k] = int(lots.size());
-            lots.push_back(std::move(l.lots[k]));
-            lots.back().id = lotMap[k];
-            lots.back().block = blockMap[size_t(b)];
-        }
-    std::vector<Envelope> envelopes;
-    for (Envelope& e : l.envelopes)
-        if (e.lot >= 0 && e.lot < int(lotMap.size()) && lotMap[size_t(e.lot)] >= 0)
-        {
-            e.lot = lotMap[size_t(e.lot)];
-            envelopes.push_back(std::move(e));
-        }
-
-    int made = 0;
-    for (Polygon& src : faces)
-    {
-        std::vector<double> d(src.size());
-        for (size_t k = 0; k < src.size(); ++k)
-        {
-            const StreetClass c = l.graph.edges[size_t(src.tag[k])].cls;
-            d[k] = 0.5 * edgeWidth(l, src.tag[k]);
-            src.tag[k] = c >= StreetClass::Boundary ? -1 : int(c);
-        }
-        Polygon inner = inset(src, d);
-        if (inner.pts.empty() || area(inner) < p.minLot * kM2)
-            continue;
-        Block b;
-        b.id = int(blocks.size());
-        b.area = area(inner) / kM2;
-        b.outline = std::move(inner);
-        ++made;
-        if (p.plaza && contains(b.outline.pts, l.center))
-        {
-            b.use = Use::Plaza;
-            Lot lot;
-            lot.id = int(lots.size());
-            lot.block = b.id;
-            lot.outline = b.outline;
-            lot.area = b.area;
-            lot.use = Use::Plaza;
-            lots.push_back(std::move(lot));
-            blocks.push_back(std::move(b));
-            continue;
-        }
-        for (Lot& lot : subdivide(b, o, int(lots.size())))
-        {
-            lot.block = b.id;
-            const Vec2 c = centroid(lot.outline);
-            const double dist = glm::length(c - l.center) / std::max(l.radius, 1.0);
-            Vec2 a(std::numeric_limits<double>::max()), z(-std::numeric_limits<double>::max());
-            for (const Vec2& q : lot.outline.pts)
-            {
-                a = glm::min(a, q);
-                z = glm::max(z, q);
-            }
-            const double fill = lot.area * kM2 / std::max((z.x - a.x) * (z.y - a.y), 1e-9);
-            if (lot.area < p.minLot || lot.frontages == 0 || fill < 0.3)
-                lot.use = Use::Open;
-            else if (lot.frontClass <= StreetClass::Collector && dist < p.commercial)
-                lot.use = Use::Commercial;
-            else
-                lot.use = Use::Residential;
-            lot.id = int(lots.size());
-            lots.push_back(lot);
-            if (o.buildings && lot.use != Use::Open)
-                if (Envelope env = envelopeFor(lot, l, g, o); !env.footprint.pts.empty())
-                    envelopes.push_back(std::move(env));
-        }
-        blocks.push_back(std::move(b));
-    }
-    l.blocks = std::move(blocks);
-    l.lots = std::move(lots);
-    l.envelopes = std::move(envelopes);
-    return made;
+    return replanParcels(l, site, g, o, lo, hi);
 }
 } // namespace settlement

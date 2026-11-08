@@ -1,6 +1,7 @@
 // Settlement export data: World Partition cells, live-sync manifests, and the GeoJSON, USD, DXF and engine JSON files.
 
 #include "Export.h"
+#include "Parcels.h"
 
 #include <lila/Profile.h>
 
@@ -54,7 +55,8 @@ const char* sideKind(int t) { return t == 0 ? "street" : t == 1 ? "party" : "ope
 json lotFields(const Lot& lot)
 {
     return {{"id", lot.id},     {"key", lotKey(lot)},   {"block", lot.block}, {"use", useName(lot.use)}, {"areaM2", lot.area / kM2},
-            {"frontages", lot.frontages}, {"corner", lot.corner}, {"frontClass", className(lot.frontClass)}};
+            {"frontages", lot.frontages}, {"corner", lot.corner}, {"frontClass", className(lot.frontClass)}, {"era", lot.era},
+            {"landmark", lot.landmark}, {"wealth", lot.wealth}, {"route", routeName(lot.route)}};
 }
 
 json envelopeFields(const Layout& l, const Envelope& e, const std::string& key)
@@ -68,7 +70,14 @@ json envelopeFields(const Layout& l, const Envelope& e, const std::string& key)
             {"base", e.base},
             {"ground", e.ground},
             {"top", e.top},
-            {"roof", e.roof}};
+            {"roof", e.roof},
+            {"roofHeight", e.roofHeight},
+            {"era", e.era},
+            {"eraName", e.eraName},
+            {"groundUse", useName(e.groundUse)},
+            {"corner", e.corner},
+            {"landmark", e.landmark},
+            {"route", routeName(e.route)}};
 }
 
 json roadFields(const Layout& l, const StreetLine& s)
@@ -327,6 +336,8 @@ std::map<Cell, CellContents> partition(const Layout& l, const RoadNetwork& net, 
 
 std::string lotKey(const Lot& lot)
 {
+    if (lot.key)
+        return "lot:" + hex(lot.key);
     const Vec2 c = centroid(lot.outline);
     const uint64_t x = uint64_t(std::llround(c.x / 100.0)), z = uint64_t(std::llround(c.y / 100.0));
     return "lot:" + hex(hash64(x * 0x9E3779B97F4A7C15ull ^ hash64(z)));

@@ -3,6 +3,7 @@
 #include "Parcels.h"
 
 #include <lila/Profile.h>
+#include <lila/Tasks.h>
 
 #include <algorithm>
 #include <cmath>
@@ -10,6 +11,7 @@
 #include <map>
 #include <numeric>
 #include <queue>
+#include <unordered_map>
 
 namespace settlement
 {
@@ -570,6 +572,9 @@ double downstream(Vec2 q, std::span<const WaterLine> water)
 }
 
 /** Uses from the rules: flood and slope, port, industry downwind and downstream, market, commerce by access, residential tiers. */
+uint64_t useCellKey(int64_t x, int64_t y) { return (uint64_t(x) * 0x9E3779B97F4A7C15ull) ^ uint64_t(y); }
+uint64_t useCellKey(Vec2 p, double size) { return useCellKey(int64_t(std::floor(p.x / size)), int64_t(std::floor(p.y / size))); }
+
 void assignUses(Layout& l, const Ground& g, const std::string& era)
 {
     LILA_ZONE();
@@ -583,44 +588,55 @@ void assignUses(Layout& l, const Ground& g, const std::string& era)
     const double reach = std::max(p.widthArterial, p.widthCollector) + 200.0;
     const double angle = p.windAngle * kPi / 180.0;
     const Vec2 wind(std::cos(angle), std::sin(angle));
-    std::vector<int> open;
-    for (Lot& lot : l.lots)
-    {
-        if (!lot.landmark.empty() || lot.use == Use::Cemetery)
-            continue;
-        const Block& b = l.blocks[size_t(lot.block)];
-        const Vec2 c = centroid(lot.outline);
-        const double bank = bankDistance(c, l.water);
-        if (b.type == BlockType::Field)
-            lot.use = Use::Farm;
-        else if (!buildable(lot, p))
-            lot.use = Use::Open;
-        else if (bank < floodMargin(p) || g.grade(c) > 2.0 * p.maxGrade)
-            lot.use = Use::Park;
-        else if (b.water && bank < 1.5 * p.lotDepth && normDist(l, c) < 0.85 && era != "future")
-            lot.use = Use::Port;
-        else
+    std::vector<char> isOpen(l.lots.size(), 0);
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, l.lots.size()), [&](const tbb::blocked_range<size_t>& range) {
+        for (size_t k = range.begin(); k < range.end(); ++k)
         {
-            lot.use = Use::Residential;
-            open.push_back(lot.id);
+            Lot& lot = l.lots[k];
+            if (!lot.landmark.empty() || lot.use == Use::Cemetery)
+                continue;
+            const Block& b = l.blocks[size_t(lot.block)];
+            const Vec2 c = centroid(lot.outline);
+            const double bank = bankDistance(c, l.water);
+            if (b.type == BlockType::Field)
+                lot.use = Use::Farm;
+            else if (!buildable(lot, p))
+                lot.use = Use::Open;
+            else if (bank < floodMargin(p) || g.grade(c) > 2.0 * p.maxGrade)
+                lot.use = Use::Park;
+            else if (b.water && bank < 1.5 * p.lotDepth && normDist(l, c) < 0.85 && era != "future")
+                lot.use = Use::Port;
+            else
+            {
+                lot.use = Use::Residential;
+                isOpen[k] = 1;
+            }
         }
-    }
+    });
+    std::vector<int> open;
+    for (size_t k = 0; k < l.lots.size(); ++k)
+        if (isOpen[k])
+            open.push_back(l.lots[k].id);
 
     const double share = era == "medieval" ? 0.03 : era == "early" ? 0.05 : era == "industrial" ? 0.15 : era == "modern" ? 0.10 : 0.06;
+    std::vector<double> scores(open.size(), std::numeric_limits<double>::quiet_NaN());
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, open.size()), [&](const tbb::blocked_range<size_t>& range) {
+        for (size_t k = range.begin(); k < range.end(); ++k)
+        {
+            const Lot& lot = l.lots[size_t(open[k])];
+            const Vec2 c = centroid(lot.outline);
+            if (normDist(l, c) < 0.3)
+                continue;
+            const Vec2 out = glm::length(c - l.center) > 1e-6 ? glm::normalize(c - l.center) : Vec2(0.0);
+            const double bank = bankDistance(c, l.water);
+            scores[k] = 0.45 * 0.5 * (1.0 + glm::dot(out, wind)) + 0.25 * (bank < 4.0 * p.lotDepth ? downstream(c, l.water) : 0.0) +
+                        0.2 * (bank < 2.0 * p.lotDepth ? 1.0 : 0.0) + 0.1 * lot.access;
+        }
+    });
     std::vector<std::pair<double, int>> industry;
-    for (int id : open)
-    {
-        const Lot& lot = l.lots[size_t(id)];
-        const Vec2 c = centroid(lot.outline);
-        const double dist = normDist(l, c);
-        if (dist < 0.3)
-            continue;
-        const Vec2 out = glm::length(c - l.center) > 1e-6 ? glm::normalize(c - l.center) : Vec2(0.0);
-        const double bank = bankDistance(c, l.water);
-        const double score = 0.45 * 0.5 * (1.0 + glm::dot(out, wind)) + 0.25 * (bank < 4.0 * p.lotDepth ? downstream(c, l.water) : 0.0) +
-                             0.2 * (bank < 2.0 * p.lotDepth ? 1.0 : 0.0) + 0.1 * lot.access;
-        industry.push_back({-score, id});
-    }
+    for (size_t k = 0; k < open.size(); ++k)
+        if (!std::isnan(scores[k]))
+            industry.push_back({-scores[k], open[k]});
     std::sort(industry.begin(), industry.end());
     const size_t nIndustry = std::min(industry.size(), size_t(std::lround(share * double(open.size()))));
     for (size_t k = 0; k < nIndustry; ++k)
@@ -653,9 +669,25 @@ void assignUses(Layout& l, const Ground& g, const std::string& era)
         if (lot.use == Use::Industrial)
             works.push_back(centroid(lot.outline));
     }
-    auto near = [](const std::vector<Vec2>& pts, Vec2 q, double r) {
-        return std::ranges::any_of(pts, [&](Vec2 x) { return glm::length(x - q) < r; });
+    // Points binned at the query radius, so a lookup checks the 3x3 cells around it.
+    auto grid = [](const std::vector<Vec2>& pts, double r) {
+        std::unordered_map<uint64_t, std::vector<Vec2>> g;
+        for (Vec2 x : pts)
+            g[useCellKey(x, r)].push_back(x);
+        return g;
     };
+    auto near = [](const std::unordered_map<uint64_t, std::vector<Vec2>>& g, Vec2 q, double r) {
+        const int64_t cx = int64_t(std::floor(q.x / r)), cy = int64_t(std::floor(q.y / r));
+        for (int64_t dx = -1; dx <= 1; ++dx)
+            for (int64_t dy = -1; dy <= 1; ++dy)
+                if (auto it = g.find(useCellKey(cx + dx, cy + dy)); it != g.end())
+                    for (Vec2 x : it->second)
+                        if (glm::length(x - q) < r)
+                            return true;
+        return false;
+    };
+    const double amenityReach = 0.12 * l.radius, worksReach = 0.1 * l.radius;
+    const auto amenityGrid = grid(amenities, amenityReach), worksGrid = grid(works, worksReach);
     std::vector<std::pair<double, int>> values;
     for (int id : open)
     {
@@ -666,8 +698,8 @@ void assignUses(Layout& l, const Ground& g, const std::string& era)
         const double dist = normDist(l, c);
         // Old towns are richest at the centre; industrial and later ones in the suburbs.
         const double place = pm ? 1.0 - dist : 0.4 + 0.6 * dist;
-        const double value = 0.45 * lot.access + 0.35 * place + 0.2 * (near(amenities, c, 0.12 * l.radius) ? 1.0 : 0.0) -
-                             0.35 * (near(works, c, 0.1 * l.radius) ? 1.0 : 0.0);
+        const double value = 0.45 * lot.access + 0.35 * place + 0.2 * (near(amenityGrid, c, amenityReach) ? 1.0 : 0.0) -
+                             0.35 * (near(worksGrid, c, worksReach) ? 1.0 : 0.0);
         values.push_back({value, id});
     }
     std::sort(values.begin(), values.end());
@@ -881,5 +913,188 @@ void planParcels(Layout& l, const Site& site, const Ground& g, const Options& o)
                 if (auto it = site.libraryPicks.find(env.key); it != site.libraryPicks.end())
                     l.placements.push_back(libraryPlacement(env, it->second));
     }
+}
+/**
+ * Street access after a local edit without the whole-graph betweenness pass: edges that were there keep theirs, and each new
+ * edge takes the mean of the old streets meeting its ends. planParcels measures it exactly.
+ */
+static void keepStreetAccess(Layout& l)
+{
+    const size_t before = std::min(l.edgeAccess.size(), l.graph.edges.size());
+    l.edgeAccess.resize(l.graph.edges.size(), 0.0);
+    for (size_t e = before; e < l.graph.edges.size(); ++e)
+    {
+        if (!l.graph.isStreet(int(e)))
+            continue;
+        double sum = 0.0;
+        int n = 0;
+        for (int end : {l.graph.edges[e].a, l.graph.edges[e].b})
+            for (int k : l.graph.incident(end))
+                if (size_t(k) < before && l.graph.isStreet(k))
+                {
+                    sum += l.edgeAccess[size_t(k)];
+                    ++n;
+                }
+        l.edgeAccess[e] = n ? sum / n : 0.0;
+    }
+}
+
+int replanParcels(Layout& l, const Site& site, const Ground& g, const Options& o, Vec2 lo, Vec2 hi)
+{
+    LILA_ZONE();
+
+    const std::string era = eraOf(l.profile);
+    std::vector<Block> oldBlocks = std::move(l.blocks);
+    std::vector<Lot> oldLots = std::move(l.lots);
+    std::vector<Envelope> oldEnvelopes = std::move(l.envelopes);
+    l.blocks.clear();
+    l.lots.clear();
+    l.envelopes.clear();
+    std::erase_if(l.placements, [](const Placement& p) { return p.id.starts_with("building/"); });
+    keepStreetAccess(l);
+    makeBlocks(l);
+    typeBlocks(l, g, site, era);
+
+    auto inRegion = [&](const Polygon& p) {
+        for (const Vec2& q : p.pts)
+            if (q.x >= lo.x && q.x <= hi.x && q.y >= lo.y && q.y <= hi.y)
+                return true;
+        return false;
+    };
+    std::unordered_map<uint64_t, int> oldByKey;
+    for (const Block& b : oldBlocks)
+        oldByKey[b.key] = b.id;
+    std::vector<std::vector<int>> lotsOfOld(oldBlocks.size());
+    for (const Lot& lot : oldLots)
+        if (lot.block >= 0 && size_t(lot.block) < lotsOfOld.size())
+            lotsOfOld[size_t(lot.block)].push_back(lot.id);
+    std::vector<int> envOfOld(oldLots.size(), -1);
+    for (size_t k = 0; k < oldEnvelopes.size(); ++k)
+        if (oldEnvelopes[k].lot >= 0 && size_t(oldEnvelopes[k].lot) < envOfOld.size())
+            envOfOld[size_t(oldEnvelopes[k].lot)] = int(k);
+
+    std::vector<char> fresh;
+    int cut = 0;
+    for (Block& b : l.blocks)
+    {
+        auto it = oldByKey.find(b.key);
+        if (it != oldByKey.end() && !inRegion(b.outline) && !inRegion(oldBlocks[size_t(it->second)].outline))
+        {
+            for (int id : lotsOfOld[size_t(it->second)])
+            {
+                Lot lot = std::move(oldLots[size_t(id)]);
+                lot.id = int(l.lots.size());
+                lot.block = b.id;
+                if (const int e = envOfOld[size_t(id)]; e >= 0)
+                {
+                    Envelope env = std::move(oldEnvelopes[size_t(e)]);
+                    env.lot = lot.id;
+                    l.envelopes.push_back(std::move(env));
+                }
+                l.lots.push_back(std::move(lot));
+                fresh.push_back(0);
+            }
+            continue;
+        }
+        ++cut;
+        if (streetSides(b.outline) == 0)
+            continue;
+        std::vector<Polygon> pieces = cutBlock(b, l, o, &b.courtyards, &l.parcelWarnings);
+        std::sort(pieces.begin(), pieces.end(), [](const Polygon& x, const Polygon& y) {
+            const Vec2 cx = centroid(x), cy = centroid(y);
+            return cx.x != cy.x ? cx.x < cy.x : cx.y < cy.y;
+        });
+        for (size_t k = 0; k < pieces.size(); ++k)
+        {
+            Lot lot;
+            lot.id = int(l.lots.size());
+            lot.block = b.id;
+            lot.key = stableKey(hash64(b.key * 0x9E3779B97F4A7C15ull + uint64_t(b.method) * 131 + k));
+            lot.area = area(pieces[k]) / kM2;
+            lot.outline = std::move(pieces[k]);
+            lot.random = float(unitRandom(hash64(lot.key) ^ hash64(o.seed)));
+            finishLot(lot, l);
+            l.lots.push_back(std::move(lot));
+            fresh.push_back(1);
+        }
+    }
+
+    // Uses are set over the whole town (they rank lots against each other), then kept only for the new lots.
+    std::vector<Lot> kept = l.lots;
+    for (size_t k = 0; k < l.lots.size(); ++k)
+        if (!fresh[k])
+            for (int& t : l.lots[k].outline.tag)
+                t = -1;
+    assignUses(l, g, era);
+    for (size_t k = 0; k < l.lots.size(); ++k)
+        if (!fresh[k])
+            l.lots[k] = std::move(kept[k]);
+    applyLotOverrides(l, site);
+    for (size_t k = 0; k < l.lots.size(); ++k)
+    {
+        if (!fresh[k])
+            continue;
+        Lot& lot = l.lots[k];
+        lot.route = routeAt(site, centroid(lot.outline));
+        for (int& t : lot.outline.tag)
+            t = t >= 0 ? int(l.graph.edges[size_t(t)].cls) : -1;
+    }
+
+    if (o.buildings)
+    {
+        for (size_t k = 0; k < l.lots.size(); ++k)
+            if (fresh[k] && getsEnvelope(l.lots[k].use) && l.lots[k].frontages > 0)
+            {
+                Envelope env = parcelEnvelope(l.lots[k], l.blocks[size_t(l.lots[k].block)], l, g, o, site);
+                if (!env.footprint.pts.empty())
+                    l.envelopes.push_back(std::move(env));
+            }
+        std::sort(l.envelopes.begin(), l.envelopes.end(), [](const Envelope& a, const Envelope& b) { return a.lot < b.lot; });
+        // Party walls change only where lots were cut afresh and next to them; the kept ones are matched already.
+        const Vec2 margin(2.0 * l.profile.lotDepth);
+        const Vec2 near0 = lo - margin, near1 = hi + margin;
+        std::vector<size_t> local;
+        for (size_t k = 0; k < l.envelopes.size(); ++k)
+            for (const Vec2& q : l.envelopes[k].footprint.pts)
+                if (q.x >= near0.x && q.x <= near1.x && q.y >= near0.y && q.y <= near1.y)
+                {
+                    local.push_back(k);
+                    break;
+                }
+        // Their neighbours join the match so walls shared across the region's edge are found again, but only the local ones are written back.
+        auto box = [](const Polygon& p) {
+            Vec2 a(1e300), z(-1e300);
+            for (const Vec2& q : p.pts)
+                a = glm::min(a, q), z = glm::max(z, q);
+            return std::pair{a - Vec2(10.0), z + Vec2(10.0)};
+        };
+        std::vector<std::pair<Vec2, Vec2>> localBoxes;
+        std::vector<char> isLocal(l.envelopes.size(), 0);
+        for (size_t k : local)
+        {
+            localBoxes.push_back(box(l.envelopes[k].footprint));
+            isLocal[k] = 1;
+        }
+        std::vector<size_t> context = local;
+        for (size_t k = 0; k < l.envelopes.size(); ++k)
+        {
+            if (isLocal[k])
+                continue;
+            const auto [a, z] = box(l.envelopes[k].footprint);
+            if (std::ranges::any_of(localBoxes, [&](const auto& b) { return a.x <= b.second.x && b.first.x <= z.x && a.y <= b.second.y && b.first.y <= z.y; }))
+                context.push_back(k);
+        }
+        std::vector<Envelope> part;
+        for (size_t k : context)
+            part.push_back(l.envelopes[k]);
+        matchPartyWalls(part);
+        for (size_t k = 0; k < local.size(); ++k)
+            l.envelopes[local[k]] = std::move(part[k]);
+        for (const Envelope& env : l.envelopes)
+            if (env.route == BuildingRoute::Library)
+                if (auto it = site.libraryPicks.find(env.key); it != site.libraryPicks.end())
+                    l.placements.push_back(libraryPlacement(env, it->second));
+    }
+    return cut;
 }
 } // namespace settlement

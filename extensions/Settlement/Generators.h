@@ -307,7 +307,7 @@ void afterPattern(Layout& l, const Ground& g, const Options& o);
 /** After street ids: gates and towers on the final streets. */
 void afterStreets(Layout& l, const Ground& g, const Options& o);
 /** After envelopes: eras on blocks, lots and envelopes (with their era's style), megablocks and skybridges. */
-void afterLots(Layout& l, const Ground& g, const Options& o);
+void afterLots(Layout& l, const Site& site, const Ground& g, const Options& o);
 
 /** Streets traced along a tensor field inside the layout's outline. */
 void layTensor(Layout& l, const Ground& g, const Options& o, const TensorSpec& spec, double limit = 0.0);
@@ -354,9 +354,9 @@ uint64_t layoutHash(const Layout& l);
 
 /**
  * Blocks, lots and envelopes again inside lo-hi after the street graph changed there (a street added, moved or removed),
- * the rest kept. Returns how many blocks were remade.
+ * the rest kept (replanParcels). Returns how many blocks were remade.
  */
-int updateBlocks(Layout& l, const Ground& g, const Options& o, Vec2 lo, Vec2 hi);
+int updateBlocks(Layout& l, const Site& site, const Ground& g, const Options& o, Vec2 lo, Vec2 hi);
 
 /** Builtin metric targets for a profile by its name. */
 void applyBuiltinTargets(Profile& p);

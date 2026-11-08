@@ -102,7 +102,7 @@ const char* sideName2(int tag) { return tag == 0 ? "street" : tag == 1 ? "party"
 
 Envelope parcelEnvelope(const Lot& lot, const Block& block, const Layout& l, const Ground& g, const Options& o, const Site& site)
 {
-    const Profile& p = l.profile;
+    const Profile& p = o.profile; // an era or district restyle passes its own profile here
     const std::string era = eraOf(p);
     const bool pm = preModern(era);
     const bool landmark = !lot.landmark.empty();
@@ -207,7 +207,8 @@ Envelope parcelEnvelope(const Lot& lot, const Block& block, const Layout& l, con
     env.tiers.push_back({tierFp, bottom, env.top});
 
     const bool tall = env.tiers.size() > 1;
-    if (tall || era == "modern" || era == "future" || (lot.use == Use::Industrial && !pm))
+    // Otherwise the style's own roof stands: an era or district profile names the roof its buildings take.
+    if (tall || (lot.use == Use::Industrial && !pm))
         env.roof = "flat";
     else if (lot.use == Use::Religious)
         env.roof = era == "early" && landmark ? "dome" : "gable";

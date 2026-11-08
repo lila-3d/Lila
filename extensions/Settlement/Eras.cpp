@@ -4,6 +4,7 @@
 // build calls around its pattern.
 
 #include "Generators.h"
+#include "Parcels.h"
 
 #include <lila/Profile.h>
 
@@ -515,7 +516,7 @@ void afterStreets(Layout& l, const Ground& g, const Options&)
         finishWalls(l, g);
 }
 
-void afterLots(Layout& l, const Ground& g, const Options& o)
+void afterLots(Layout& l, const Site& site, const Ground& g, const Options& o)
 {
     if (!l.gen)
         return;
@@ -538,6 +539,7 @@ void afterLots(Layout& l, const Ground& g, const Options& o)
     }
     // Envelopes take the style of their district, else of their era: floors, heights, depth and roof of that profile.
     std::vector<Envelope> kept;
+    bool restyled = false;
     for (Envelope& env : l.envelopes)
     {
         const Lot& lot = l.lots[size_t(env.lot)];
@@ -555,13 +557,16 @@ void afterLots(Layout& l, const Ground& g, const Options& o)
         }
         Options eo = o;
         eo.profile = *style;
-        Envelope styled = envelopeFor(lot, l, g, eo);
+        Envelope styled = parcelEnvelope(lot, l.blocks[size_t(lot.block)], l, g, eo, site);
         if (styled.footprint.pts.empty())
             continue;
         styled.era = era;
         kept.push_back(std::move(styled));
+        restyled = true;
     }
     l.envelopes = std::move(kept);
+    if (restyled)
+        matchPartyWalls(l.envelopes);
     if (gen.spec && gen.spec->levels)
         finishLevels(l, g, o, *gen.spec->levels);
 }

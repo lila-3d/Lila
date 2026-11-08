@@ -529,7 +529,11 @@ TEST_CASE("settlement lots: commands list, override by id with undo, choose rout
     const json massing = run("settlementBuildings", {{"args", {mesh}}, {"route", "massing"}});
     CHECK(massing["envelopes"].get<int>() > 0);
     CHECK_THROWS_WITH_AS(run("settlementBuildings", {{"args", {mesh}}, {"route", "library"}}), doctest::Contains("librarySearch"), std::exception);
-    CHECK_THROWS_WITH_AS(run("settlementBuildings", {{"args", {mesh}}, {"route", "masonry"}}), doctest::Contains("masonryBuilding"), std::exception);
+    // Another suite in this executable may have loaded Masonry already.
+    if (ops::find("masonryBuilding"))
+        CHECK(run("settlementBuildings", {{"args", {mesh}}, {"route", "masonry"}}).dump().find("built") != std::string::npos);
+    else
+        CHECK_THROWS_WITH_AS(run("settlementBuildings", {{"args", {mesh}}, {"route", "masonry"}}), doctest::Contains("masonryBuilding"), std::exception);
     CHECK_THROWS_WITH_AS(run("settlementFoundations", {{"args", {mesh}}}), doctest::Contains("flat ground"), std::exception);
 }
 

@@ -225,6 +225,9 @@ TEST_CASE("settlement gen: eras build in order and every street, lot and envelop
     for (const Envelope& e : l.envelopes)
     {
         CHECK(e.era == l.lots[size_t(e.lot)].era);
+        // Towers, industry and landmarks take their own roofs whatever the style.
+        if (e.tiers.size() > 1 || e.use == Use::Industrial || !e.landmark.empty())
+            continue;
         era2 += e.era == 2;
         mansard += e.era == 2 && e.roof == "mansard";
         era3 += e.era == 3;
@@ -271,7 +274,7 @@ TEST_CASE("settlement gen: a district runs its own generator and style inside it
     CHECK(alignedShare(l, 0.0, 3.0, deep) + alignedShare(l, 90.0, 3.0, deep) > 0.8);
     int gable = 0, inDistrict = 0;
     for (const Envelope& e : l.envelopes)
-        if (deep(centroid(l.lots[size_t(e.lot)].outline)))
+        if (deep(centroid(l.lots[size_t(e.lot)].outline)) && e.tiers.size() <= 1 && e.use != Use::Industrial && e.landmark.empty())
         {
             ++inDistrict;
             gable += e.roof == "gable";
@@ -342,7 +345,7 @@ TEST_CASE("settlement gen: walls follow the break of slope, gates where main roa
         moat += e.alive && e.moat && e.cls == StreetClass::Water;
     CHECK(moat > 10);
     REQUIRE_FALSE(l.water.empty());
-    CHECK(l.water.back().moat);
+    CHECK(l.water.back().kind == "moat");
     CHECK(gen::lineDistance(l.water.back().pts, w.pts.front()) > 1000.0);
     for (const Lot& lot : l.lots)
         CHECK(bankDistance(centroid(lot.outline), l.water) > 0.0);
@@ -576,7 +579,8 @@ TEST_CASE("settlement gen: a 5 km city grows in seconds and a one-block edit re-
     const Ground g = Ground::plane();
     const Options o = gopts("europeanCity", json::object());
     const auto t0 = clock::now();
-    Layout l = build(site(500000.0), g, o);
+    const Site city = site(500000.0);
+    Layout l = build(city, g, o);
     const double grow = std::chrono::duration<double>(clock::now() - t0).count();
     MESSAGE("5 km city: " << grow << " s, " << l.lots.size() << " lots");
     CHECK(l.lots.size() > 20000);
@@ -597,7 +601,7 @@ TEST_CASE("settlement gen: a 5 km city grows in seconds and a one-block edit re-
     const size_t before = l.blocks.size();
     const auto t1 = clock::now();
     l.graph.addStreet(Vec2(lo.x - 2000.0, c.y), Vec2(hi.x + 2000.0, c.y), StreetClass::Alley);
-    const int remade = updateBlocks(l, g, o, lo - Vec2(2000.0), hi + Vec2(2000.0));
+    const int remade = updateBlocks(l, city, g, o, lo - Vec2(2000.0), hi + Vec2(2000.0));
     const double edit = std::chrono::duration<double>(clock::now() - t1).count();
     MESSAGE("one-block edit: " << edit * 1000.0 << " ms, " << remade << " blocks remade");
     CHECK(remade >= 2);
