@@ -71,7 +71,7 @@ using scene::Graph;
 constexpr int kTipBodyRole = Qt::UserRole + 1;
 constexpr int kTipHintRole = Qt::UserRole + 2;
 
-/** The selection's names, wrapped onto as many rows as the width needs and exactly that tall: never a scroll bar. */
+/** The selection's names, wrapped to the width and sized to fit up to kMaxRows rows; a longer selection scrolls. */
 class SelectionStrip : public QListWidget
 {
 public:
@@ -89,11 +89,15 @@ public:
     void fitHeight()
     {
         doItemsLayout();
+        constexpr int kMaxRows = 3;
+        const int rowStep = count() ? sizeHintForRow(0) + 2 * spacing() : fontMetrics().height() + 10;
         int bottom = 0;
         for (int i = 0; i < count(); ++i)
-            bottom = std::max(bottom, visualItemRect(item(i)).bottom() + 1);
-        const int rows = std::max(bottom + spacing(), fontMetrics().height() + 10);
-        setFixedHeight(rows + 2 * frameWidth());
+            bottom = std::max(bottom, visualItemRect(item(i)).bottom() + 1 + verticalOffset());
+        const int full = std::max(bottom + spacing(), fontMetrics().height() + 10);
+        const int capped = std::min(full, kMaxRows * rowStep + spacing());
+        setVerticalScrollBarPolicy(full > capped ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
+        setFixedHeight(capped + 2 * frameWidth());
     }
 
 protected:
@@ -1176,7 +1180,12 @@ void ChannelBox::refreshStrip()
     }
     mStrip->setVisible(sel.size() > 1);
     if (!mStrip->isHidden())
+    {
         static_cast<SelectionStrip*>(mStrip)->fitHeight();
+        for (int i = 0; i < mStrip->count(); ++i)
+            if (scene::NodeId(mStrip->item(i)->data(Qt::UserRole).toULongLong()) == lead)
+                mStrip->scrollToItem(mStrip->item(i));
+    }
 }
 
 void ChannelBox::noteEdit(const Row& row)
