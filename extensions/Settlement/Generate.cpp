@@ -13,7 +13,9 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <numeric>
 #include <queue>
+#include <set>
 #include <unordered_map>
 #include <stdexcept>
 
@@ -458,7 +460,17 @@ void joinComponents(Layout& l, const Ground& g)
             // Too far or too steep for a straight link: a street routed over the ground joins it instead.
             const std::vector<Vec2> path = route(l, g, p, pa, pb);
             if (path.size() >= 2)
-                graph.addPolyline(path, StreetClass::Local);
+            {
+                // Where the link has to cross water (a moat, a river between quarters) it does so on a bridge.
+                for (int e : graph.addPolyline(path, StreetClass::Local))
+                {
+                    const Vec2 ea = graph.nodes[size_t(graph.edges[size_t(e)].a)].p, eb = graph.nodes[size_t(graph.edges[size_t(e)].b)].p;
+                    bool wet = bankDistance((ea + eb) * 0.5, l.water) < 0.0;
+                    for (size_t w = 0; w < l.water.size() && !wet; ++w)
+                        wet = segmentCrosses(l.water[w].pts, ea, eb);
+                    graph.edges[size_t(e)].bridge = wet;
+                }
+            }
             else
                 l.streetWarnings.push_back(std::format("a street network of {:.0f} m near ({:.0f}, {:.0f}) has no way to the town's: left unconnected",
                                                        length / 100.0, pa.x / 100.0, pa.y / 100.0));
@@ -472,6 +484,75 @@ void joinComponents(Layout& l, const Ground& g)
                         graph.removeEdge(e);
             }
     }
+}
+
+/**
+ * Generated streets other than arterials that still cross or run in water after every generator (a moat dug around
+ * streets already grown, a later era's growth along a bank) are removed: only main roads bridge.
+ */
+void dropStreetsInWater(Layout& l)
+{
+    if (l.water.empty())
+        return;
+    for (size_t e = 0; e < l.graph.edges.size(); ++e)
+    {
+        const StreetEdge& x = l.graph.edges[e];
+        if (!l.graph.isStreet(int(e)) || x.cls == StreetClass::Arterial || x.bridge || x.tunnel || x.path >= 0)
+            continue;
+        const Vec2 a = l.graph.nodes[size_t(x.a)].p, b = l.graph.nodes[size_t(x.b)].p;
+        bool wet = bankDistance((a + b) * 0.5, l.water) < 0.0;
+        for (size_t w = 0; w < l.water.size() && !wet; ++w)
+            wet = segmentCrosses(l.water[w].pts, a, b);
+        if (wet)
+            l.graph.removeEdge(int(e));
+    }
+}
+
+/**
+ * Generated street fragments the wall and water cuts left with no way to the town's network are removed, and the count
+ * reported; fragments holding a street you drew stay.
+ */
+void dropStranded(Layout& l)
+{
+    StreetGraph& graph = l.graph;
+    std::vector<int> parent(graph.nodes.size());
+    std::iota(parent.begin(), parent.end(), 0);
+    auto root = [&](int x) {
+        while (parent[size_t(x)] != x)
+            x = parent[size_t(x)] = parent[size_t(parent[size_t(x)])];
+        return x;
+    };
+    for (size_t e = 0; e < graph.edges.size(); ++e)
+        if (graph.isStreet(int(e)))
+            parent[size_t(root(graph.edges[e].a))] = root(graph.edges[e].b);
+    int centre = -1;
+    double best = std::numeric_limits<double>::max();
+    for (size_t n = 0; n < graph.nodes.size(); ++n)
+        if (graph.degree(int(n)) > 0)
+            if (const double d = glm::length(graph.nodes[n].p - l.center); d < best)
+            {
+                best = d;
+                centre = int(n);
+            }
+    if (centre < 0)
+        return;
+    const int main = root(centre);
+    std::set<int> drawn;
+    for (size_t e = 0; e < graph.edges.size(); ++e)
+        if (graph.isStreet(int(e)) && graph.edges[e].path >= 0)
+            drawn.insert(root(graph.edges[e].a));
+    int removed = 0;
+    double length = 0.0;
+    for (size_t e = 0; e < graph.edges.size(); ++e)
+        if (graph.isStreet(int(e)))
+            if (const int r = root(graph.edges[e].a); r != main && !drawn.count(r))
+            {
+                length += graph.length(int(e));
+                graph.removeEdge(int(e));
+                ++removed;
+            }
+    if (removed)
+        l.streetWarnings.push_back(std::format("{} street pieces ({:.0f} m) cut off by walls or water were removed", removed, length / 100.0));
 }
 
 /**
@@ -1668,6 +1749,8 @@ Layout build(const Site& site, const Ground& g, const Options& in, const WalkSur
     assignStreetIds(l);
     applyOverrides(l, site);
     afterStreets(l, g, o);
+    dropStreetsInWater(l);
+    dropStranded(l);
     nameStreets(l, site);
     for (size_t n = 0; n < l.graph.nodes.size(); ++n)
     {
