@@ -4,6 +4,8 @@
 #include "ui/Theme.h"
 
 #include <QAbstractButton>
+#include <QApplication>
+#include <QCursor>
 #include <QAbstractItemView>
 #include <QComboBox>
 #include <QDockWidget>
@@ -328,6 +330,11 @@ public:
 
     void begin()
     {
+        if (mAnchor && mAnchor != mDock->widget())
+            mAnchor->removeEventFilter(this);
+        mAnchor = anchorUnderCursor();
+        if (mAnchor != mDock->widget())
+            mAnchor->installEventFilter(this);
         show();
         mHighlights->show();
         place();
@@ -355,7 +362,7 @@ protected:
                 return true;
             }
         }
-        else if (obj == mDock->widget() && (e->type() == QEvent::Resize || e->type() == QEvent::Move))
+        else if ((obj == mDock->widget() || obj == mAnchor) && (e->type() == QEvent::Resize || e->type() == QEvent::Move))
             place();
         return false;
     }
@@ -370,6 +377,23 @@ protected:
     }
 
 private:
+    /**
+     * The outermost scrolling region of the panel under the cursor, so in a panel split into parts (a canvas over a
+     * toolkit) the bar sits on the part being searched. The whole panel when the cursor is elsewhere.
+     */
+    QWidget* anchorUnderCursor() const
+    {
+        QWidget* content = mDock->widget();
+        QWidget* hit = QApplication::widgetAt(QCursor::pos());
+        if (!hit || !content->isAncestorOf(hit))
+            return content;
+        QWidget* anchor = content;
+        for (QWidget* w = hit; w && w != content; w = w->parentWidget())
+            if (qobject_cast<QAbstractScrollArea*>(w) && !qobject_cast<QAbstractItemView*>(w->parentWidget()))
+                anchor = w;
+        return anchor;
+    }
+
     void place()
     {
         QWidget* content = mDock->widget();
@@ -377,9 +401,12 @@ private:
             return;
         const QRect area = content->geometry();
         mHighlights->setGeometry(area);
-        const int w = std::min(300, std::max(160, area.width() - 8));
+        QRect at = area;
+        if (mAnchor && mAnchor != content && mAnchor->isVisible())
+            at = QRect(mAnchor->mapTo(mDock, QPoint(0, 0)), mAnchor->size()).intersected(area);
+        const int w = std::min(300, std::max(160, at.width() - 8));
         const int h = sizeHint().height();
-        setGeometry(area.right() - w - 3, area.top() + 4, w, h);
+        setGeometry(at.right() - w - 3, at.top() + 4, w, h);
         mHighlights->raise();
         raise();
     }
@@ -453,6 +480,7 @@ private:
     }
 
     QDockWidget* mDock;
+    QPointer<QWidget> mAnchor;
     Highlights* mHighlights;
     QLineEdit* mEdit;
     QLabel* mCount;
