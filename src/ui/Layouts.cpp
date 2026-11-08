@@ -103,7 +103,7 @@ const std::vector<std::pair<std::string, json>>& presets()
         {"Sculpt", preset(with({"sculptPanel"}), {"sculptPanel", "channelBox"}, "Sculpt", {{"sculptPanel", {{"width", 600}}}}, {},
                           json::array({{"sculptPanel"}, {"outliner", "channelBox"}}))},
         {"Texture", preset(with({"textureSets", "baker", "materialEditor"}), {"textureSets", "materialEditor"}, "Texture")},
-        {"Bake", preset(with({"baker", "textureSets", "materialEditor"}), {"baker", "channelBox"}, "Texture")},
+        {"Bake", preset(with({"baker", "textureSets", "materialEditor"}), {"baker", "channelBox"}, "Texture", {{"baker", {{"width", 375}}}})},
         {"Rig", preset(with({"timeSlider"}), {"channelBox"}, "Rig", {{"outliner", {{"height", 0.5}}}})},
         {"Animate", preset(with({"animLayers", "graphEditor", "timeSlider"}), {"graphEditor", "channelBox"}, "Animate",
                            {{"outliner", {{"height", 0.45}}}, {"graphEditor", {{"height", 0.32}}}})},
