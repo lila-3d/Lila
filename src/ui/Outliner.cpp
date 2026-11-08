@@ -1143,13 +1143,18 @@ void Outliner::shadeAncestors()
 {
     scene::Graph& g = scene::Graph::current();
     const std::set<scene::NodeId> chain = outliner::selectionAncestors(g, g.selection());
-    // A step above the background and well below the selection highlight.
-    const QBrush shade(themeShade(56));
+    // Part way from the list toward the selection colour, so the chain reads as tied to the selection in every theme.
+    const QColor base = themeColor("base"), sel = themeColor("highlight");
+    constexpr double kToward = 0.45;
+    const QBrush shade(QColor::fromRgbF(float(base.redF() + (sel.redF() - base.redF()) * kToward),
+                                        float(base.greenF() + (sel.greenF() - base.greenF()) * kToward),
+                                        float(base.blueF() + (sel.blueF() - base.blueF()) * kToward)));
     for (auto& [id, item] : mItems)
     {
-        bool on = chain.contains(id);
-        if (item->data(0, Qt::BackgroundRole).isValid() != on)
-            item->setData(0, Qt::BackgroundRole, on ? QVariant(shade) : QVariant());
+        const QVariant want = chain.contains(id) ? QVariant(shade) : QVariant();
+        if (item->data(0, Qt::BackgroundRole) != want)
+            for (int c = 0; c < item->columnCount(); ++c)
+                item->setData(c, Qt::BackgroundRole, want);
     }
 }
 
