@@ -1984,8 +1984,8 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
             if (field.ok() && (!best.ok() || (flawsOf(field) < patchFlaws && (!fewFlaws || field.metrics.irregular <= 3 * best.metrics.irregular / 2))))
             {
                 result.notes.push_back(best.ok() ? "the patch layout came out with " + std::to_string(patchFlaws) +
-                                                       (patchFlaws == 1 ? " flaw" : " flaws") + ", so this is the Field layout, with more poles"
-                                                 : "the patch layout didn't work out for this shape (" + why + "), so this is the Field layout");
+                                                       (patchFlaws == 1 ? " flaw" : " flaws") + ", so each point is placed from the flow near it instead, with more poles"
+                                                 : "the patch layout didn't work out for this shape (" + why + "), so each point is placed from the flow near it instead");
                 best = std::move(field);
             }
         }
