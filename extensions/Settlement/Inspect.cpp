@@ -168,7 +168,18 @@ bool edgeInWater(const Layout& l, int edge)
 bool edgeIsBridge(const Layout& l, int edge)
 {
     const StreetEdge& e = l.graph.edges[size_t(edge)];
-    return e.bridge || e.tunnel || (e.cls == StreetClass::Arterial && edgeInWater(l, edge));
+    if (e.bridge || e.tunnel)
+        return true;
+    if (e.cls != StreetClass::Arterial || l.water.empty())
+        return false;
+    if (edgeInWater(l, edge))
+        return true;
+    // A main road's approach whose end reaches into the channel is part of the span, not a climb up the bank.
+    const Vec2 a = l.graph.nodes[size_t(e.a)].p, b = l.graph.nodes[size_t(e.b)].p;
+    for (int k = 0; k <= 8; ++k)
+        if (bankDistance(a + (b - a) * (k / 8.0), l.water) < 0.0)
+            return true;
+    return false;
 }
 
 json checkLayout(const Layout& l, const Ground& ground, const Options& o)
@@ -241,7 +252,8 @@ json checkLayout(const Layout& l, const Ground& ground, const Options& o)
         const StreetEdge& x = l.graph.edges[size_t(s.second)];
         const Vec2 a = l.graph.nodes[size_t(x.a)].p, b = l.graph.nodes[size_t(x.b)].p;
         issue("grade", "warning", "street:" + std::to_string(street),
-              std::format("{} street {} climbs {:.1f}%, over its {:.1f}%", className(x.cls), street, s.first * 100.0, classMaxGrade(p, x.cls) * 100.0),
+              std::format("{} street {} climbs {:.1f}% over {:.1f} m, over its {:.1f}%", className(x.cls), street, s.first * 100.0,
+                          glm::length(b - a) / 100.0, classMaxGrade(p, x.cls) * 100.0),
               at((a + b) * 0.5));
     }
 
