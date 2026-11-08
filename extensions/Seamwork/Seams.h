@@ -86,6 +86,11 @@ struct Options
     std::vector<std::pair<int, int>> ignorePairs;
     /** Rays for the crease mask; null traces the objects' own trees on the CPU. */
     OcclusionFn occluded;
+    /**
+     * Where the crease mask is traced without occluded: auto (the bake's GPU AO when the renderer registered it, else
+     * the CPU), gpu, cpu, or bakeCpu (the GPU path's samples through the bake's CPU kernel, its reference).
+     */
+    std::string creaseBackend = "auto";
 };
 
 /** A join between two surfaces as a polyline in world space, with one value per point in each array. */
@@ -132,7 +137,7 @@ struct Result
     std::vector<std::string> layers;
     /** Per object, per point: crease occlusion 0 to 1 (empty unless crease was on). */
     std::vector<std::vector<float>> crease;
-    /** cpu, or what the caller's occlusion function said it was. */
+    /** rt or compute (the bake's GPU AO), cpu, or custom (the caller's occlusion function). */
     std::string creaseBackend;
     std::vector<std::string> warnings;
     size_t crossings = 0;
@@ -140,6 +145,15 @@ struct Result
     double totalLength() const;
     std::vector<PairStats> pairs() const;
 };
+
+/**
+ * Crease occlusion (0 open, 1 enclosed) at each given point (world position and unit normal per object, empty lists
+ * skipped) through the bake backend's AO kernel, every object and the ground near them as occluders. Returns the
+ * backend's mode (rt, compute) or an empty string, with why in note, when no GPU bake backend ran.
+ */
+std::string bakeCrease(std::span<const Object> objects, const Ground* ground, const std::vector<std::vector<glm::dvec3>>& points,
+                       const std::vector<std::vector<glm::dvec3>>& normals, const Options& o, std::vector<std::vector<float>>& out, std::string& note,
+                       const std::string& backend = "gpu");
 
 /** Every join between the objects and with the ground (when given). Deterministic at any thread count. */
 Result findSeams(std::span<const Object> objects, const Ground* ground, const Options& o);

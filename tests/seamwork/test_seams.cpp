@@ -1,4 +1,5 @@
 #include <Seams.h>
+#include <lila/Bake.h>
 
 #include <doctest/doctest.h>
 
@@ -268,6 +269,49 @@ TEST_CASE("seams: creases between stacked boxes come from occlusion")
         for (float v : values)
             most = std::max(most, v);
     CHECK(most > 0.0f);
+}
+
+TEST_CASE("seams: crease occlusion through the bake's AO kernel matches the CPU trace")
+{
+    const std::vector<Object> objs = {object("Floor", box({0, 0, 0}, {200, 20, 200})), object("Block", box({50, 20.0, 50}, {150, 120, 150})),
+                                      object("Post", box({160, 20, 160}, {180, 80, 180}))};
+    // Below every vertex: a buried point is solid ground to the heightfield trace but behind a one-sided surface to the bake.
+    const Ground g = flatGround(-5.0);
+    Options o = quick();
+    o.nearContact = false;
+    o.crease = true;
+    o.creaseRange = 30.0;
+    o.creaseRays = 256;
+    o.creaseBackend = "cpu";
+    const Result cpu = findSeams(objs, &g, o);
+    o.creaseBackend = "bakeCpu";
+    lila::bake::registerBuiltinMaps();
+    const Result baked = findSeams(objs, &g, o);
+    CHECK(baked.creaseBackend == "bakeCpu");
+    REQUIRE(baked.crease.size() == cpu.crease.size());
+    size_t compared = 0, enclosed = 0;
+    for (size_t i = 0; i < cpu.crease.size(); ++i)
+    {
+        REQUIRE(baked.crease[i].size() == cpu.crease[i].size());
+        for (size_t p = 0; p < cpu.crease[i].size(); ++p)
+        {
+            INFO("object " << i << " point " << p);
+            CHECK(std::abs(baked.crease[i][p] - cpu.crease[i][p]) < 0.15f);
+            enclosed += baked.crease[i][p] > 0.2f;
+            ++compared;
+        }
+    }
+    CHECK(compared > 16);
+    CHECK(enclosed > 0);
+
+    // With no GPU bake backend, auto traces on the CPU and says so.
+    o.creaseBackend = "auto";
+    const Result fallback = findSeams(objs, &g, o);
+    CHECK(fallback.creaseBackend == "cpu");
+    bool warned = false;
+    for (const std::string& w : fallback.warnings)
+        warned = warned || w.find("creases traced on the CPU") != std::string::npos;
+    CHECK(warned);
 }
 
 #include <Scatter.h>

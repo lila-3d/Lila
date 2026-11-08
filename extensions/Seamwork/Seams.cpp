@@ -647,33 +647,72 @@ Result findSeams(std::span<const Object> objects, const Ground* ground, const Op
     // Creases: short-range occlusion per point; its iso-line away from the other joins becomes a crease curve.
     if (o.crease)
     {
-        r.creaseBackend = o.occluded ? "custom" : "cpu";
         r.crease.resize(objects.size());
-        const SegmentIndex joins(r);
+        auto creaseTarget = [&](const Object& ob) { return !ob.ignore && !ob.ground && ob.bvh && !ob.bvh->empty(); };
+        // World position and normal per point; invalid points keep a zero normal and stay at 0.
+        std::vector<std::vector<glm::dvec3>> cpts(objects.size()), cnrm(objects.size());
         for (size_t i = 0; i < objects.size(); ++i)
         {
             const Object& ob = objects[i];
-            if (ob.ignore || ob.ground || !ob.bvh || ob.bvh->empty())
+            if (!creaseTarget(ob))
                 continue;
             const Mesh& m = *ob.mesh;
             const std::vector<glm::dvec3> pn = pointNormals(m);
             const glm::dmat3 nm = normalMatrix(ob.world);
-            std::vector<float>& values = r.crease[i];
-            values.assign(m.pointCapacity(), 0.0f);
-            tbb::parallel_for(Index(0), m.pointCapacity(), [&](Index p) {
-                if (!m.pointValid(p))
-                    return;
-                const glm::dvec3 n = safeNormalize(nm * pn[p], up);
-                const glm::dvec3 origin = xformPoint(ob.world, m.position(p)) + n * 0.05;
-                int blocked = 0;
-                const auto dirs = hemisphere(n, std::max(4, o.creaseRays));
-                for (const glm::dvec3& d : dirs)
+            cpts[i].assign(m.pointCapacity(), glm::dvec3(0.0));
+            cnrm[i].assign(m.pointCapacity(), glm::dvec3(0.0));
+            for (Index p = 0; p < m.pointCapacity(); ++p)
+                if (m.pointValid(p))
                 {
-                    const bool hit = o.occluded ? o.occluded(origin, d, o.creaseRange) : anyBlocks(objects, prep, ground, origin, d, o.creaseRange);
-                    blocked += hit ? 1 : 0;
+                    cpts[i][p] = xformPoint(ob.world, m.position(p));
+                    cnrm[i][p] = safeNormalize(nm * pn[p], up);
                 }
-                values[p] = float(double(blocked) / double(dirs.size()));
-            });
+        }
+        std::string gpu;
+        if (o.occluded)
+            r.creaseBackend = "custom";
+        else if (o.creaseBackend != "cpu" && std::any_of(cpts.begin(), cpts.end(), [](const auto& v) { return !v.empty(); }))
+        {
+            std::string note;
+            const bool reference = o.creaseBackend == "bakeCpu";
+            gpu = bakeCrease(objects, ground, cpts, cnrm, o, r.crease, note, reference ? "cpu" : "gpu");
+            if (reference && !gpu.empty())
+                gpu = "bakeCpu";
+            if (gpu.empty())
+            {
+                if (o.creaseBackend == "gpu")
+                    throw std::runtime_error("crease on the GPU: " + note);
+                r.warnings.push_back("contact creases traced on the CPU: " + note);
+            }
+        }
+        if (!o.occluded)
+            r.creaseBackend = gpu.empty() ? "cpu" : gpu;
+        const SegmentIndex joins(r);
+        for (size_t i = 0; i < objects.size(); ++i)
+        {
+            const Object& ob = objects[i];
+            if (!creaseTarget(ob))
+                continue;
+            const Mesh& m = *ob.mesh;
+            std::vector<float>& values = r.crease[i];
+            if (gpu.empty())
+            {
+                values.assign(m.pointCapacity(), 0.0f);
+                tbb::parallel_for(Index(0), m.pointCapacity(), [&](Index p) {
+                    if (!m.pointValid(p))
+                        return;
+                    const glm::dvec3 n = cnrm[i][p];
+                    const glm::dvec3 origin = cpts[i][p] + n * 0.05;
+                    int blocked = 0;
+                    const auto dirs = hemisphere(n, std::max(4, o.creaseRays));
+                    for (const glm::dvec3& d : dirs)
+                    {
+                        const bool hit = o.occluded ? o.occluded(origin, d, o.creaseRange) : anyBlocks(objects, prep, ground, origin, d, o.creaseRange);
+                        blocked += hit ? 1 : 0;
+                    }
+                    values[p] = float(double(blocked) / double(dirs.size()));
+                });
+            }
             std::vector<uint8_t> closedFlags;
             const auto lines = isoLines(m, *ob.bvh, ob.world, values, o.creaseThreshold, &closedFlags);
             for (size_t li = 0; li < lines.size(); ++li)
