@@ -249,6 +249,12 @@ struct PlacementOptions
  */
 LILA_SCENE_API json placementPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, const PlacementOptions& o);
 
+/** placementPlan, also handing back the meshes the groups' gnMesh index (geometry nodes parts and bases). */
+LILA_SCENE_API json placementPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, const PlacementOptions& o, std::vector<scene::MeshPtr>& meshes);
+
+/** Writes a mesh alone at the origin as an FBX for Unreal. Any thread. */
+LILA_SCENE_API bool writeMeshFbx(const scene::MeshPtr& mesh, const std::string& name, const fs::path& path, std::string* err);
+
 /**
  * More of what a placement carries: an extension returns a JSON object whose fields are merged into the placement of the
  * mesh (Stagehand's "physics"), or null for none. A placement whose physics.simulate is true needs an actor of its own,

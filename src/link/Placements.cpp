@@ -533,18 +533,6 @@ json meshMaterials(scene::Graph& g, const geo::Mesh& mesh)
     return out;
 }
 
-/** Writes a mesh alone at the origin as an FBX for Unreal. Any thread. */
-bool writeMeshFbx(const scene::MeshPtr& mesh, const std::string& name, const fs::path& path, std::string* err)
-{
-    fbx::ExportScene scene;
-    scene.upAxis = math::upAxis();
-    fbx::ExportNode node;
-    node.name = name;
-    node.mesh = mesh;
-    scene.nodes.push_back(std::move(node));
-    return fbx::writeFbx(scene, path, fbx::ExportOptions{}, err);
-}
-
 /** The components every placement carries with the same values: what an instanced group's holder actor takes. */
 json sharedComponents(const json& placements)
 {
@@ -784,6 +772,22 @@ json placementPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, con
 {
     std::vector<scene::MeshPtr> meshes;
     return buildPlan(g, roots, o, meshes);
+}
+
+json placementPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, const PlacementOptions& o, std::vector<scene::MeshPtr>& meshes)
+{
+    return buildPlan(g, roots, o, meshes);
+}
+
+bool writeMeshFbx(const scene::MeshPtr& mesh, const std::string& name, const fs::path& path, std::string* err)
+{
+    fbx::ExportScene scene;
+    scene.upAxis = math::upAxis();
+    fbx::ExportNode node;
+    node.name = name;
+    node.mesh = mesh;
+    scene.nodes.push_back(std::move(node));
+    return fbx::writeFbx(scene, path, fbx::ExportOptions{}, err);
 }
 
 std::vector<std::string> customDataNames(const scene::Node& source)

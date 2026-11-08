@@ -947,6 +947,92 @@ void writeTileFbx(const Tile& tile, const fs::path& file, const std::string& nam
         throw std::runtime_error("writing " + file.string() + ": " + err);
 }
 
+/**
+ * Sends one cliff kit: hism through unrealPlaceInstances, or assembly: its pieces imported with Nanite and one Nanite
+ * Assembly (USD, UE 5.7+) drawing every fitted piece, placed as a single actor.
+ */
+json sendKit(Graph& g, const json& entry, const std::string& kitAs, const std::string& id, const std::string& content, const std::string& hlod,
+             const std::function<json(const char*, const json&)>& call, const std::string& cmd)
+{
+    LILA_ZONE();
+    Node* host = g.find(entry.value("mesh", std::string()));
+    const std::string name = identifier(entry.value("name", std::string("Kit")));
+    if (!host)
+        throw std::runtime_error(name + ": the kit's mesh is gone");
+    if (kitAs == "hism")
+        return ops::execute("unrealPlaceInstances", {{"args", {host->path()}}, {"mode", "hism"}, {"folder", content + "/Kits"}, {"wait", true}});
+
+    link::PlacementOptions o;
+    o.folder = content + "/Kits/" + name;
+    o.mode = "hism";
+    o.collision = "complexAsSimple";
+    o.nanite = true;
+    o.lightingChannels = false;
+    std::vector<scene::MeshPtr> meshes;
+    const json plan = link::placementPlan(g, {host->id()}, o, meshes);
+    std::vector<size_t> partGroups;
+    const std::vector<link::AssemblyInstance> instances = link::assemblyInstances(plan["groups"], partGroups);
+    if (instances.empty())
+        throw std::runtime_error(name + ": the kit has no fitted pieces");
+    const fs::path dir = link::cacheDir() / "terrain" / (name + "_kit");
+    std::vector<std::string> parts;
+    json errors = json::array();
+    for (size_t gi : partGroups)
+    {
+        const json& grp = plan["groups"][gi];
+        const std::string contentPath = grp["contentPath"].get<std::string>();
+        const std::string asset = contentPath.substr(contentPath.rfind('/') + 1);
+        const fs::path file = dir / (asset + ".fbx");
+        std::string err;
+        const scene::MeshPtr mesh = grp.contains("gnMesh") ? meshes[grp["gnMesh"].get<size_t>()] : nullptr;
+        if (!mesh || !link::writeMeshFbx(mesh, asset, file, &err))
+            throw std::runtime_error(name + ": writing " + asset + " failed: " + err);
+        const json mapping = {{"contentPath", contentPath}, {"kind", "static"}, {"collision", "complexAsSimple"}, {"nanite", true}, {"reapplyOptions", true}};
+        const json imported = call("importAsset", link::importParams(file, mapping));
+        std::string objectPath = grp["objectPath"].get<std::string>();
+        for (const json& made : imported.value("assets", json::array()))
+            if (made.is_string() && made.get<std::string>().ends_with("/" + asset + "." + asset))
+                objectPath = made.get<std::string>();
+        parts.push_back(objectPath);
+        std::error_code ec;
+        fs::remove(file, ec);
+    }
+    const std::string root = "SM_" + name + "_Assembly";
+    const std::string assemblyPath = content + "/Kits/" + root;
+    // A Nanite Assembly rebuilds whenever a part is reimported; replacing it outright is quicker and never races that build.
+    try
+    {
+        call("deleteAssets", {{"paths", json::array({assemblyPath + "." + root})}});
+    }
+    catch (const std::exception& e)
+    {
+        errors.push_back(e.what());
+    }
+    const fs::path usd = dir / (root + ".usda");
+    std::string err;
+    if (!link::writeNaniteAssemblyUsda(usd, root, parts, instances, &err))
+        throw std::runtime_error(name + ": " + err);
+    const json imported = call("importAsset", link::importParams(usd, {{"contentPath", assemblyPath}, {"kind", "static"}, {"nanite", true}}));
+    for (const json& e : imported.value("errors", json::array()))
+        errors.push_back(e.is_string() ? e.get<std::string>() : e.dump());
+    std::string assembly = assemblyPath + "." + root;
+    for (const json& made : imported.value("assets", json::array()))
+        if (made.is_string() && made.get<std::string>().ends_with("/" + root + "." + root))
+            assembly = made.get<std::string>();
+    const std::string group = id + "/kits/" + name;
+    json params = {{"group", group},
+                   {"label", root},
+                   {"mesh", assembly},
+                   {"mode", "actors"},
+                   {"placements", json::array({{{"id", group}, {"name", root}, {"location", json::array({0, 0, 0})},
+                                                {"rotation", json::array({0, 0, 0, 1})}, {"scale", json::array({1, 1, 1})}}})}};
+    if (!hlod.empty())
+        params["hlodLayer"] = hlod;
+    call("placeInstances", params);
+    log::info("{}: kit {} sent as a Nanite Assembly of {} pieces ({} parts)", cmd, name, instances.size(), parts.size());
+    return {{"name", name}, {"as", "assembly"}, {"assembly", assembly}, {"parts", parts}, {"instances", instances.size()}, {"errors", errors}};
+}
+
 json runSendCliffs(const Args& a)
 {
     LILA_ZONE();
@@ -1029,6 +1115,11 @@ json runSendCliffs(const Args& a)
                              {"triangles", p.tile.triangles}, {"lods", p.tile.lods.size()}, {"nanite", p.tile.nanite}});
     }
     json out = {{"cellSize", tp.cell}, {"meshes", perMesh}, {"tiles", tilesJson}, {"tileCount", planned.size()}};
+    const std::string kitAs = a.get<std::string>("kitAs", "assembly");
+    json kitNames = json::array();
+    for (const json& k : kits)
+        kitNames.push_back(k.value("name", std::string()));
+    out["kits"] = {{"names", kitNames}, {"as", kitAs}};
     if (dryRun)
     {
         if (a.has("folder"))
@@ -1075,6 +1166,7 @@ json runSendCliffs(const Args& a)
         link::TileItem it;
         it.key = p.key;
         it.hash = p.tile.hash ^ link::hashBytes(hlod.data(), hlod.size());
+        it.group = p.key;
         json options = {{"nanite", p.tile.nanite}, {"collision", "complexAsSimple"}, {"existing", "replace"}, {"reapplyOptions", true}};
         // Without Nanite the collision comes from the last LOD: simplified, and its borders still meet the neighbours'.
         options["lodForCollision"] = !p.tile.nanite && p.tile.lods.size() > 1 ? int64_t(p.tile.lods.size() - 1) : int64_t(0);
@@ -1114,7 +1206,22 @@ json runSendCliffs(const Args& a)
         log::info("terrainSendCliffs: tile {} of {} ({})", index + 1, total, key);
         return stopAfter < 0 || int64_t(index) < stopAfter;
     };
-    const link::TileSendResult r = link::sendTiles(*client, items, so);
+    const link::TileSendResult r = items.empty() ? link::TileSendResult{} : link::sendTiles(*client, items, so);
+    json kitResults = json::array();
+    if (!r.cancelled)
+        for (const json& k : kits)
+        {
+            try
+            {
+                kitResults.push_back(sendKit(g, k, kitAs, id, content, hlod, call, cmd));
+            }
+            catch (const std::exception& e)
+            {
+                kitResults.push_back({{"name", k.value("name", std::string())}, {"error", e.what()}});
+                log::warn("{}: kit {}: {}", cmd, k.value("name", std::string()), e.what());
+            }
+        }
+    out["kits"]["sent"] = kitResults;
     json sentAssets = json::array();
     for (const std::string& s : r.assets)
         if (!s.empty())
@@ -1137,6 +1244,11 @@ json runSendCliffs(const Args& a)
         out["material"] = materialResult.value("material", json());
     out["sent"] = r.sent;
     out["skipped"] = r.skipped;
+    out["restored"] = r.restored;
+    out["replaced"] = r.replaced;
+    if (!r.warnings.empty())
+        for (const std::string& w : r.warnings)
+            out["warnings"].push_back(w);
     out["failed"] = r.failed;
     out["cancelled"] = r.cancelled;
     out["stale"] = r.stale;
@@ -1305,10 +1417,11 @@ void registerCliffCommands(ext::Context& ctx)
                "exactly, every LOD and the collision are reduced with their borders kept so neighbours meet at any LOD, each "
                "tile's pivot is its centre so its actor lands in its own cell, Nanite per tile (nanite: auto turns it on past "
                "naniteTriangles), and without Nanite the collision comes from the last LOD. Tiles go one at a time "
-               "through LilaLink with progress, and only tiles whose content changed are sent again; an interrupted send "
+               "through LilaLink with progress; only tiles whose content changed, or whose asset or actor Unreal lost, are sent "
+               "again (a lost actor is placed again without reimporting); an interrupted send "
                "carries on where it stopped. hlodLayer= puts every actor on that HLOD layer. Tiles get MI_<terrain>_Cliffs "
                "(MF_LilaTerrainVolume). dryRun=True plans the tiles (and writes their FBX to folder= when given) without "
-               "Unreal. Returns the tiles, sent, skipped, failed, stale and assets.",
+               "Unreal. Returns the tiles, sent, skipped, restored, replaced, failed, stale and assets.",
         .positionalDoc = "terrain mesh or its modifier",
         .flags = {{"cellSize", "cs", T::Float, 12800.0, "World Partition cell size, cm.", {}, {}, 100.0},
                   {"lods", "ld", T::Int, int64_t(3), "Levels per tile.", {}, {}, 1.0, 8.0},

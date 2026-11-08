@@ -1,5 +1,6 @@
 lila_module(lila_link Scene
     Exporters.cpp
+    AssemblySend.cpp
     ExpressionRig.cpp
     LinkCommands.cpp
     MlDeformerExport.cpp
