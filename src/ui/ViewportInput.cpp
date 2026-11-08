@@ -469,6 +469,20 @@ bool ViewportWidget::selectLoopAt(QPointF at, Qt::KeyboardModifiers mods)
     };
     try
     {
+        // A Ctrl click before this one on the same loop anchors a run: only the edges between the two are removed.
+        if (ctrl && !shift && mode == ComponentMode::Edge)
+        {
+            const scene::componentPick::Hover& prev = mClicked[0] == h ? mClicked[1] : mClicked[0];
+            if (prev.node == h.node && prev.mode == mode && prev.id != h.id &&
+                !std::ranges::binary_search(scene::components::selected(h.node, mode), prev.id) &&
+                std::ranges::count(geo::edgeLoop(*mesh, h.id), prev.id) != 0)
+            {
+                ops::execute("selectPathBetween",
+                             {{"args", {n->path()}}, {"kind", "edge"}, {"from", prev.id}, {"to", h.id}, {"deselect", true}, {"symmetric", symmetric}},
+                             CallSource::UI);
+                return true;
+            }
+        }
         if (op)
         {
             json call = {{"args", {n->path()}}, {op, true}, {"symmetric", symmetric}};
