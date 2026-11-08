@@ -425,12 +425,13 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
                                          2, body);
     addSection(collapsibleSection("Unwrap", stacked(body, {unwrapTiles, unwrapPush}), body, kUvCollapsed));
 
-    addSection(collapsibleSection("Project",
-                                  controls::grid({planarTile(body), tile("uv.projectBox", "box", "Box"),
-                                                  tile("uv.projectCylindrical", "cylinder", "Cylindrical"),
-                                                  tile("uv.projectSpherical", "sphere", "Spherical")},
-                                                 kToolkitColumns, body),
-                                  body, kUvCollapsed));
+    QToolButton* hoseBtn = uvKitTile("Hose", "pipeline", QString::fromStdString(actions::tooltip("uv.hose")), body, "uv.hose");
+    connect(hoseBtn, &QToolButton::clicked, this, [this, packCall] { runCommand("uvHose", packCall()); });
+    QWidget* projectTiles = controls::grid({planarTile(body), tile("uv.projectBox", "box", "Box"),
+                                            tile("uv.projectCylindrical", "cylinder", "Cylindrical"), hoseBtn},
+                                           kToolkitColumns, body);
+    addSection(collapsibleSection("Project", stacked(body, {projectTiles, controls::overflow({"uv.projectSpherical"}, body)}), body,
+                                  kUvCollapsed));
 
     // Relaxing: live solving, one-shot solves, pins, the stretch/compress balance and the brushes.
     QToolButton* live = uvKitTile("Live", "bolt", QString::fromStdString(actions::tooltip("uv.liveMode")), body);
@@ -988,5 +989,8 @@ void registerUvActions()
     cmd("uv.projectBox", "Box Projection", "uvProject", json{{"type", "box"}}, "Project uvs from six sides.");
     cmd("uv.projectCylindrical", "Cylindrical Projection", "uvProject", json{{"type", "cylindrical"}}, "Project uvs around an axis.");
     cmd("uv.projectSpherical", "Spherical Projection", "uvProject", json{{"type", "spherical"}}, "Project uvs from the centre.");
+    cmd("uv.hose", "Hose UVs", "uvHose", json::object(),
+        "Pipes, hoses, cables and rings: one straight strip per tube with its seam on the least seen side, long runs cut where least "
+        "seen, round ends as circles. Seam views, cameras or planes in the options say where it is seen from.");
 }
 } // namespace lila::ui

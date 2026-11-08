@@ -4,6 +4,7 @@
 
 #include "uv/Chart.h"
 
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -15,12 +16,17 @@ enum class SeamMethod : uint8_t
     OptCuts, // joint seam and distortion optimisation (Li et al. 2018): grow seams where they relieve the most stretch, zip back the rest
 };
 
-/** A place seams hide from, such as where a first person camera sits or a character's face is seen from. */
+/**
+ * A place seams hide from, such as where a first person camera sits or a character's face is seen from. A plane sees along
+ * its normal instead, like an orthographic camera, onto whichever side the surface is on.
+ */
 struct SeamView
 {
     glm::dvec3 position{0.0}; // object space
     /** How hard seams avoid what it sees; negative draws them towards it instead. */
     double weight = 1.0;
+    /** Set for a plane through position: object space, unit length. */
+    std::optional<glm::dvec3> planeNormal;
 };
 
 struct AutoSeamOptions

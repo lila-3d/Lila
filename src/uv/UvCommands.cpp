@@ -279,7 +279,7 @@ std::vector<SeamView> seamViewArgs(const Args& a)
         {
             Node* n = g.find(name.get<std::string>());
             if (!n || !n->type().isA("transform"))
-                throw CommandError("views: " + name.get<std::string>() + " is not a transform, camera or locator");
+                throw CommandError("views: " + name.get<std::string>() + " is not a camera, locator or mesh");
             nodes.push_back(n);
         }
     else
@@ -289,7 +289,27 @@ std::vector<SeamView> seamViewArgs(const Args& a)
     for (Node* n : nodes)
     {
         SeamView v;
-        v.position = glm::dvec3(n->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]);
+        const glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+        v.position = glm::dvec3(world[3]);
+        // A mesh is a plane: it sees along its average normal.
+        if (MeshPtr mesh = cageOf(g, n->id()))
+        {
+            glm::dvec3 normal(0.0), center(0.0);
+            double area = 0.0;
+            for (Index f = 0; f < mesh->faceCapacity(); ++f)
+                if (mesh->faceValid(f))
+                {
+                    normal += mesh->faceAreaVector(f);
+                    center += mesh->faceCentroid(f) * mesh->faceArea(f);
+                    area += mesh->faceArea(f);
+                }
+            normal = glm::transpose(glm::inverse(glm::dmat3(world))) * normal;
+            if (area > 0.0 && glm::length(normal) > 1e-12)
+            {
+                v.position = glm::dvec3(world * glm::dvec4(center / area, 1.0));
+                v.planeNormal = glm::normalize(normal);
+            }
+        }
         if (int i = n->type().attrIndex(kSeamViewAttr); i >= 0)
             if (const double* w = std::get_if<double>(&n->value(i)))
                 v.weight = *w;
@@ -298,12 +318,24 @@ std::vector<SeamView> seamViewArgs(const Args& a)
     return out;
 }
 
+/** Seam views brought from world space into the node's. */
+std::vector<SeamView> viewsIn(std::vector<SeamView> views, Node& node)
+{
+    const glm::dmat4 world = node.as<glm::dmat4>(scene::Transform::kWorldMatrix);
+    const glm::dmat4 toObject = glm::inverse(world);
+    for (SeamView& v : views)
+    {
+        v.position = glm::dvec3(toObject * glm::dvec4(v.position, 1.0));
+        if (v.planeNormal)
+            v.planeNormal = glm::normalize(glm::transpose(glm::dmat3(world)) * *v.planeNormal);
+    }
+    return views;
+}
+
 /** The options for one mesh: seam views in its space, and with symmetry on, its mirror edges. */
 AutoSeamOptions seamsIn(AutoSeamOptions o, Node& node, const geo::Mesh& m, const std::optional<geo::SymmetryMap>& map)
 {
-    const glm::dmat4 toObject = glm::inverse(node.as<glm::dmat4>(scene::Transform::kWorldMatrix));
-    for (SeamView& v : o.views)
-        v.position = glm::dvec3(toObject * glm::dvec4(v.position, 1.0));
+    o.views = viewsIn(std::move(o.views), node);
     if (map)
     {
         std::vector<Index> all(m.edgeCapacity());
@@ -333,6 +365,14 @@ AutoSeamOptions seamArgs(const Args& a)
     return o;
 }
 
+FlagDef viewsFlag()
+{
+    return nodeFlag({"views", "", ArgType::List, nullptr,
+                     "Cameras, locators or planes seams hide from; every seam view in the scene when not given. A plane (any mesh) "
+                     "sees along its normal, like an orthographic camera."},
+                    "transform");
+}
+
 std::vector<FlagDef> seamFlagDefs()
 {
     using T = ArgType;
@@ -348,7 +388,7 @@ std::vector<FlagDef> seamFlagDefs()
             {"distortionBound", "", T::Float, 0.05, "optcuts: stretch (symmetric Dirichlet excess, all islands) to get under.", {}, {}, 0.0},
             {"seamWeight", "", T::Float, 0.5, "optcuts: price of seam length against stretch; higher keeps seams shorter.", {}, {}, 0.0},
             {"useViews", "", T::Bool, true, "Keep seams out of sight of the seam views (uvSeamView)."},
-            {"views", "", T::List, nullptr, "Cameras or locators seams hide from; every seam view in the scene when not given."}};
+            viewsFlag()};
 }
 
 template <class... L> std::vector<FlagDef> join(std::vector<FlagDef> a, L... rest)
@@ -930,6 +970,43 @@ void registerCommands()
                 json j = packJson(r.pack);
                 j["islands"] = r.islands;
                 j["seams"] = r.seams;
+                return j;
+            });
+        },
+    });
+
+    ops::registerCommand({
+        .name = "uvHose",
+        .doc = "Uvs for pipes, hoses, cables and rings: each tube is cut once along its least seen side and straightened into a strip, "
+               "runs longer than maxAspect are cut across where least seen, and ends and rims are projected flat. Faces that are neither "
+               "get auto seams. Works from the quad topology, so any swept tube qualifies.",
+        .flags = join({uvSetFlag(),
+                       {"maxAspect", "", T::Float, 8.0, "Longest strip as a multiple of its circumference; 0 never cuts across.", {}, {}, 0.0, 64.0},
+                       {"maxLength", "", T::Float, 0.0, "Longest strip in cm; replaces maxAspect when set.", {}, {}, 0.0},
+                       {"visibility", "", T::Bool, true, "Hide cuts where they are least visible: occluded, concave and downward facing."},
+                       {"keepSeams", "", T::Bool, false, "Keep the seams already there."},
+                       {"useViews", "", T::Bool, true, "Keep seams out of sight of the views."},
+                       viewsFlag(),
+                       {"pack", "", T::Bool, true, "Pack the islands into 0-1 afterwards."}},
+                      packFlags()),
+        .run = [](const Args& a) -> json {
+            HoseOptions o;
+            o.maxAspect = std::max(0.0, a.get<double>("maxAspect", 8.0));
+            o.maxLength = std::max(0.0, a.get<double>("maxLength", 0.0));
+            o.visibility = a.get<bool>("visibility", true);
+            o.keepSeams = a.get<bool>("keepSeams", false);
+            o.views = seamViewArgs(a);
+            const bool pack = a.get<bool>("pack", true);
+            const PackOptions packing = packArgs(a);
+            std::string set = uvSetArg(a);
+            return editUv("UV Hose", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
+                HoseOptions mo = o;
+                mo.views = viewsIn(o.views, n);
+                HoseResult r = hoseUv(m, f, set, mo);
+                json j = {{"strips", r.strips}, {"lengthCuts", r.lengthCuts}, {"caps", r.caps}, {"otherFaces", r.otherFaces},
+                          {"unstraightened", r.unstraightened}};
+                if (pack)
+                    j["pack"] = packJson(packIslands(m, f, set, packing));
                 return j;
             });
         },

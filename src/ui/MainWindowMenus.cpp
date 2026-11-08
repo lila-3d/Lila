@@ -224,7 +224,7 @@ void MainWindow::buildMenus()
                                     "bevel.clearOverrides", "bevel.showEdges"});
 
     menu("UV", "UV", Area::MenuBar, {}, "", {"UV", "Texture"});
-    menus::addActions("UV", {"window.uvEditor", "uv.auto", "uv.autoSeams", "uv.unwrap", "uv.projectPlanar", "uv.projectBox", "uv.projectCylindrical",
+    menus::addActions("UV", {"window.uvEditor", "uv.auto", "uv.autoSeams", "uv.unwrap", "uv.projectPlanar", "uv.projectBox", "uv.projectCylindrical", "uv.hose",
                       "uv.projectSpherical", "uv.cut", "uv.sew", "uv.straighten", "uv.orient", "uv.rotateLeft", "uv.rotateRight", "uv.flipX", "uv.flipY", "uv.pack", "uv.lightmap", "uv.delete", "uv.seamView", "", "uv.autoSeams2",
                       "uv.bff", "uv.bffDisk", "uv.bffRectangle", "uv.bffCones", "uv.unwrapSymmetric", "uv.unwrapSymmetricStack"});
     addSubmenu("UV", "Pack");

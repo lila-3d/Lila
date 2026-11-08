@@ -3,6 +3,7 @@
 #include "core/Export.h"
 
 #include "uv/Chart.h"
+#include "uv/Hose.h"
 #include "uv/Layout.h"
 #include "uv/Metrics.h"
 #include "uv/Pack.h"

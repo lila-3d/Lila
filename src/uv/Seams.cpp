@@ -66,10 +66,17 @@ void applyViews(Context& ctx)
         for (const SeamView& v : ctx.opts.views)
         {
             glm::dvec3 d = v.position - mid;
-            const double dist = glm::length(d);
+            double dist = glm::length(d);
+            if (v.planeNormal)
+            {
+                const double h = glm::dot(d, *v.planeNormal);
+                d = h < 0.0 ? -*v.planeNormal : *v.planeNormal;
+                dist = std::abs(h);
+            }
+            else if (dist >= 1e-12)
+                d /= dist;
             if (dist < 1e-12)
                 continue;
-            d /= dist;
             const double facing = glm::dot(n, d);
             // Facing away counts a little in the other direction, so seams settle on the far side rather than anywhere unseen.
             if (facing <= 0.0)

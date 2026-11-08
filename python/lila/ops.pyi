@@ -7780,7 +7780,7 @@ def sculptEnter(*objects: Any, mode: str | None = None, levels: int | None = Non
     Args:
         objects: mesh.
         mode: subdivide, remesh or direct. One of 'subdivide', 'remesh', 'direct'. Default 'subdivide'.
-        levels: Subdivision levels to start with, 1 to 6. Default 2.
+        levels: Subdivision levels to start with, 0 to 6: 0 sculpts the cage until sculptAddLevel adds some. Default 0.
         resolution: Voxels along the longest side, for mode='remesh'. Default 192.
         resume: Continue from the mesh's kept high poly when it has one. Default True.
     """
@@ -10208,7 +10208,7 @@ def uvAuto(uvSet: str | None = None, iterations: int | None = None, hardAngle: f
         distortionBound: optcuts: stretch (symmetric Dirichlet excess, all islands) to get under. Default 0.05.
         seamWeight: optcuts: price of seam length against stretch; higher keeps seams shorter. Default 0.5.
         useViews: Keep seams out of sight of the seam views (uvSeamView). Default True.
-        views: Cameras or locators seams hide from; every seam view in the scene when not given.
+        views: Cameras, locators or planes seams hide from; every seam view in the scene when not given. A plane (any mesh) sees along its normal, like an orthographic camera.
         resolution: Target texture size, px. Padding and margin are in its texels. Default 1024.
         padding: Texels between islands, held exactly (the search never lets two islands closer). Default 4.0.
         margin: Texels from the tile (or region) border; negative is half the padding. Default -1.0.
@@ -10246,7 +10246,7 @@ def uvAutoSeams(hardAngle: float | None = None, useHardEdges: bool | None = None
         distortionBound: optcuts: stretch (symmetric Dirichlet excess, all islands) to get under. Default 0.05.
         seamWeight: optcuts: price of seam length against stretch; higher keeps seams shorter. Default 0.5.
         useViews: Keep seams out of sight of the seam views (uvSeamView). Default True.
-        views: Cameras or locators seams hide from; every seam view in the scene when not given.
+        views: Cameras, locators or planes seams hide from; every seam view in the scene when not given. A plane (any mesh) sees along its normal, like an orthographic camera.
     """
 
 def uvBff(uvSet: str | None = None, boundary: str | None = None, cones: int | None = None, exactLengths: bool | None = None, pack: bool | None = None) -> Any:
@@ -10280,6 +10280,41 @@ def uvDelete(uvSet: str | None = None) -> Any:
 
     Args:
         uvSet: UV set; the current one (uvSetCurrent) when not given.
+    """
+
+def uvHose(uvSet: str | None = None, maxAspect: float | None = None, maxLength: float | None = None, visibility: bool | None = None, keepSeams: bool | None = None, useViews: bool | None = None, views: Sequence[Any] | None = None, pack: bool | None = None, resolution: int | None = None, padding: float | None = None, margin: float | None = None, paddingMips: int | None = None, rotateStep: int | None = None, angles: Sequence[Any] | None = None, freeRotation: bool | None = None, flip: bool | None = None, orient: bool | None = None, scaleMode: str | None = None, normalize: bool | None = None, stack: bool | None = None, stackMirrored: bool | None = None, stackTolerance: float | None = None, tilesU: int | None = None, tilesV: int | None = None, region: Sequence[Any] | None = None, texelsPerUnit: float | None = None, effort: int | None = None, timeLimit: float | None = None, workingResolution: int | None = None) -> Any:
+    """Uvs for pipes, hoses, cables and rings: each tube is cut once along its least seen side and straightened into a strip, runs longer than maxAspect are cut across where least seen, and ends and rims are projected flat. Faces that are neither get auto seams. Works from the quad topology, so any swept tube qualifies.
+
+    Args:
+        uvSet: UV set; the current one (uvSetCurrent) when not given.
+        maxAspect: Longest strip as a multiple of its circumference; 0 never cuts across. Default 8.0.
+        maxLength: Longest strip in cm; replaces maxAspect when set. Default 0.0.
+        visibility: Hide cuts where they are least visible: occluded, concave and downward facing. Default True.
+        keepSeams: Keep the seams already there. Default False.
+        useViews: Keep seams out of sight of the views. Default True.
+        views: Cameras, locators or planes seams hide from; every seam view in the scene when not given. A plane (any mesh) sees along its normal, like an orthographic camera.
+        pack: Pack the islands into 0-1 afterwards. Default True.
+        resolution: Target texture size, px. Padding and margin are in its texels. Default 1024.
+        padding: Texels between islands, held exactly (the search never lets two islands closer). Default 4.0.
+        margin: Texels from the tile (or region) border; negative is half the padding. Default -1.0.
+        paddingMips: Padding and margin survive this many mip levels: both are multiplied by 2^paddingMips. Default 0.
+        rotateStep: Rotation step to try, degrees: 0 none, 90 quarter turns, smaller for more. Default 90.
+        angles: Exact angles to try, degrees (replaces rotateStep), e.g. [0, 90, 45].
+        freeRotation: Any angle: each island also tries its three best-fitting angles (smallest bounding box) and their quarter turns. Default False.
+        flip: Also try islands mirrored (the texture then reads mirrored on them). Default False.
+        orient: Turn islands to their smallest bounding rectangle first. Default True.
+        scaleMode: normalize: even texel density across islands and objects (world space). keep: islands keep their relative uv sizes. lock: islands keep their exact uv size and are only moved and turned. One of 'normalize', 'keep', 'lock'. Default 'normalize'.
+        normalize: Same as scaleMode=normalize when on, keep when off. Default True.
+        stack: Islands with the same shape (within stackTolerance) share one spot. Default False.
+        stackMirrored: Mirror-image islands stack too (the mirrored halves of a symmetric model). Default True.
+        stackTolerance: Largest vertex mismatch for two islands to stack, as a fraction of the island's size. Default 0.002.
+        tilesU: UDIM tiles across. Default 1.
+        tilesV: UDIM tiles up. Default 1.
+        region: Pack into [uMin, vMin, uMax, vMax] of each tile instead of all of it.
+        texelsPerUnit: Pack at this density (px/cm) instead of filling the tiles; overflow spills into further tiles. Default 0.0.
+        effort: Search effort 0-3: island orders tried per scale (1, 3, 6, 12). Higher packs denser, slower. Default 1.
+        timeLimit: Stop refining after this many seconds (0 never); results can then vary between runs. Default 0.0.
+        workingResolution: Search raster cells across a tile; 0 uses the resolution up to 4096. Default 0.
     """
 
 def uvLayout(uvSet: str | None = None, resolution: int | None = None) -> Any:

@@ -409,6 +409,45 @@ TEST_CASE("seam views keep auto seams out of their sight")
     run("uvAutoSeams", {{"views", {view}}, {"useViews", false}});
 }
 
+TEST_CASE("uvHose straightens a tube and hides its rail from a camera or a plane")
+{
+    run("newScene");
+    std::string tube = run("polyCylinder", {{"radius", 5}, {"height", 40}, {"subdivisionsAxis", 16}, {"subdivisionsHeight", 8}})[0];
+    run("select", {{"args", {tube}}});
+    json r = run("uvHose", {{"visibility", false}});
+    CHECK(r["strips"] == 1);
+    CHECK(r["caps"] == 2);
+    CHECK(r["otherFaces"] == 0);
+    CHECK(r["pack"]["ok"] == true);
+
+    // Rail edges run along Y; their mean x says which side the rail is on.
+    auto railX = [&] {
+        scene::MeshPtr m = cageOf(tube);
+        std::span<const bool> seam = m->edgeAttrs().get<bool>(geo::attr::kSeam);
+        double x = 0.0;
+        int n = 0;
+        for (geo::Index e = 0; e < m->edgeCapacity(); ++e)
+            if (m->edgeValid(e) && seam[e])
+            {
+                glm::dvec3 a = m->position(m->edgePoint(e, 0)), b = m->position(m->edgePoint(e, 1));
+                if (std::abs(glm::normalize(b - a).y) > 0.9)
+                    x += a.x, ++n;
+            }
+        return n ? x / n : 0.0;
+    };
+    std::string view = run("uvSeamView", {{"position", {200.0, 0.0, 0.0}}}).get<std::string>();
+    run("select", {{"args", {tube}}});
+    run("uvHose", {{"visibility", false}, {"views", {view}}});
+    CHECK(railX() < -4.0);
+
+    std::string plane = run("polyPlane", {{"width", 10}, {"depth", 10}})[0];
+    run("move", {{"args", {plane}}, {"to", {-200.0, 0.0, 0.0}}});
+    run("setAttr", {{"args", {plane + ".rotateZ", 90.0}}});
+    run("select", {{"args", {tube}}});
+    run("uvHose", {{"visibility", false}, {"views", {plane}}});
+    CHECK(railX() > 4.0);
+}
+
 TEST_CASE("planar projection with symmetry fits one side, not both")
 {
     run("newScene");
