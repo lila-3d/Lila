@@ -65,6 +65,24 @@ void projectPoints(geo::Mesh& m, std::vector<FeatureKind>& feature, const geo::M
 {
     LILA_ZONE();
 
+    // One inner point per corner, the nearest: two snapped onto it would pinch the mesh there.
+    std::map<std::array<double, 3>, std::pair<double, Index>> claimed;
+    std::vector<std::pair<Index, std::array<double, 3>>> claims;
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+    {
+        glm::dvec3 q;
+        if (!m.pointValid(p) || feature[p] != FeatureKind::Corner || m.isBoundaryPoint(p) || !lines.closestCorner(m.position(p), reach, q))
+            continue;
+        const std::array<double, 3> key{q.x, q.y, q.z};
+        const double d = glm::distance(m.position(p), q);
+        auto [it, fresh] = claimed.try_emplace(key, d, p);
+        if (!fresh && d < it->second.first)
+            it->second = {d, p};
+        claims.push_back({p, key});
+    }
+    for (const auto& [p, key] : claims)
+        if (claimed[key].second != p)
+            feature[p] = FeatureKind::Line;
     tbb::parallel_for(Index(0), m.pointCapacity(), [&](Index p) {
         if (!m.pointValid(p))
             return;
