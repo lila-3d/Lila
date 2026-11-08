@@ -53,6 +53,7 @@
 #include <algorithm>
 #include <cmath>
 #include <optional>
+#include <set>
 
 namespace lila::ui
 {
@@ -129,11 +130,68 @@ double scalarOf(const scene::PlugValue& v)
     return 0.0;
 }
 
+/** A mesh's stack source then its modifiers, bottom up. */
+std::vector<NodeId> stackNodes(Graph& g, NodeId mesh)
+{
+    std::vector<NodeId> out;
+    if (NodeId src = scene::modifiers::stackSource(g, mesh))
+        out.push_back(src);
+    for (NodeId id : scene::modifiers::stack(g, mesh))
+        out.push_back(id);
+    return out;
+}
+
+/**
+ * The plug on p's node plus the same plug on the matching node of every other selected mesh's stack: the same type at
+ * the same place among that type's nodes. Only while p's mesh is itself selected, so a pinned stack edits just itself.
+ */
+std::vector<PlugRef> matchingPlugs(Graph& g, const PlugRef& p)
+{
+    std::vector<PlugRef> out{p};
+    scene::Node* n = g.node(p.node);
+    const NodeId mesh = n ? scene::modifiers::meshOf(g, p.node) : scene::kNoNode;
+    if (!mesh)
+        return out;
+    auto meshOfSelected = [&](NodeId id) {
+        scene::Node* s = g.node(id);
+        return s && s->type().isA("mesh") ? scene::instancing::root(g, id) : scene::kNoNode;
+    };
+    const auto& sel = g.selection();
+    if (std::none_of(sel.begin(), sel.end(), [&](NodeId id) { return meshOfSelected(id) == mesh; }))
+        return out;
+    const std::string& type = n->type().name;
+    int ordinal = 0;
+    for (NodeId id : stackNodes(g, mesh))
+    {
+        if (id == p.node)
+            break;
+        ordinal += g.node(id)->type().name == type;
+    }
+    std::set<NodeId> done{mesh};
+    for (NodeId id : sel)
+    {
+        const NodeId other = meshOfSelected(id);
+        if (!other || !done.insert(other).second)
+            continue;
+        int k = 0;
+        for (NodeId m : stackNodes(g, other))
+            if (g.node(m)->type().name == type && k++ == ordinal)
+            {
+                PlugRef q = p;
+                q.node = m;
+                out.push_back(q);
+                break;
+            }
+    }
+    return out;
+}
+
 void setAttr(const PlugRef& p, const json& value)
 {
     Graph& g = Graph::current();
     if (!g.node(p.node))
         return;
+    const std::vector<PlugRef> plugs = matchingPlugs(g, p);
     json v = value;
     if (v.is_number() && p.attr >= 0)
     {
@@ -144,7 +202,14 @@ void setAttr(const PlugRef& p, const json& value)
         if (c != d)
             v = v.is_number_integer() ? json(int64_t(std::llround(c))) : json(c);
     }
-    runUi("setAttr", {{"args", {g.plugName(p), v}}});
+    if (plugs.size() == 1)
+    {
+        runUi("setAttr", {{"args", {g.plugName(p), v}}});
+        return;
+    }
+    UndoChunk chunk("Set " + g.plugName(p));
+    for (const PlugRef& q : plugs)
+        runUi("setAttr", {{"args", {g.plugName(q), v}}});
 }
 
 struct Counts
