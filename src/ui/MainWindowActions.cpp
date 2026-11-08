@@ -99,6 +99,8 @@ void MainWindow::registerActions()
                   "Moves the active view's camera to fit everything in the scene."});
     actions::add({"viewport.frameUnderCursor", "Frame Under Cursor", "View",
                   [this] {
+                      if (frameUvUnderCursor())
+                          return;
                       ViewportWidget* view = mViewports->active();
                       for (ViewportWidget* v : mViewports->views())
                           if (v->isVisible() && v->rect().contains(v->mapFromGlobal(QCursor::pos())))
@@ -106,7 +108,7 @@ void MainWindow::registerActions()
                       view->frameUnderCursor();
                   },
                   nullptr,
-                  "Centres the view on the surface under the cursor, keeping its distance unless Preferences > Viewport sets it to zoom in too. From the menu, click the surface "
+                  "Centres the view on the surface under the cursor (in the UV Editor, the UV point under it), keeping its distance unless Preferences > Viewport sets it to zoom in too. From the menu, click the surface "
                   "afterwards."});
     actions::add({"viewport.cameraUndo", "Undo View Change", "View", [this] { mViewports->active()->cameraUndo(); }, nullptr,
                   "Puts the active view's camera back where it was before its last move. Separate from scene undo."});

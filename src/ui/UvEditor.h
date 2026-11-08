@@ -110,4 +110,7 @@ LILA_UI_API void showUvPackOptions();
 
 /** Shows the UV editor with its UV Toolkit column. */
 LILA_UI_API void showUvToolkit();
+
+/** Centres the UV view under the cursor on the point there, zooming like the viewport's Frame Under Cursor. False when the cursor is over no UV view. */
+LILA_UI_API bool frameUvUnderCursor();
 } // namespace lila::ui

@@ -125,6 +125,9 @@ public:
 
     void frameSelection();
 
+    /** Centres the view on the uv under the cursor, zooming in when the viewport's Frame Under Cursor does. */
+    void frameUnderCursor();
+
 protected:
     void resizeEvent(QResizeEvent*) override;
 

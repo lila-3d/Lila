@@ -1,5 +1,8 @@
 #include "ui/UvEditorInternal.h"
 
+#include <QApplication>
+#include <QCursor>
+
 
 namespace lila::ui
 {
@@ -196,6 +199,30 @@ void UvView::frameSelection()
         frame(lo, hi);
     else
         frameAll();
+}
+
+void UvView::frameUnderCursor()
+{
+    const glm::dvec2 at = toUv(mapFromGlobal(QCursor::pos().toPointF()));
+    PrefStore& prefs = PrefStore::get();
+    const double zoom = prefs.value<bool>("general", "/viewport/frameUnderCursor/zoom", true)
+                            ? std::max(prefs.value<double>("general", "/viewport/frameUnderCursor/zoomFactor", 4.0), 0.01)
+                            : 1.0;
+    mFit.reset();
+    mZoom = std::clamp(mZoom * zoom, 1.0, 1e7);
+    mPan = glm::dvec2(width() * 0.5 - at.x * mZoom, height() * 0.5 + at.y * mZoom);
+    update();
+}
+
+bool frameUvUnderCursor()
+{
+    for (QWidget* w = QApplication::widgetAt(QCursor::pos()); w; w = w->parentWidget())
+        if (auto* view = dynamic_cast<UvView*>(w))
+        {
+            view->frameUnderCursor();
+            return true;
+        }
+    return false;
 }
 
 void UvView::resizeEvent(QResizeEvent*)
