@@ -219,3 +219,29 @@ TEST_CASE("seamDecal: a live strip mesh that follows the wall and covers the con
             maxX = std::max(maxX, m.position(p).x);
     CHECK(maxX > 400.0);
 }
+
+TEST_CASE("seamSkirt: one live skirt per object, mapped for Unreal, following a move")
+{
+    load();
+    run("newScene");
+    const json t = run("terrainCreate", {{"flat", true}, {"size", json::array({4000, 4000})}, {"resolution", 81}, {"name", "Ground"}});
+    const std::string wall = box("Wall", {-200, -20, -10}, {200, 280, 10});
+    const json r = run("seamFind", {{"args", {wall}}, {"terrain", t["mesh"]}, {"field", "none"}});
+    const json s = run("seamSkirt", {{"args", {r["seam"]}}, {"width", 20.0}});
+    REQUIRE(s["skirts"].size() == 1);
+    const json& one = s["skirts"][0];
+    CHECK(one["object"] == wall);
+    CHECK(one["stats"]["faces"].get<int>() > 0);
+    CHECK(one["mapping"]["lodGroup"] == "SmallProp");
+    double before = -1e9;
+    for (geo::Index p = 0; p < evaluatedMesh(one["mesh"]).pointCapacity(); ++p)
+        before = std::max(before, evaluatedMesh(one["mesh"]).position(p).x);
+    moveTo(wall, {500, 0, 0});
+    double after = -1e9;
+    const geo::Mesh& m = evaluatedMesh(one["mesh"]);
+    for (geo::Index p = 0; p < m.pointCapacity(); ++p)
+        if (m.pointValid(p))
+            after = std::max(after, m.position(p).x);
+    CHECK(after == doctest::Approx(before + 500.0).epsilon(0.001));
+    CHECK(run("seamCheck", {{"args", {r["seam"]}}})["ok"].get<bool>());
+}

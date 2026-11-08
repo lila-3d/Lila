@@ -6,11 +6,13 @@
 
 LILA_EXTENSION_EXPORT int lilaExtensionInit(lila::ext::Context& ctx)
 {
-    if (!seamwork::registerNodes(ctx) || !seamwork::registerScatterNodes(ctx) || !seamwork::registerStripNodes(ctx))
+    if (!seamwork::registerNodes(ctx) || !seamwork::registerScatterNodes(ctx) || !seamwork::registerStripNodes(ctx) ||
+        !seamwork::registerSkirtNodes(ctx))
         return 1;
     seamwork::registerCommands(ctx);
     seamwork::registerScatterCommands(ctx);
     seamwork::registerStripCommands(ctx);
+    seamwork::registerSkirtCommands(ctx);
     seamwork::registerExportCommands(ctx);
     seamwork::registerLiveUpdates(ctx);
     seamwork::registerUi(ctx);

@@ -379,3 +379,144 @@ TEST_CASE("strips: ribbons lie on the ground beside the wall, faded and facing u
     CHECK(wallUp);
     CHECK(decalBoxes(r, o, 100.0).size() > 16);
 }
+
+#include <Skirt.h>
+
+namespace
+{
+/** A closed n-sided cylinder along Y. */
+std::shared_ptr<const Mesh> cylinder(double radius, double y0, double y1, int n)
+{
+    std::vector<glm::dvec3> p;
+    for (int k = 0; k < n; ++k)
+    {
+        const double a = 2.0 * kPi * k / n;
+        p.push_back({radius * std::cos(a), y0, -radius * std::sin(a)});
+        p.push_back({radius * std::cos(a), y1, -radius * std::sin(a)});
+    }
+    std::vector<Index> sizes, idx;
+    for (int k = 0; k < n; ++k)
+    {
+        const Index a = Index(2 * k), b = Index(2 * ((k + 1) % n));
+        sizes.push_back(4);
+        idx.insert(idx.end(), {a, b, b + 1, a + 1});
+    }
+    sizes.push_back(Index(n));
+    for (int k = n - 1; k >= 0; --k)
+        idx.push_back(Index(2 * k));
+    sizes.push_back(Index(n));
+    for (int k = 0; k < n; ++k)
+        idx.push_back(Index(2 * k + 1));
+    return std::make_shared<const Mesh>(Mesh::fromPolygons(p, sizes, idx));
+}
+
+/** Border checks: every point with side 0 or 1 lies on its surface with its normal; the only open edges are the two borders. */
+void checkSkirt(const Mesh& m, const Object& wall, const Ground* ground, const Object* floor)
+{
+    REQUIRE(m.numFaces() > 0);
+    const auto side = m.pointAttrs().get<float>("side");
+    const auto normal = m.cornerAttrs().get<glm::vec3>("normal");
+    REQUIRE(!side.empty());
+    REQUIRE(!normal.empty());
+    double worstDistance = 0.0, worstAngle = 0.0;
+    const glm::dmat4 inv = glm::inverse(wall.world);
+    for (Index c = 0; c < m.cornerCapacity(); ++c)
+    {
+        if (!m.cornerValid(c))
+            continue;
+        const Index p = m.cornerPoint(c);
+        const glm::dvec3 pos = m.position(p);
+        glm::dvec3 surfaceNormal;
+        double distance;
+        if (side[p] < 1e-6)
+        {
+            lila::geo::BvhClosest cl;
+            REQUIRE(wall.bvh->closestPoint(glm::dvec3(inv * glm::dvec4(pos, 1.0)), cl));
+            distance = cl.distance;
+            surfaceNormal = glm::normalize(wall.mesh->faceNormal(cl.face));
+        }
+        else if (side[p] > 1.0 - 1e-6)
+        {
+            if (ground)
+            {
+                distance = std::abs(pos.y - ground->field->heightAt(pos.x, pos.z));
+                surfaceNormal = ground->field->normalAt(pos.x, pos.z);
+            }
+            else
+            {
+                lila::geo::BvhClosest cl;
+                REQUIRE(floor->bvh->closestPoint(pos, cl));
+                distance = cl.distance;
+                surfaceNormal = glm::normalize(floor->mesh->faceNormal(cl.face));
+            }
+        }
+        else
+            continue;
+        worstDistance = std::max(worstDistance, distance);
+        worstAngle = std::max(worstAngle, glm::degrees(std::acos(std::clamp(glm::dot(glm::dvec3(normal[c]), surfaceNormal), -1.0, 1.0))));
+    }
+    CHECK(worstDistance < 0.01);
+    CHECK(worstAngle < 1.0);
+    // No crack: every open edge lies on a source surface (the borders, and fillet ends that taper onto the ground).
+    auto onSurface = [&](const glm::dvec3& q) {
+        lila::geo::BvhClosest cl;
+        double d = wall.bvh->closestPoint(glm::dvec3(inv * glm::dvec4(q, 1.0)), cl) ? cl.distance : 1e300;
+        if (ground)
+            d = std::min(d, std::abs(q.y - ground->field->heightAt(q.x, q.z)));
+        if (floor && floor->bvh->closestPoint(q, cl))
+            d = std::min(d, cl.distance);
+        return d < 0.01;
+    };
+    for (Index e = 0; e < m.edgeCapacity(); ++e)
+        if (m.edgeValid(e) && m.isBoundaryEdge(e))
+        {
+            const glm::dvec3 a = m.position(m.edgePoint(e, 0)), b = m.position(m.edgePoint(e, 1));
+            INFO("open edge " << a.x << "," << a.y << "," << a.z << " to " << b.x << "," << b.y << "," << b.z);
+            CHECK(onSurface((a + b) * 0.5));
+        }
+}
+} // namespace
+
+TEST_CASE("skirt: a sunk round column is swept, its borders on both surfaces with their normals")
+{
+    const std::vector<Object> objs = {object("Column", cylinder(60.0, -30.0, 300.0, 24))};
+    const Ground g = flatGround();
+    const Result r = findSeams(objs, &g, quick());
+    REQUIRE(r.curves.size() == 1);
+    SkirtOptions o;
+    o.width = 20.0;
+    const SkirtResult s = buildSkirt(r, objs, &g, o);
+    REQUIRE(s.curves.size() == 1);
+    CHECK(s.curves[0].method == "sweep");
+    checkSkirt(s.mesh, objs[0], &g, nullptr);
+}
+
+TEST_CASE("skirt: a box wall on a floor mesh gets a skirt and says which method made it")
+{
+    Object floor = object("Floor", box({-1000, -50, -1000}, {1000, 0, 1000}));
+    floor.ground = true;
+    const std::vector<Object> objs = {object("Wall", box({-200, -20, -10}, {200, 280, 10})), floor};
+    const Result r = findSeams(objs, nullptr, quick());
+    SkirtOptions o;
+    o.width = 15.0;
+    const SkirtResult s = buildSkirt(r, objs, nullptr, o);
+    REQUIRE_FALSE(s.curves.empty());
+    // Whatever ran is named with its reason (a fallback says what it fell back from).
+    CHECK_FALSE(s.curves[0].reason.empty());
+    CHECK(s.curves[0].method != "none");
+    checkSkirt(s.mesh, objs[0], nullptr, &objs[1]);
+}
+
+TEST_CASE("skirt: on terrain the box wall is unioned with a fillet, borders on both surfaces")
+{
+    const std::vector<Object> objs = {object("Wall", box({-200, -20, -10}, {200, 280, 10}))};
+    const Ground g = flatGround();
+    const Result r = findSeams(objs, &g, quick());
+    SkirtOptions o;
+    o.width = 15.0;
+    const SkirtResult s = buildSkirt(r, objs, &g, o);
+    REQUIRE(s.curves.size() == 1);
+    CHECK(s.curves[0].method == "union");
+    CHECK(s.curves[0].reason.find("past") != std::string::npos);
+    checkSkirt(s.mesh, objs[0], &g, nullptr);
+}
