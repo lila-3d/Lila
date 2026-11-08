@@ -83,6 +83,7 @@ const std::vector<Builtin>& builtins()
         {"overlays", "Overlays", "eye", "Every display toggle for this view."},
         {"renderer", "Renderer", "aperture", "Which renderer draws this view, and its settings."},
         {"camera", "Camera", "camera", "The view's camera: persp, the ortho views, scene cameras, camera settings."},
+        {"jointSize", "Joint Size", "bone", "How large joints draw in every view."},
     };
     return all;
 }
@@ -102,7 +103,7 @@ json defaultConfig()
          {"componentMode", "shading", kSeparator, "symmetry", "softSelect", kSeparator, "selectionMasks", kSeparator,
           {{"menu", "Display"}, {"icon", "adjustments-horizontal"}, {"items",
             {"viewport.wireOnShaded", "viewport.defaultMaterial", "viewport.greyBaseColor", kSeparator, "viewport.toggleHighlightSelection",
-             "viewport.togglePreselectObjects", "viewport.togglePreselectComponents"}}}}},
+             "viewport.togglePreselectObjects", "viewport.togglePreselectComponents", kSeparator, "jointSize"}}}}},
         {"right",
          {"snap", "overlays", "camera", kSeparator, {{"action", "viewport.isolate"}}, {{"action", "viewport.toggleImagePlanes"}}, kSeparator,
           {{"action", "view.presenter"}}, {{"action", "viewport.frameSelected"}},
@@ -190,7 +191,7 @@ QTreeWidgetItem* makeRow(const json& e)
         row->setFont(0, f);
         row->setFlags(row->flags() | Qt::ItemIsDropEnabled | Qt::ItemIsDragEnabled);
         for (const json& item : e.value("items", json::array()))
-            row->addChild(makeRow(item.is_string() && !isSeparator(item) ? json{{"action", item}} : item));
+            row->addChild(makeRow(item.is_string() && !isSeparator(item) && !builtin(item.get<std::string>()) ? json{{"action", item}} : item));
     }
     else
     {

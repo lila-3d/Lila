@@ -68,6 +68,7 @@ private:
     void buildEntry(const nlohmann::json& entry);
     void buildSelectionMasks();
     void fillCommandMenu(QMenu* m, const nlohmann::json& items);
+    void addJointSizeRow(QMenu* m);
     void fillRendererMenu(QMenu* m);
     void contextMenu(const QPoint& at);
     void buildModes();

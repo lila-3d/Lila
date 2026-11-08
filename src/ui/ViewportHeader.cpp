@@ -30,6 +30,7 @@
 #include "ui/ViewportHud.h"
 #include "ui/ViewportLayout.h"
 #include "ui/ViewportRenderers.h"
+#include "ui/ViewportTool.h"
 #include "ui/ViewportToolbar.h"
 #include "ui/ViewportWidget.h"
 
@@ -580,6 +581,11 @@ void ViewportHeader::buildEntry(const json& e)
             optionBox::decorateMenu(overlays->menu());
             add(overlays, true, 7, [this](QMenu* m) { hdrSubmenu(m, "Overlays", [this](QMenu* s) { fillOverlaysMenu(s); }); }, {overlays});
         }
+        else if (id == "jointSize")
+        {
+            QToolButton* joints = popover("bone", "Joint Size", [this](QMenu* m) { addJointSizeRow(m); }, false);
+            add(joints, true, 2, [this](QMenu* m) { addJointSizeRow(m); }, {joints});
+        }
         else if (id == "renderer")
         {
             QToolButton* renderer = popover("aperture", "Renderer", [this](QMenu* m) { fillRendererMenu(m); }, false);
@@ -662,6 +668,11 @@ void ViewportHeader::fillCommandMenu(QMenu* m, const json& items)
             m->addSeparator();
             continue;
         }
+        if (id == "jointSize")
+        {
+            addJointSizeRow(m);
+            continue;
+        }
         if (!actions::find(id))
             continue;
         std::optional<bool> on = viewportActionState(id, mView);
@@ -683,6 +694,22 @@ void ViewportHeader::fillCommandMenu(QMenu* m, const json& items)
     if (m->isEmpty())
         m->addAction("Empty: add commands in Customize Viewport Header")->setEnabled(false);
     optionBox::decorateMenu(m);
+}
+
+void ViewportHeader::addJointSizeRow(QMenu* m)
+{
+    static constexpr const char* kPref = "/rig/jointDisplayScale";
+    QHBoxLayout* row = hdrRow(m, "Joint Size");
+    QDoubleSpinBox* size = controls::valueField(0.01, 100.0, 2, QString(QChar(0x00D7)), row->parentWidget());
+    size->setSingleStep(0.1);
+    size->setToolTip("How large joints draw in every view");
+    setSpinDefault(size, 1.0);
+    size->setValue(PrefStore::get().value<double>("general", kPref, 1.0));
+    connect(size, &QDoubleSpinBox::valueChanged, this, [](double v) {
+        PrefStore::get().set("general", kPref, v);
+        viewportTools::requestRedraw();
+    });
+    row->addWidget(size, 1);
 }
 
 void ViewportHeader::contextMenu(const QPoint& at)
