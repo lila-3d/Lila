@@ -63,7 +63,7 @@ void panels::add(Panel p, std::string owner)
     if (!p.toggleAction.empty() && !actions::find(p.toggleAction))
         actions::add({.id = p.toggleAction, .label = p.title, .category = "Windows", .run = [id] { panels::toggle(id); },
                       .doc = "Shows the " + p.title + " panel, or tucks it away when it is showing.",
-                      .python = "lila.ui.show_panel(\"" + id + "\")"},
+                      .python = "lila.ui.show_panel(\"" + id + "\")", .keywords = p.keywords},
                      owner);
     registry().put(id, std::move(p), std::move(owner));
 }

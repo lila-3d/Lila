@@ -50,6 +50,8 @@ struct Panel
     std::function<void(QDockWidget*)> place;
     /** An action that shows or tucks away the panel, registered with it under the same owner; empty for none. */
     std::string toggleAction;
+    /** Extra search words for the toggle action. */
+    std::vector<std::string> keywords;
     /**
      * Opens as a floating window, floatWidth x floatHeight and centred on the main window, whatever a saved layout says, until the
      * user docks it themselves; from then on it opens wherever they put it.

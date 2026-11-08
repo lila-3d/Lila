@@ -572,6 +572,7 @@ void registerNotesPanel()
                  .area = Qt::RightDockWidgetArea,
                  .icon = "notes",
                  .open = false,
-                 .toggleAction = "window.notes"});
+                 .toggleAction = "window.notes",
+                 .keywords = {"todo"}});
 }
 } // namespace lila::ui
