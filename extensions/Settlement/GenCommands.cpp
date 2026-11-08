@@ -376,7 +376,7 @@ void registerGeneratorCommands(ext::Context& ctx)
         .name = "settlementEras",
         .doc = "A settlement's eras in order: name, profile, pattern, roof, street km, lots and envelopes laid in each era, walls "
                "built in it; and its districts. Every street, lot and envelope carries its era (settlementExport writes it on "
-               "streets). Changes nothing.",
+               "streets, lots and envelopes). Changes nothing.",
         .positionalDoc = "settlement mesh or its modifier",
         .undoable = false,
         .run = [](const Args& a) -> json {
