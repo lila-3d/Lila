@@ -88,7 +88,8 @@ public:
         {
             warning = e.what();
         }
-        if (!warning.empty() && warning != mLogged)
+        // An unconnected node (still being wired up) only says so on its warning attr.
+        if (!warning.empty() && warning != mLogged && std::get<DataPtr>(value(sk(*this, "seams"))))
             log::warn("{}: {}", name(), warning);
         mLogged = warning;
         setOutput(sk(*this, "outMesh"), out);

@@ -99,6 +99,8 @@ void registerSkirtCommands(lila::ext::Context& ctx);
 /** S5 and the Unreal side of S2-S4: seamExport, seamSend, materials. */
 void registerExportCommands(lila::ext::Context& ctx);
 void registerUi(lila::ext::Context& ctx);
+/** lila://guide/contacts. */
+void registerAgent(lila::ext::Context& ctx);
 
 /** The nearest surface of the data's objects or terrain along dir within range. */
 bool raySurface(const SeamData& d, const glm::dvec3& from, const glm::dvec3& dir, glm::dvec3& hit, glm::dvec3& normal, double range);

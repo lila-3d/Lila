@@ -517,7 +517,7 @@ bool registerNodes(ext::Context& ctx)
 {
     NodeType t;
     t.name = kSeamType;
-    t.icon = "line-dashed";
+    t.icon = "layers-intersect";
     t.doc = "Where objects meet the ground and each other: contact curves with facts at every point (angle, depth, gap, exposure, "
             "ground layer), points along them, distance fields for the meshes and a contact mask for the terrain. Live: it follows "
             "the objects as they move.";

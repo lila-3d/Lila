@@ -11,6 +11,7 @@ A terrain is a mesh whose geometry-nodes modifier builds a heightfield. Lengths 
 - Add a road: `terrainRoute(t, start=, end=, road='road')` or `terrainAddRoad`. See "Roads".
 - Add a river, lake or sea: `terrainAddRiver`, `terrainAddLake`, `terrainSeaLevel`. See "Water: rivers, lakes, sea".
 - Caves, overhangs, arches: `terrainCave`, `terrainOverhang`, `terrainArch`. See "Caves, overhangs and arches".
+- Cover building bases (where walls, rocks and props meet the ground): read `lila://guide/contacts`; in short `seamFind(...)`, then `seamScatter`, `seamDecal` or `seamSkirt`, and `seamCheck()` until `ok`.
 - Check it: `terrainCheck(t)` until `ok`. Look at it: `terrainMap(t, file=)`.
 - Compare options: `terrainWedge(spec=, vary={'seed': [1, 2, 3]})`. See "Wedges".
 - Ship it: `terrainSendToUnreal(t)` or `terrainExport(t, target='unreal'|'unity'|'godot'|'files'|'mesh')`. See "To Unreal" and "To other engines and as meshes".

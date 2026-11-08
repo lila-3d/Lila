@@ -216,19 +216,19 @@ void registerUi(lila::ext::Context& ctx)
     actions::add(ctx, {.id = "seamwork.overlay", .label = "Contacts", .category = "Display", .run = [] { togglePref(kOverlayPref); },
                        .doc = "Draw contacts over the scene: ground joins thick and orange, joins between objects blue, creases thin grey; "
                               "near contacts dashed.",
-                       .checked = [] { return prefOn(kOverlayPref, false); }, .icon = "line-dashed"});
+                       .checked = [] { return prefOn(kOverlayPref, false); }, .icon = "layers-intersect"});
     actions::add(ctx, {.id = "seamwork.overlayWeights", .label = "Contact Blend Weights", .category = "Display",
                        .run = [] { togglePref(kWeightsPref); }, .doc = "With Contacts on, also draw each mesh's blend weight as points, brighter where stronger.",
                        .checked = [] { return prefOn(kWeightsPref, false); }});
     menus::addItem(ctx, {.menu = "Display", .action = "seamwork.overlay"});
     menus::addItem(ctx, {.menu = "Display", .action = "seamwork.overlayWeights"});
 
-    std::vector<levelToolkit::Item> items = {{"seamwork.find", "line-dashed", "Find", "Contacts"}};
-    const levelToolkit::Item buttons[] = {{"seamwork.scatter", "", "Scatter"}, {"seamwork.decal", "", "Strips"},   {"seamwork.skirt", "", "Skirt"},
-                                          {"seamwork.check", "", "Check"},     {"seamwork.send", "", "To Unreal"}, {"seamwork.overlay", "", "Overlay"},
-                                          {"seamwork.update", "", "Update"},   {"seamwork.export", "", "Export"},  {"seamwork.tagIgnore", "", "Ignore"},
+    // Find is the daily tile; the covers next, then check and ship; the toggle and tags go to the overflow past six.
+    std::vector<levelToolkit::Item> items = {{"seamwork.find", "layers-intersect", "Find", "Contacts"}, {}};
+    const levelToolkit::Item buttons[] = {{"seamwork.scatter", "", "Scatter"}, {"seamwork.decal", "", "Strips"},     {"seamwork.skirt", "", "Skirt"},
+                                          {"seamwork.check", "", "Check"},     {"seamwork.send", "", "To Unreal"},   {"seamwork.export", "", "Export"},
+                                          {"seamwork.update", "", "Update"},   {"seamwork.overlay", "", "Overlay"}, {"seamwork.tagIgnore", "", "Ignore"},
                                           {"seamwork.tagGround", "", "Ground"}};
-    items.push_back({});
     for (const auto& b : buttons)
         items.push_back(b);
     levelToolkit::add(ctx, {.id = "seamwork.contacts", .title = "Contacts", .items = items, .order = 43, .docs = "seamwork"});
