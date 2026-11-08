@@ -46,6 +46,8 @@ struct Field
     double max = std::numeric_limits<double>::quiet_NaN();
     double step = std::numeric_limits<double>::quiet_NaN();
     std::string suffix; // " cm", " deg"
+    /** Values a number field offers in a menu and steps through on the wheel (FlagDef::presets); empty for none. */
+    std::vector<double> presets;
     /** A Text field's editor: "multiline" (a box of several lines), "code" (monospace, applied on Ctrl+Enter) or "font" (font pickers); empty is one line. */
     std::string editor;
     /** A Text or List field naming scene nodes: their type (FlagDef::nodeType), drawn as a node picker. */
@@ -71,6 +73,7 @@ struct Override
     };
     std::map<std::string, Range> ranges;
     std::map<std::string, std::string> editors; // flag -> Field::editor
+    std::map<std::string, std::vector<double>> presets; // flag -> Field::presets
     /** Buttons above the fields that fill some of them in, such as from the selection; values returns flag -> value. */
     struct Fill
     {

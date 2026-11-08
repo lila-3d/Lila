@@ -209,7 +209,7 @@ PackOptions packArgs(const Args& a)
 std::vector<FlagDef> packFlags()
 {
     using T = ArgType;
-    return {{"resolution", "", T::Int, 1024, "Target texture size, px. Padding and margin are in its texels.", {}, {}, 4.0},
+    return {presetFlag({"resolution", "", T::Int, 1024, "Target texture size, px. Padding and margin are in its texels.", {}, {}, 4.0}, kTextureSizePresets),
             {"padding", "", T::Float, 4.0, "Texels between islands, held exactly (the search never lets two islands closer).", {}, {}, 0.0},
             {"margin", "", T::Float, -1.0, "Texels from the tile (or region) border; negative is half the padding."},
             {"paddingMips", "", T::Int, 0, "Padding and margin survive this many mip levels: both are multiplied by 2^paddingMips.", {}, {}, 0.0, 12.0},
@@ -1190,7 +1190,7 @@ void registerCommands()
                "Faces mapped onto a trim sheet take their density from the sheet: trims='skip' (the default) leaves their islands "
                "on their trims and reports how many were skipped, 'rescale' scales them too and clears their trim mapping.",
         .flags = {uvSetFlag(),
-                  {"resolution", "", T::Int, 1024, "Texture size, px.", {}, {}, 1.0},
+                  presetFlag({"resolution", "", T::Int, 1024, "Texture size, px.", {}, {}, 1.0}, kTextureSizePresets),
                   {"density", "", T::Float, nullptr, "Set to this many px/cm.", {}, {}, 0.0},
                   {"worldSpace", "", T::Bool, true, "Measure world size, with the mesh's scale."},
                   {"trims", "", T::String, "skip", "Trim-mapped faces: skip keeps them on their trims, rescale scales them off.", {"skip", "rescale"}}},
@@ -1241,7 +1241,7 @@ void registerCommands()
         .doc = "Generate Unreal lightmap uvs: the source set's islands repacked without overlaps, padded for the lightmap resolution.",
         .flags = {{"uvSet", "", T::String, "uv1", "Lightmap set to write."},
                   {"source", "", T::String, "uv0", "Set whose islands to reuse (auto seams when missing)."},
-                  {"resolution", "", T::Int, 64, "Lightmap resolution in Unreal.", {}, {}, 4.0},
+                  presetFlag({"resolution", "", T::Int, 64, "Lightmap resolution in Unreal.", {}, {}, 4.0}, std::vector<double>{16, 32, 64, 128, 256, 512, 1024}),
                   {"padding", "", T::Float, 2.0, "Texels between charts, held exactly at the lightmap resolution.", {}, {}, 0.0},
                   {"effort", "", T::Int, 2, "Packing search effort 0-3; higher packs denser, slower.", {}, {}, 0.0, 3.0},
                   {"rotateStep", "", T::Int, 90, "Rotation step for the charts, degrees (0 keeps their orientation).", {}, {}, 0.0, 180.0}},
@@ -1271,7 +1271,7 @@ void registerCommands()
         .doc = "UV report for the selection: islands, overlapping and folded faces, distortion and texel density. Faces mapped onto a "
                "trim sheet share texels on purpose: their overlaps count in trimOverlapFaces, not overlappingFaces (trimCheck checks "
                "them against their sheet).",
-        .flags = {uvSetFlag(), {"resolution", "", T::Int, 1024, "Texture size for the density, px.", {}, {}, 1.0}},
+        .flags = {uvSetFlag(), presetFlag({"resolution", "", T::Int, 1024, "Texture size for the density, px.", {}, {}, 1.0}, kTextureSizePresets)},
         .undoable = false,
         .run = [](const Args& a) -> json {
             std::string set = uvSetArg(a);

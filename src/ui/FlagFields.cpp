@@ -151,6 +151,8 @@ QDoubleSpinBox* flagNumber(const opt::Field& f, int decimals, double lo, double 
         spin = controls::valueField(lo, hi, decimals, {}, parent);
     spin->setSingleStep(std::isnan(f.step) ? (decimals ? 0.1 : 1.0) : f.step);
     spin->setSuffix(flagSuffix(f.suffix));
+    if (!f.presets.empty())
+        controls::setPresets(spin, f.presets);
     return spin;
 }
 
@@ -213,7 +215,8 @@ FlagFieldWidgets makeFlagField(const opt::Field& f, const json& value, std::func
             if (whole != 0)
             {
                 *acc -= whole;
-                spin->setValue(spin->value() + whole);
+                if (!controls::stepPresets(spin, whole))
+                    spin->setValue(spin->value() + whole);
             }
         }, parent);
         setSpinDefault(spin, d);
@@ -232,7 +235,19 @@ FlagFieldWidgets makeFlagField(const opt::Field& f, const json& value, std::func
         QDoubleSpinBox* spin = flagNumber(f, 3, std::isnan(f.min) ? -1e6 : f.min, std::isnan(f.max) ? 1e6 : f.max, parent);
         spin->setValue(jsonNumber(value));
         QObject::connect(spin, &QDoubleSpinBox::valueChanged, spin, [changed](double x) { changed(x); });
-        auto* scrub = new ScrubLabel(label, [spin](double dx) { spin->setValue(spin->value() + dx); }, parent);
+        auto acc = std::make_shared<double>(0.0);
+        auto* scrub = new ScrubLabel(label, [spin, acc](double dx) {
+            if (controls::stepPresets(spin, 0))
+            {
+                // dx is pixels times the single step; a preset per 24 pixels keeps each one pickable.
+                *acc += dx / spin->singleStep() / 24.0;
+                const int whole = int(*acc);
+                *acc -= whole;
+                controls::stepPresets(spin, whole);
+                return;
+            }
+            spin->setValue(spin->value() + dx);
+        }, parent);
         scrub->setStepScale(spin->singleStep() / 0.1);
         double d = jsonNumber(f.defaultValue);
         setSpinDefault(spin, d);

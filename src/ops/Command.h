@@ -62,6 +62,8 @@ struct FlagDef
      * node picker. Set it with nodeFlag().
      */
     std::string nodeType;
+    /** Values an Int or Float flag's option box field offers in a menu and steps through on the wheel; set it with presetFlag(). */
+    std::vector<double> presets;
 };
 
 /** `flag` as one naming a scene node of `type` (see FlagDef::nodeType). */
@@ -70,6 +72,16 @@ inline FlagDef nodeFlag(FlagDef flag, std::string type)
     flag.nodeType = std::move(type);
     return flag;
 }
+
+/** `flag` with preset values (see FlagDef::presets). */
+inline FlagDef presetFlag(FlagDef flag, std::vector<double> presets)
+{
+    flag.presets = std::move(presets);
+    return flag;
+}
+
+/** Power-of-two texture sizes, the presets of every texture size field. */
+inline const std::vector<double> kTextureSizePresets = {64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384};
 
 /** Normalized call: positional args plus long-name flags, defaults filled in. */
 struct LILA_FOUNDATION_API Args

@@ -1,6 +1,7 @@
 #include "ui/SpinScrub.h"
 
 #include "ops/Undo.h"
+#include "ui/Controls.h"
 #include "ui/Icons.h"
 #include "ui/Theme.h"
 #include "ui/ValueReset.h"
@@ -30,6 +31,7 @@ namespace lila::ui
 namespace
 {
 constexpr double kPixelsPerStep = 6.0;
+constexpr double kStepsPerPreset = 4.0;
 
 int64_t steadyNowMs()
 {
@@ -90,6 +92,7 @@ protected:
             mButton = m->button();
             mLastX = m->globalPosition().x();
             mCarry = 0.0;
+            mPresetCarry = 0.0;
             mClick.press(int(m->globalPosition().x()), int(m->globalPosition().y()), steadyNowMs());
             QApplication::setOverrideCursor(Qt::SizeHorCursor);
             UndoStack::get().openChunk("Drag Value");
@@ -254,6 +257,18 @@ private:
 
     void step(double steps, Qt::KeyboardModifiers mods)
     {
+        // Presets step like a choice: one per few steps of travel, so they can be picked one at a time.
+        if (controls::stepPresets(mBox, 0))
+        {
+            mPresetCarry += steps;
+            const int whole = int(mPresetCarry / kStepsPerPreset);
+            if (whole != 0)
+            {
+                mPresetCarry -= whole * kStepsPerPreset;
+                controls::stepPresets(mBox, whole);
+            }
+            return;
+        }
         double scale = (mods & Qt::ShiftModifier) ? 10.0 : 1.0;
         if (auto* d = qobject_cast<QDoubleSpinBox*>(mBox.data()))
         {
@@ -275,6 +290,7 @@ private:
     QPointer<QWidget> mChoice;
     double mLastX = 0.0;
     double mCarry = 0.0;
+    double mPresetCarry = 0.0;
     valueReset::ClickTracker mClick;
 };
 

@@ -16,11 +16,15 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QScrollArea>
+#include <QKeyEvent>
 #include <QScrollBar>
+#include <QSpinBox>
 #include <QStyle>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 
 #include <algorithm>
+#include <cmath>
 
 namespace lila::ui::controls
 {
@@ -335,5 +339,148 @@ void fitScrollWidth(QScrollArea* scroll)
 {
     if (QWidget* content = scroll->widget())
         content->installEventFilter(new ScrollWidthFit(scroll));
+}
+
+namespace
+{
+constexpr const char* kPresetsProperty = "lilaPresets";
+constexpr int kPresetArrowWidth = 16;
+
+std::vector<double> presetsOf(const QAbstractSpinBox* box)
+{
+    std::vector<double> out;
+    for (const QVariant& v : box->property(kPresetsProperty).toList())
+        out.push_back(v.toDouble());
+    return out;
+}
+
+double spinValue(const QAbstractSpinBox* box)
+{
+    if (auto* d = qobject_cast<const QDoubleSpinBox*>(box))
+        return d->value();
+    if (auto* i = qobject_cast<const QSpinBox*>(box))
+        return i->value();
+    return 0.0;
+}
+
+void setSpinValue(QAbstractSpinBox* box, double v)
+{
+    if (auto* d = qobject_cast<QDoubleSpinBox*>(box))
+        d->setValue(v);
+    else if (auto* i = qobject_cast<QSpinBox*>(box))
+        i->setValue(int(std::lround(v)));
+}
+
+QString presetText(const QAbstractSpinBox* box, double v)
+{
+    if (auto* d = qobject_cast<const QDoubleSpinBox*>(box))
+        return d->textFromValue(v) + d->suffix();
+    if (auto* i = qobject_cast<const QSpinBox*>(box))
+        return QString::number(std::lround(v)) + i->suffix();
+    return QString::number(v);
+}
+
+/** Wheel and arrow keys step presets; the chevron follows the field's right edge. */
+class PresetStepper : public QObject
+{
+public:
+    PresetStepper(QAbstractSpinBox* box, QToolButton* arrow) : QObject(box), mBox(box), mArrow(arrow) {}
+
+protected:
+    bool eventFilter(QObject*, QEvent* e) override
+    {
+        switch (e->type())
+        {
+        case QEvent::Resize:
+        case QEvent::Show:
+            mArrow->setGeometry(mBox->width() - kPresetArrowWidth - 2, 2, kPresetArrowWidth, std::max(0, mBox->height() - 4));
+            return false;
+        case QEvent::Wheel:
+        {
+            const int dy = static_cast<QWheelEvent*>(e)->angleDelta().y();
+            if (dy != 0)
+                stepPresets(mBox, dy > 0 ? 1 : -1);
+            return true;
+        }
+        case QEvent::KeyPress:
+        {
+            const int key = static_cast<QKeyEvent*>(e)->key();
+            if (key == Qt::Key_Up || key == Qt::Key_PageUp || key == Qt::Key_Down || key == Qt::Key_PageDown)
+            {
+                stepPresets(mBox, key == Qt::Key_Up || key == Qt::Key_PageUp ? 1 : -1);
+                return true;
+            }
+            return false;
+        }
+        default: return false;
+        }
+    }
+
+private:
+    QAbstractSpinBox* mBox;
+    QToolButton* mArrow;
+};
+} // namespace
+
+void setPresets(QAbstractSpinBox* box, std::vector<double> values)
+{
+    std::sort(values.begin(), values.end());
+    values.erase(std::unique(values.begin(), values.end()), values.end());
+    QVariantList list;
+    for (double v : values)
+        list.push_back(v);
+    const bool had = box->property(kPresetsProperty).isValid();
+    box->setProperty(kPresetsProperty, list);
+    if (had)
+        return;
+    box->setButtonSymbols(QAbstractSpinBox::NoButtons);
+    auto* arrow = new QToolButton(box);
+    arrow->setObjectName("presetArrow");
+    arrow->setIcon(icon("chevron-down"));
+    arrow->setIconSize(QSize(12, 12));
+    arrow->setAutoRaise(true);
+    arrow->setFocusPolicy(Qt::NoFocus);
+    arrow->setCursor(Qt::ArrowCursor);
+    arrow->setToolTip("Presets");
+    arrow->setStyleSheet("QToolButton { border: none; background: transparent; padding: 0; }");
+    if (auto* edit = box->findChild<QLineEdit*>())
+        edit->setTextMargins(0, 0, kPresetArrowWidth, 0);
+    QObject::connect(arrow, &QToolButton::clicked, box, [box, arrow] {
+        QMenu menu;
+        const double current = spinValue(box);
+        for (double v : presetsOf(box))
+        {
+            QAction* a = menu.addAction(presetText(box, v), box, [box, v] { setSpinValue(box, v); });
+            a->setCheckable(true);
+            a->setChecked(std::abs(v - current) < 1e-9);
+        }
+        menu.exec(arrow->mapToGlobal(QPoint(arrow->width() - menu.sizeHint().width(), arrow->height())));
+    });
+    box->installEventFilter(new PresetStepper(box, arrow));
+}
+
+bool stepPresets(QAbstractSpinBox* box, int steps)
+{
+    const std::vector<double> values = presetsOf(box);
+    if (values.empty() || !box->isEnabled() || box->isReadOnly())
+        return !values.empty();
+    const double v = spinValue(box);
+    const double eps = 1e-9 * std::max(1.0, std::abs(v));
+    // From a value between presets, the first step lands on the neighbouring preset.
+    ptrdiff_t i = 0;
+    if (steps > 0)
+    {
+        i = std::upper_bound(values.begin(), values.end(), v + eps) - values.begin();
+        i += steps - 1;
+    }
+    else if (steps < 0)
+    {
+        i = std::lower_bound(values.begin(), values.end(), v - eps) - values.begin() - 1;
+        i += steps + 1;
+    }
+    else
+        return true;
+    setSpinValue(box, values[size_t(std::clamp<ptrdiff_t>(i, 0, ptrdiff_t(values.size()) - 1))]);
+    return true;
 }
 } // namespace lila::ui::controls

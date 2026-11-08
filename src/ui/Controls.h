@@ -94,6 +94,15 @@ LILA_UI_API QDoubleSpinBox* axisField(char axis, double lo, double hi, int decim
 /** Three axis fields in a row, equal widths. */
 LILA_UI_API QWidget* vectorField(std::vector<QDoubleSpinBox*>& out, double lo, double hi, int decimals, const QString& unit, QWidget* parent);
 
+/**
+ * Gives a number field preset values: a chevron inside its right edge lists them, and the wheel, arrow keys and
+ * middle-drag step from one to the next instead of by the single step. Any other value can still be typed.
+ */
+LILA_UI_API void setPresets(QAbstractSpinBox* box, std::vector<double> values);
+
+/** Moves the field `steps` presets up (down when negative) from its value; false when it has no presets. */
+LILA_UI_API bool stepPresets(QAbstractSpinBox* box, int steps);
+
 /** Keeps the scroll area at least as wide as its content needs, so a narrow dock never clips a row of tiles. */
 LILA_UI_API void fitScrollWidth(QScrollArea* scroll);
 

@@ -375,6 +375,8 @@ Field fieldFor(const FlagDef& flag)
         f.nodeType = flag.nodeType;
     f.min = flag.min.value_or(f.min);
     f.max = flag.max.value_or(f.max);
+    if (f.kind == FieldKind::Int || f.kind == FieldKind::Float)
+        f.presets = flag.presets;
     json def = flag.defaultValue.is_null() ? json(nullptr) : normalize(f, flag.defaultValue);
     f.defaultValue = def.is_null() ? kindZero(f) : def;
     return f;
@@ -433,6 +435,8 @@ std::vector<Field> fields(std::string_view command, const json& fixed)
             }
             if (auto it = o->editors.find(flag.name); it != o->editors.end() && f.kind == FieldKind::Text)
                 f.editor = it->second;
+            if (auto it = o->presets.find(flag.name); it != o->presets.end())
+                f.presets = it->second;
         }
         out.push_back(std::move(f));
     }
