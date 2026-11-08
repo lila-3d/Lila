@@ -222,7 +222,7 @@ TEST_CASE("a registered brush sculpts through the shared stroke, and unloads wit
     CHECK_FALSE(sculpt::setBrush(b, "lift"));
 }
 
-TEST_CASE("polypaint survives exit onto the cage and the kept proxy, and resumes")
+TEST_CASE("polypaint survives exit onto the mesh and the stored levels, and resumes")
 {
     makePaintNode("paintCube", geo::makeCube({}));
     ops::execute("sculptEnter", {{"args", {"paintCube"}}, {"levels", 2}});
@@ -251,9 +251,7 @@ TEST_CASE("polypaint survives exit onto the cage and the kept proxy, and resumes
     for (const glm::vec4& c : geo::colors::pointColors(cage, sculpt::kColorSet))
         red |= c.r > 0.5f && c.g < 0.5f;
     CHECK(red);
-    scene::Node* kept = scene::Graph::current().find("paintCube_high");
-    REQUIRE(kept);
-    CHECK(geo::colors::has(storedPaintMesh("paintCube_high"), sculpt::kColorSet));
+    REQUIRE(sculpt::storedLevels(*scene::Graph::current().find("paintCube")));
 
     ops::execute("sculptEnter", {{"args", {"paintCube"}}});
     REQUIRE(sculpt::active());

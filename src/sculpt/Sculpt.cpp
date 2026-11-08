@@ -2,6 +2,7 @@
 
 #include "brush/Symmetry.h"
 #include "core/Profile.h"
+#include "geo/RenderMesh.h"
 
 #include <glm/gtc/quaternion.hpp>
 #include <tbb/blocked_range.h>
@@ -1258,7 +1259,11 @@ void SculptMesh::writeVertices(std::span<const Index> points)
         v.normal = mNormals[p];
         v.tangent = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
         v.color = shownColor(p);
-        dv.write(p, v);
+        for (uint32_t k = mPointVertOffsets[p]; k < mPointVertOffsets[p + 1]; ++k)
+        {
+            v.uv = v.uv1 = mVertUv[mPointVerts[k]];
+            dv.write(mPointVerts[k], v);
+        }
     }
 }
 
@@ -1276,34 +1281,53 @@ std::shared_ptr<const render::RenderMesh> SculptMesh::renderMesh()
         return mRender;
     LILA_ZONE();
 
+    // Split at uv seams and grouped by face material, so the mesh's own materials and textures draw on the sculpt.
+    geo::RenderMeshOptions opts;
+    opts.maxUvSets = 1;
+    opts.colors = false;
+    opts.wireframe = false;
+    const geo::RenderMesh layout = geo::buildRenderMesh(mMesh, opts);
+    const Index n = layout.vertexCount();
+    const bool uvs = !layout.uvs.empty() && layout.uvs[0].size() == size_t(n);
+    mVertUv.assign(size_t(n), glm::vec2(0.0f));
+    mPointVertOffsets.assign(size_t(mMesh.pointCapacity()) + 1, 0);
+    for (Index v = 0; v < n; ++v)
+        ++mPointVertOffsets[size_t(layout.vertexPoint[v]) + 1];
+    for (size_t i = 1; i < mPointVertOffsets.size(); ++i)
+        mPointVertOffsets[i] += mPointVertOffsets[i - 1];
+    mPointVerts.resize(size_t(n));
+    {
+        std::vector<uint32_t> fill(mPointVertOffsets.begin(), mPointVertOffsets.end() - 1);
+        for (Index v = 0; v < n; ++v)
+            mPointVerts[fill[layout.vertexPoint[v]]++] = uint32_t(v);
+    }
+
     auto rm = std::make_shared<render::RenderMesh>();
     rm->dynamic = std::make_shared<render::DynamicVertices>();
-    const Index n = mMesh.pointCapacity();
     auto& verts = rm->dynamic->vertices;
-    verts.resize(n);
-    tbb::parallel_for(Index(0), n, [&](Index p) {
-        render::MeshVertex& v = verts[p];
+    verts.resize(size_t(n));
+    tbb::parallel_for(Index(0), n, [&](Index i) {
+        const Index p = layout.vertexPoint[i];
+        render::MeshVertex& v = verts[i];
         v.pos = glm::vec3(mMesh.position(p));
         v.normal = mNormals[p];
         v.tangent = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
-        v.uv = v.uv1 = glm::vec2(0.0f);
+        mVertUv[i] = uvs ? layout.uvs[0][i] : glm::vec2(0.0f);
+        v.uv = v.uv1 = mVertUv[i];
         v.color = shownColor(p);
     });
-    const auto& corners = mBvh.triangles().corners;
-    rm->indices.resize(corners.size());
-    tbb::parallel_for(size_t(0), corners.size(), [&](size_t i) { rm->indices[i] = uint32_t(mMesh.cornerPoint(corners[i])); });
+    rm->indices.assign(layout.indices.begin(), layout.indices.end());
+    for (const geo::RenderSection& sec : layout.sections)
+        rm->sections.push_back({uint32_t(std::max(0, sec.material)), sec.firstIndex, sec.indexCount});
     // Which triangle sides are polygon edges, so the shader draws the wireframe without the triangulation's diagonals.
-    const size_t tris = corners.size() / 3;
+    const size_t tris = layout.indices.size() / 3;
     rm->edgeMask.assign((tris + 7) / 8, 0u);
     tbb::parallel_for(size_t(0), rm->edgeMask.size(), [&](size_t w) {
         uint32_t word = 0;
         for (size_t t = w * 8; t < std::min(w * 8 + 8, tris); ++t)
             for (int k = 0; k < 3; ++k)
-            {
-                const Index a = corners[t * 3 + size_t(k)], b = corners[t * 3 + size_t((k + 1) % 3)];
-                if (mMesh.cornerNext(a) == b || mMesh.cornerNext(b) == a)
+                if (layout.triangleSides[t] & (1u << k))
                     word |= 1u << ((t & 7) * 4 + size_t(k));
-            }
         rm->edgeMask[w] = word;
     });
     // Strokes may push the surface past its starting bounds, so leave room.

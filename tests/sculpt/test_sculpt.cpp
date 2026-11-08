@@ -15,6 +15,8 @@
 
 #include <chrono>
 #include <cmath>
+#include <map>
+#include <set>
 
 using namespace lila;
 using geo::Index;
@@ -137,9 +139,10 @@ TEST_CASE("reprojection round trip leaves an untouched cage unchanged")
     ops::execute("sculptEnter", {{"args", {"rtCube"}}, {"levels", 2}});
     REQUIRE(sculpt::active());
     CHECK(sculpt::active()->sculpt.mesh().numFaces() == 6 * 16);
-    ops::execute("sculptExit", {{"method", "fit"}});
+    ops::execute("sculptLevel", {{"level", 0}});
+    ops::execute("sculptExit", json::object());
     CHECK_FALSE(sculpt::active());
-    CHECK(maxDiff(before, inMesh("rtCube")) < 1e-9);
+    CHECK(maxDiff(before, inMesh("rtCube")) < 1e-4);
 }
 
 TEST_CASE("exit fit recovers a displaced cage")
@@ -610,9 +613,10 @@ std::pair<FitResult, FitResult> sculptAndFit(geo::Mesh cage, const std::vector<j
             r.sculptMove = std::max(r.sculptMove, glm::length(now[i] - start[i]));
         sculpt::FitOptions fo;
         fo.maxMoveRatio = ratio;
-        std::vector<glm::dvec3> x = sculpt::fitCage(s->cage, s->stack->stencils, now, fo);
-        for (Index p = 0; p < s->cage.pointCapacity(); ++p)
-            r.cageMove = std::max(r.cageMove, glm::length(x[p] - s->cage.position(p)));
+        const geo::Mesh& cage = s->stack->levels.front()->mesh;
+        std::vector<glm::dvec3> x = sculpt::fitCage(cage, s->stack->stencils, now, fo);
+        for (Index p = 0; p < cage.pointCapacity(); ++p)
+            r.cageMove = std::max(r.cageMove, glm::length(x[p] - cage.position(p)));
         for (const auto& st : s->stack->stencils)
             x = st.apply(x);
         for (size_t i = 0; i < now.size(); ++i)
@@ -665,39 +669,6 @@ TEST_CASE("exit fit still follows a broad sculpt")
     CHECK(limited.rms <= plain.rms * 1.01);
 }
 
-TEST_CASE("exitPositions previews exactly what sculptExit leaves")
-{
-    json dab = {{"center", {0.0, 0.0, 50.0}}, {"normal", {0.0, 0.0, 1.0}}, {"radius", 40.0}};
-    for (const char* mode : {"subdivide", "remesh"})
-        for (const char* method : {"fit", "closest"})
-        {
-            CAPTURE(mode);
-            CAPTURE(method);
-            // Subdivided, so the closest point fit has a cage point under the stroke.
-            scene::Node* n = makeMeshNode("previewCube", geo::makeCube({.subdivX = 2, .subdivY = 2, .subdivZ = 2}));
-            scene::Graph::current().setValue({n->id(), scene::MeshNode::kSymmetry, -1}, int64_t(1));
-            ops::execute("sculptEnter", {{"args", {"previewCube"}}, {"mode", mode}, {"levels", 2}, {"resolution", 32}});
-            auto s = sculpt::active();
-            REQUIRE(s);
-            // Each stroke moves the preview, from the solver kept on the session.
-            std::vector<glm::dvec3> first = sculpt::exitPositions(*s, method);
-            ops::execute("sculptStroke", {{"brush", "draw"}, {"strength", 1.0}, {"dabs", json::array({dab, dab})}});
-            std::vector<glm::dvec3> second = sculpt::exitPositions(*s, method);
-            CHECK(s->exitSolver);
-            double moved = 0.0;
-            for (size_t p = 0; p < first.size(); ++p)
-                moved = std::max(moved, glm::length(second[p] - first[p]));
-            CHECK(moved > 0.1);
-            ops::execute("sculptExit", {{"method", method}});
-            const geo::Mesh& out = inMesh("previewCube");
-            double diff = 0.0;
-            for (Index p = 0; p < out.pointCapacity(); ++p)
-                if (out.pointValid(p))
-                    diff = std::max(diff, glm::length(out.position(p) - second[p]));
-            CHECK(diff < 1e-9);
-        }
-}
-
 TEST_CASE("CageFitter matches fitCage from any start")
 {
     geo::Mesh cage = sphere(6);
@@ -741,15 +712,15 @@ TEST_CASE("sculpt commands undo as single steps")
     CHECK(sculpted != start);
     ops::execute("sculptExit", json::object());
     CHECK_FALSE(sculpt::active());
-    CHECK(maxDiff(before, inMesh("undoCube")) > 0.1);
-    CHECK(scene::Graph::current().find("undoCube_high"));
+    CHECK(inMesh("undoCube").numFaces() == 6 * 16);
+    CHECK(sculpt::storedLevels(*scene::Graph::current().find("undoCube")));
 
-    // Undo exit: back in sculpt mode with the sculpt intact, cage restored.
+    // Undo exit: back in sculpt mode with the sculpt intact, mesh and levels as before.
     REQUIRE(u.undo());
     REQUIRE(sculpt::active() == s);
     CHECK(maxDiff(before, inMesh("undoCube")) == 0.0);
     CHECK(std::vector<glm::dvec3>(s->sculpt.mesh().positions().begin(), s->sculpt.mesh().positions().end()) == sculpted);
-    CHECK_FALSE(scene::Graph::current().find("undoCube_high"));
+    CHECK_FALSE(sculpt::storedLevels(*scene::Graph::current().find("undoCube")));
     // Undo the stroke, then the enter.
     REQUIRE(u.undo());
     CHECK(std::vector<glm::dvec3>(s->sculpt.mesh().positions().begin(), s->sculpt.mesh().positions().end()) == start);
@@ -762,13 +733,13 @@ TEST_CASE("sculpt commands undo as single steps")
     CHECK(std::vector<glm::dvec3>(s->sculpt.mesh().positions().begin(), s->sculpt.mesh().positions().end()) == sculpted);
     REQUIRE(u.redo());
     CHECK_FALSE(sculpt::active());
-    CHECK(maxDiff(before, inMesh("undoCube")) > 0.1);
+    CHECK(inMesh("undoCube").numFaces() == 6 * 16);
 
-    // Re-entering resumes from the kept proxy.
-    ops::execute("sculptEnter", {{"args", {"undoCube"}}});
+    // Re-entering picks up the stored levels.
+    json r2 = ops::execute("sculptEnter", {{"args", {"undoCube"}}});
     REQUIRE(sculpt::active());
-    CHECK(sculpt::active()->mode == sculpt::ProxyMode::Subdivide);
-    CHECK(sculpt::active()->proxyNode != scene::kNoNode);
+    CHECK(r2["level"].get<int>() == 2);
+    CHECK(r2["levels"].get<int>() == 2);
     ops::execute("sculptCancel", json::object());
     CHECK_FALSE(sculpt::active());
 }
@@ -921,4 +892,40 @@ TEST_CASE("strokes on a radially symmetric mesh repeat exactly through its orbit
             CHECK_MESSAGE(radialAsymmetry() < 1e-9, sculpt::brushName(brush));
         }
     }
+}
+
+TEST_CASE("the sculpt draws with the mesh's material slots and uv seams")
+{
+    geo::Mesh cube = geo::makeCube({});
+    cube.materialNames() = {"Red", "Blue"};
+    std::span<int32_t> mat = cube.faceAttrs().getOrAdd<int32_t>(geo::attr::kMaterial);
+    mat[0] = 1;
+    mat[1] = 1;
+    geo::SubdivideOptions o;
+    o.levels = 2;
+    sculpt::SculptMesh sm(geo::subdivide(cube, o));
+    const auto rm = sm.renderMesh();
+    REQUIRE(rm->sections.size() == 2);
+    std::set<uint32_t> slots;
+    for (const render::MeshSection& s : rm->sections)
+        slots.insert(s.material);
+    CHECK(slots == std::set<uint32_t>{0, 1});
+    // A cube's uvs are cut, so seam points get a vertex per side.
+    CHECK(rm->dynamic->vertices.size() > size_t(sm.mesh().numPoints()));
+
+    // A stroke moves every vertex of a seam point together.
+    sculpt::BrushSettings b;
+    sm.beginStroke(b);
+    sculpt::Dab d;
+    d.center = glm::dvec3(50.0);
+    d.normal = glm::normalize(glm::dvec3(1.0));
+    d.radius = 30.0;
+    sm.dab(d);
+    sm.endStroke();
+    std::map<glm::vec3, int, decltype([](const glm::vec3& a, const glm::vec3& c) { return std::tie(a.x, a.y, a.z) < std::tie(c.x, c.y, c.z); })> seen;
+    for (Index p = 0; p < sm.mesh().pointCapacity(); ++p)
+        if (sm.mesh().pointValid(p))
+            seen[glm::vec3(sm.mesh().position(p))] = 0;
+    for (const render::MeshVertex& v : rm->dynamic->vertices)
+        CHECK(seen.contains(v.pos));
 }

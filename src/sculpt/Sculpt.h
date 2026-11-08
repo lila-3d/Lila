@@ -354,6 +354,10 @@ private:
     uint32_t mGatherId = 0;
 
     std::shared_ptr<render::RenderMesh> mRender;
+    /** The render vertices of each point (one per uv seam side), [mPointVertOffsets[p], mPointVertOffsets[p + 1]). */
+    std::vector<uint32_t> mPointVertOffsets;
+    std::vector<uint32_t> mPointVerts;
+    std::vector<glm::vec2> mVertUv;
     uint64_t mVersion = 1;
     uint64_t mMaskVersion = 1;
     uint64_t mColorVersion = 1;
