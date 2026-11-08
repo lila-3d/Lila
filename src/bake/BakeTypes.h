@@ -47,7 +47,7 @@ struct LILA_SCENE_API OutputSettings
     int bits = 8;
     /** Triangular dither when writing 8 bit. Exact maps (IDs, islands) never dither. */
     bool dither = false;
-    /** TIFF strips: deflate | none. */
+    /** deflate | none: TIFF strips deflate, TGA run-length encodes. */
     std::string compression = "deflate";
     /** Deflate level for PNG, EXR and TIFF: 1 fastest to 9 smallest. Bakes favour speed; files are a little larger. */
     int compressionLevel = 2;

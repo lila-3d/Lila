@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 
 #include "groomlab/cards.h"
+#include "groomlab/texture.h"
 #include "groomlab/operators.h"
 #include "groomlab/curve.h"
 #include "groomlab/display.h"
@@ -320,21 +321,36 @@ TEST(Cards, BakeCoversTheCardsAndWritesTga) {
 
     const std::string path = (std::filesystem::temp_directory_path() / "groomlab_cards_alpha.tga").string();
     writeTga(path, t.size, t.size, 1, t.coverage);
-    EXPECT_EQ(std::filesystem::file_size(path), 18u + 256u * 256u);
+    EXPECT_LT(std::filesystem::file_size(path), 18u + 256u * 256u);
     std::ifstream in(path, std::ios::binary);
     char header[18];
     in.read(header, 18);
-    EXPECT_EQ(header[2], 3);   // grayscale
+    EXPECT_EQ(header[2], 11);  // run-length grayscale
     EXPECT_EQ(header[16], 8);  // bits
     in.close();
-    writeTga(path, t.size, t.size, 4, t.attribute);
-    EXPECT_EQ(std::filesystem::file_size(path), 18u + 4u * 256u * 256u);
-    std::ifstream rgba(path, std::ios::binary);
+    {
+        const TexturePtr back = loadTexture(path);
+        ASSERT_EQ(back->width(), t.size);
+        for (std::size_t p = 0; p < 256u * 256u; p += 97)
+            EXPECT_NEAR(back->image()->texel(int(p % 256u), int(p / 256u))[0] * 255.0f, float(t.coverage[p]), 0.5f);
+    }
+    std::filesystem::remove(path);
+    // Its own file: loadTexture caches by path and file stamp.
+    const std::string rgbaPath = (std::filesystem::temp_directory_path() / "groomlab_cards_rgba.tga").string();
+    writeTga(rgbaPath, t.size, t.size, 4, t.attribute);
+    std::ifstream rgba(rgbaPath, std::ios::binary);
     rgba.read(header, 18);
+    EXPECT_EQ(header[2], 10);  // run-length true colour
     EXPECT_EQ(header[16], 32);
     EXPECT_EQ(header[17] & 0x0F, 8);  // alpha bits
     rgba.close();
-    std::filesystem::remove(path);
+    {
+        const TexturePtr back = loadTexture(rgbaPath);
+        for (std::size_t p = 0; p < 256u * 256u; p += 97)
+            for (int c = 0; c < 4; ++c)
+                EXPECT_NEAR(back->image()->texel(int(p % 256u), int(p / 256u))[std::size_t(c)] * 255.0f, float(t.attribute[p * 4 + std::size_t(c)]), 0.5f);
+    }
+    std::filesystem::remove(rgbaPath);
     EXPECT_THROW(writeTga(path, 2, 2, 1, {1, 2, 3}), std::runtime_error);
 }
 

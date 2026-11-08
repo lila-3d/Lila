@@ -38,7 +38,7 @@ struct WriteOptions
     int bits = 8;
     /** Triangular (TPDF) dither when quantising to 8 bit. Values already on an 8-bit step stay exact. */
     bool dither = false;
-    /** TIFF: deflate (zlib) strips, else uncompressed. */
+    /** TIFF: deflate (zlib) strips. TGA: run-length packets. Else uncompressed. */
     bool compress = true;
     /** Deflate level for PNG, EXR and TIFF: 1 is fastest, 9 smallest. */
     int level = 6;
@@ -56,8 +56,9 @@ LILA_FOUNDATION_API void writePng(const fs::path& path, int width, int height, s
                                   int level = 6);
 /** bits 16 is half float, 32 is float. Throws std::runtime_error. */
 LILA_FOUNDATION_API void writeExr(const fs::path& path, int width, int height, std::span<const float> rgba, int bits = 16, int level = 6);
-/** 8 bit RGBA, top-left origin. Throws std::runtime_error. */
-LILA_FOUNDATION_API void writeTga(const fs::path& path, int width, int height, std::span<const float> rgba, bool dither = false);
+/** 8 bit RGBA, top-left origin, run-length encoded unless rle is false. Throws std::runtime_error. */
+LILA_FOUNDATION_API void writeTga(const fs::path& path, int width, int height, std::span<const float> rgba, bool dither = false,
+                                  bool rle = true);
 /** RGBA with unassociated alpha, 8/16 bit unsigned or 32 bit float, deflate with a horizontal predictor for integers. Throws std::runtime_error. */
 LILA_FOUNDATION_API void writeTiff(const fs::path& path, int width, int height, std::span<const float> rgba, int bits, bool deflate = true,
                                    bool dither = false, int level = 6);

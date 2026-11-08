@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <fstream>
 #include <limits>
 #include <map>
@@ -1023,7 +1024,7 @@ void writeTga(const std::string& path, int width, int height, int channels, cons
     std::ofstream out(path, std::ios::binary);
     if (!out) throw std::runtime_error("cannot write '" + path + "'");
     std::uint8_t header[18] = {};
-    header[2] = channels == 1 ? 3 : 2;  // uncompressed grayscale / true color
+    header[2] = channels == 1 ? 11 : 10;  // run-length grayscale / true color
     header[12] = static_cast<std::uint8_t>(width & 0xFF);
     header[13] = static_cast<std::uint8_t>(width >> 8);
     header[14] = static_cast<std::uint8_t>(height & 0xFF);
@@ -1031,19 +1032,38 @@ void writeTga(const std::string& path, int width, int height, int channels, cons
     header[16] = static_cast<std::uint8_t>(8 * channels);
     header[17] = static_cast<std::uint8_t>(0x20 | (channels == 4 ? 8 : 0));  // rows top to bottom; alpha bits
     out.write(reinterpret_cast<const char*>(header), sizeof header);
-    if (channels == 1) {
-        out.write(reinterpret_cast<const char*>(pixels.data()), static_cast<std::streamsize>(pixels.size()));
-    } else {
-        std::vector<std::uint8_t> bgr(pixels.size());
-        const auto step = static_cast<std::size_t>(channels);
-        for (std::size_t i = 0; i < pixels.size(); i += step) {
-            bgr[i] = pixels[i + 2];
-            bgr[i + 1] = pixels[i + 1];
-            bgr[i + 2] = pixels[i];
-            if (channels == 4) bgr[i + 3] = pixels[i + 3];
-        }
-        out.write(reinterpret_cast<const char*>(bgr.data()), static_cast<std::streamsize>(bgr.size()));
+    const auto step = static_cast<std::size_t>(channels);
+    std::vector<std::uint8_t> bgr(pixels.size());
+    for (std::size_t i = 0; i < pixels.size(); i += step) {
+        bgr[i] = pixels[i + (channels == 1 ? 0 : 2)];
+        if (channels == 1) continue;
+        bgr[i + 1] = pixels[i + 1];
+        bgr[i + 2] = pixels[i];
+        if (channels == 4) bgr[i + 3] = pixels[i + 3];
     }
+    std::vector<std::uint8_t> packed;
+    packed.reserve(bgr.size() / 2);
+    const auto same = [&](std::size_t a, std::size_t b) { return std::memcmp(&bgr[a * step], &bgr[b * step], step) == 0; };
+    // Packets stop at each scanline: some readers decode TGA a row at a time.
+    for (std::size_t row = 0; row < static_cast<std::size_t>(height); ++row) {
+        const std::size_t first = row * static_cast<std::size_t>(width), end = first + static_cast<std::size_t>(width);
+        for (std::size_t i = first; i < end;) {
+            std::size_t run = 1;
+            while (i + run < end && run < 128 && same(i, i + run)) ++run;
+            if (run > 1) {
+                packed.push_back(static_cast<std::uint8_t>(0x80 | (run - 1)));
+                packed.insert(packed.end(), bgr.data() + i * step, bgr.data() + (i + 1) * step);
+                i += run;
+                continue;
+            }
+            std::size_t raw = 1;
+            while (i + raw < end && raw < 128 && !(i + raw + 1 < end && same(i + raw, i + raw + 1))) ++raw;
+            packed.push_back(static_cast<std::uint8_t>(raw - 1));
+            packed.insert(packed.end(), bgr.data() + i * step, bgr.data() + (i + raw) * step);
+            i += raw;
+        }
+    }
+    out.write(reinterpret_cast<const char*>(packed.data()), static_cast<std::streamsize>(packed.size()));
     if (!out) throw std::runtime_error("cannot write '" + path + "'");
 }
 

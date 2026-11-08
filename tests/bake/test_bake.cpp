@@ -113,6 +113,38 @@ TEST_CASE("image files round trip: png 8/16, exr half, tga")
     }
 }
 
+TEST_CASE("tga is run-length encoded by default and reads back exactly; uncompressed on request")
+{
+    const fs::path dir = tempDir("lila_bake_tga_rle");
+    // Rows mix long runs (past the 128-texel packet limit), raw spans and runs of two.
+    const int W = 300, H = 5;
+    image::Image img{W, H, std::vector<float>(size_t(W) * H * 4)};
+    for (int y = 0; y < H; ++y)
+        for (int x = 0; x < W; ++x)
+        {
+            float* p = &img.rgba[(size_t(y) * W + size_t(x)) * 4];
+            const int v = x < 200 ? y * 40 : x < 260 ? (x * 7 + y) % 256 : ((x / 2) * 31) % 256;
+            p[0] = float(v) / 255.0f;
+            p[1] = float(255 - v) / 255.0f;
+            p[2] = float(y * 50) / 255.0f;
+            p[3] = x % 3 == 0 && x >= 260 ? 0.0f : 1.0f;
+        }
+    image::write(dir / "rle.tga", img, image::WriteOptions{});
+    image::write(dir / "raw.tga", img, image::WriteOptions{.compress = false});
+    CHECK(fs::file_size(dir / "raw.tga") == 18u + size_t(W) * H * 4);
+    CHECK(fs::file_size(dir / "rle.tga") < fs::file_size(dir / "raw.tga") / 2);
+    for (const char* file : {"rle.tga", "raw.tga"})
+    {
+        std::string err;
+        const image::Image back = image::read(dir / file, &err);
+        INFO(file << " " << err);
+        REQUIRE(back.width == W);
+        REQUIRE(back.height == H);
+        for (size_t i = 0; i < img.rgba.size(); ++i)
+            REQUIRE(std::abs(back.rgba[i] - img.rgba[i]) <= 0.5f / 255.0f);
+    }
+}
+
 TEST_CASE("dilation fills padding from the nearest island and never changes covered texels")
 {
     const int W = 32, H = 4;

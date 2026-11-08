@@ -1167,29 +1167,68 @@ void writeExr(const fs::path& path, int width, int height, std::span<const float
     writeExrImpl(path, width, height, rgba, bits == 32, level);
 }
 
-void writeTga(const fs::path& path, int width, int height, std::span<const float> rgba, bool dither)
+namespace
+{
+void appendTgaRle(std::vector<unsigned char>& out, const uint32_t* px, int count)
+{
+    for (int i = 0; i < count;)
+    {
+        int run = 1;
+        while (i + run < count && run < 128 && px[i + run] == px[i])
+            ++run;
+        if (run > 1)
+        {
+            out.push_back(static_cast<unsigned char>(0x80 | (run - 1)));
+            out.insert(out.end(), reinterpret_cast<const unsigned char*>(&px[i]), reinterpret_cast<const unsigned char*>(&px[i]) + 4);
+            i += run;
+            continue;
+        }
+        // A raw packet ends where the next run of two or more begins.
+        int raw = 1;
+        while (i + raw < count && raw < 128 && !(i + raw + 1 < count && px[i + raw] == px[i + raw + 1]))
+            ++raw;
+        out.push_back(static_cast<unsigned char>(raw - 1));
+        out.insert(out.end(), reinterpret_cast<const unsigned char*>(&px[i]), reinterpret_cast<const unsigned char*>(&px[i + raw]));
+        i += raw;
+    }
+}
+
+} // namespace
+
+void writeTga(const fs::path& path, int width, int height, std::span<const float> rgba, bool dither, bool rle)
 {
     LILA_ZONE();
 
     checkSize(path, width, height, rgba);
-    std::vector<unsigned char> out(18 + size_t(width) * size_t(height) * 4);
-    out[2] = 2; // uncompressed true colour
+    std::vector<uint32_t> bgra(size_t(width) * size_t(height));
+    tbb::parallel_for(0, height, [&](int y) {
+        for (int x = 0; x < width; ++x)
+        {
+            const size_t i = size_t(y) * size_t(width) + size_t(x);
+            auto q = [&](int c) { return uint32_t(quantize8(rgba[i * 4 + size_t(c)], x, y, c, dither)); };
+            bgra[i] = q(2) | q(1) << 8 | q(0) << 16 | q(3) << 24;
+        }
+    });
+    std::vector<unsigned char> out(18);
+    out[2] = rle ? 10 : 2;
     out[12] = static_cast<unsigned char>(width & 0xff);
     out[13] = static_cast<unsigned char>(width >> 8);
     out[14] = static_cast<unsigned char>(height & 0xff);
     out[15] = static_cast<unsigned char>(height >> 8);
     out[16] = 32;
     out[17] = 0x28; // 8 alpha bits, top-left origin
-    unsigned char* px = out.data() + 18;
-    for (size_t i = 0; i < size_t(width) * size_t(height); ++i)
+    if (!rle)
     {
-        const int x = int(i % size_t(width)), y = int(i / size_t(width));
-        auto q = [&](int c) { return quantize8(rgba[i * 4 + size_t(c)], x, y, c, dither); };
-        px[i * 4 + 0] = q(2);
-        px[i * 4 + 1] = q(1);
-        px[i * 4 + 2] = q(0);
-        px[i * 4 + 3] = q(3);
+        const auto* bytes = reinterpret_cast<const unsigned char*>(bgra.data());
+        out.insert(out.end(), bytes, bytes + bgra.size() * 4);
+        writeFile(path, out);
+        return;
     }
+    // Packets stop at each scanline: some readers decode TGA a row at a time.
+    std::vector<std::vector<unsigned char>> rows(static_cast<size_t>(height));
+    tbb::parallel_for(0, height, [&](int y) { appendTgaRle(rows[size_t(y)], bgra.data() + size_t(y) * size_t(width), width); });
+    for (const auto& row : rows)
+        out.insert(out.end(), row.begin(), row.end());
     writeFile(path, out);
 }
 
@@ -1222,7 +1261,7 @@ void write(const fs::path& path, const Image& image, const WriteOptions& o)
     else if (ext == ".exr")
         writeExr(path, image.width, image.height, image.rgba, o.bits >= 32 ? 32 : 16, o.level);
     else if (ext == ".tga")
-        writeTga(path, image.width, image.height, image.rgba, o.dither);
+        writeTga(path, image.width, image.height, image.rgba, o.dither, o.compress);
     else if (ext == ".tif" || ext == ".tiff")
         writeTiff(path, image.width, image.height, image.rgba, o.bits >= 32 ? 32 : o.bits >= 16 ? 16 : 8, o.compress, o.dither, o.level);
     else if (ext == ".psd")
@@ -1248,20 +1287,48 @@ Image readTga(const fs::path& path, std::string* err)
         return Image{};
     };
     const std::vector<unsigned char> d = readAll(path);
-    if (d.size() < 18 || d[2] != 2 || d[1] != 0)
-        return fail("only uncompressed true colour TGA");
+    if (d.size() < 18 || (d[2] != 2 && d[2] != 10) || d[1] != 0)
+        return fail("only true colour TGA, uncompressed or RLE");
     const int w = d[12] | d[13] << 8, h = d[14] | d[15] << 8, bpp = d[16] / 8;
     const bool topDown = (d[17] & 0x20) != 0;
-    const size_t at = 18 + size_t(d[0]);
-    if ((bpp != 3 && bpp != 4) || w <= 0 || h <= 0 || d.size() < at + size_t(w) * size_t(h) * size_t(bpp))
-        return fail("truncated or unsupported TGA");
-    Image img{w, h, std::vector<float>(size_t(w) * size_t(h) * 4, 1.0f)};
+    size_t at = 18 + size_t(d[0]);
+    const size_t count = size_t(w) * size_t(h);
+    if ((bpp != 3 && bpp != 4) || w <= 0 || h <= 0)
+        return fail("unsupported TGA");
+    std::vector<unsigned char> px;
+    const unsigned char* src = nullptr;
+    if (d[2] == 2)
+    {
+        if (d.size() < at + count * size_t(bpp))
+            return fail("truncated TGA");
+        src = &d[at];
+    }
+    else
+    {
+        px.resize(count * size_t(bpp));
+        for (size_t n = 0; n < count;)
+        {
+            if (at >= d.size())
+                return fail("truncated TGA");
+            const unsigned char head = d[at++];
+            const size_t len = std::min(size_t(head & 0x7f) + 1, count - n);
+            const size_t need = (head & 0x80) ? size_t(bpp) : len * size_t(bpp);
+            if (at + need > d.size())
+                return fail("truncated TGA");
+            for (size_t k = 0; k < len; ++k)
+                std::memcpy(&px[(n + k) * size_t(bpp)], &d[at + ((head & 0x80) ? 0 : k * size_t(bpp))], size_t(bpp));
+            at += need;
+            n += len;
+        }
+        src = px.data();
+    }
+    Image img{w, h, std::vector<float>(count * 4, 1.0f)};
     for (int y = 0; y < h; ++y)
     {
         const int row = topDown ? y : h - 1 - y;
         for (int x = 0; x < w; ++x)
         {
-            const unsigned char* p = &d[at + (size_t(row) * size_t(w) + size_t(x)) * size_t(bpp)];
+            const unsigned char* p = src + (size_t(row) * size_t(w) + size_t(x)) * size_t(bpp);
             float* o = &img.rgba[(size_t(y) * size_t(w) + size_t(x)) * 4];
             o[0] = float(p[2]) / 255.0f;
             o[1] = float(p[1]) / 255.0f;

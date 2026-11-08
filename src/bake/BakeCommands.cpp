@@ -513,7 +513,7 @@ void registerCommands()
                    "png, exr, tga, tif or psd (one layered file per texture set, a layer per map).", {"png", "exr", "tga", "tif", "tiff", "psd"}},
                   {"bits", "b", T::Int, nullptr, "8 or 16 (PNG, PSD); 8, 16 or 32 float (TIFF); 16 half or 32 float (EXR).", {}, {}, 8.0, 32.0},
                   {"dither", "di", T::Bool, nullptr, "Triangular dither when writing 8 bit (never on ID or island maps)."},
-                  {"compression", "cmp", T::String, nullptr, "TIFF: deflate or none.", {"deflate", "none"}},
+                  {"compression", "cmp", T::String, nullptr, "deflate or none: TIFF deflates, TGA run-length encodes.", {"deflate", "none"}},
                   {"compressionLevel", "cl", T::Int, nullptr, "Deflate level for PNG, EXR and TIFF: 1 fastest (default 2) to 9 smallest.", {}, {}, 1.0, 9.0},
                   {"udimNaming", "un", T::String, nullptr, "How {udim} reads: 1001, uv (u1_v1) or uv0 (u0_v0).", {"1001", "uv", "uv0"}},
                   {"sidecar", "sc", T::Bool, nullptr, "Write <texture>.json beside each texture (map, colour space, decode data)."},
