@@ -210,6 +210,24 @@ TEST_CASE("settlement streetscape: furniture follows each road profile's set, ju
     CHECK(avenueKinds["lamp"] > 2 * lampSlots);
     CHECK_THROWS(applyFurnitureJson(sets, json::parse(R"({"avenue": [{"kind": "lamp", "where": "roof"}]})")));
 
+    // The layout's placements: one per piece, same ids as text, asset by kind, turned about +Y only.
+    Layout withPlacements = l;
+    const json edits = json::parse(R"({"furniture": {"assets": {"lamp": "/Game/City/SM_Lamp"}}})");
+    addFurniturePlacements(withPlacements, Ground::plane(), edits);
+    REQUIRE(withPlacements.placements.size() == placed.size());
+    for (size_t k = 0; k < placed.size(); ++k)
+    {
+        const Placement& p = withPlacements.placements[k];
+        CHECK(p.id == std::to_string(placed[k].id));
+        CHECK(p.asset == (placed[k].kind == "lamp" ? std::string("/Game/City/SM_Lamp") : furnitureAsset(json(), placed[k].kind)));
+        CHECK(glm::length(p.rotation) == doctest::Approx(1.0));
+        CHECK(p.rotation.x == 0.0);
+        CHECK(p.rotation.z == 0.0);
+        CHECK(p.position == placed[k].p);
+        CHECK(p.tags.size() == 4);
+    }
+    CHECK(furnitureAsset(json(), "bench") == "/Game/Settlement/Furniture/SM_Bench");
+
     // Medieval: lanterns, a well and market stalls on the square, no signals, hydrants or signs.
     const Layout ml = build(Site{.size = 60000.0}, Ground::plane(), styled("medievalTown"));
     const RoadNetwork mnet = roadNetwork(ml, Ground::plane());
@@ -428,6 +446,13 @@ TEST_CASE("settlement streetscape: commands mesh roads, place furniture, name st
     CHECK(f["byKind"]["signal"].get<int>() > 0);
     CHECK(run("settlementFurniture", {{"args", {mesh}}})["placements"] == f["placements"]);
     CHECK(run("settlementFurniture", {{"args", {mesh}}, {"kinds", {"lamp"}}})["byKind"].size() == 1);
+    CHECK(f["layoutPlacements"] == f["count"]);
+    const json stored = run("settlementFurniture", {{"args", {mesh}}, {"store", true}, {"sets", {{"lane", json::array()}, {"street", json::array()}}},
+                                                    {"engineAssets", {{"lamp", "/Game/City/SM_Lamp"}}}});
+    CHECK(stored["count"].get<int>() < f["count"].get<int>());
+    CHECK(stored["layoutPlacements"] == stored["count"]);
+    run("undo");
+    CHECK(run("settlementFurniture", {{"args", {mesh}}})["count"] == f["count"]);
 
     const json names = run("settlementNames", {{"args", {mesh}}});
     CHECK(names["culture"] == "usGrid");

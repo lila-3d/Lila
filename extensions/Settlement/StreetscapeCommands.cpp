@@ -263,25 +263,48 @@ void registerStreetscapeCommands(ext::Context& ctx)
                "Sets are data: sets= replaces a profile's rules, {profile: [{kind, spacing, where, sides, minWidth}]} with "
                "where kerb, back, verge, median or edge and sides both, alternate, right or left. realize=True places a "
                "Set Dressing library asset for each kind in assets= (lamp defaults to Road/StreetLight) through its place "
-               "command; kinds without an asset are listed in missingAssets. Returns counts by kind and by profile, the "
+               "command; kinds without an asset are listed in missingAssets. store=True keeps sets= with the settlement and "
+               "engineAssets= names the engine asset per kind (default /Game/Settlement/Furniture/SM_<Kind>): the layout's "
+               "placements, which exports and Send to Unreal read, use both. Returns counts by kind and by profile, the "
                "sets used and the placements.",
         .positionalDoc = "settlement mesh or its modifier",
         .flags = {{"sets", "st", T::Any, nullptr, "Furniture rules per road profile, over the built-in ones."},
                   {"kinds", "k", T::List, nullptr, "Only these kinds."},
                   {"realize", "rz", T::Bool, false, "Place library assets in the scene (needs the Set Dressing extension)."},
                   {"assets", "as", T::Any, nullptr, "{kind: library asset id} for realize."},
-                  {"limit", "lm", T::Int, int64_t(2000), "Most placements returned in the list (counts cover all).", {}, {}, 0.0}},
+                  {"limit", "lm", T::Int, int64_t(2000), "Most placements returned in the list (counts cover all).", {}, {}, 0.0},
+                  {"store", "sr", T::Bool, false, "Keep sets= with the settlement, so its placements (exports, Send to Unreal) use them."},
+                  {"engineAssets", "ea", T::Any, nullptr, "{kind: engine asset path} the settlement's placements use, kept with it."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
             const char* cmd = "settlementFurniture";
             Graph& g = Graph::current();
-            const Rebuilt r = rebuildSettlement(g, settlementOf(a, cmd), cmd);
+            const std::string target = settlementOf(a, cmd);
+            Rebuilt r = rebuildSettlement(g, target, cmd);
             const bool medieval = medievalStyle(r.layout);
             std::vector<FurnitureSet> sets;
             try
             {
-                sets = applyFurnitureJson(furnitureSets(medieval), a.flags.value("sets", json()));
+                const json raw = ops::execute("getAttr", {{"args", {r.modifier + ".edits"}}});
+                json edits = parseEdits(raw.is_string() ? raw.get<std::string>() : std::string());
+                const bool storeSets = a.get<bool>("store", false) && a.has("sets");
+                if (storeSets || a.has("engineAssets"))
+                {
+                    if (a.has("engineAssets") && !a.flags["engineAssets"].is_object())
+                        throw std::runtime_error("engineAssets is {kind: asset path}");
+                    applyFurnitureJson(furnitureSets(medieval), a.flags.value("sets", json()));
+                    json& f = edits["furniture"];
+                    if (!f.is_object())
+                        f = json::object();
+                    if (storeSets)
+                        f["sets"] = a.flags["sets"];
+                    if (a.has("engineAssets"))
+                        f["assets"] = a.flags["engineAssets"];
+                    ops::execute("setAttr", {{"args", {r.modifier + ".edits", edits.dump()}}});
+                    r = rebuildSettlement(g, target, cmd);
+                }
+                sets = applyFurnitureJson(furnitureSetsFor(r.layout, edits), a.flags.value("sets", json()));
             }
             catch (const std::runtime_error& e)
             {
@@ -321,7 +344,7 @@ void registerStreetscapeCommands(ext::Context& ctx)
             for (const FurnitureSet& s : sets)
                 setsJson[s.profile] = toJson(s);
             json out = {{"count", placed.size()}, {"byKind", byKind}, {"byProfile", byProfile}, {"sets", setsJson},
-                        {"medieval", medieval}, {"placements", list}};
+                        {"medieval", medieval}, {"placements", list}, {"layoutPlacements", r.layout.placements.size()}};
             if (a.get<bool>("realize", false))
             {
                 if (!ops::find("place"))

@@ -5,6 +5,7 @@
 #include <lila/Profile.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <stdexcept>
 
@@ -111,6 +112,43 @@ std::vector<FurnitureSet> applyFurnitureJson(std::vector<FurnitureSet> base, con
             base.push_back(std::move(set));
     }
     return base;
+}
+
+std::vector<FurnitureSet> furnitureSetsFor(const Layout& l, const json& edits)
+{
+    const json furniture = edits.is_object() ? edits.value("furniture", json::object()) : json::object();
+    return applyFurnitureJson(furnitureSets(medievalStyle(l)), furniture.is_object() ? furniture.value("sets", json()) : json());
+}
+
+std::string furnitureAsset(const json& edits, const std::string& kind)
+{
+    if (edits.is_object())
+        if (const json f = edits.value("furniture", json::object()); f.is_object())
+            if (const json assets = f.value("assets", json::object()); assets.is_object() && assets.contains(kind) && assets[kind].is_string())
+                return assets[kind].get<std::string>();
+    std::string name = kind;
+    if (!name.empty())
+        name[0] = char(std::toupper(static_cast<unsigned char>(name[0])));
+    return "/Game/Settlement/Furniture/SM_" + name;
+}
+
+void addFurniturePlacements(Layout& l, const Ground& ground, const json& edits)
+{
+    LILA_ZONE();
+
+    const std::vector<FurnitureSet> sets = furnitureSetsFor(l, edits);
+    l.placements.clear();
+    for (const FurniturePlacement& f : placeFurniture(l, roadNetwork(l, ground), ground, sets))
+    {
+        const double half = glm::radians(f.heading) * 0.5;
+        Placement p;
+        p.id = std::to_string(f.id);
+        p.asset = furnitureAsset(edits, f.kind);
+        p.position = f.p;
+        p.rotation = {0.0, std::sin(half), 0.0, std::cos(half)};
+        p.tags = {"settlement", "furniture", f.kind, f.profile};
+        l.placements.push_back(std::move(p));
+    }
 }
 
 std::vector<FurniturePlacement> placeFurniture(const Layout& l, const RoadNetwork& net, const Ground& ground, const std::vector<FurnitureSet>& sets)

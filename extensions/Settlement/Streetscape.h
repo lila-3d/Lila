@@ -141,6 +141,19 @@ struct FurniturePlacement
  */
 std::vector<FurniturePlacement> placeFurniture(const Layout& l, const RoadNetwork& net, const Ground& ground, const std::vector<FurnitureSet>& sets);
 
+/**
+ * The furniture sets a settlement uses: the built-in ones for its style, with edits["furniture"]["sets"] over them
+ * ({profile: [rule, ...]}). Throws std::runtime_error on bad data.
+ */
+std::vector<FurnitureSet> furnitureSetsFor(const Layout& l, const json& edits);
+/** The engine asset a kind is placed as: edits["furniture"]["assets"][kind], else /Game/Settlement/Furniture/SM_<Kind>. */
+std::string furnitureAsset(const json& edits, const std::string& kind);
+/**
+ * Fills l.placements with the furniture (id as decimal text, asset, position, rotation about +Y as a quaternion, tags
+ * settlement, furniture, the kind and the profile), for exporters and Unreal.
+ */
+void addFurniturePlacements(Layout& l, const Ground& ground, const json& edits);
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Lane graph and transit
 

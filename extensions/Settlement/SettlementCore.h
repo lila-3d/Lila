@@ -575,6 +575,16 @@ struct District
     double area = 0.0; // m2
 };
 
+struct Placement
+{
+    std::string id;                  // stable across rebuilds: live sync matches on it
+    std::string asset;               // engine asset path, such as /Game/Props/SM_Bench
+    glm::dvec3 position{0.0};        // world, cm
+    glm::dvec4 rotation{0, 0, 0, 1}; // quaternion x, y, z, w, world
+    glm::dvec3 scale{1.0};
+    std::vector<std::string> tags;
+};
+
 struct Layout
 {
     StreetGraph graph;
@@ -598,6 +608,7 @@ struct Layout
     std::string culture;                            // the naming culture used
     std::unordered_map<uint64_t, std::string> streetNames; // by stable street id
     std::vector<District> districts;
+    std::vector<Placement> placements;
 };
 
 /** Old English, Latin, French, Spanish, numbered US grid and sci-fi sector codes, as culture names. */

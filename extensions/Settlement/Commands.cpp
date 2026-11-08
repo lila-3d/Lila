@@ -3,6 +3,7 @@
 // settlementProfiles lists the styles.
 
 #include "Settlement.h"
+#include "Streetscape.h"
 
 #include <lila/Command.h>
 #include <lila/Curves.h>
@@ -329,8 +330,10 @@ Rebuilt rebuild(Graph& g, const std::string& name, const char* cmd)
         r.walk = WalkSurface::fromMesh(worldMesh(g, walkable, cmd), r.options.walk);
     try
     {
-        applyEdits(site, parseEdits(textOf(r.values.at("edits"))));
+        const json edits = parseEdits(textOf(r.values.at("edits")));
+        applyEdits(site, edits);
         r.layout = build(site, r.ground, r.options, &r.walk);
+        addFurniturePlacements(r.layout, r.ground, edits);
     }
     catch (const std::runtime_error& e)
     {
