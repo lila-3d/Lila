@@ -379,18 +379,20 @@ TEST_CASE("settlement streetscape: lane graph is strongly connected per mode, gr
     CHECK(c["ok"] == true);
     CHECK(checkLanes(l, Ground::plane())["ok"] == true);
 
-    // Two crossing approaches given green together are caught.
-    RoadNetwork bad = net;
-    bool merged = false;
-    for (Junction& j : bad.junctions)
-        if (j.control == Control::Signal && j.phases.size() >= 2 && !merged)
+    // Every movement of a signalised junction given green together, none yielding, is caught.
+    LaneGraph bad = laneGraph(l, net);
+    int junction = -1;
+    for (size_t j = 0; j < net.junctions.size() && junction < 0; ++j)
+        if (net.junctions[j].control == Control::Signal && net.junctions[j].phases.size() >= 2)
+            junction = int(j);
+    REQUIRE(junction >= 0);
+    for (LaneLink& k : bad.links)
+        if (k.junction == junction && k.phase >= 0)
         {
-            j.phases[0].insert(j.phases[0].end(), j.phases[1].begin(), j.phases[1].end());
-            j.phases.erase(j.phases.begin() + 1);
-            merged = true;
+            k.phase = 0;
+            k.yields = false;
         }
-    REQUIRE(merged);
-    const json cb = checkLaneGraph(laneGraph(l, bad), bad);
+    const json cb = checkLaneGraph(bad, net);
     CHECK_FALSE(cb["conflictingGreens"].empty());
     CHECK(cb["ok"] == false);
 
