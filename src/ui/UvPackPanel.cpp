@@ -248,6 +248,16 @@ UvPackPanel::UvPackPanel(QWidget* parent) : QWidget(parent)
     for (QSpinBox* s : {mTilesU, mTilesV})
         setSpinDefault(s, 1);
     setSpinDefault(mMargin, -1.0);
+    // Names under which the UV editor's saved defaults store these.
+    const std::pair<QWidget*, const char*> names[] = {
+        {mKeep, "packKeep"},           {mSeparate, "packSeparate"}, {mInto, "packInto"},         {mRotation, "packRotation"},
+        {mScale, "packScale"},         {mEffort, "packEffort"},     {mFixPinned, "packFixPinned"}, {mFlip, "packFlip"},
+        {mStack, "packStack"},         {mShowStacks, "packMarkStacks"}, {mKeepTile, "packKeepTile"}, {mOrient, "packOrient"},
+        {mStackMirrored, "packStackMirrored"}, {mDensity, "packDensity"}, {mMips, "packMips"},   {mTimeLimit, "packTimeLimit"},
+        {mTilesU, "packTilesU"},       {mTilesV, "packTilesV"},     {mMargin, "packMargin"},     {mRegion[0], "packRegionU0"},
+        {mRegion[1], "packRegionV0"},  {mRegion[2], "packRegionU1"}, {mRegion[3], "packRegionV1"}};
+    for (auto [w, name] : names)
+        w->setObjectName(name);
 
     load(uvPackOptions());
 

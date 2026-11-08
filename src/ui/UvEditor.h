@@ -21,6 +21,7 @@ class QScrollArea;
 class QSplitter;
 class QShowEvent;
 class QSpinBox;
+class QTimer;
 class QToolButton;
 
 namespace lila::ui
@@ -59,7 +60,8 @@ private:
     /** Runs a command from the UI (echoed), logging failures; returns its result or null. */
     nlohmann::json runCommand(const char* command, const nlohmann::json& call = nlohmann::json::object());
     void refreshSets();
-    void showLayout();
+    /** Layout stats under the view, below `lead` (a command's result) when given. Shown while Info is on. */
+    void showLayout(const QString& lead = {});
     /** uvPack with the Pack panel's options and the editor's resolution and padding. */
     void runPack();
     /** Puts the toolkit beside or below the view, whichever leaves the canvas closer to square. */
@@ -89,6 +91,9 @@ private:
     QDoubleSpinBox* mScaleU = nullptr;
     QDoubleSpinBox* mScaleV = nullptr;
     QLabel* mStatus = nullptr;
+    QToolButton* mInfo = nullptr;
+    /** Refreshes the Info stats a moment after edits, so a drag does not re-measure every frame. */
+    QTimer* mInfoRefresh = nullptr;
     int mGraphListener = 0;
     int mComponentListener = 0;
     int mLiveListener = 0;

@@ -93,6 +93,7 @@ lila_module(lila_ui UI
     Owner.h
     SpinScrub.cpp SpinScrub.h
     PanelFilter.cpp PanelFilter.h
+    PanelDefaults.cpp PanelDefaults.h
     ValueReset.h
     NodeLookup.h
     Manipulator.cpp Manipulator.h

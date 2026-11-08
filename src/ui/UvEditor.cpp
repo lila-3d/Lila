@@ -2,6 +2,7 @@
 
 #include "ops/CommandOptions.h"
 #include "ui/OptionBox.h"
+#include "ui/PanelDefaults.h"
 #include "ui/FlowLayout.h"
 #include "ui/Panels.h"
 #include "ui/SpinScrub.h"
@@ -25,23 +26,6 @@ std::function<void()>& opener()
     return fn;
 }
 
-/** Arrows and the wheel step through power-of-two texture sizes; any other size can still be typed. */
-class TextureSizeBox : public QSpinBox
-{
-public:
-    using QSpinBox::QSpinBox;
-
-    void stepBy(int steps) override
-    {
-        int v = value();
-        for (; steps > 0; --steps)
-            v = int(std::bit_floor(unsigned(v))) * 2;
-        for (; steps < 0; ++steps)
-            v = std::has_single_bit(unsigned(v)) ? v / 2 : int(std::bit_floor(unsigned(v)));
-        setValue(v);
-    }
-};
-
 /** "vertex", "edge" or "face" switch the component mode; "island" is face mode with island select. */
 void setPickMode(const std::string& m)
 {
@@ -60,6 +44,7 @@ constexpr const char* kUvCollapsed = "/uvEditor/collapsed";
 constexpr const char* kToolkitPref = "/uvEditor/toolkitShown";
 constexpr const char* kToolkitWidthPref = "/uvEditor/toolkitWidth";
 constexpr const char* kToolkitHeightPref = "/uvEditor/toolkitHeight";
+constexpr const char* kDefaultsPref = "/uvEditor/defaults";
 /** Sections in the left column when the toolkit sits below the view; the rest, from Pack on, go right. */
 constexpr size_t kLeftSections = 3;
 constexpr int kPanelColumnGap = 8;
@@ -94,6 +79,72 @@ QToolButton* uvKitPush(const QString& label, const QString& tip, QWidget* parent
     b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     controls::setRole(b, "push");
     return b;
+}
+
+/** Keeps a strip laid over a tile's icon area as the tile resizes. */
+class IconAreaFit : public QObject
+{
+public:
+    IconAreaFit(QToolButton* tile, QWidget* strip) : QObject(tile), mTile(tile), mStrip(strip) {}
+
+protected:
+    bool eventFilter(QObject*, QEvent* e) override
+    {
+        if (e->type() == QEvent::Resize || e->type() == QEvent::Show)
+            mStrip->setGeometry(3, 2, mTile->width() - 6, 33);
+        return false;
+    }
+
+private:
+    QToolButton* mTile;
+    QWidget* mStrip;
+};
+
+/**
+ * The Planar tile: best fit, X, Y and Z project in one click from a 2x2 grid where the icon would be; the tile keeps its
+ * label and option box (the axis there is what the grid overrides), so it sits in the grid like its neighbours.
+ */
+QToolButton* planarTile(QWidget* parent)
+{
+    QToolButton* t = controls::tile("uv.projectPlanar", "square", parent, "Planar");
+    QPixmap blank(24, 24);
+    blank.fill(Qt::transparent);
+    t->setIcon(QIcon(blank));
+    auto* strip = new QWidget(t);
+    controls::setRole(strip, "segmented");
+    strip->setAttribute(Qt::WA_StyledBackground);
+    auto* cells = new QGridLayout(strip);
+    cells->setContentsMargins(1, 1, 1, 1);
+    cells->setSpacing(1);
+    const std::tuple<const char*, const char*, const char*> parts[] = {
+        {nullptr, "uv.projectPlanarBest", nullptr}, {"X", "uv.projectPlanarX", "axisX"}, {"Y", "uv.projectPlanarY", "axisY"}, {"Z", "uv.projectPlanarZ", "axisZ"}};
+    for (int i = 0; auto [text, id, axisToken] : parts)
+    {
+        auto* b = new QToolButton(strip);
+        if (text)
+            b->setText(text);
+        else
+        {
+            // Best fit wears the planar icon: it is what the plain Planar button does by default.
+            b->setIcon(icon("square"));
+            b->setIconSize(QSize(14, 14));
+        }
+        b->setToolTip(QString::fromStdString(actions::tooltip(id)));
+        b->setAccessibleName(QString::fromStdString(actions::displayLabel(id)));
+        b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        b->setFocusPolicy(Qt::NoFocus);
+        controls::setRole(b, "segment");
+        // The letter names the axis with colour off; the hue only speeds reading it.
+        const QString colour = axisToken ? QString(" color: %1; font-weight: 600;").arg(themeColor(axisToken).name()) : QString();
+        b->setStyleSheet("QToolButton { padding: 0;" + colour + " }");
+        if (axisToken)
+            b->setProperty("lilaRawColors", true);
+        QObject::connect(b, &QToolButton::clicked, b, [id] { actions::run(nlohmann::json(id)); });
+        cells->addWidget(b, i / 2, i % 2);
+        ++i;
+    }
+    t->installEventFilter(new IconAreaFit(t, strip));
+    return t;
 }
 
 /** Label and field rows, the labels right-aligned in one column (the Channel Box layout). */
@@ -227,14 +278,19 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     mDisplay->addItems({"Plain", "Checker", "Distortion", "Stretch", "Islands"});
     mDisplay->setCurrentIndex(1);
     setComboDefault(mDisplay, 1);
+    mDisplay->setObjectName("display");
     mDisplay->setToolTip("Display: Distortion shades distorted faces brighter; Stretch shades stretched faces light and compressed ones dark; "
                          "Islands shades each island apart");
     displayRow->addWidget(mDisplay);
     flow->addWidget(displayBox);
     QToolButton* twoColour = uvKitPush("Two-Tone", "Two-Tone: the Stretch display in two colours instead of grey", this, true, uvLive::twoColourHeatmap());
     twoColour->setEnabled(false);
+    twoColour->setObjectName("twoTone");
+    panelDefaults::setToggleDefault(twoColour, false);
     flow->addWidget(twoColour);
     QToolButton* udim = uvKitPush("UDIM", "UDIM: show the UDIM tiles", this, true, false);
+    udim->setObjectName("udim");
+    panelDefaults::setToggleDefault(udim, false);
     flow->addWidget(udim);
     QToolButton* packPreview = uvKitPush("Pack Preview",
                                          "Pack Preview: show the shown objects' islands as if packed together, with the Pack options' "
@@ -333,7 +389,10 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     QToolButton* children = uvKitPush("Children", QString::fromStdString(actions::tooltip("uv.includeChildren")), setBox, true,
                                       uv::includeChildren());
     children->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+    children->setObjectName("children");
+    panelDefaults::setToggleDefault(children, true);
     setRow->addWidget(children);
+    setRow->addWidget(panelDefaults::resetButton(this, kDefaultsPref, setBox));
     kit->addWidget(setBox);
     mSectionRow = new QHBoxLayout;
     mSectionRow->setContentsMargins(0, 0, 0, 0);
@@ -362,7 +421,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     addSection(collapsibleSection("Unwrap", stacked(body, {unwrapTiles, unwrapPush}), body, kUvCollapsed));
 
     addSection(collapsibleSection("Project",
-                                  controls::grid({tile("uv.projectPlanar", "square", "Planar"), tile("uv.projectBox", "box", "Box"),
+                                  controls::grid({planarTile(body), tile("uv.projectBox", "box", "Box"),
                                                   tile("uv.projectCylindrical", "cylinder", "Cylindrical"),
                                                   tile("uv.projectSpherical", "sphere", "Spherical")},
                                                  kToolkitColumns, body),
@@ -372,6 +431,8 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     QToolButton* live = uvKitTile("Live", "bolt", QString::fromStdString(actions::tooltip("uv.liveMode")), body);
     live->setCheckable(true);
     live->setChecked(uvLive::liveMode());
+    live->setObjectName("live");
+    panelDefaults::setToggleDefault(live, false);
     QWidget* relaxTiles = controls::grid({tile("uv.liveRelax", "ripple", "Relax"), tile("uv.liveFlatten", "arrows-diagonal-minimize-2", "Flatten"),
                                           tile("uv.liveSettle", "circle-check", "Settle"), live},
                                          kToolkitColumns, body);
@@ -387,6 +448,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     balance->setSingleStep(0.05);
     balance->setValue(uvLive::balance());
     setSpinDefault(balance, 0.0);
+    balance->setObjectName("balance");
     balance->setToolTip("Balance: stretch against compression. Positive tolerates stretch and fixes compression, negative the reverse, "
                         "zero treats both alike");
     uvKitRow(relaxGrid, "Balance", balance);
@@ -395,6 +457,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
         brushCombo->addItem(uvBrushDisplayName(uv::liveBrushName(uv::LiveBrush(i))));
     brushCombo->setCurrentIndex(int(uvLive::brush().brush));
     setComboDefault(brushCombo, int(uvLive::BrushSettings{}.brush));
+    brushCombo->setObjectName("brush");
     brushCombo->setToolTip("Brush: for the Brush tool here and Brush on Mesh in the viewport");
     uvKitRow(relaxGrid, "Brush", brushCombo);
     addSection(collapsibleSection("Relax", stacked(body, {relaxTiles, relaxPush, relaxForm}), body, kUvCollapsed));
@@ -402,12 +465,14 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     // Packing and texel density share the texture size; the pack options fold beneath.
     auto* packForm = new QWidget(body);
     QGridLayout* packGrid = uvKitForm(packForm);
-    mResolution = new TextureSizeBox(packForm);
+    mResolution = new QSpinBox(packForm);
     mResolution->setRange(16, 16384);
     mResolution->setValue(1024);
     setSpinDefault(mResolution, 1024);
     mResolution->setSuffix(" px");
     mResolution->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    mResolution->setObjectName("textureSize");
+    controls::setPresets(mResolution, kTextureSizePresets);
     mResolution->setToolTip("Texture Size: for packing and texel density");
     uvKitRow(packGrid, "Texture Size", mResolution);
     mPadding = new controls::SliderField(packForm);
@@ -415,20 +480,38 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     mPadding->setDecimals(1);
     mPadding->setValue(4.0);
     setSpinDefault(mPadding, 4.0);
+    mPadding->setObjectName("padding");
     mPadding->setSuffix(" px");
     mPadding->setToolTip("Padding: texels between islands");
     uvKitRow(packGrid, "Padding", mPadding);
     mDensity = controls::valueField(0.0, 100000.0, 3, "px/cm", packForm);
     mDensity->setValue(10.24);
     setSpinDefault(mDensity, 10.24);
+    mDensity->setObjectName("texelDensity");
+    // 10.24 px/cm is 1024 px over a metre; the rest halve and double it.
+    controls::setPresets(mDensity, {2.56, 5.12, 10.24, 20.48, 40.96});
     mDensity->setToolTip("Texel Density: at the texture size");
     uvKitRow(packGrid, "Texel Density", mDensity);
     QToolButton* packBtn = uvKitTile("Pack", "packages", QString::fromStdString(actions::tooltip("uv.pack")), body, "uv.pack");
     connect(packBtn, &QToolButton::clicked, this, [this] { runPack(); });
     QToolButton* getTd = uvKitTile("Get Density", "color-picker", "Get Density: measure the texel density of the selection", body);
     QToolButton* setTd = uvKitTile("Set Density", "ruler-measure", "Set Density: scale each selected island to the texel density", body);
-    QToolButton* infoBtn = uvKitTile("Info", "info-circle", "Info: islands, overlaps, distortion and density (uvLayout)", body);
-    connect(infoBtn, &QToolButton::clicked, this, [this] { showLayout(); });
+    QToolButton* infoBtn = mInfo = uvKitTile("Info", "info-circle", "Info: islands, overlaps, distortion and density under the view while on (uvLayout)", body);
+    mInfo->setCheckable(true);
+    mInfoRefresh = new QTimer(this);
+    mInfoRefresh->setSingleShot(true);
+    mInfoRefresh->setInterval(300);
+    connect(mInfoRefresh, &QTimer::timeout, this, [this] {
+        if (mInfo->isChecked())
+            showLayout();
+    });
+    connect(mInfo, &QToolButton::toggled, this, [this](bool on) {
+        if (on)
+            showLayout();
+        else
+            mStatus->clear();
+    });
+    connect(mResolution, &QSpinBox::valueChanged, mInfoRefresh, qOverload<>(&QTimer::start));
     QWidget* packTiles = controls::grid({packBtn, getTd, setTd, infoBtn}, kToolkitColumns, body);
     QWidget* packMore = controls::overflow({"uv.packAroundSelected", "uv.packSelectionOnly", "uv.packStacked", "uv.packPerObject",
                                             "uv.packPerMaterial", "uv.packUdimByMaterial", "uv.selectStacks"},
@@ -443,11 +526,14 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     viewportRow->setContentsMargins(0, 0, 0, 0);
     viewportRow->setSpacing(2);
     QToolButton* checker = uvKitPush("Checker", QString::fromStdString(actions::tooltip("uv.checker3d")), viewportForm, true, uvLive::checker3d());
+    checker->setObjectName("checker");
+    panelDefaults::setToggleDefault(checker, false);
     viewportRow->addWidget(checker);
     auto* tiling = new QSpinBox(viewportForm);
     tiling->setRange(1, 256);
     tiling->setValue(uvLive::checkerTiling());
     setSpinDefault(tiling, 32);
+    tiling->setObjectName("checkerTiling");
     tiling->setKeyboardTracking(false);
     tiling->setButtonSymbols(QAbstractSpinBox::NoButtons);
     tiling->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -456,6 +542,8 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     tiling->setEnabled(uvLive::checker3d());
     viewportRow->addWidget(tiling);
     QToolButton* seams = uvKitPush("Seams", QString::fromStdString(actions::tooltip("uv.seams3d")), viewportForm, true, uvLive::seams3d());
+    seams->setObjectName("seams");
+    panelDefaults::setToggleDefault(seams, true);
     viewportRow->addWidget(seams);
     addSection(collapsibleSection("Viewport", viewportForm, body, kUvCollapsed));
 
@@ -479,6 +567,11 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     mScaleU = controls::valueField(-100.0, 100.0, 4, {}, xformBox);
     mScaleV = controls::valueField(-100.0, 100.0, 4, {}, xformBox);
     mRotate->setValue(90.0);
+    mMoveU->setObjectName("moveU");
+    mMoveV->setObjectName("moveV");
+    mRotate->setObjectName("rotate");
+    mScaleU->setObjectName("scaleU");
+    mScaleV->setObjectName("scaleV");
     mScaleU->setValue(1.0);
     mScaleV->setValue(1.0);
     for (QDoubleSpinBox* s : {mMoveU, mMoveV})
@@ -593,6 +686,8 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
 
     mGraphListener = scene::Graph::current().addListener([this](scene::Change, scene::NodeId) {
         mView->invalidate();
+        if (mInfo->isChecked())
+            mInfoRefresh->start();
         refreshSets();
     });
     mComponentListener = scene::components::addListener([this, showMode] {
@@ -600,6 +695,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
         mView->update();
     });
     refreshSets();
+    panelDefaults::load(this, kDefaultsPref);
 }
 
 UvEditor::~UvEditor()
@@ -694,7 +790,11 @@ json UvEditor::runCommand(const char* command, const json& call)
         std::string text = r.dump();
         if (text.size() > 200)
             text = text.substr(0, 197) + "...";
-        mStatus->setText(QString(command) + ": " + QString::fromStdString(text));
+        const QString result = QString(command) + ": " + QString::fromStdString(text);
+        if (mInfo->isChecked())
+            showLayout(result);
+        else
+            mStatus->setText(result);
     }
     mView->invalidate();
     return r;
@@ -753,7 +853,7 @@ void UvEditor::runPack()
     mPackPanel->showResult(r);
 }
 
-void UvEditor::showLayout()
+void UvEditor::showLayout(const QString& lead)
 {
     json r = UvView::safeRun("uvLayout", {{"resolution", mResolution->value()}}, CallSource::Script);
     if (r.is_null())
@@ -775,7 +875,7 @@ void UvEditor::showLayout()
     else
         for (auto& [name, j] : r.items())
             lines << line(name, j);
-    mStatus->setText(lines.join("\n"));
+    mStatus->setText((lead.isEmpty() ? QString() : lead + "\n") + lines.join("\n"));
     log::info("{}", lines.join("; ").toStdString());
 }
 
@@ -871,6 +971,14 @@ void registerUvActions()
     cmd("uv.alignV", "Align Side to V", "uvAlignToEdge", json{{"axis", "v"}}, "Turn islands so the selected edges run along V.");
     cmd("uv.orientByEdge", "Orient by Edge", "uvAlignToEdge", json::object(), "Turn islands so the selected edges run along the nearest axis.");
     cmd("uv.projectPlanar", "Planar Projection", "uvProject", json{{"type", "planar"}}, "Project uvs along the best-fit plane.");
+    cmd("uv.projectPlanarBest", "Planar Projection Best Fit", "uvProject", json{{"type", "planar"}, {"axis", "best"}},
+        "Project uvs along the plane fitted to the faces.");
+    for (const char* axis : {"X", "Y", "Z"})
+    {
+        const std::string lower(1, char(std::tolower(axis[0])));
+        cmd(std::string("uv.projectPlanar") + axis, std::string("Planar Projection ") + axis, "uvProject",
+            json{{"type", "planar"}, {"axis", lower}}, std::string("Project uvs along the ") + axis + " axis.");
+    }
     cmd("uv.projectBox", "Box Projection", "uvProject", json{{"type", "box"}}, "Project uvs from six sides.");
     cmd("uv.projectCylindrical", "Cylindrical Projection", "uvProject", json{{"type", "cylindrical"}}, "Project uvs around an axis.");
     cmd("uv.projectSpherical", "Spherical Projection", "uvProject", json{{"type", "spherical"}}, "Project uvs from the centre.");
