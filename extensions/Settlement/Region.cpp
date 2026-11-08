@@ -1,11 +1,13 @@
 // Settlement: where settlements go on a map, and many of them at once, joined by roads.
 
 #include "SettlementCore.h"
+#include "SettlementTerrain.h"
 
 #include <lila/Profile.h>
 
 #include <algorithm>
 #include <cmath>
+#include <format>
 #include <limits>
 
 namespace settlement
@@ -91,6 +93,7 @@ std::vector<SiteScore> suggestSites(const Polygon& outline, const Ground& ground
     const std::vector<Vec2> joins = confluences(water);
     const double probe = std::max(spacing * 0.08, 500.0);
 
+    const double ring = std::max(spacing * 0.15, 2000.0);
     std::vector<SiteScore> all;
     for (double y = lo.y + cell * 0.5; y < hi.y; y += cell)
         for (double x = lo.x + cell * 0.5; x < hi.x; x += cell)
@@ -105,12 +108,24 @@ std::vector<SiteScore> suggestSites(const Polygon& outline, const Ground& ground
                 grade += ground.grade(q + Vec2(std::cos(t), std::sin(t)) * probe);
             }
             grade /= 9.0;
+            SiteFacts f;
+            f.p = q;
             const double flat = std::clamp(1.0 - grade / std::max(o.maxGrade, 1e-3), 0.0, 1.0);
-            const double edge = std::clamp(edgeDistance(outline, q) / std::max(spacing * 0.25, 1.0), 0.0, 1.0);
-            SiteScore s;
-            s.p = q;
-            s.reasons = {{"flat", flat}, {"gradePercent", grade * 100.0}, {"edge", edge}};
-            double score = flat;
+            f.set(SiteTerm::Flat, flat, std::format("mean grade {:.1f}%", grade * 100.0));
+            f.edge = std::clamp(edgeDistance(outline, q) / std::max(spacing * 0.25, 1.0), 0.0, 1.0);
+            json legacy = {{"flat", flat}, {"gradePercent", grade * 100.0}, {"edge", f.edge}};
+            if (!ground.isPlane())
+            {
+                // High ground over its surroundings is easier to hold.
+                double around = 0.0;
+                for (int k = 0; k < 8; ++k)
+                {
+                    const double t = 2.0 * kPi * k / 8.0;
+                    around += ground.height(q + Vec2(std::cos(t), std::sin(t)) * ring);
+                }
+                const double rise = ground.height(q) - around / 8.0;
+                f.set(SiteTerm::Defense, std::clamp(rise / (0.08 * ring), 0.0, 1.0), std::format("{:.0f} m above the ground around", rise / 100.0));
+            }
             if (!water.empty())
             {
                 const double bank = bankDistance(q, water);
@@ -120,39 +135,53 @@ std::vector<SiteScore> suggestSites(const Polygon& outline, const Ground& ground
                     const double d = (bank - o.floodMargin) / std::max(o.waterReach * 0.5, 1.0);
                     near = std::exp(-d * d);
                 }
-                double join = 0.0;
+                double join = 0.0, joinAt = std::numeric_limits<double>::max();
                 for (const Vec2& j : joins)
                 {
                     const double d = glm::length(j - q) / std::max(o.waterReach * 0.5, 1.0);
                     join = std::max(join, std::exp(-d * d));
+                    joinAt = std::min(joinAt, glm::length(j - q));
                 }
-                score = 0.45 * flat + 0.4 * near + 0.15 * join;
-                // Flooded ground keeps houses off the centre, whatever else it has.
-                if (bank < o.floodMargin)
-                    score *= 0.2;
-                s.reasons["bankDistanceM"] = bank / 100.0;
-                s.reasons["water"] = near;
-                s.reasons["confluence"] = join;
-                s.reasons["floodplain"] = bank < o.floodMargin;
+                const bool flooded = bank < o.floodMargin;
+                f.set(SiteTerm::Water, near, flooded ? std::format("{:.0f} m from the bank, inside the flood margin", bank / 100.0)
+                                                     : std::format("river bank {:.0f} m away", bank / 100.0));
+                f.set(SiteTerm::Trade, join, joins.empty() ? std::string("no confluence on the map") : std::format("confluence {:.0f} m away", joinAt / 100.0));
+                f.set(SiteTerm::Flood, flooded ? 1.0 : 0.0, flooded ? "floodplain" : "out of the flood margin");
+                legacy["bankDistanceM"] = bank / 100.0;
+                legacy["water"] = near;
+                legacy["confluence"] = join;
+                legacy["floodplain"] = flooded;
             }
-            s.score = score * edge + 1e-3 * unitRandom(hash64(o.seed) ^ hash64(uint64_t(all.size())));
+            SiteScore s = scoreSite(f, o.rules, 1e-3 * unitRandom(hash64(o.seed) ^ hash64(uint64_t(all.size()))));
+            for (auto& [k, v] : legacy.items())
+                s.reasons[k] = v;
             all.push_back(std::move(s));
         }
-    std::sort(all.begin(), all.end(), [](const SiteScore& x, const SiteScore& y) { return x.score > y.score; });
-    for (const SiteScore& s : all)
-    {
-        bool clear = true;
-        for (const SiteScore& c : out)
-            clear = clear && glm::length(c.p - s.p) >= spacing;
-        if (clear)
-            out.push_back(s);
-        if (int(out.size()) >= count)
-            break;
-    }
+    out = pickSites(std::move(all), count, spacing);
     return out;
 }
 
-RegionPlan planRegion(const Polygon& outline, const Ground& ground, std::span<const WaterLine> water, const RegionOptions& o)
+std::vector<Vec2> roadBridges(std::span<const std::vector<Vec2>> roads, std::span<const WaterLine> water)
+{
+    std::vector<Vec2> out;
+    for (const std::vector<Vec2>& r : roads)
+        for (size_t k = 0; k + 1 < r.size(); ++k)
+            for (const WaterLine& w : water)
+                for (size_t m = 0; m + 1 < w.pts.size(); ++m)
+                {
+                    const Vec2 p = r[k], e = r[k + 1] - p, c = w.pts[m], f = w.pts[m + 1] - c;
+                    const double den = cross(e, f);
+                    if (std::abs(den) <= 1e-9 * glm::length(e) * glm::length(f))
+                        continue;
+                    const double t = cross(c - p, f) / den, u = cross(c - p, e) / den;
+                    if (t >= 0.0 && t <= 1.0 && u >= 0.0 && u <= 1.0)
+                        out.push_back(p + e * t);
+                }
+    return out;
+}
+
+RegionPlan planRegion(const Polygon& outline, const Ground& ground, std::span<const WaterLine> water, const RegionOptions& o,
+                      const std::vector<SiteScore>* given)
 {
     LILA_ZONE();
 
@@ -174,7 +203,7 @@ RegionPlan planRegion(const Polygon& outline, const Ground& ground, std::span<co
     so.count = total * 12;
     so.spacing = base * 0.3;
     so.seed = o.seed;
-    const std::vector<SiteScore> candidates = suggestSites(outline, ground, water, so);
+    const std::vector<SiteScore> candidates = given ? *given : suggestSites(outline, ground, water, so);
     for (const TierSpec& t : tiers)
     {
         const double radius = std::min(t.radius, t.spacing * 0.45);
@@ -229,19 +258,7 @@ RegionPlan planRegion(const Polygon& outline, const Ground& ground, std::span<co
                 path = {a, b};
             plan.roads.push_back(std::move(path));
         }
-    for (const std::vector<Vec2>& r : plan.roads)
-        for (size_t k = 0; k + 1 < r.size(); ++k)
-            for (const WaterLine& w : water)
-                for (size_t m = 0; m + 1 < w.pts.size(); ++m)
-                {
-                    const Vec2 p = r[k], e = r[k + 1] - p, c = w.pts[m], f = w.pts[m + 1] - c;
-                    const double den = cross(e, f);
-                    if (std::abs(den) <= 1e-9 * glm::length(e) * glm::length(f))
-                        continue;
-                    const double t = cross(c - p, f) / den, u = cross(c - p, e) / den;
-                    if (t >= 0.0 && t <= 1.0 && u >= 0.0 && u <= 1.0)
-                        plan.bridges.push_back(p + e * t);
-                }
+    plan.bridges = roadBridges(plan.roads, water);
 
     for (RegionSettlement& s : plan.settlements)
     {

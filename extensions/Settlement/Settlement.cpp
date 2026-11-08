@@ -2,6 +2,7 @@
 // Every tool and command builds a group around this node.
 
 #include "Settlement.h"
+#include "SettlementTerrain.h"
 
 #include <lila/Extension.h>
 #include <lila/GeometryNodes.h>
@@ -136,7 +137,7 @@ void settlementExec(ExecContext& c)
     Layout l;
     try
     {
-        l = build(site, ground, o, &walk);
+        l = buildPlanned(site, ground, o, &walk);
     }
     catch (const std::runtime_error& e)
     {

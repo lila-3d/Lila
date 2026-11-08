@@ -211,6 +211,8 @@ struct StreetEdge
     int profile = -1;   // road profile (Layout::roads), -1 for the class's
     int path = -1;      // the edit (street or route) it was laid for, -1 when generated
     uint64_t street = 0; // stable id of the street it is part of (streetId), 0 until the layout is finished
+    bool bridge = false; // carried over water or a gap: graded as a span, never as a cut through the bank
+    bool tunnel = false;
 };
 
 /** Planar street network: inserting a street splits every street it crosses and snaps its ends to what is near. */
@@ -245,6 +247,8 @@ public:
     /** Splits the edge at parameter t, returning the new node. */
     int splitEdge(int edge, double t);
     void removeEdge(int edge);
+    /** Rebuilds the junction lists and spatial hashes after nodes and edges were set directly. */
+    void reindex();
 
 private:
     double mSnap;
@@ -285,6 +289,19 @@ enum class Pattern : uint8_t
 const char* patternName(Pattern p);
 bool parsePattern(std::string_view name, Pattern* out);
 
+/**
+ * What makes a place a good site, as weighted terms: flat (gentle slope), water (close to a river, lake or sea), trade
+ * (crossings, fords, bridge sites, confluences, harbours), defense (prominent, defensible high ground), resource (the
+ * kind's own: farmland, quarries, harbours, mill races) and climate (sunny, sheltered). flood scales the score down by
+ * flood risk. kind names the preset the weights started from (sitingKinds). Read and written as JSON.
+ */
+struct SitingRules
+{
+    std::string kind = "town";
+    double flat = 0.45, water = 0.4, trade = 0.15, defense = 0.0, resource = 0.1, climate = 0.05;
+    double flood = 0.8;
+};
+
 /** Every rule a style sets. Lengths cm, areas m2. Read and written as JSON (field names as here). */
 struct Profile
 {
@@ -321,6 +338,7 @@ struct Profile
     std::string blockType = "auto"; // the type ordinary blocks take (blockTypeName), auto chooses by era and block shape
     std::string lotMethod = "auto"; // how ordinary blocks are cut into lots (lotMethodName), auto chooses by block type and era
     double windAngle = 0.0;         // degrees: the prevailing wind blows toward this heading (0 is +X); industry goes downwind
+    SitingRules siting;
 };
 
 /** The built-in styles, by name. */
@@ -390,6 +408,7 @@ struct WaterLine
 {
     std::vector<Vec2> pts;
     double width = 2000.0;
+    std::string kind; // empty for natural water; canal, moat, quay or river for water the settlement builds
 };
 
 /** A region nothing is laid in: no street, block, lot or building. The space a structure stands in, a ruin, a lake. */
@@ -520,6 +539,8 @@ struct Foundation
 {
     double min = 0.0, max = 0.0;
 };
+struct RouteBook;
+struct PlanSnapshot;
 
 /** What the user gives: an outline, fixed streets and roads, water, a centre and attractors, exclusions and edits. */
 struct Site
@@ -542,6 +563,9 @@ struct Site
     std::vector<RouteRegion> buildingRoutes;              // later ones win where they overlap
     std::unordered_map<uint64_t, Foundation> foundations; // by stable lot id (settlementFoundations)
     std::unordered_map<uint64_t, LibraryPick> libraryPicks; // by stable lot id (settlementBuildings route=library)
+    std::shared_ptr<RouteBook> routeBook;        // main roads routed over a Terrain (SettlementTerrain.h)
+    std::shared_ptr<const PlanSnapshot> plan;    // the pinned plan, while only the ground changed
+    uint64_t editsKey = 0;                              // hash of the edits besides the plan and terrain records
 };
 
 /**
@@ -726,6 +750,8 @@ struct Layout
     std::vector<District> districts;
     std::vector<double> edgeAccess;       // per graph edge, 0 to 1 (streetAccess)
     std::vector<std::string> parcelWarnings; // what blocks, lots and envelopes fell back to and why
+    std::shared_ptr<RouteBook> routeBook;
+    std::string plan; // none, pinned (the pinned plan shown) or stale (inputs changed since it was pinned)
 };
 
 /** Old English, Latin, French, Spanish, numbered US grid and sci-fi sector codes, as culture names. */
@@ -899,6 +925,7 @@ struct SiteOptions
     double waterReach = 40000.0; // water further than this adds nothing
     double maxGrade = 0.12;
     uint32_t seed = 1;
+    SitingRules rules;
 };
 
 /** How far q is from the nearest river bank: negative inside the water, very large when there is none. */
@@ -941,7 +968,9 @@ struct RegionPlan
     std::vector<Vec2> bridges;
 };
 
-RegionPlan planRegion(const Polygon& outline, const Ground& ground, std::span<const WaterLine> water, const RegionOptions& o);
+/** candidates, when given, are the scored sites to place on (best first); else suggestSites finds them. */
+RegionPlan planRegion(const Polygon& outline, const Ground& ground, std::span<const WaterLine> water, const RegionOptions& o,
+                      const std::vector<SiteScore>* candidates = nullptr);
 
 uint64_t hash64(uint64_t x);
 double unitRandom(uint64_t key); // [0, 1)

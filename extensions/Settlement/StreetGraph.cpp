@@ -113,6 +113,26 @@ void StreetGraph::removeEdge(int e)
     }
 }
 
+void StreetGraph::reindex()
+{
+    mIncident.assign(nodes.size(), {});
+    mNodeCells.clear();
+    mEdgeCells.clear();
+    for (size_t n = 0; n < nodes.size(); ++n)
+        if (nodes[n].alive)
+            mNodeCells[key(int(std::floor(nodes[n].p.x / mCell)), int(std::floor(nodes[n].p.y / mCell)))].push_back(int(n));
+    for (size_t e = 0; e < edges.size(); ++e)
+    {
+        const StreetEdge& x = edges[e];
+        if (!x.alive)
+            continue;
+        mIncident[size_t(x.a)].push_back(int(e));
+        mIncident[size_t(x.b)].push_back(int(e));
+        const Vec2 pa = nodes[size_t(x.a)].p, pb = nodes[size_t(x.b)].p;
+        forCells(glm::min(pa, pb), glm::max(pa, pb), [&](int64_t k) { mEdgeCells[k].push_back(int(e)); });
+    }
+}
+
 double StreetGraph::length(int e) const
 {
     const StreetEdge& x = edges[size_t(e)];

@@ -57,14 +57,18 @@ struct Rebuilt
     Options options;
     json values;
     std::string mesh, modifier;
+    Site site;
 };
 
-/** Throws CommandError naming cmd when name is not a settlement or its layout fails. */
-Rebuilt rebuildSettlement(lila::scene::Graph& g, const std::string& name, const char* cmd);
+/**
+ * Throws CommandError naming cmd when name is not a settlement or its layout fails. edits, when given, is used in place
+ * of the modifier's edits input.
+ */
+Rebuilt rebuildSettlement(lila::scene::Graph& g, const std::string& name, const char* cmd, const json* edits = nullptr);
 
 bool registerNodes(lila::ext::Context& ctx);
 void registerCommands(lila::ext::Context& ctx);
-/** settlementGrade and settlementSendToUnreal. */
+/** settlementSendToUnreal. */
 void registerUnrealCommands(lila::ext::Context& ctx);
 void registerUi(lila::ext::Context& ctx);
 /** settlementExport (files: JSON, GeoJSON, USD, DXF, Unity, Godot). */
@@ -73,4 +77,27 @@ void registerExportCommands(lila::ext::Context& ctx);
 void addPlacements(Layout& l, const lila::Args& a, const char* cmd);
 /** settlementRoadMesh, settlementFurniture, settlementNames, settlementLanes and settlementTransit. */
 void registerStreetscapeCommands(lila::ext::Context& ctx);
+
+// Terrain (TerrainLink.cpp): Terrain commands are called by name, so the Terrain extension is never linked.
+
+/** True when the node is a terrain the Terrain extension answers for (terrainInfo knows it). */
+bool isTerrainGround(const std::string& node);
+/**
+ * Sites scored from the terrain's own analysis: terrainSample fields (slope, floodRisk, distanceToWater, prominence,
+ * solar, ...), terrainWaterInfo crossings, terrainSites resources and townCentres, terrainBuildable land, refined by
+ * terrainRegionStats over each best site. analysis carries riverArea, seaLevel and floodReturn through.
+ */
+std::vector<SiteScore> suggestOnTerrain(const std::string& terrain, const Polygon& outline, const Ground& ground, const SiteOptions& o,
+                                        const json& analysis, json* report = nullptr);
+/** The terrain's rivers (terrainWaterInfo) as water lines, each its mean width. */
+std::vector<WaterLine> terrainRivers(const std::string& terrain, const json& analysis);
+/** terrainRoute from a to b at maxGrade (rise over run); empty when there is no way, with why in note. */
+std::vector<Vec2> terrainRoad(const std::string& terrain, Vec2 a, Vec2 b, double maxGrade, std::string* note);
+/**
+ * Fits a settlement on a Terrain ground: main roads routed by terrainRoute (kept in its edits) and, with rivers, the
+ * terrain's rivers crossing the outline added as water. Null when the ground is not a Terrain.
+ */
+json followTerrain(lila::scene::Graph& g, const std::string& settlement, const std::string& ground, bool rivers, const char* cmd);
+/** settlementGrade, settlementReplan, settlementExplain, settlementCheck. */
+void registerTerrainCommands(lila::ext::Context& ctx);
 } // namespace settlement

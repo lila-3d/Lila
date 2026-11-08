@@ -551,7 +551,7 @@ TEST_CASE("settlement: edit commands route, change and delete, undo, and survive
     CHECK(on["walkableNodes"].get<int>() > 0);
 }
 
-TEST_CASE("settlement: grading stamps streets, lots and squares into the terrain's City layer, and again after edits")
+TEST_CASE("settlement: grading stamps lots and squares into the terrain's City layer, and again after edits")
 {
     loadSettlementPackage();
     if (!ops::find("terrainStampPad"))
@@ -561,9 +561,9 @@ TEST_CASE("settlement: grading stamps streets, lots and squares into the terrain
     const std::string ground = terrain["mesh"].get<std::string>();
     const json made = run("settlementCreate", {{"profile", "hamlet"}, {"size", 30000.0}, {"seed", 2}, {"ground", ground}});
     const std::string mesh = made["mesh"].get<std::string>();
-    CHECK_FALSE(run("settlementGrade", {{"args", {mesh}}, {"terrain", "NoSuchTerrain"}, {"lots", false}, {"plazas", false}})["errors"].empty());
+    CHECK_THROWS(run("settlementGrade", {{"args", {mesh}}, {"terrain", "NoSuchTerrain"}, {"lots", false}, {"plazas", false}}));
 
-    const json graded = run("settlementGrade", {{"args", {mesh}}, {"padMode", "terraced"}, {"segment", 4000.0}});
+    const json graded = run("settlementGrade", {{"args", {mesh}}, {"padMode", "terraced"}});
     CAPTURE(graded.dump());
     CHECK(graded["errors"].empty());
     CHECK(graded["terrain"] == ground);
@@ -572,18 +572,18 @@ TEST_CASE("settlement: grading stamps streets, lots and squares into the terrain
     CHECK(graded.contains("revision"));
     const json stamps = run("terrainStamps", {{"args", {ground}}});
     const json city = stamps["layers"]["City"];
-    CHECK(int(city.size()) == graded["streets"].get<int>() + graded["pads"].get<int>() + graded.value("regions", 0));
+    CHECK(int(city.size()) == graded["pads"].get<int>() + graded.value("regions", 0));
     int terraced = 0;
     for (const json& s : city)
         terraced += s.value("mode", std::string()) == "terraced";
     CHECK(terraced == graded["pads"].get<int>());
 
-    // Without the buildings, grading again replaces the street stamps and removes every pad.
+    // Without the buildings, grading again removes every pad.
     run("setAttr", {{"args", {made["modifier"].get<std::string>() + ".blocks", false}}});
     const json again = run("settlementGrade", {{"args", {mesh}}});
     CAPTURE(again.dump());
     CHECK(again["errors"].empty());
     CHECK(again["pads"].get<int>() == 0);
     CHECK(again["removed"].get<int>() >= graded["pads"].get<int>());
-    CHECK(run("terrainStamps", {{"args", {ground}}})["layers"]["City"].size() == size_t(again["streets"].get<int>()));
+    CHECK(run("terrainStamps", {{"args", {ground}}})["layers"]["City"].size() == size_t(again["regions"].get<int>()));
 }

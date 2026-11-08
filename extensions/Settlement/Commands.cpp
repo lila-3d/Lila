@@ -5,6 +5,7 @@
 #include "Settlement.h"
 #include "Streetscape.h"
 #include "Parcels.h"
+#include "SettlementTerrain.h"
 
 #include <lila/Command.h>
 #include <lila/Curves.h>
@@ -309,7 +310,7 @@ Polygon regionOutline(Graph& g, const Args& a, const std::string& groundName, co
     return p;
 }
 
-Rebuilt rebuild(Graph& g, const std::string& name, const char* cmd)
+Rebuilt rebuild(Graph& g, const std::string& name, const char* cmd, const json* editsOverride = nullptr)
 {
     Node* mod = settlementModifier(g, name, cmd);
     const scene::NodeId meshId = scene::modifiers::meshOf(g, mod->id());
@@ -331,9 +332,9 @@ Rebuilt rebuild(Graph& g, const std::string& name, const char* cmd)
         r.walk = WalkSurface::fromMesh(worldMesh(g, walkable, cmd), r.options.walk);
     try
     {
-        const json edits = parseEdits(textOf(r.values.at("edits")));
+        const json edits = editsOverride ? *editsOverride : parseEdits(textOf(r.values.at("edits")));
         applyEdits(site, edits);
-        r.layout = build(site, r.ground, r.options, &r.walk);
+        r.layout = buildPlanned(site, r.ground, r.options, &r.walk);
         addFurniturePlacements(r.layout, r.ground, edits);
     }
     catch (const std::runtime_error& e)
@@ -342,6 +343,7 @@ Rebuilt rebuild(Graph& g, const std::string& name, const char* cmd)
     }
     r.mesh = mesh ? mesh->path() : std::string();
     r.modifier = mod->path();
+    r.site = std::move(site);
     return r;
 }
 
@@ -550,9 +552,29 @@ std::vector<FlagDef> pathFlags(const char* defaultClass)
                                                "ground; ground; or surface.", {"auto", "ground", "surface"}},
             {"name", "n", T::String, nullptr, "A name to find it by."}};
 }
+/** The siting rules from profile=, kind= and rules= (in that order). */
+SitingRules sitingRulesFrom(const Args& a, const char* cmd)
+{
+    Profile p;
+    if (const std::string name = a.get<std::string>("profile", "medievalTown"); !builtinProfile(name, &p))
+        throw CommandError(std::string(cmd) + ": unknown profile '" + name + "'");
+    SitingRules r = p.siting;
+    try
+    {
+        if (const std::string kind = a.get<std::string>("kind", ""); !kind.empty())
+            applyJson(r, json{{"kind", kind}});
+        if (a.has("rules") && !a.flags["rules"].is_null())
+            applyJson(r, a.flags["rules"]);
+    }
+    catch (const std::exception& e)
+    {
+        throw CommandError(std::string(cmd) + ": " + e.what());
+    }
+    return r;
+}
 } // namespace
 
-Rebuilt rebuildSettlement(scene::Graph& g, const std::string& name, const char* cmd) { return rebuild(g, name, cmd); }
+Rebuilt rebuildSettlement(scene::Graph& g, const std::string& name, const char* cmd, const json* edits) { return rebuild(g, name, cmd, edits); }
 
 void registerCommands(ext::Context& ctx)
 {
@@ -570,6 +592,7 @@ void registerCommands(ext::Context& ctx)
                                             "inside; open: a corridor along them)."},
         {"exclusionMargin", "xm", T::Float, 0.0, "Clearance around exclusions, cm.", {}, {}, 0.0},
         {"name", "n", T::String, "Settlement", "Name of the mesh made to hold the site."},
+        {"terrainWater", "tw", T::Bool, true, "On a Terrain ground with no water of its own: the terrain's rivers crossing the outline become the settlement's water."},
     };
     for (FlagDef& f : layoutFlags())
         flags.push_back(std::move(f));
@@ -669,8 +692,11 @@ void registerCommands(ext::Context& ctx)
             ops::execute("setAttr", {{"args", {modName + ".ground", groundName}}});
             ops::execute("setAttr", {{"args", {modName + ".walkable", walkName}}});
 
+            const json onTerrain = followTerrain(g, modName, groundName, a.get<bool>("terrainWater", true), "settlementCreate");
             Rebuilt r = rebuild(g, host, "settlementCreate");
             json out = stats(r.layout);
+            if (!onTerrain.is_null())
+                out["terrain"] = onTerrain;
             out["metrics"] = metrics(r.layout);
             out["checks"] = checks(r.layout, r.ground, r.options);
             out["mesh"] = host;
@@ -711,6 +737,7 @@ void registerCommands(ext::Context& ctx)
             out["resolvedProfile"] = toJson(r.layout.profile);
             out["mesh"] = r.mesh;
             out["modifier"] = r.modifier;
+            out["plan"] = r.layout.plan;
             return out;
         },
         .examples = {"settlementInfo('Settlement')['metrics']['orientationOrder']"},
@@ -736,47 +763,77 @@ void registerCommands(ext::Context& ctx)
 
     ctx.registerCommand({
         .name = "settlementSuggest",
-        .doc = "Where settlements would go: the best sites inside an outline, best first, each with its score and the reasons "
-               "behind it (flat: ground flatness, gradePercent, water: closeness to a river while out of the flood margin, "
-               "bankDistanceM, confluence: where rivers meet, floodplain, edge: distance from the outline). No two sites closer "
-               "than spacing. Changes nothing.",
+        .doc = "Where settlements would go: the best sites inside an outline, best first, no two closer than spacing. Each "
+               "site has its position, score and reasons: reasons.terms scores every siting term (flat, water, trade, defense, "
+               "resource, climate, flood) with its value, weight, contribution and why (\"ford on river 2, 340 m away\"), from "
+               "the kind's preset (town, market, port, mining, fort, farming, mill) and any rules= weights. On a Terrain "
+               "ground the terms come from the terrain's analysis (terrainSample fields, terrainWaterInfo crossings and "
+               "harbours, terrainSites resources, terrainBuildable land, terrainRegionStats over the best sites); on a mesh or "
+               "flat ground from its slope, height and the water= lines given. ground says which was used. Changes nothing.",
         .flags = {{"outline", "o", T::List, nullptr, "Region outline, [[x, z], ...] in cm. Omit for the ground's extent, else a square of size."},
                   {"size", "sz", T::Float, 400000.0, "Side of the square used without an outline or ground, cm.", {}, {}, 0.0},
-                  nodeFlag({"ground", "gd", T::String, "", "Ground mesh (world space). Empty for flat ground."}, "mesh"),
-                  {"water", "wa", T::List, nullptr, "Rivers as centrelines: a list of polylines."},
+                  nodeFlag({"ground", "gd", T::String, "", "Ground mesh or Terrain (world space). Empty for flat ground."}, "mesh"),
+                  {"water", "wa", T::List, nullptr, "Rivers as centrelines: a list of polylines (a Terrain brings its own)."},
                   {"waterWidth", "ww", T::Float, 2000.0, "Width of the rivers, cm.", {}, {}, 0.0},
                   {"count", "c", T::Int, int64_t(5), "How many sites.", {}, {}, 1.0},
                   {"spacing", "sp", T::Float, 0.0, "Least distance between sites, cm; 0 picks one from the area and count.", {}, {}, 0.0},
+                  {"kind", "k", T::String, "", "Kind of place, setting the term weights; empty for the profile's (town).", [] {
+                       std::vector<std::string> k{""};
+                       for (const std::string& n : sitingKinds())
+                           k.push_back(n);
+                       return k;
+                   }()},
+                  {"profile", "pf", T::String, "medievalTown", "Profile whose siting rules start the weights.", profileNames()},
+                  {"rules", "ru", T::Any, nullptr, "Term weights over the kind's: {water: 0.6, defense: 0.3, ...}."},
+                  {"riverArea", "ra", T::Float, nullptr, "Terrain: drainage area, m2, past which water is a river."},
+                  {"seaLevel", "sea", T::Float, nullptr, "Terrain: sea level along the up axis, cm."},
                   {"seed", "s", T::Int, int64_t(1), "Breaks ties between equal sites."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
             Graph& g = Graph::current();
+            const char* cmd = "settlementSuggest";
             const std::string groundName = a.get<std::string>("ground", "");
-            const Polygon outline = regionOutline(g, a, groundName, "settlementSuggest");
-            const Ground ground = groundOf(g, groundName, 0.0, "settlementSuggest");
-            const std::vector<WaterLine> water = waterFromJson(a.flags.value("water", json()), a.get<double>("waterWidth", 2000.0), "settlementSuggest");
+            const Polygon outline = regionOutline(g, a, groundName, cmd);
+            const Ground ground = groundOf(g, groundName, 0.0, cmd);
+            const std::vector<WaterLine> water = waterFromJson(a.flags.value("water", json()), a.get<double>("waterWidth", 2000.0), cmd);
             SiteOptions o;
             o.count = int(std::max<int64_t>(1, a.get<int64_t>("count", 5)));
             o.spacing = std::max(0.0, a.get<double>("spacing", 0.0));
             o.seed = uint32_t(a.get<int64_t>("seed", 1));
+            o.rules = sitingRulesFrom(a, cmd);
+            const bool terrain = !groundName.empty() && isTerrainGround(groundName);
+            json analysis = json::object();
+            for (const char* k : {"riverArea", "seaLevel"})
+                if (a.has(k))
+                    analysis[k] = a.flags[k];
+            const std::vector<SiteScore> sites = terrain ? suggestOnTerrain(groundName, outline, ground, o, analysis) : suggestSites(outline, ground, water, o);
+            const char* used = terrain ? "terrain" : groundName.empty() ? "plane" : "mesh";
             json out = json::array();
-            for (const SiteScore& s : suggestSites(outline, ground, water, o))
-                out.push_back({{"position", json::array({s.p.x, ground.height(s.p), s.p.y})}, {"score", s.score}, {"reasons", s.reasons}});
+            for (const SiteScore& s : sites)
+                out.push_back({{"position", json::array({s.p.x, ground.height(s.p), s.p.y})},
+                               {"score", s.score},
+                               {"reasons", s.reasons},
+                               {"kind", o.rules.kind},
+                               {"ground", used}});
             return out;
         },
-        .examples = {"settlementSuggest(ground='Terrain', water=[[[-200000, -150000], [0, 0], [180000, 160000]]], count=3)"},
+        .examples = {"settlementSuggest(ground='Terrain', kind='market', count=3)",
+                     "settlementSuggest(ground='Terrain', kind='fort', rules={'defense': 0.9})[0]['reasons']['terms']['defense']",
+                     "settlementSuggest(ground='Hills', water=[[[-200000, -150000], [0, 0], [180000, 160000]]], count=3)"},
     });
 
     ctx.registerCommand({
         .name = "settlementRegion",
-        .doc = "Settles a whole map: cities on the best sites (flat, by a river but out of its flood, near confluences), towns "
+        .doc = "Settles a whole map: cities on the best sites (scored as settlementSuggest scores them, for kind=), towns "
                "between them and villages filling in, spaced as central places; roads routed between neighbours over the ground, "
                "bridging rivers where they must; then each settlement laid out with settlementCreate, its main roads continuing "
                "the regional ones. Makes a Region mesh holding the roads and rivers as lines, plus one settlement mesh per place. "
-               "Returns each settlement (name, tier, profile, centre, radius, site score and reasons, lots, buildings, checks), "
-               "the road count and the bridges.",
+               "On a Terrain ground the sites come from its analysis, the roads from terrainRoute and, with no water= given, the "
+               "rivers from terrainWaterInfo; each settlement keeps its site record for settlementExplain id='site'. Returns "
+               "each settlement (name, tier, profile, centre, radius, site score and reasons, lots, buildings, checks), the road "
+               "count, the bridges, which ground was used and roadNotes (pairs the terrain router could not join).",
         .flags = {{"outline", "o", T::List, nullptr, "Region outline, [[x, z], ...] in cm. Omit for the ground's extent, else a square of size."},
                   {"size", "sz", T::Float, 400000.0, "Side of the square used without an outline or ground, cm.", {}, {}, 0.0},
                   nodeFlag({"ground", "gd", T::String, "", "Ground mesh (world space). Empty for flat ground."}, "mesh"),
@@ -792,7 +849,16 @@ void registerCommands(ext::Context& ctx)
                   {"townRadius", "tr", T::Float, 45000.0, "Largest town radius, cm.", {}, {}, 0.0},
                   {"villageRadius", "vr", T::Float, 15000.0, "Largest village radius, cm.", {}, {}, 0.0},
                   {"seed", "s", T::Int, int64_t(1), "Random seed."},
-                  {"name", "n", T::String, "Region", "Name of the mesh holding the roads and rivers."}},
+                  {"name", "n", T::String, "Region", "Name of the mesh holding the roads and rivers."},
+                  {"kind", "k", T::String, "", "Kind of place the sites are scored for (settlementSuggest); empty for town.", [] {
+                       std::vector<std::string> k{""};
+                       for (const std::string& n : sitingKinds())
+                           k.push_back(n);
+                       return k;
+                   }()},
+                  {"rules", "ru", T::Any, nullptr, "Term weights over the kind's: {water: 0.6, defense: 0.3, ...}."},
+                  {"riverArea", "ra", T::Float, nullptr, "Terrain: drainage area, m2, past which water is a river."},
+                  {"seaLevel", "sea", T::Float, nullptr, "Terrain: sea level along the up axis, cm."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
@@ -802,7 +868,14 @@ void registerCommands(ext::Context& ctx)
             const Polygon outline = regionOutline(g, a, groundName, cmd);
             const Ground ground = groundOf(g, groundName, 0.0, cmd);
             const double waterWidth = a.get<double>("waterWidth", 2000.0);
-            const std::vector<WaterLine> water = waterFromJson(a.flags.value("water", json()), waterWidth, cmd);
+            std::vector<WaterLine> water = waterFromJson(a.flags.value("water", json()), waterWidth, cmd);
+            const bool terrain = !groundName.empty() && isTerrainGround(groundName);
+            json analysis = json::object();
+            for (const char* k : {"riverArea", "seaLevel"})
+                if (a.has(k))
+                    analysis[k] = a.flags[k];
+            if (terrain && water.empty())
+                water = terrainRivers(groundName, analysis);
             RegionOptions o;
             o.cities = int(std::max<int64_t>(0, a.get<int64_t>("cities", 1)));
             o.towns = int(std::max<int64_t>(0, a.get<int64_t>("towns", 3)));
@@ -817,7 +890,30 @@ void registerCommands(ext::Context& ctx)
             for (const std::string* prof : {&o.cityProfile, &o.townProfile, &o.villageProfile})
                 if (Profile p; !builtinProfile(*prof, &p))
                     throw CommandError(std::string(cmd) + ": unknown profile '" + *prof + "'");
-            const RegionPlan plan = planRegion(outline, ground, water, o);
+            SiteOptions so;
+            so.count = std::max(1, o.cities + o.towns + o.villages) * 12;
+            so.spacing = std::sqrt(area(outline) / std::max(1, o.cities + o.towns + o.villages)) * 0.3;
+            so.seed = o.seed;
+            so.rules = sitingRulesFrom(a, cmd);
+            const std::vector<SiteScore> candidates = terrain ? suggestOnTerrain(groundName, outline, ground, so, analysis) : suggestSites(outline, ground, water, so);
+            RegionPlan plan = planRegion(outline, ground, water, o, &candidates);
+            json roadNotes = json::array();
+            if (terrain)
+            {
+                // Roads between settlements follow the terrain's router; a pair it cannot join keeps Settlement's own road.
+                for (std::vector<Vec2>& r : plan.roads)
+                {
+                    std::string note;
+                    std::vector<Vec2> way = terrainRoad(groundName, r.front(), r.back(), 0.1, &note);
+                    if (way.size() >= 2)
+                        r = std::move(way);
+                    else
+                        roadNotes.push_back("kept Settlement's own road: " + note);
+                }
+                plan.bridges = roadBridges(plan.roads, water);
+                for (RegionSettlement& rs : plan.settlements)
+                    rs.site.roads = plan.roads;
+            }
 
             json roadLines = json::array(), waterLines = json::array();
             for (const std::vector<Vec2>& r : plan.roads)
@@ -869,6 +965,17 @@ void registerCommands(ext::Context& ctx)
                                                            {"profile", s.profile},
                                                            {"seed", int64_t(o.seed) * 1000 + int64_t(i)},
                                                            {"name", name}});
+                if (const std::string modName = textOf(r.value("modifier", json())); !modName.empty())
+                {
+                    json edits = parseEditsOr(textOf(ops::execute("getAttr", {{"args", {modName + ".edits"}}})), cmd);
+                    edits["siting"] = {{"kind", so.rules.kind},
+                                       {"score", s.score.score},
+                                       {"reasons", s.score.reasons},
+                                       {"position", json::array({c.x, ground.height(c), c.y})},
+                                       {"tier", tier},
+                                       {"ground", terrain ? "terrain" : groundName.empty() ? "plane" : "mesh"}};
+                    ops::execute("setAttr", {{"args", {modName + ".edits", edits.dump()}}});
+                }
                 settlements.push_back({{"name", r.value("mesh", name)},
                                        {"tier", tier},
                                        {"profile", s.profile},
@@ -885,7 +992,12 @@ void registerCommands(ext::Context& ctx)
             json bridges = json::array();
             for (const Vec2& b : plan.bridges)
                 bridges.push_back(json::array({b.x, ground.height(b), b.y}));
-            return {{"region", regionMesh}, {"settlements", settlements}, {"roads", int64_t(plan.roads.size())}, {"bridges", bridges}};
+            return {{"region", regionMesh},
+                    {"settlements", settlements},
+                    {"roads", int64_t(plan.roads.size())},
+                    {"bridges", bridges},
+                    {"ground", terrain ? "terrain" : groundName.empty() ? "plane" : "mesh"},
+                    {"roadNotes", roadNotes}};
         },
         .examples = {"settlementRegion(ground='Terrain', water=[[[-200000, -150000], [0, 0], [180000, 160000]]], cities=1, towns=2, villages=6)"},
     });
@@ -1268,5 +1380,6 @@ void registerCommands(ext::Context& ctx)
     registerExportCommands(ctx);
     registerStreetscapeCommands(ctx);
     registerLotCommands(ctx);
+    registerTerrainCommands(ctx);
 }
 } // namespace settlement

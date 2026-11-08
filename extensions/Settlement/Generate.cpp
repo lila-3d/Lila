@@ -2,6 +2,7 @@
 
 #include "SettlementCore.h"
 #include "Parcels.h"
+#include "SettlementTerrain.h"
 
 #include <lila/Profile.h>
 
@@ -546,6 +547,9 @@ std::vector<Vec2> route(const Layout& l, const Ground& g, const Profile& p, Vec2
 
     if (clearance < 0.0)
         clearance = 0.5 * p.widthArterial;
+    if (l.routeBook)
+        if (const std::vector<Vec2>* booked = l.routeBook->use(a, b, p.maxGrade))
+            return *booked;
     auto clearOf = [&](Vec2 x, Vec2 y) {
         for (const Polygon& h : l.exclusions)
             if (segmentDistance(h.pts, x, y) < clearance)
@@ -1559,6 +1563,7 @@ Layout build(const Site& site, const Ground& g, const Options& in, const WalkSur
     }
     Layout l{StreetGraph(std::clamp(p.widthLocal * 0.5, 50.0, 1500.0), std::max({p.segment, p.gridWidth * 0.5, 1000.0}))};
     l.profile = p;
+    l.routeBook = site.routeBook;
     for (StreetClass c : {StreetClass::Arterial, StreetClass::Collector, StreetClass::Local, StreetClass::Alley, StreetClass::Path})
     {
         RoadProfile r;
@@ -1591,7 +1596,7 @@ Layout build(const Site& site, const Ground& g, const Options& in, const WalkSur
         for (std::vector<Vec2>& run : clipPolyline(w.pts, l.outline, l.center, 0.0, 0.0))
         {
             l.graph.addPolyline(run, StreetClass::Water, 0, false, w.width);
-            l.water.push_back({std::move(run), w.width});
+            l.water.push_back({std::move(run), w.width, w.kind});
         }
     for (const std::vector<Vec2>& r : site.roads)
         for (const std::vector<Vec2>& run : clipPolyline(r, l.outline, l.center, 0.0, 0.0, l.exclusions))

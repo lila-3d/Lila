@@ -1,11 +1,12 @@
 # The Settlement extension: its layout compiled in directly, and the package driven through its commands.
 set(_settlement ${CMAKE_SOURCE_DIR}/extensions/Settlement)
-add_executable(lila_settlement_tests main.cpp test_settlement.cpp test_structure.cpp test_streets.cpp test_street.cpp test_lots.cpp
+add_executable(lila_settlement_tests main.cpp test_settlement.cpp test_structure.cpp test_streets.cpp test_street.cpp test_lots.cpp test_terrain.cpp
     ${_settlement}/Geometry.cpp ${_settlement}/StreetGraph.cpp ${_settlement}/Profiles.cpp ${_settlement}/Generate.cpp
     ${_settlement}/Output.cpp ${_settlement}/Region.cpp
     ${_settlement}/Footprint.cpp ${_settlement}/Walk.cpp ${_settlement}/Edits.cpp
     ${_settlement}/Names.cpp ${_settlement}/RoadMesh.cpp ${_settlement}/Furniture.cpp ${_settlement}/Lanes.cpp
-    ${_settlement}/Blocks.cpp ${_settlement}/Parcels.cpp ${_settlement}/Envelopes.cpp)
+    ${_settlement}/Blocks.cpp ${_settlement}/Parcels.cpp ${_settlement}/Envelopes.cpp
+    ${_settlement}/Siting.cpp ${_settlement}/Plan.cpp ${_settlement}/Inspect.cpp)
 target_sources(lila_settlement_tests PRIVATE test_export.cpp ${_settlement}/Export.cpp)
 target_include_directories(lila_settlement_tests PRIVATE ${_settlement})
 target_link_libraries(lila_settlement_tests PRIVATE LilaUI doctest::doctest)

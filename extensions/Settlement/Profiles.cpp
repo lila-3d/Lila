@@ -2,6 +2,7 @@
 
 #include "SettlementCore.h"
 #include "Parcels.h"
+#include "SettlementTerrain.h"
 
 #include <algorithm>
 #include <cctype>
@@ -217,6 +218,7 @@ json toJson(const Profile& p)
         j[f.name] = p.*f.member;
     for (const IntField& f : kInts)
         j[f.name] = p.*f.member;
+    j["siting"] = toJson(p.siting);
     return j;
 }
 
@@ -257,6 +259,8 @@ void applyJson(Profile& p, const json& j)
             p.blockType = v.get<std::string>();
         else if (k == "lotMethod" && v.is_string())
             p.lotMethod = v.get<std::string>();
+        else if (k == "siting")
+            applyJson(p.siting, v);
         else if (k == "pattern" && v.is_string())
         {
             if (!parsePattern(v.get<std::string>(), &p.pattern))
