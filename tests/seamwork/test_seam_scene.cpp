@@ -96,6 +96,13 @@ TEST_CASE("seamFind: a wall on a terrain gives a live join, a field and a terrai
 
     const json info = run("terrainInfo", {{"args", {terrain}}});
     CHECK(info["masks"].contains("contact"));
+    // The mask goes to Unreal as its own paint layer.
+    const std::string folder = (std::filesystem::temp_directory_path() / "lila_seamwork_contact_layer").string();
+    const json exported = run("terrainExport", {{"args", {terrain}}, {"target", "unreal"}, {"folder", folder}});
+    bool contactLayer = false;
+    for (const json& l : exported["layers"])
+        contactLayer = contactLayer || (l["mask"] == "contact" && l["layer"] == "contact");
+    CHECK(contactLayer);
 
     const json si = run("seamInfo", {{"args", {r["seam"]}}, {"points", true}});
     REQUIRE(si["curveList"].size() == 1);
