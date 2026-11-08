@@ -1,0 +1,14 @@
+{
+    "id": "Seamwork",
+    "name": "Seamwork",
+    "version": "0.1.0",
+    "vendor": "Lila",
+    "description": "Cover where objects meet the ground and each other: contact curves, points and masks, debris along them, decal strips, contact materials and skirt meshes that blend walls into terrain in any renderer.",
+    "sdk": "1.0",
+    "entry": {
+        "windows": "Seamwork.dll",
+        "linux": "Seamwork.so",
+        "macos": "Seamwork.dylib"
+    },
+    "enabledByDefault": true
+}
