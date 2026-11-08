@@ -10,6 +10,7 @@
 #include "scene/Modifiers.h"
 #include "uv/Uv.h"
 #include "uv/UvEdit.h"
+#include "uv/UvEdit.h"
 
 #include <algorithm>
 #include <map>
@@ -132,6 +133,11 @@ void Session::reload()
     std::vector<LiveIsland> islands;
     if (mBase)
         islands = liveIslands(*mBase, {}, mSet, options());
+    if (mBase && options().finalMesh)
+        if (scene::Node* n = Graph::current().node(mNode))
+            if (Stack stack = exportStack(*n); !stack.empty())
+                if (FinalMap map = attachFinal(islands, *mBase, mSet, stack); !map.warning.empty())
+                    log::warn("{}: {}", n->name(), map.warning);
     mTopology.clear();
     mTopology.reserve(islands.size());
     for (const LiveIsland& is : islands)

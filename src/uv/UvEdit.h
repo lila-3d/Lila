@@ -7,6 +7,8 @@
 #include "geo/Symmetry.h"
 #include "scene/Components.h"
 #include "scene/Node.h"
+#include "uv/FinalMesh.h"
+#include "uv/Pack.h"
 
 #include <functional>
 #include <optional>
@@ -27,6 +29,38 @@ inline FlagDef uvSetFlag() { return {"uvSet", "", ArgType::String, nullptr, "UV 
  * allowWhole) and writes it back to inMesh as one undo step. Returns fn's results keyed by mesh name.
  */
 LILA_SCENE_API json editUvMeshes(const char* label, scene::ComponentMode kind, const UvMeshEditFn& fn, bool allowWhole = true);
+
+/** The finalMesh flag: uv tools measure and solve on the mesh as exported, after its modifiers. */
+inline FlagDef finalMeshFlag()
+{
+    return {"finalMesh", "fm", ArgType::Bool, true,
+            "Measure and solve on the mesh as exported, after modifiers that move its surface (bevel, subdivision); False works on the "
+            "base mesh alone."};
+}
+
+/** The mesh's modifiers as exported, from its cage up. Empty when it has none. */
+LILA_SCENE_API Stack exportStack(scene::Node& mesh);
+
+/**
+ * With on, re-solves the uv islands of the faces against the exported mesh and returns what happened for the command's
+ * result (null when the modifiers leave the surface alone). A modifier the solve can't follow is logged and reported.
+ */
+LILA_SCENE_API json refineOnExport(geo::Mesh& m, std::span<const geo::Index> faces, std::string_view uvSet, scene::Node& n,
+                                   const FinalSolveOptions& opts, bool on);
+
+/** With on, the exported mesh traced back to the cage's faces (traceFaces), for measuring uvs where they are exported. */
+LILA_SCENE_API FinalMap exportTraceOf(const geo::Mesh& m, scene::Node& n, bool on);
+
+/**
+ * The end of a uv tool that lays out islands: with on and modifiers that move the surface, re-solves the faces' islands
+ * against the exported mesh, then repacks them with the export's density when the tool packed. Returns refineOnExport's
+ * report.
+ */
+LILA_SCENE_API json finishOnExport(geo::Mesh& m, std::span<const geo::Index> faces, std::string_view uvSet, scene::Node& n, bool on,
+                                   const PackOptions* repack = nullptr);
+
+/** With on, sets each chart's densityArea from the exported mesh. Logs and returns a warning when the cage is used instead. */
+LILA_SCENE_API std::string densityOnExport(const geo::Mesh& m, std::span<Chart> charts, std::string_view uvSet, scene::Node& n, bool on);
 
 /** The base mesh's plug under any modifiers (modifiers::editPlug): uv edits go there so the stack survives. */
 LILA_SCENE_API scene::PlugRef uvEditPlug(scene::Node& n);

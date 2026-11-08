@@ -1,5 +1,6 @@
 #include "ops/Command.h"
 #include "ops/Undo.h"
+#include "core/Log.h"
 #include "core/Profile.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
@@ -82,12 +83,20 @@ struct RelaxStats
     size_t folded = 0;
     bool settled = true;
 
-    json toJson() const { return {{"islands", islands}, {"iterations", iterations}, {"folded", folded}, {"settled", settled}}; }
+    std::string warning;
+
+    json toJson() const
+    {
+        json j = {{"islands", islands}, {"iterations", iterations}, {"folded", folded}, {"settled", settled}};
+        if (!warning.empty())
+            j["finalMesh"] = {{"method", "cage"}, {"warning", warning}};
+        return j;
+    }
 };
 
 /** Relaxes the islands holding the faces (whole islands; all when faces is empty) with the live solver, synchronously. */
 RelaxStats relaxIslands(geo::Mesh& m, std::span<const Index> faces, std::string_view set, const LiveOptions& o, int iterations,
-                        bool flatten = false, bool usePins = true)
+                        bool flatten = false, bool usePins = true, const Stack& stack = {})
 {
     LILA_ZONE();
 
@@ -98,6 +107,9 @@ RelaxStats relaxIslands(geo::Mesh& m, std::span<const Index> faces, std::string_
     if (scope.empty())
         return st;
     std::vector<LiveIsland> islands = liveIslands(m, scope, set, o);
+    if (!stack.empty())
+        if (FinalMap map = attachFinal(islands, m, set, stack); !map.warning.empty())
+            st.warning = map.warning;
     std::vector<int> iters(islands.size(), 0);
     tbb::parallel_for(size_t(0), islands.size(), size_t(1), [&](size_t i) {
         LiveIsland& is = islands[i];
@@ -193,7 +205,8 @@ void registerLiveCommands()
     std::vector<FlagDef> relaxFlags = {setFlag(),
                                        {"iterations", "", T::Int, 200, "Most local/global iterations; it stops once settled.", {}, {}, 1.0, 100000.0},
                                        {"flatten", "", T::Bool, false, "Solve from scratch first (LSCM/SLIM), keeping size and placement."},
-                                       {"pins", "", T::Bool, true, "Respect pinned uvs (uvPin)."}};
+                                       {"pins", "", T::Bool, true, "Respect pinned uvs (uvPin)."},
+                                       finalMeshFlag()};
     for (const FlagDef& f : optionFlags())
         relaxFlags.push_back(f);
     ops::registerCommand({
@@ -204,10 +217,13 @@ void registerLiveCommands()
         .run = [](const Args& a) -> json {
             LiveOptions o = optionsArgs(a);
             int iterations = std::clamp(a.get<int>("iterations", 200), 1, 100000);
-            bool flatten = a.get<bool>("flatten", false), pins = a.get<bool>("pins", true);
+            bool flatten = a.get<bool>("flatten", false), pins = a.get<bool>("pins", true), final = a.get<bool>("finalMesh", true);
             std::string set = setArg(a);
-            return editUvMeshes("UV Live Relax", ComponentMode::Face, symmetricUvEdit(set, [&](geo::Mesh& m, const Ids& f, Node&) -> json {
-                return relaxIslands(m, f, set, o, iterations, flatten, pins).toJson();
+            return editUvMeshes("UV Live Relax", ComponentMode::Face, symmetricUvEdit(set, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
+                RelaxStats st = relaxIslands(m, f, set, o, iterations, flatten, pins, final ? exportStack(n) : Stack{});
+                if (!st.warning.empty())
+                    log::warn("{}: {}", n.name(), st.warning);
+                return st.toJson();
             }));
         },
     });

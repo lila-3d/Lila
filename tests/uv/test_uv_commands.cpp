@@ -637,3 +637,44 @@ TEST_CASE("selecting a uv widens to its whole uv vertex")
     for (geo::Index r = 0; r < rows.size(); ++r)
         CHECK(back[rows[r]] == r);
 }
+
+TEST_CASE("uv tools solve and measure on the mesh after its modifiers")
+{
+    run("newScene");
+    std::string plate = run("polyCube", {{"width", 10.0}, {"height", 1.0}, {"depth", 10.0}})[0];
+    run("select", {{"args", {plate}}});
+    run("uvProject", {{"type", "box"}});
+    run("uvPack");
+    const json cage = run("uvLayout", {{"finalMesh", false}});
+    CHECK(cage["measuredOn"] == "cage");
+
+    run("autoBevel", {{"args", {plate}}, {"segments", 3}, {"offset", 0.03}});
+    const json added = run("addModifier", {{"args", {plate}}, {"kind", "subdivision"}});
+    const std::string subdiv = added.is_array() ? added[0].get<std::string>() : added.get<std::string>();
+    run("setAttr", {{"args", {subdiv + ".levels", 2}}});
+    run("select", {{"args", {plate}}});
+    const json before = run("uvLayout");
+    CHECK(before["measuredOn"] == "exported");
+    CHECK(before["texelDensity"].get<double>() > 0.0);
+
+    // Script control: the base mesh alone, as without modifiers.
+    json r = run("uvOptimize", {{"finalMesh", false}});
+    CHECK_FALSE(r.contains("finalMesh"));
+    run("undo");
+
+    r = run("uvOptimize");
+    REQUIRE(r.contains("finalMesh"));
+    CHECK(r["finalMesh"]["method"] == "probed");
+    const json collapsed = r["finalMesh"]["collapsed"];
+    MESSAGE("collapsed " << collapsed[0] << " -> " << collapsed[1]);
+    CHECK(collapsed[1].get<int>() <= collapsed[0].get<int>());
+
+    r = run("uvLiveRelax", {{"iterations", 20}});
+    CHECK_FALSE(r.contains("finalMesh"));
+    r = run("uvPack");
+    CHECK(r["ok"] == true);
+    CHECK(run("uvLayout")["overlappingFaces"] == 0);
+    const double target = 10.0;
+    run("uvTexelDensity", {{"density", target}, {"resolution", 1024}, {"worldSpace", false}});
+    CHECK(run("uvTexelDensity", {{"resolution", 1024}, {"worldSpace", false}}).get<double>() == doctest::Approx(target).epsilon(0.02));
+}

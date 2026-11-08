@@ -105,6 +105,17 @@ std::vector<Index> selectedPoints(const Node& n)
     return {ids.begin(), ids.end()};
 }
 
+/** The exported-mesh solve matching an optimise mode. */
+FinalSolveOptions finalOptions(const OptimizeOptions& o)
+{
+    FinalSolveOptions f;
+    f.mode = o.mode;
+    f.mix = o.mix;
+    f.iterations = std::max(o.iterations, 200);
+    f.usePins = o.usePins;
+    return f;
+}
+
 bool usableUvs(const Chart& ch)
 {
     double a = std::abs(ch.areaUv());
@@ -127,8 +138,10 @@ void registerOptimizeCommands()
                   {"boundary", "", T::String, "free", "free, disk, rectangle or polygon.", {"free", "disk", "rectangle", "polygon"}},
                   {"cones", "", T::Int, 0, "Cone points placed automatically (free boundary only); each adds a short seam.", {}, {}, 0.0, 64.0},
                   {"exactLengths", "", T::Bool, false, "free boundary: bend rather than stretch to close it, so its lengths are exact."},
-                  {"pack", "", T::Bool, false, "Pack the islands into 0-1 afterwards."}},
+                  {"pack", "", T::Bool, false, "Pack the islands into 0-1 afterwards."},
+                  finalMeshFlag()},
         .run = [](const Args& a) -> json {
+            const bool final = a.get<bool>("finalMesh", true);
             std::string boundary = a.get<std::string>("boundary", "free");
             BffOptions bo;
             if (boundary == "free")
@@ -190,7 +203,11 @@ void registerOptimizeCommands()
                 writeCharts(m, charts, set);
                 if (cones > 0)
                     markSeamsFromUvs(m, faces, set);
-                return {{"islands", charts.size()}, {"failed", failed.load()}, {"cones", cones.load()}, {"seamsAdded", opened}};
+                json out = {{"islands", charts.size()}, {"failed", failed.load()}, {"cones", cones.load()}, {"seamsAdded", opened}};
+                const PackOptions packing;
+                if (json fm = finishOnExport(m, faces, set, n, final, pack ? &packing : nullptr); !fm.is_null())
+                    out["finalMesh"] = std::move(fm);
+                return out;
             }));
         },
     });
@@ -204,12 +221,14 @@ void registerOptimizeCommands()
             for (FlagDef& d : modeFlags())
                 f.push_back(std::move(d));
             f.push_back({"pins", "", ArgType::Bool, true, "Respect pinned uvs (corner attribute uvPin)."});
+            f.push_back(finalMeshFlag());
             return f;
         }(),
         .run = [](const Args& a) -> json {
             OptimizeOptions o = optimizeArgs(a);
             std::string set = uvSetOf(a);
-            return editUvMeshes("UV Optimize", K::Face, symmetricUvEdit(set, [&](geo::Mesh& m, const Ids& f, Node&) -> json {
+            const bool final = a.get<bool>("finalMesh", true);
+            return editUvMeshes("UV Optimize", K::Face, symmetricUvEdit(set, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
                 if (m.cornerAttrs().get<glm::vec2>(set).empty())
                     throw CommandError("uvOptimize: no " + set + " uvs; unwrap first");
                 std::vector<Chart> charts = uvIslands(m, f, set);
@@ -233,10 +252,13 @@ void registerOptimizeCommands()
                     w += a3;
                 }
                 w = std::max(w, 1e-300);
-                return {{"islands", charts.size()},
-                        {"failed", failed},
-                        {"areaDistortion", {area[0] / w, area[1] / w}},
-                        {"angleDistortion", {angle[0] / w, angle[1] / w}}};
+                json out = {{"islands", charts.size()},
+                            {"failed", failed},
+                            {"areaDistortion", {area[0] / w, area[1] / w}},
+                            {"angleDistortion", {angle[0] / w, angle[1] / w}}};
+                if (json fm = refineOnExport(m, f, set, n, finalOptions(o), final); !fm.is_null())
+                    out["finalMesh"] = std::move(fm);
+                return out;
             }));
         },
     });
@@ -251,19 +273,24 @@ void registerOptimizeCommands()
                                    {"visibility", "", ArgType::Bool, true, "Hide cuts where they are least visible."}};
             for (FlagDef& d : modeFlags())
                 f.push_back(std::move(d));
+            f.push_back(finalMeshFlag());
             return f;
         }(),
         .run = [](const Args& a) -> json {
+            const bool final = a.get<bool>("finalMesh", true);
             MosaicOptions o;
             o.threshold = std::max(0.0, a.get<double>("threshold", 0.08));
             o.visibility = a.get<bool>("visibility", true);
             o.optimize = optimizeArgs(a);
             std::string set = uvSetOf(a);
-            return editUvMeshes("UV Mosaic", K::Face, [&](geo::Mesh& m, const Ids& f, Node&) -> json {
+            return editUvMeshes("UV Mosaic", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
                 if (m.cornerAttrs().get<glm::vec2>(set).empty())
                     throw CommandError("uvMosaic: no " + set + " uvs; unwrap first");
                 MosaicResult r = mosaicFaces(m, f, set, o);
-                return {{"islandsBefore", r.islandsBefore}, {"islandsAfter", r.islandsAfter}, {"split", r.split}};
+                json out = {{"islandsBefore", r.islandsBefore}, {"islandsAfter", r.islandsAfter}, {"split", r.split}};
+                if (json fm = refineOnExport(m, f, set, n, finalOptions(o.optimize), final); !fm.is_null())
+                    out["finalMesh"] = std::move(fm);
+                return out;
             });
         },
     });

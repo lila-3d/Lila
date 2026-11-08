@@ -1,10 +1,13 @@
 #include "uv/UvCommands.h"
 
 #include "ops/Command.h"
+#include "ops/CommandOptions.h"
 #include "ops/Undo.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
+#include "core/Log.h"
 #include "scene/Components.h"
+#include "scene/DeformEval.h"
 #include "scene/Graph.h"
 #include "scene/Instancing.h"
 #include "scene/MeshNodes.h"
@@ -291,6 +294,18 @@ json packJson(const PackResult& r)
             {"seconds", r.seconds}, {"layouts", r.attempts}};
 }
 
+/** Packs the islands of the faces with their density measured on the exported mesh. */
+void packOnExport(geo::Mesh& m, std::span<const Index> faces, std::string_view uvSet, Node& n, const PackOptions& o)
+{
+    PackTarget t;
+    t.mesh = &m;
+    t.faces.assign(faces.begin(), faces.end());
+    t.stack = exportStack(n);
+    PackResult r = packMeshes(std::span<PackTarget>(&t, 1), uvSet, o);
+    for (const std::string& w : r.warnings)
+        log::warn("{}: {}", n.name(), w);
+}
+
 /** The attr marking a transform as a seam view: its weight. */
 constexpr const char* kSeamViewAttr = "seamView";
 
@@ -511,6 +526,93 @@ json sewEdges(geo::Mesh& m, std::span<const Index> edges, std::string_view uvSet
     return {{"sewn", sewn}};
 }
 } // namespace
+
+Stack exportStack(Node& n)
+{
+    Graph& g = graph();
+    const NodeId mesh = scene::instancing::root(g, n.id());
+    const std::vector<NodeId> mods = scene::modifiers::stack(g, mesh);
+    // A modifier showing its input for editing makes that input the cage; it and the ones after it still export.
+    auto first = std::find_if(mods.begin(), mods.end(), [&](NodeId id) {
+        const auto* m = scene::modifiers::asModifier(g.node(id));
+        return m && m->editingInput();
+    });
+    if (first == mods.end())
+        first = mods.begin();
+    Stack out;
+    for (auto it = first; it != mods.end(); ++it)
+    {
+        auto* mod = scene::modifiers::asModifier(g.node(*it));
+        if (!mod || !scene::modifiers::exportEnabled(*mod))
+            continue;
+        std::string name = mod->name();
+        if (!mod->apply)
+            out.push_back({name, [name](const geo::Mesh&) -> geo::Mesh { throw std::runtime_error(name + " can't be re-run"); }});
+        else
+            out.push_back({name, [mod](const geo::Mesh& in) {
+                               scene::deformEval::CpuOnly cpu;
+                               return mod->apply(in, *mod);
+                           }});
+    }
+    return out;
+}
+
+json refineOnExport(geo::Mesh& m, std::span<const Index> faces, std::string_view uvSet, Node& n, const FinalSolveOptions& opts, bool on)
+{
+    if (!on)
+        return nullptr;
+    const Stack stack = exportStack(n);
+    if (stack.empty())
+        return nullptr;
+    LILA_ZONE_N("refineOnExport");
+    const FinalRefineResult r = refineFinal(m, faces, uvSet, stack, opts);
+    if (!r.warning.empty())
+    {
+        log::warn("{}: {}", n.name(), r.warning);
+        return {{"method", "cage"}, {"warning", r.warning}};
+    }
+    if (r.method == FinalMethod::Cage)
+        return nullptr;
+    return {{"method", "probed"},
+            {"islands", r.islands},
+            {"failed", r.failed},
+            {"collapsed", {r.collapsedBefore, r.collapsedAfter}},
+            {"angleDistortion", {r.distortionBefore, r.distortionAfter}}};
+}
+
+FinalMap exportTraceOf(const geo::Mesh& m, Node& n, bool on)
+{
+    if (!on)
+        return {};
+    const Stack stack = exportStack(n);
+    if (stack.empty())
+        return {};
+    FinalMap map = traceFaces(m, stack);
+    if (!map.warning.empty())
+        log::warn("{}: {}", n.name(), map.warning);
+    return map;
+}
+
+json finishOnExport(geo::Mesh& m, std::span<const Index> faces, std::string_view uvSet, Node& n, bool on, const PackOptions* repack)
+{
+    json fm = refineOnExport(m, faces, uvSet, n, {}, on);
+    if (repack && fm.is_object() && fm.value("method", "") == "probed")
+        packOnExport(m, faces, uvSet, n, *repack);
+    return fm;
+}
+
+std::string densityOnExport(const geo::Mesh& m, std::span<Chart> charts, std::string_view uvSet, Node& n, bool on)
+{
+    if (!on)
+        return {};
+    const Stack stack = exportStack(n);
+    if (stack.empty())
+        return {};
+    const FinalMap map = applyDensityAreas(m, charts, uvSet, stack);
+    if (!map.warning.empty())
+        log::warn("{}: {}", n.name(), map.warning);
+    return map.warning;
+}
 
 json editUvMeshes(const char* label, ComponentMode kind, const UvMeshEditFn& fn, bool allowWhole)
 {
@@ -822,7 +924,8 @@ void registerCommands()
                        {"iterations", "", T::Int, 12, "SLIM iterations.", {}, {}, 0.0, 200.0},
                        {"pins", "", T::Bool, true, "Respect pinned uvs (corner attribute uvPin)."},
                        {"pack", "", T::Bool, false, "Pack the unwrapped islands into 0-1."},
-                       {"openIslands", "", T::Bool, false, "Cut closed or holed islands open where they cannot unfold, instead of stopping."}},
+                       {"openIslands", "", T::Bool, false, "Cut closed or holed islands open where they cannot unfold, instead of stopping."},
+                       finalMeshFlag()},
                       packFlags()),
         .run = [](const Args& a) -> json {
             UnwrapFacesOptions o;
@@ -833,20 +936,35 @@ void registerCommands()
             o.pack = a.get<bool>("pack", false);
             o.packing = packArgs(a);
             o.openIslands = a.get<bool>("openIslands", false);
+            const bool final = a.get<bool>("finalMesh", true);
             std::string set = uvSetArg(a);
             return editUv("UV Unwrap", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
                 Index mirrored = 0;
                 if (std::optional<geo::SymmetryMap> map = uvSymmetryMap(n, m))
                     mirrored = symmetricSeams(m, *map, f, o.openIslands);
+                // On a mesh whose modifiers move its surface, the islands are re-solved on the export before they are packed.
+                const bool refine = final && !exportStack(n).empty();
+                UnwrapFacesOptions uo = o;
+                uo.pack = o.pack && !refine;
                 UnwrapFacesResult r;
                 withUvSymmetry(m, n, set, UvSymmetry::Absolute, {}, [&]() -> json {
-                    r = unwrapFaces(m, f, set, o);
+                    r = unwrapFaces(m, f, set, uo);
                     return nullptr;
                 });
                 if (r.closed)
                     throw CommandError("uvUnwrap: " + std::to_string(r.closed) + (r.closed == 1 ? " island is" : " islands are") +
                                        " closed or holed and cannot unfold; cut seams on " + n.name() + " or unwrap with openIslands=True");
-                return {{"islands", r.islands}, {"failed", r.failed}, {"seamsAdded", r.seamsAdded + mirrored}};
+                json out = {{"islands", r.islands}, {"failed", r.failed}, {"seamsAdded", r.seamsAdded + mirrored}};
+                if (refine)
+                {
+                    FinalSolveOptions fo;
+                    fo.usePins = o.unwrap.usePins;
+                    if (json fm = refineOnExport(m, f, set, n, fo, true); !fm.is_null())
+                        out["finalMesh"] = std::move(fm);
+                    if (o.pack)
+                        packOnExport(m, f, set, n, o.packing);
+                }
+                return out;
             });
         },
     });
@@ -1001,8 +1119,10 @@ void registerCommands()
     ops::registerCommand({
         .name = "uvAuto",
         .doc = "Automatic uvs: seams, low-stretch unwrap and pack, in one step.",
-        .flags = join({uvSetFlag(), {"iterations", "", T::Int, 12, "SLIM iterations.", {}, {}, 0.0, 200.0}}, seamFlagDefs(), packFlags()),
+        .flags = join({uvSetFlag(), {"iterations", "", T::Int, 12, "SLIM iterations.", {}, {}, 0.0, 200.0}, finalMeshFlag()}, seamFlagDefs(),
+                      packFlags()),
         .run = [](const Args& a) -> json {
+            const bool final = a.get<bool>("finalMesh", true);
             AutoUvOptions o;
             o.seams = seamArgs(a);
             o.unwrap.iterations = std::clamp(a.get<int>("iterations", 12), 0, 200);
@@ -1018,6 +1138,8 @@ void registerCommands()
                 json j = packJson(r.pack);
                 j["islands"] = r.islands;
                 j["seams"] = r.seams;
+                if (json fm = finishOnExport(m, f, set, n, final, &mo.pack); !fm.is_null())
+                    j["finalMesh"] = std::move(fm);
                 return j;
             });
         },
@@ -1035,9 +1157,11 @@ void registerCommands()
                        {"keepSeams", "", T::Bool, false, "Keep the seams already there."},
                        {"useViews", "", T::Bool, true, "Keep seams out of sight of the views."},
                        viewsFlag(),
-                       {"pack", "", T::Bool, true, "Pack the islands into 0-1 afterwards."}},
+                       {"pack", "", T::Bool, true, "Pack the islands into 0-1 afterwards."},
+                       finalMeshFlag()},
                       packFlags()),
         .run = [](const Args& a) -> json {
+            const bool final = a.get<bool>("finalMesh", true);
             HoseOptions o;
             o.maxAspect = std::max(0.0, a.get<double>("maxAspect", 8.0));
             o.maxLength = std::max(0.0, a.get<double>("maxLength", 0.0));
@@ -1053,8 +1177,17 @@ void registerCommands()
                 HoseResult r = hoseUv(m, f, set, mo);
                 json j = {{"strips", r.strips}, {"lengthCuts", r.lengthCuts}, {"caps", r.caps}, {"otherFaces", r.otherFaces},
                           {"unstraightened", r.unstraightened}};
+                if (json fm = refineOnExport(m, f, set, n, {}, final); !fm.is_null())
+                    j["finalMesh"] = std::move(fm);
                 if (pack)
-                    j["pack"] = packJson(packIslands(m, f, set, packing));
+                {
+                    PackTarget t;
+                    t.mesh = &m;
+                    t.faces.assign(f.begin(), f.end());
+                    if (final)
+                        t.stack = exportStack(n);
+                    j["pack"] = packJson(packMeshes(std::span<PackTarget>(&t, 1), set, packing));
+                }
                 return j;
             });
         },
@@ -1150,10 +1283,11 @@ void registerCommands()
                "rotations, optional mirroring and stacking of identical islands; the densest of several island orders wins. Returns "
                "the density reached (percent of the used tiles covered) and the texel density. Runs on worker threads and can be "
                "cancelled from the progress bar.",
-        .flags = join({uvSetFlag()}, packFlags(), packLayoutFlags()),
+        .flags = join({uvSetFlag(), finalMeshFlag()}, packFlags(), packLayoutFlags()),
         .run = [](const Args& a) -> json {
             PackOptions o = packArgs(a);
             std::string set = uvSetArg(a), keep = a.get<std::string>("keep", "none");
+            const bool final = a.get<bool>("finalMesh", true);
             std::map<NodeId, Ids> work = targets(K::Face, true);
             if (work.empty())
                 throw CommandError("uvPack: select a mesh or some components first");
@@ -1176,6 +1310,8 @@ void registerCommands()
                 const Ids& ids = work[nodes[i]];
                 t.mesh = &meshes[i];
                 t.linear = worldLinear(*g.node(nodes[i]));
+                if (final)
+                    t.stack = exportStack(*g.node(nodes[i]));
                 if (keep == "selected")
                     t.fixedFaces.assign(ids.begin(), ids.end());
                 else
@@ -1186,6 +1322,8 @@ void registerCommands()
             }
             auto pack = [&](std::span<PackTarget> t) {
                 PackResult r = packMeshes(t, set, o);
+                for (const std::string& w : r.warnings)
+                    log::warn("uvPack: {}", w);
                 if (r.cancelled)
                     throw CommandError("uvPack: cancelled");
                 if (!r.ok)
@@ -1318,14 +1456,17 @@ void registerCommands()
                   presetFlag({"resolution", "", T::Int, 1024, "Texture size, px.", {}, {}, 1.0}, kTextureSizePresets),
                   {"density", "", T::Float, nullptr, "Set to this many px/cm.", {}, {}, 0.0},
                   {"worldSpace", "", T::Bool, true, "Measure world size, with the mesh's scale."},
-                  {"trims", "", T::String, "skip", "Trim-mapped faces: skip keeps them on their trims, rescale scales them off.", {"skip", "rescale"}}},
+                  {"trims", "", T::String, "skip", "Trim-mapped faces: skip keeps them on their trims, rescale scales them off.", {"skip", "rescale"}},
+                  finalMeshFlag()},
         .run = [](const Args& a) -> json {
             double res = double(std::max(1, a.get<int>("resolution", 1024)));
             bool world = a.get<bool>("worldSpace", true);
+            const bool final = a.get<bool>("finalMesh", true);
             std::string set = uvSetArg(a);
             if (!a.has("density"))
                 return queryUv([&](const geo::Mesh& m, const Ids& f, Node& n) -> json {
-                    return texelDensity(m, set, f, res, world ? worldLinear(n) : glm::dmat3(1.0));
+                    const FinalMap map = exportTraceOf(m, n, final);
+                    return texelDensity(m, set, f, res, world ? worldLinear(n) : glm::dmat3(1.0), &map);
                 });
             double density = a.get<double>("density");
             const bool rescaleTrims = a.get<std::string>("trims", "skip") == "rescale";
@@ -1346,12 +1487,14 @@ void registerCommands()
                 const size_t skipped = before - faces.size();
                 skippedAll += skipped;
                 editedAll += faces.size();
+                const FinalMap map = exportTraceOf(m, n, final);
                 if (!faces.empty())
                     withUvSymmetry(m, n, set, UvSymmetry::Absolute, {}, [&]() -> json {
-                        setTexelDensity(m, set, faces, res, density, lin);
+                        setTexelDensity(m, set, faces, res, density, lin, &map);
                         return nullptr;
                     });
-                json r = faces.empty() ? json(nullptr) : json(texelDensity(m, set, faces, res, lin));
+                const FinalMap after = map.exported ? exportTraceOf(m, n, final) : FinalMap{};
+                json r = faces.empty() ? json(nullptr) : json(texelDensity(m, set, faces, res, lin, &after));
                 return skipped ? json{{"density", r}, {"skippedTrimFaces", skipped}} : r;
             });
             if (editedAll == 0 && skippedAll > 0)
@@ -1396,14 +1539,17 @@ void registerCommands()
         .doc = "UV report for the selection: islands, overlapping and folded faces, distortion and texel density. Faces mapped onto a "
                "trim sheet share texels on purpose: their overlaps count in trimOverlapFaces, not overlappingFaces (trimCheck checks "
                "them against their sheet).",
-        .flags = {uvSetFlag(), presetFlag({"resolution", "", T::Int, 1024, "Texture size for the density, px.", {}, {}, 1.0}, kTextureSizePresets)},
+        .flags = {uvSetFlag(), presetFlag({"resolution", "", T::Int, 1024, "Texture size for the density, px.", {}, {}, 1.0}, kTextureSizePresets),
+                  finalMeshFlag()},
         .undoable = false,
         .run = [](const Args& a) -> json {
             std::string set = uvSetArg(a);
             double res = double(std::max(1, a.get<int>("resolution", 1024)));
+            const bool final = a.get<bool>("finalMesh", true);
             return queryUv([&](const geo::Mesh& m, const Ids& f, Node& n) -> json {
                 if (m.cornerAttrs().get<glm::vec2>(set).empty())
                     return {{"uvSet", set}, {"exists", false}};
+                const FinalMap map = exportTraceOf(m, n, final);
                 ChartOptions co;
                 co.source = IslandSource::Uvs;
                 co.uvSet = set;
@@ -1414,7 +1560,7 @@ void registerCommands()
                 for (Index fc = 0; fc < flags.size(); ++fc)
                     if (flags[fc])
                         ++(trimMapped(trim, fc) ? trimOverlap : overlapping);
-                std::vector<FaceDistortion> d = faceDistortion(m, set, f);
+                std::vector<FaceDistortion> d = faceDistortion(m, set, f, &map);
                 DistortionSummary s = summarize(m, d, f);
                 std::vector<std::string> sets;
                 for (const std::string& name : m.cornerAttrs().names())
@@ -1428,7 +1574,8 @@ void registerCommands()
                         {"foldedFaces", s.folded},
                         {"areaDistortion", {{"mean", s.meanArea}, {"max", s.maxArea}}},
                         {"angleDistortion", {{"mean", s.meanAngle}, {"max", s.maxAngle}}},
-                        {"texelDensity", texelDensity(m, set, f, res, worldLinear(n))}};
+                        {"texelDensity", texelDensity(m, set, f, res, worldLinear(n), &map)},
+                        {"measuredOn", map.exported ? "exported" : "cage"}};
             });
         },
     });
@@ -1611,5 +1758,14 @@ void registerCommands()
             });
         },
     });
+
+    for (const char* cmd : {"uvUnwrap", "uvOptimize", "uvLiveRelax", "uvPack", "uvAuto", "uvHose", "uvBff", "uvMosaic", "uvTexelDensity", "uvLayout"})
+    {
+        ops::options::Override o;
+        if (const ops::options::Override* had = ops::options::findOverride(cmd))
+            o = *had;
+        o.labels["finalMesh"] = "After Modifiers";
+        ops::options::setOverride(cmd, std::move(o));
+    }
 }
 } // namespace lila::uv
