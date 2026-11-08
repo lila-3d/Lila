@@ -203,7 +203,7 @@ void MainWindow::registerActions()
                       }
                       try
                       {
-                          ops::execute("applyLayout", {{"name", current}}, CallSource::UI);
+                          ops::execute("applyLayout", {{"name", current}, {"reset", true}}, CallSource::UI);
                           fitToScreen();
                       }
                       catch (const CommandError& e)

@@ -30,6 +30,20 @@ std::string fileFor(const std::string& name)
     return "layouts/" + name;
 }
 
+/** Each layout as it was last left, so switching back restores it until it is reset. */
+constexpr const char* kLiveFile = "layoutsLive";
+
+std::optional<json> liveLayout(const std::string& name)
+{
+    json v = PrefStore::get().value(kLiveFile, "/" + name);
+    return v.is_object() && !v.empty() ? std::optional<json>(std::move(v)) : std::nullopt;
+}
+
+void dropLive(const std::string& name)
+{
+    PrefStore::get().remove(kLiveFile, "/" + name);
+}
+
 std::string lower(std::string s)
 {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return char(std::tolower(c)); });
@@ -85,7 +99,9 @@ const std::vector<std::pair<std::string, json>>& presets()
         // The UV editor takes its own full-height column beside the viewport; the data column stays whole beyond it.
         {"UV", preset(with({"uvEditor", "modifierStack"}), {"uvEditor", "channelBox"}, "UV", {{"uvEditor", {{"width", 580}}}}, {},
                       json::array({{"uvEditor"}, {"outliner", "channelBox"}}))},
-        {"Sculpt", preset(with({"sculptPanel"}), {"sculptPanel", "channelBox"}, "Sculpt")},
+        // The sculpt panel takes its own full-height column beside the viewport, like the UV editor.
+        {"Sculpt", preset(with({"sculptPanel"}), {"sculptPanel", "channelBox"}, "Sculpt", {{"sculptPanel", {{"width", 600}}}}, {},
+                          json::array({{"sculptPanel"}, {"outliner", "channelBox"}}))},
         {"Texture", preset(with({"textureSets", "baker", "materialEditor"}), {"textureSets", "materialEditor"}, "Texture")},
         {"Bake", preset(with({"baker", "textureSets", "materialEditor"}), {"baker", "channelBox"}, "Texture")},
         {"Rig", preset(with({"timeSlider"}), {"channelBox"}, "Rig", {{"outliner", {{"height", 0.5}}}})},
@@ -290,6 +306,7 @@ bool remove(const std::string& name)
     p.flush();
     std::error_code ec;
     fs::remove(pathFor(name, e->origin), ec);
+    dropLive(name);
     if (current() == name && !find(name))
         setCurrent("");
     return true;
@@ -310,8 +327,11 @@ void rename(const std::string& from, const std::string& to)
         throw CommandError("a layout named \"" + to + "\" already exists");
     std::optional<json> doc = read(from);
     bool wasCurrent = current() == from;
+    std::optional<json> live = liveLayout(from);
     write(to, doc.value_or(json::object()), e->origin);
     remove(from);
+    if (live)
+        PrefStore::get().set(kLiveFile, "/" + to, *live);
     if (wasCurrent)
         setCurrent(to);
 }
@@ -351,9 +371,10 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "applyLayout",
-        .doc = "Arrange the window's panels, viewports and shelf as the named layout. UI only.",
+        .doc = "Arrange the window's panels, viewports and shelf as the named layout, as it was last left. reset=True "
+               "applies its saved or built-in arrangement instead. UI only.",
         .positionalDoc = "name",
-        .flags = {nameFlag},
+        .flags = {nameFlag, {"reset", "r", T::Bool, false, "Apply the saved or built-in arrangement, dropping how it was last left"}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             std::string name = nameArg(a, "applyLayout");
@@ -361,6 +382,16 @@ void registerCommands()
             std::optional<json> layout = read(name);
             if (!layout)
                 throw CommandError("applyLayout: no layout named \"" + name + "\"");
+            const bool reset = a.get<bool>("reset", false);
+            const std::string from = current();
+            if (from == name && !reset)
+                return name;
+            if (!from.empty() && from != name && hooks().capture && find(from))
+                PrefStore::get().set(kLiveFile, "/" + from, hooks().capture());
+            if (reset)
+                dropLive(name);
+            else if (std::optional<json> live = liveLayout(name))
+                layout = std::move(live);
             hooks().apply(name, *layout);
             setCurrent(name);
             events::send({.type = events::Event::LayoutChanged, .name = name});
@@ -378,6 +409,7 @@ void registerCommands()
             std::string name = nameArg(a, "saveLayout");
             requireGui("saveLayout", bool(hooks().capture));
             write(name, hooks().capture(), a.get<bool>("workspace", false) ? Origin::Workspace : Origin::User);
+            dropLive(name);
             setCurrent(name);
             return name;
         },

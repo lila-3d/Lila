@@ -33,6 +33,8 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QMouseEvent>
+#include <QPainter>
 #include <QPointer>
 #include <QPushButton>
 #include <QTabBar>
@@ -55,6 +57,84 @@ namespace
 {
 /** The layouts that always have a tab; the rest are one click away in the tab strip's + menu. */
 const std::vector<std::string> kTabLayouts = {"Model", "UV", "Sculpt", "Texture", "Bake", "Rig", "Animate", "Level"};
+
+/**
+ * Reset folded into the active layout tab: a small restore arrow in its top-right corner, where the option-box triangle
+ * sits bottom-right. Clicking that corner resets the layout instead of running the tab; the arrow brightens under the
+ * pointer. Inactive tabs show nothing.
+ */
+class LayoutResetCorner : public QObject
+{
+public:
+    explicit LayoutResetCorner(QToolButton* tab) : QObject(tab), mTab(tab)
+    {
+        tab->setMouseTracking(true);
+        tab->installEventFilter(this);
+    }
+
+protected:
+    bool eventFilter(QObject* obj, QEvent* e) override
+    {
+        if (obj != mTab)
+            return false;
+        switch (e->type())
+        {
+        case QEvent::MouseButtonPress:
+        case QEvent::MouseButtonDblClick:
+        {
+            auto* m = static_cast<QMouseEvent*>(e);
+            if (mTab->isChecked() && m->button() == Qt::LeftButton && inCorner(m->position().toPoint()))
+            {
+                actions::run(json("window.resetLayout"));
+                return true;
+            }
+            return false;
+        }
+        case QEvent::MouseMove:
+            setHot(mTab->isChecked() && inCorner(static_cast<QMouseEvent*>(e)->position().toPoint()));
+            return false;
+        case QEvent::Leave:
+            setHot(false);
+            return false;
+        case QEvent::Paint:
+        {
+            mTab->removeEventFilter(this);
+            QCoreApplication::sendEvent(mTab, e);
+            mTab->installEventFilter(this);
+            if (!mTab->isChecked())
+                return true;
+            QPainter p(mTab);
+            const int size = mHot ? 12 : 10;
+            const QRect r = mTab->rect();
+            const QIcon::Mode mode = mHot ? QIcon::Active : QIcon::Normal;
+            icon("restore").paint(&p, QRect(r.right() - 1 - size, r.top() + 1, size, size), Qt::AlignCenter, mode);
+            return true;
+        }
+        default:
+            return false;
+        }
+    }
+
+private:
+    bool inCorner(QPoint pos) const { return pos.x() >= mTab->rect().right() - kZone && pos.y() <= kZone; }
+
+    void setHot(bool hot)
+    {
+        if (hot == mHot)
+            return;
+        mHot = hot;
+        mTab->setToolTip(hot ? QString::fromStdString(actions::tooltip("window.resetLayout")) : mTip);
+        mTab->update();
+    }
+
+public:
+    QString mTip;
+
+private:
+    static constexpr int kZone = 14;
+    QToolButton* mTab;
+    bool mHot = false;
+};
 
 std::map<std::string, std::function<QDockWidget*()>>& lazyDocks()
 {
@@ -117,7 +197,7 @@ LayoutController::LayoutController(QMainWindow* window, DockSidebars* sidebars, 
                       if (!e || !e->shadowsBuiltIn)
                           return;
                       run("deleteLayout", {{"name", cur}});
-                      run("applyLayout", {{"name", cur}});
+                      run("applyLayout", {{"name", cur}, {"reset", true}});
                   }, [] {
                       std::optional<layouts::Entry> e = layouts::find(layouts::current());
                       return e && e->shadowsBuiltIn;
@@ -246,8 +326,10 @@ void LayoutController::refreshSwitcher()
             b->setText(QString::fromStdString(n));
             b->setCheckable(true);
             b->setProperty("layoutName", QString::fromStdString(n));
-            b->setToolTip(QString("%1 layout: arranges the panels and starts the %1 menus. Every tool and menu works in any layout.")
+            b->setToolTip(QString("%1 layout: arranges the panels and starts the %1 menus. Every tool and menu works in any layout. "
+                                  "Switching back restores it as you left it; the arrow in the active tab's corner resets it.")
                               .arg(QString::fromStdString(n)));
+            (new LayoutResetCorner(b))->mTip = b->toolTip();
             connect(b, &QToolButton::clicked, this, [this, n] {
                 run("applyLayout", {{"name", n}});
                 refreshSwitcher();
@@ -477,6 +559,8 @@ void LayoutController::apply(const json& layout)
         mSidebars->expandAll();
         // An active tool keeps its palette across a layout switch; no layout opens one for a tool that isn't.
         const std::vector<std::string> palettes = panels::shownToolPalettes(mWindow);
+        // The state already places panels that keep their own column; rearranging them now would undo it.
+        holdOwnColumns(mWindow);
         mWindow->restoreState(QByteArray::fromBase64(QByteArray::fromStdString(layout["state"].get<std::string>())));
         toolBox::place(mWindow);
         for (QDockWidget* d : mWindow->findChildren<QDockWidget*>())
@@ -690,7 +774,7 @@ void LayoutController::manage()
         if (const layouts::Entry* e = selected())
         {
             std::string name = e->name;
-            run("applyLayout", {{"name", name}});
+            run("applyLayout", {{"name", name}, {"reset", true}});
             reload(name);
         }
     });
