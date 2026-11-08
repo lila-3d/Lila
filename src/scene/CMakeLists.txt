@@ -111,6 +111,7 @@ lila_module(lila_scene Scene
     BatchRename.cpp
     SoftSelect.cpp
     Spaces.cpp
+    SpecSteps.cpp SpecSteps.h
     Take.cpp
     TextureFolders.cpp
     TransferAttributes.cpp

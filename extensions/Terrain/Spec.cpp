@@ -13,6 +13,7 @@
 #include <lila/Mcp.h>
 #include <lila/Node.h>
 #include <lila/Profile.h>
+#include <lila/SpecSteps.h>
 
 #include <chrono>
 #include <fstream>
@@ -96,6 +97,9 @@ json schemaJson()
         {"inputs", obj("Read back only, with graph: the modifier's input values by name.")},
         {"transform", obj("Read back only, with graph: {translate, rotate, scale} of the mesh.")},
     };
+    // Keys other extensions add (Seamwork's seams), run after every step above.
+    for (const lila::specs::Step* s : lila::specs::stepsFor("terrain"))
+        props[s->key] = s->schema;
     return {{"$schema", "http://json-schema.org/draft-07/schema#"},
             {"$id", "lila://schema/terrain-spec"},
             {"title", "Lila terrain spec"},
@@ -214,6 +218,36 @@ class Builder
 {
 public:
     Builder(bool stopOnError, bool full) : mStop(stopOnError), mFull(full) {}
+
+    /** Runs another extension's spec step (lila::specs::Step) like a command. */
+    bool runStep(const lila::specs::Step& s, const std::string& target, const json& value)
+    {
+        if (mFailed && mStop)
+            return false;
+        const auto t0 = std::chrono::steady_clock::now();
+        json entry = {{"step", s.key}, {"command", s.key}};
+        try
+        {
+            json r = s.run(target, value);
+            entry["ok"] = true;
+            entry["result"] = mFull ? r : summarize(r);
+            if (r.is_object() && r.contains("warnings") && r["warnings"].is_array() && !r["warnings"].empty())
+                entry["warnings"] = r["warnings"];
+        }
+        catch (const std::exception& e)
+        {
+            entry["ok"] = false;
+            entry["error"] = e.what();
+            entry["call"] = value;
+            mFailed = true;
+            if (mFirstError.is_null())
+                mFirstError = {{"step", s.key}, {"command", s.key}, {"error", e.what()}};
+            log::warn("terrainSpec: {} failed: {}", s.key, e.what());
+        }
+        entry["ms"] = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        mSteps.push_back(entry);
+        return entry["ok"].get<bool>();
+    }
 
     /** Runs one command; false when it failed (and the build should stop). */
     bool run(const std::string& step, const std::string& command, const json& call, json* result = nullptr)
@@ -511,7 +545,9 @@ using namespace spec_;
 
 const nlohmann::json& terrainSpecSchema()
 {
-    static const json s = schemaJson();
+    // Rebuilt each time: extensions add and remove keys as they load.
+    static json s;
+    s = schemaJson();
     return s;
 }
 
@@ -556,8 +592,10 @@ nlohmann::json buildTerrainSpec(const nlohmann::json& spec, bool replace, bool s
 
     if (!spec.is_object())
         throw CommandError("terrainSpec: spec is a dict (see lila://schema/terrain-spec)");
+    const std::vector<const lila::specs::Step*> added = lila::specs::stepsFor("terrain");
     for (const auto& [k, v] : spec.items())
-        if (std::find(specKeys().begin(), specKeys().end(), k) == specKeys().end())
+        if (std::find(specKeys().begin(), specKeys().end(), k) == specKeys().end() &&
+            std::none_of(added.begin(), added.end(), [&](const lila::specs::Step* s) { return s->key == k; }))
             throw CommandError("terrainSpec: unknown key " + k + " (see lila://schema/terrain-spec)");
     const std::string name = spec.value("name", std::string("Terrain"));
     Graph& g = Graph::current();
@@ -584,6 +622,10 @@ nlohmann::json buildTerrainSpec(const nlohmann::json& spec, bool replace, bool s
         out["failed"] = b.firstError();
         return out;
     }
+
+    for (const lila::specs::Step* s : added)
+        if (spec.contains(s->key) && !(spec[s->key].is_boolean() && !spec[s->key].get<bool>()))
+            b.runStep(*s, mesh, spec[s->key]);
 
     json check;
     if (!b.stopped() && enabled(spec, "check", true))
@@ -690,7 +732,8 @@ void registerSpec(ext::Context& ctx)
         .doc = "Build a whole terrain from one JSON spec, or read a terrain back as one.\n\n"
                "spec= (or preset= with overrides=) runs the terrain commands in order: source (noise, flat, image or dem), "
                "constraints, sculpt, erosion, landforms, water (sea, rivers, lakes), regions (terrainQuery, stored by name for "
-               "'region:<name>' references), roads, stamps, volume, biomes, materials, ground cover, check, export. Each step is "
+               "'region:<name>' references), roads, stamps, volume, biomes, materials, ground cover, keys other extensions add "
+               "(seams, with Seamwork), check, export. Each step is "
                "that command's flags; lila://schema/terrain-spec lists them. Returns ok (every step ran and terrainCheck passed), "
                "the terrain, each step's command, result (big lists counted), warnings, error and time, the check, the exports "
                "and the final stats with the revision. A failed step stops the build unless stopOnError=False.\n\n"
