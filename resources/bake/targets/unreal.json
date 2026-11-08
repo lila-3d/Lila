@@ -6,7 +6,7 @@
   "output": {"name": "T_{[!M_]material}_{map}", "format": "png", "bits": 8},
   "pipeline": {"autoAssign": true},
   "maps": [
-    {"map": "normal", "suffix": "N", "slot": "Normal"},
+    {"map": "normal", "suffix": "N", "slot": "Normal", "bits": 16},
     {"map": "orm", "suffix": "ORM", "slot": "OcclusionRoughnessMetallic"},
     {"map": "height", "suffix": "H", "slot": "Height", "bits": 16, "optional": true},
     {"map": "ao", "suffix": "AO", "slot": "AmbientOcclusion", "optional": true},
