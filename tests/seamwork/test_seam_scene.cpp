@@ -245,3 +245,38 @@ TEST_CASE("seamSkirt: one live skirt per object, mapped for Unreal, following a 
     CHECK(after == doctest::Approx(before + 500.0).epsilon(0.001));
     CHECK(run("seamCheck", {{"args", {r["seam"]}}})["ok"].get<bool>());
 }
+
+TEST_CASE("Seam Points and Distribute Along Seam: instances along the contact points in a geometry-nodes group")
+{
+    load();
+    run("newScene");
+    const json t = run("terrainCreate", {{"flat", true}, {"size", json::array({4000, 4000})}, {"resolution", 81}, {"name", "Ground"}});
+    const std::string wall = box("Wall", {-200, -20, -10}, {200, 280, 10});
+    const json r = run("seamFind", {{"args", {wall}}, {"terrain", t["mesh"]}, {"field", "none"}, {"spacing", 20.0}});
+    const std::string user = run("polyCube", {{"width", 10.0}, {"height", 10.0}, {"depth", 10.0}, {"name", "Scatter"}})[0];
+    run("gnCreateGroup", {{"args", {"Along"}}});
+    const std::string oi = run("gnAddNode", {{"args", {"Along", "ObjectInfo"}}});
+    const std::string sp = run("gnAddNode", {{"args", {"Along", "SeamPoints"}}});
+    const std::string da = run("gnAddNode", {{"args", {"Along", "DistributeAlongSeam"}}});
+    const std::string cube = run("gnAddNode", {{"args", {"Along", "MeshCube"}}});
+    const std::string real = run("gnAddNode", {{"args", {"Along", "RealizeInstances"}}});
+    run("gnSetValue", {{"args", {"Along", oi + ".object", r["pointsNode"]}}});
+    run("gnSetValue", {{"args", {"Along", oi + ".transformSpace", "world"}}});
+    run("gnSetValue", {{"args", {"Along", cube + ".size", {4, 4, 4}}}});
+    run("gnSetValue", {{"args", {"Along", sp + ".density", 0.5}}});
+    run("gnDisconnect", {{"args", {"Along", "GroupOutput.geometry"}}});
+    run("gnConnect", {{"args", {"Along", oi + ".geometry", sp + ".points"}}});
+    run("gnConnect", {{"args", {"Along", sp + ".points", da + ".points"}}});
+    run("gnConnect", {{"args", {"Along", cube + ".mesh", da + ".instance"}}});
+    run("gnConnect", {{"args", {"Along", da + ".instances", real + ".geometry"}}});
+    run("gnConnect", {{"args", {"Along", real + ".geometry", "GroupOutput.geometry"}}});
+    run("gnApply", {{"args", {user, "Along"}}});
+    const int cubes = faces(user) / 6;
+    // 42 points along 840 cm at 20 cm, about half kept.
+    CHECK(cubes > 10);
+    CHECK(cubes < 35);
+    const geo::Mesh& m = evaluatedMesh(user);
+    for (geo::Index p = 0; p < m.pointCapacity(); ++p)
+        if (m.pointValid(p))
+            CHECK(std::abs(m.position(p).y) < 10.0);
+}
