@@ -8,6 +8,8 @@
 #include "ui/MultilineEdit.h"
 #include "ui/NodePicker.h"
 #include "ui/SpinScrub.h"
+#include "ui/UvEditor.h"
+#include "uv/Uv.h"
 #include "ui/ValueReset.h"
 
 #include <QCheckBox>
@@ -313,6 +315,32 @@ FlagFieldWidgets makeFlagField(const opt::Field& f, const json& value, std::func
             out.label = new QLabel(label, parent);
             out.field = picker;
             out.set = [picker, str](const json& v) { picker->setValue(str(v)); };
+            break;
+        }
+        if (!list && f.editor == "uvSet")
+        {
+            auto* combo = new QComboBox(parent);
+            combo->setEditable(true);
+            combo->setInsertPolicy(QComboBox::NoInsert);
+            combo->addItems(uvSetNames());
+            // Left empty, the command uses the current set; typing a new name makes that set.
+            combo->lineEdit()->setPlaceholderText(QString("Current (%1)").arg(QString::fromStdString(uv::currentUvSet())));
+            auto show = [combo, str](const json& v) {
+                QSignalBlocker b(combo);
+                combo->setEditText(QString::fromStdString(str(v)));
+            };
+            show(value);
+            auto commit = [combo, changed] {
+                const std::string t = combo->currentText().trimmed().toStdString();
+                changed(t.empty() ? json(nullptr) : json(t));
+            };
+            QObject::connect(combo, &QComboBox::activated, combo, commit);
+            QObject::connect(combo->lineEdit(), &QLineEdit::editingFinished, combo, commit);
+            auto* l = new QLabel(label, parent);
+            onMiddleClickReset(l, [combo, changed] { combo->setEditText({}); changed(nullptr); }, combo->lineEdit()->placeholderText(), combo);
+            out.label = l;
+            out.field = combo;
+            out.set = show;
             break;
         }
         if (!list && f.editor == "code")

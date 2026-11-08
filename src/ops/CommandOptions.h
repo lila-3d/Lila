@@ -48,7 +48,10 @@ struct Field
     std::string suffix; // " cm", " deg"
     /** Values a number field offers in a menu and steps through on the wheel (FlagDef::presets); empty for none. */
     std::vector<double> presets;
-    /** A Text field's editor: "multiline" (a box of several lines), "code" (monospace, applied on Ctrl+Enter) or "font" (font pickers); empty is one line. */
+    /**
+     * A Text field's editor: "multiline" (a box of several lines), "code" (monospace, applied on Ctrl+Enter), "font" (font
+     * pickers) or "uvSet" (the selected meshes' uv sets, given to every flag named uvSet); empty is one line.
+     */
     std::string editor;
     /** A Text or List field naming scene nodes: their type (FlagDef::nodeType), drawn as a node picker. */
     std::string nodeType;

@@ -373,6 +373,8 @@ Field fieldFor(const FlagDef& flag)
     f.choiceDocs = choiceDocs(flag.doc, f.choices);
     if (f.kind == FieldKind::Text || f.kind == FieldKind::List)
         f.nodeType = flag.nodeType;
+    if (f.kind == FieldKind::Text && flag.name == "uvSet")
+        f.editor = "uvSet";
     f.min = flag.min.value_or(f.min);
     f.max = flag.max.value_or(f.max);
     if (f.kind == FieldKind::Int || f.kind == FieldKind::Float)

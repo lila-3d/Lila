@@ -807,7 +807,7 @@ json UvEditor::runCommand(const char* command, const json& call)
     return r;
 }
 
-void UvEditor::refreshSets()
+QStringList uvSetNames()
 {
     std::set<std::string> names{uv::currentUvSet(), "uv0", "uv1"};
     scene::Graph& g = scene::Graph::current();
@@ -820,6 +820,12 @@ void UvEditor::refreshSets()
     QStringList items;
     for (const std::string& n : names)
         items << QString::fromStdString(n);
+    return items;
+}
+
+void UvEditor::refreshSets()
+{
+    const QStringList items = uvSetNames();
     QString cur = QString::fromStdString(uv::currentUvSet());
     QStringList existing;
     for (int i = 0; i < mSet->count(); ++i)

@@ -2,6 +2,7 @@
 
 #include "core/Export.h"
 
+#include <QStringList>
 #include <QWidget>
 
 #include <nlohmann/json.hpp>
@@ -101,6 +102,9 @@ private:
 
 /** Registers "window.uvEditor" and the uv.* actions (unwrap, auto, pack...) for menus, hotkeys and shelves. */
 LILA_UI_API void registerUvActions();
+
+/** UV sets of the meshes the UV editor shows, with the current set, uv0 and uv1, sorted. */
+LILA_UI_API QStringList uvSetNames();
 
 /** How "window.uvEditor" toggles the panel: the main window raises its dock, or tucks it away when showing. */
 LILA_UI_API void setUvEditorOpener(std::function<void()> open);
