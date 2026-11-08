@@ -111,17 +111,113 @@ json defaultConfig()
     };
 }
 
+namespace
+{
+constexpr const char* kSides[] = {"left", "right"};
+
+/** Identifies an entry across layouts; empty for separators. A menu's commands are keyed under the menu's title. */
+std::string entryKey(const json& e, const std::string& menu = {})
+{
+    std::string k;
+    if (isSeparator(e))
+        return k;
+    if (e.is_string())
+        k = e.get<std::string>();
+    else if (isMenu(e))
+        k = "menu:" + e.value("menu", std::string());
+    else if (e.is_object() && e.contains("action"))
+        k = "action:" + e.value("action", std::string());
+    else if (e.is_object() && e.contains("item"))
+        k = "item:" + e.value("item", std::string());
+    return menu.empty() ? k : "menu:" + menu + "/" + k;
+}
+
+void collectKeys(const json& c, std::vector<std::string>& out)
+{
+    for (const char* side : kSides)
+        for (const json& e : c.value(side, json::array()))
+        {
+            if (std::string k = entryKey(e); !k.empty())
+                out.push_back(k);
+            if (isMenu(e))
+                for (const json& item : e.value("items", json::array()))
+                    if (std::string k = entryKey(item, e.value("menu", std::string())); !k.empty())
+                        out.push_back(k);
+        }
+}
+
+/**
+ * Inserts the default entries a layout has never seen into list, each after the entry that precedes it in the defaults
+ * (with the separator before it, if the defaults have one), or at the end.
+ */
+void mergeNew(json& list, const json& defaults, const std::string& menu, const std::vector<std::string>& known,
+              const std::vector<std::string>& present)
+{
+    auto has = [](const std::vector<std::string>& keys, const std::string& k) { return std::find(keys.begin(), keys.end(), k) != keys.end(); };
+    auto find = [&](const std::string& k) {
+        for (size_t i = 0; i < list.size(); ++i)
+            if (entryKey(list[i], menu) == k)
+                return int(i);
+        return -1;
+    };
+    for (size_t i = 0; i < defaults.size(); ++i)
+    {
+        const std::string k = entryKey(defaults[i], menu);
+        if (k.empty() || has(known, k) || has(present, k))
+            continue;
+        int at = -1;
+        for (size_t j = i; j-- > 0 && at < 0;)
+            if (const std::string prev = entryKey(defaults[j], menu); !prev.empty())
+                if (int found = find(prev); found >= 0)
+                    at = found + 1;
+        // With nothing before it in the layout, it goes ahead of whatever follows it in the defaults.
+        for (size_t j = i + 1; j < defaults.size() && at < 0; ++j)
+            if (const std::string next = entryKey(defaults[j], menu); !next.empty())
+                at = find(next);
+        if (at < 0)
+            at = int(list.size());
+        if (i > 0 && isSeparator(defaults[i - 1]))
+            list.insert(list.begin() + at++, json(kSeparator));
+        list.insert(list.begin() + at, defaults[i]);
+    }
+}
+} // namespace
+
 json config()
 {
     json c = PrefStore::get().value("general", kPref, json());
     if (!c.is_object() || !c.contains("left") || !c.contains("right") || !c["left"].is_array() || !c["right"].is_array())
         return defaultConfig();
+    std::vector<std::string> present;
+    collectKeys(c, present);
+    std::vector<std::string> known = present;
+    for (const json& k : c.value("known", json::array()))
+        if (k.is_string())
+            known.push_back(k.get<std::string>());
+    // Entries added to the defaults after the layout was saved show up in it; ones the user removed stay known and stay out.
+    const json defaults = defaultConfig();
+    for (const char* side : kSides)
+    {
+        mergeNew(c[side], defaults[side], {}, known, present);
+        for (const json& d : defaults[side])
+            if (isMenu(d))
+                for (json& e : c[side])
+                    if (isMenu(e) && e.value("menu", std::string()) == d.value("menu", std::string()))
+                        mergeNew(e["items"], d.value("items", json::array()), d.value("menu", std::string()), known, present);
+    }
     return c;
 }
 
 void setConfig(const json& c)
 {
-    PrefStore::get().set("general", kPref, c);
+    json stored = c;
+    if (!stored.contains("known"))
+    {
+        std::vector<std::string> known;
+        collectKeys(defaultConfig(), known);
+        stored["known"] = known;
+    }
+    PrefStore::get().set("general", kPref, stored);
 }
 
 std::string entryLabel(const json& e)
