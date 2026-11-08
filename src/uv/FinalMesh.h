@@ -96,6 +96,35 @@ struct LILA_SCENE_API FinalIsland
 LILA_SCENE_API std::vector<FinalIsland> finalIslands(const FinalMap& map, const geo::Mesh& cage, std::span<const Chart> charts,
                                                      std::string_view uvSet);
 
+/**
+ * The chart vertices the exported uvs barely read (the inside of an island a Fit Surface subdivision fills from its
+ * border, reached at most through a bevel's sliver) placed as the harmonic fill of the others and the pins on the cage.
+ * Solves move the others over the folded map, so the cage layout keeps following the exported one instead of flinging
+ * weak vertices far to nudge the export.
+ */
+class LILA_SCENE_API UninfluencedFill
+{
+public:
+    UninfluencedFill(const Chart& chart, const FinalIsland& island);
+    ~UninfluencedFill();
+
+    bool empty() const { return mUnknown.empty(); }
+    /** Per chart vertex, whether solves place it (the rest are filled). */
+    const std::vector<uint8_t>& solved() const { return mSolved; }
+    /** The island with the filled vertices' weights moved onto the solved ones through the fill. */
+    FinalIsland fold(const FinalIsland& island) const;
+    /** Rewrites the filled entries of uv (any affine frame of the chart's uvs) from the others. */
+    void apply(std::span<glm::dvec2> uv) const;
+
+private:
+    struct Solver;
+    std::vector<uint8_t> mSolved;
+    std::vector<Index> mUnknown;
+    std::unique_ptr<Solver> mSolver;
+};
+/** A chart vertex no exported uv reads with at least this weight is filled rather than solved. */
+inline constexpr double kWeakInfluence = 0.2;
+
 /** Distortion of the exported triangles for the chart's current uvs. */
 LILA_SCENE_API ChartStats finalStats(const FinalIsland& island, const Chart& chart);
 

@@ -234,6 +234,7 @@ void LiveIsland::setFinal(std::shared_ptr<const FinalIsland> island)
 {
     mFinal = island && !island->tris.empty() ? std::move(island) : nullptr;
     mFinalFrames.clear();
+    mFinalFill.reset();
     if (mFinal)
         prepareFinal();
     mFactor.reset();
@@ -243,6 +244,12 @@ void LiveIsland::setFinal(std::shared_ptr<const FinalIsland> island)
 
 void LiveIsland::prepareFinal()
 {
+    auto fill = std::make_shared<const UninfluencedFill>(mChart, *mFinal);
+    if (!fill->empty())
+    {
+        mFinal = std::make_shared<const FinalIsland>(fill->fold(*mFinal));
+        mFinalFill = std::move(fill);
+    }
     const FinalIsland& isl = *mFinal;
     mFinalFrames.assign(isl.tris.size(), {});
     for (size_t i = 0; i < isl.tris.size(); ++i)
@@ -842,6 +849,8 @@ void LiveIsland::step(std::span<const double> weights)
     for (Index v = 0; v < V; ++v)
         if (mChart.pinned[v])
             mX[v] = mPinAt[v];
+    if (mFinalFill)
+        mFinalFill->apply(mX);
     bool anchored = mTargetCount > 0;
     for (uint8_t p : mChart.pinned)
         anchored |= p != 0;

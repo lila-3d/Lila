@@ -185,6 +185,7 @@ private:
     std::vector<Frame> mFrames;
     std::shared_ptr<const FinalIsland> mFinal;
     std::vector<Frame> mFinalFrames;
+    std::shared_ptr<const UninfluencedFill> mFinalFill;
     std::vector<float> mStiff;
     std::vector<glm::dvec2> mX;
     std::vector<glm::dvec2> mPinAt;

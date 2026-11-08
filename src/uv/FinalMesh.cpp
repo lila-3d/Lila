@@ -27,8 +27,15 @@ constexpr const char* kProbePrefix = "lila:finalProbe";
 constexpr double kDelta = 0.6180339887;
 /** Weights under this are float noise. */
 constexpr double kMinWeight = 2e-5;
+/**
+ * Whole-island probes keep weights down to this: a uv filled from its island's border reads thousands of wedges a little
+ * each, and dropped together they miss the export. Still well above the float noise of a probe's response.
+ */
+constexpr double kMinIslandWeight = 1e-6;
 /** Probe layers per stack run. */
 constexpr int kLayersPerRun = 16;
+/** Probe layers per run when whole islands are probed at once, which takes many more colours. */
+constexpr int kIslandLayersPerRun = 64;
 
 /** Wedge (chart vertex over the whole mesh, from uv agreement) of every corner, and a representative corner per wedge. */
 struct Wedges
@@ -114,6 +121,43 @@ std::vector<std::vector<Index>> neighbourhoods(const geo::Mesh& m, const Wedges&
             std::sort(o.begin(), o.end());
         }
     });
+    return out;
+}
+
+/**
+ * Per face, its uv island: faces joined across manifold edges whose two ends are one wedge on both sides, as
+ * subdivision's islands join them.
+ */
+std::vector<Index> faceIslands(const geo::Mesh& m, const Wedges& w, Index& count)
+{
+    std::vector<Index> parent(m.faceCapacity());
+    for (Index f = 0; f < parent.size(); ++f)
+        parent[f] = f;
+    auto root = [&](Index f) {
+        while (parent[f] != f)
+            f = parent[f] = parent[parent[f]];
+        return f;
+    };
+    auto cornerAt = [&](Index c, Index p) { return m.cornerPoint(c) == p ? c : m.cornerNext(c); };
+    for (Index e = 0; e < m.edgeCapacity(); ++e)
+    {
+        if (!m.edgeValid(e) || !m.isManifoldEdge(e))
+            continue;
+        const Index c = m.edgeCorner(e), rc = m.cornerRadial(c);
+        const Index p0 = m.edgePoint(e, 0), p1 = m.edgePoint(e, 1);
+        if (w.ofCorner[cornerAt(c, p0)] == w.ofCorner[cornerAt(rc, p0)] && w.ofCorner[cornerAt(c, p1)] == w.ofCorner[cornerAt(rc, p1)])
+            parent[root(m.cornerFace(c))] = root(m.cornerFace(rc));
+    }
+    std::vector<Index> id(m.faceCapacity(), kInvalid), out(m.faceCapacity(), kInvalid);
+    count = 0;
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f))
+        {
+            Index& i = id[root(f)];
+            if (i == kInvalid)
+                i = count++;
+            out[f] = i;
+        }
     return out;
 }
 
@@ -272,16 +316,71 @@ std::vector<int> sourceFaces(const geo::Mesh& cage, const geo::Mesh& res, std::s
     return src;
 }
 
-/** One attempt at the map with the given ring count. Empty error on success. */
-std::string probe(const geo::Mesh& cage, std::string_view uvSet, const Stack& stack, const geo::Mesh& real, int rings, FinalMap& out)
+/**
+ * One attempt at the map with the given ring count. Whole islands also probes every wedge of a face's uv island, for
+ * stacks that spread a uv over its whole island (a Fit Surface subdivision fills each island's inside from its border).
+ * Empty error on success.
+ */
+std::string probe(const geo::Mesh& cage, std::string_view uvSet, const Stack& stack, const geo::Mesh& real, int rings, bool wholeIslands,
+                  FinalMap& out)
 {
     LILA_ZONE();
 
     const Wedges w = wedgesOf(cage, uvSet);
-    const std::vector<std::vector<Index>> hoods = neighbourhoods(cage, w, rings);
+    std::vector<std::vector<Index>> hoods = neighbourhoods(cage, w, rings);
+    // Per face, the hood its responses are looked up in: its own, or its island's: its faces' hoods and every wedge of
+    // the islands those reach (a bevel strip of one island's face can carry its neighbour's uvs).
+    std::vector<Index> hoodOf(cage.faceCapacity());
+    for (Index f = 0; f < hoodOf.size(); ++f)
+        hoodOf[f] = f;
+    if (wholeIslands)
+    {
+        Index count = 0;
+        const std::vector<Index> island = faceIslands(cage, w, count);
+        std::vector<std::vector<Index>> ring(count), members(count);
+        for (Index f = 0; f < cage.faceCapacity(); ++f)
+            if (island[f] != kInvalid)
+            {
+                ring[island[f]].insert(ring[island[f]].end(), hoods[f].begin(), hoods[f].end());
+                hoodOf[f] = island[f];
+            }
+        std::vector<Index> islandOfWedge(w.rep.size(), kInvalid);
+        for (size_t wd = 0; wd < w.rep.size(); ++wd)
+            if (const Index i = island[cage.cornerFace(w.rep[wd])]; i != kInvalid)
+            {
+                islandOfWedge[wd] = i;
+                members[i].push_back(Index(wd));
+            }
+        std::vector<std::vector<Index>> merged(count);
+        tbb::parallel_for(Index(0), count, [&](Index i) {
+            std::vector<Index>& h = merged[i];
+            std::sort(ring[i].begin(), ring[i].end());
+            ring[i].erase(std::unique(ring[i].begin(), ring[i].end()), ring[i].end());
+            std::vector<Index> reached;
+            for (Index wd : ring[i])
+                if (islandOfWedge[wd] != kInvalid)
+                    reached.push_back(islandOfWedge[wd]);
+            std::sort(reached.begin(), reached.end());
+            reached.erase(std::unique(reached.begin(), reached.end()), reached.end());
+            h = ring[i];
+            for (Index j : reached)
+                h.insert(h.end(), members[j].begin(), members[j].end());
+            std::sort(h.begin(), h.end());
+            h.erase(std::unique(h.begin(), h.end()), h.end());
+        });
+        hoods = std::move(merged);
+    }
     std::vector<int> colour;
     const int colours = colourWedges(hoods, w.rep.size(), colour);
     const int layers = (colours + 1) / 2;
+    const int perRun = wholeIslands ? kIslandLayersPerRun : kLayersPerRun;
+    // Each hood's wedges by colour, which is unique within a hood.
+    std::vector<std::vector<std::pair<int, Index>>> byColour(hoods.size());
+    tbb::parallel_for(size_t(0), hoods.size(), [&](size_t h) {
+        for (Index wd : hoods[h])
+            byColour[h].push_back({colour[wd], wd});
+        std::sort(byColour[h].begin(), byColour[h].end());
+    });
 
     // The probe base: the cage with only the uv set among its uv layers, and each face's id.
     geo::Mesh base = cage;
@@ -307,9 +406,9 @@ std::string probe(const geo::Mesh& cage, std::string_view uvSet, const Stack& st
     std::vector<double> unattributed(rows, 0.0);
     std::vector<int> sourceFace;
     out.runs = 0;
-    for (int first = 0; first < std::max(layers, 1); first += kLayersPerRun)
+    for (int first = 0; first < std::max(layers, 1); first += perRun)
     {
-        const int count = std::min(kLayersPerRun, layers - first);
+        const int count = std::min(perRun, layers - first);
         geo::Mesh in = base;
         for (int k = 0; k < count; ++k)
         {
@@ -352,23 +451,19 @@ std::string probe(const geo::Mesh& cage, std::string_view uvSet, const Stack& st
                 if (!res.faceValid(f))
                     continue;
                 const int src = sourceFace[f];
-                const std::vector<Index>* hood = src >= 0 && Index(src) < hoods.size() ? &hoods[Index(src)] : nullptr;
+                const std::vector<std::pair<int, Index>>* hood = src >= 0 && Index(src) < hoodOf.size() ? &byColour[hoodOf[Index(src)]] : nullptr;
                 res.forEachFaceCorner(f, [&](Index c) {
                     for (int k = 0; k < count; ++k)
                         for (int ch = 0; ch < 2; ++ch)
                         {
                             const double d = (double(probes[size_t(k)][c][ch]) - double(baseUv[c][ch])) / kDelta;
-                            if (std::abs(d) < kMinWeight)
+                            if (std::abs(d) < (wholeIslands ? kMinIslandWeight : kMinWeight))
                                 continue;
                             const int col = 2 * (first + k) + ch;
                             Index found = kInvalid;
                             if (hood)
-                                for (Index wd : *hood)
-                                    if (colour[wd] == col)
-                                    {
-                                        found = wd;
-                                        break;
-                                    }
+                                if (auto it = std::lower_bound(hood->begin(), hood->end(), std::pair<int, Index>{col, 0}); it != hood->end() && it->first == col)
+                                    found = it->second;
                             if (found == kInvalid)
                                 unattributed[c] += std::abs(d);
                             else
@@ -377,6 +472,9 @@ std::string probe(const geo::Mesh& cage, std::string_view uvSet, const Stack& st
                 });
             }
         });
+        // A response no wedge in reach owns stays unowned whatever the later runs find.
+        if (std::ranges::any_of(unattributed, [](double u) { return u > 1e-3; }))
+            return "reach";
     }
 
     // Check: every response found its wedge, and the map reproduces the exported uvs.
@@ -580,11 +678,12 @@ FinalMap buildFinalMap(const geo::Mesh& cage, std::string_view uvSet, const Stac
         return map;
     }
     std::string why;
-    for (int rings : {3, 6, 12})
+    // Ring-local probes first; whole islands for stacks that spread uvs over them.
+    for (auto [rings, wholeIslands] : {std::pair{3, false}, std::pair{3, true}, std::pair{6, false}, std::pair{6, true}, std::pair{12, false}})
     {
         try
         {
-            why = probe(cage, uvSet, stack, *exported, rings, map);
+            why = probe(cage, uvSet, stack, *exported, rings, wholeIslands, map);
         }
         catch (const std::exception& e)
         {
@@ -611,7 +710,7 @@ FinalMap buildFinalMap(const geo::Mesh& cage, std::string_view uvSet, const Stac
             geo::Mesh r = runStack(cage, prefix);
             if (!changesSurface(cage, r))
                 continue;
-            if (r.cornerAttrs().get<glm::vec2>(uvSet).empty() || !probe(cage, uvSet, prefix, r, 12, trial).empty())
+            if (r.cornerAttrs().get<glm::vec2>(uvSet).empty() || (!probe(cage, uvSet, prefix, r, 12, false, trial).empty() && !probe(cage, uvSet, prefix, r, 6, true, trial).empty()))
                 culprit = stack[n - 1].name;
         }
         catch (const std::exception&)
@@ -748,6 +847,151 @@ std::vector<FinalIsland> finalIslands(const FinalMap& map, const geo::Mesh& cage
     return out;
 }
 
+struct UninfluencedFill::Solver
+{
+    /** Per filled vertex (in mUnknown order), its uv as weights of the solved vertices and pins. */
+    std::vector<std::vector<std::pair<Index, double>>> rows;
+};
+
+UninfluencedFill::UninfluencedFill(const Chart& ch, const FinalIsland& isl)
+{
+    const size_t V = ch.pos.size();
+    std::vector<double> reach(V, 0.0);
+    for (size_t k = 0; k < isl.cols.size(); ++k)
+        if (isl.cols[k] < V)
+            reach[isl.cols[k]] = std::max(reach[isl.cols[k]], std::abs(isl.weights[k]));
+    mSolved.assign(V, 1);
+    std::vector<int> index(V, -1);
+    bool anyKnown = false;
+    for (size_t v = 0; v < V; ++v)
+        if (reach[v] < kWeakInfluence && !(v < ch.pinned.size() && ch.pinned[v]))
+        {
+            index[v] = int(mUnknown.size());
+            mUnknown.push_back(Index(v));
+        }
+        else
+            anyKnown = true;
+    if (mUnknown.empty() || !anyKnown || isl.tris.empty())
+    {
+        mUnknown.clear();
+        return;
+    }
+    // Clamped cotan weights: the cage's own triangles can be poor, and these uvs only have to read sensibly.
+    std::vector<Triplet> ta, tb;
+    std::vector<int> knownIndex(V, -1);
+    std::vector<Index> knownVertex;
+    for (const auto& t : ch.tris)
+        for (int k = 0; k < 3; ++k)
+        {
+            const Index a = t[(k + 1) % 3], b = t[(k + 2) % 3];
+            const glm::dvec3 u = ch.pos[a] - ch.pos[t[k]], v = ch.pos[b] - ch.pos[t[k]];
+            const double sn = glm::length(glm::cross(u, v));
+            const double w = 0.5 * std::max(sn > 1e-300 ? glm::dot(u, v) / sn : 0.0, 0.0) + 1e-3;
+            for (auto [p, q] : {std::pair{a, b}, std::pair{b, a}})
+            {
+                if (index[p] < 0)
+                    continue;
+                ta.emplace_back(index[p], index[p], w);
+                if (index[q] >= 0)
+                    ta.emplace_back(index[p], index[q], -w);
+                else
+                {
+                    if (knownIndex[q] < 0)
+                    {
+                        knownIndex[q] = int(knownVertex.size());
+                        knownVertex.push_back(q);
+                    }
+                    tb.emplace_back(index[p], knownIndex[q], w);
+                }
+            }
+        }
+    const auto n = Eigen::Index(mUnknown.size()), nk = Eigen::Index(knownVertex.size());
+    SpMat a(n, n);
+    a.setFromTriplets(ta.begin(), ta.end());
+    double trace = 0.0;
+    for (Eigen::Index i = 0; i < n; ++i)
+        trace += a.coeff(i, i);
+    // Parts of the chart no solved vertex reaches settle at the origin of the frame instead of failing the solve.
+    for (Eigen::Index i = 0; i < n; ++i)
+        a.coeffRef(i, i) += 1e-9 * std::max(trace / double(n), 1e-30);
+    Eigen::SimplicialLDLT<SpMat> ldlt(a);
+    if (ldlt.info() != Eigen::Success || nk == 0)
+    {
+        mUnknown.clear();
+        return;
+    }
+    SpMat bs(n, nk);
+    bs.setFromTriplets(tb.begin(), tb.end());
+    const Eigen::MatrixXd h = ldlt.solve(Eigen::MatrixXd(bs));
+    if (!h.allFinite())
+    {
+        mUnknown.clear();
+        return;
+    }
+    mSolver = std::make_unique<Solver>();
+    mSolver->rows.resize(size_t(n));
+    for (Eigen::Index i = 0; i < n; ++i)
+        for (Eigen::Index k = 0; k < nk; ++k)
+            if (std::abs(h(i, k)) > 1e-9)
+                mSolver->rows[size_t(i)].push_back({knownVertex[size_t(k)], h(i, k)});
+    for (Index v : mUnknown)
+        mSolved[v] = 0;
+}
+
+UninfluencedFill::~UninfluencedFill() = default;
+
+FinalIsland UninfluencedFill::fold(const FinalIsland& isl) const
+{
+    if (mUnknown.empty())
+        return isl;
+    std::vector<int> index(mSolved.size(), -1);
+    for (size_t i = 0; i < mUnknown.size(); ++i)
+        index[mUnknown[i]] = int(i);
+    FinalIsland out = isl;
+    out.rowStart.assign(1, 0);
+    out.cols.clear();
+    out.weights.clear();
+    std::vector<std::pair<Index, double>> row;
+    for (size_t c = 0; c + 1 < isl.rowStart.size(); ++c)
+    {
+        row.clear();
+        for (Index k = isl.rowStart[c]; k < isl.rowStart[c + 1]; ++k)
+        {
+            const Index v = isl.cols[k];
+            if (v < index.size() && index[v] >= 0)
+                for (auto [q, h] : mSolver->rows[size_t(index[v])])
+                    row.push_back({q, isl.weights[k] * h});
+            else
+                row.push_back({v, isl.weights[k]});
+        }
+        std::sort(row.begin(), row.end());
+        for (size_t k = 0; k < row.size(); ++k)
+            if (k > 0 && row[k].first == out.cols.back() && out.cols.size() > out.rowStart.back())
+                out.weights.back() += row[k].second;
+            else
+            {
+                out.cols.push_back(row[k].first);
+                out.weights.push_back(row[k].second);
+            }
+        out.rowStart.push_back(Index(out.cols.size()));
+    }
+    return out;
+}
+
+void UninfluencedFill::apply(std::span<glm::dvec2> uv) const
+{
+    if (mUnknown.empty())
+        return;
+    // All rows read only solved vertices, so the order of the writes doesn't matter.
+    for (size_t i = 0; i < mUnknown.size(); ++i)
+    {
+        glm::dvec2 s(0.0);
+        for (auto [q, h] : mSolver->rows[i])
+            s += h * uv[q];
+        uv[mUnknown[i]] = s;
+    }
+}
+
 ChartStats finalStats(const FinalIsland& isl, const Chart& chart)
 {
     ChartStats s;
@@ -830,15 +1074,21 @@ void setDensityArea(Chart& chart, const FinalIsland& isl)
     chart.densityArea = std::clamp(ex3 * cageUv / exUv, a3 / 16.0, a3 * 16.0);
 }
 
-OptimizeResult solveFinal(Chart& ch, const FinalIsland& isl, const FinalSolveOptions& o)
+OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveOptions& o)
 {
     LILA_ZONE();
 
     OptimizeResult r;
-    const size_t V = ch.pos.size(), C = isl.pos.size(), T = isl.tris.size();
-    if (V < 3 || T == 0)
+    if (ch.pos.size() < 3 || exact.tris.empty())
         return r;
-    r.before = finalStats(isl, ch);
+    r.before = finalStats(exact, ch);
+    // Vertices the export barely reads are placed from the others; the solve sees them through the fill.
+    const UninfluencedFill fill(ch, exact);
+    const FinalIsland isl = fill.fold(exact);
+    const std::vector<glm::dvec2> original = ch.uv;
+    const size_t collapsedOriginal = collapsedTriangles(exact, ch);
+    fill.apply(ch.uv);
+    const size_t V = ch.pos.size(), C = isl.pos.size(), T = isl.tris.size();
     size_t pins = 0;
     if (o.usePins)
         for (uint8_t p : ch.pinned)
@@ -893,6 +1143,8 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& isl, const FinalSolveOpt
         colWeight.maxCoeff(&best);
         fixed[size_t(best)] = 1;
     }
+    for (size_t v = 0; v < V; ++v)
+        fixed[v] |= !fill.solved()[v];
     for (size_t v = 0; v < V; ++v)
         if (!fixed[v])
             freeIdx[v] = nFree++;
@@ -1166,15 +1418,19 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& isl, const FinalSolveOpt
     }
     for (size_t v = 0; v < V; ++v)
         ch.uv[v] = glm::dvec2(best[v].x * sx, best[v].y);
+    fill.apply(ch.uv);
     if (pins == 0)
     {
         const glm::dvec2 shift = centre0 - ch.uvCentroid();
         for (glm::dvec2& p : ch.uv)
             p += shift;
     }
+    // The fill moves vertices the export reads a little, so the result can lose to where the island started.
+    if (collapsedTriangles(exact, ch) > collapsedOriginal)
+        ch.uv = original;
     r.ok = true;
     r.iterations = it;
-    r.after = finalStats(isl, ch);
+    r.after = finalStats(exact, ch);
     return r;
 }
 
@@ -1209,7 +1465,9 @@ FinalRefineResult refineFinal(geo::Mesh& cage, std::span<const Index> faces, std
         {
             if (!opts.usePins || std::ranges::none_of(trial.pinned, [](uint8_t p) { return p != 0; }))
                 keepInTile(trial, tile);
-            charts[i] = std::move(trial);
+            // Moving the island alone shifts it against the uvs its neighbours lend its export.
+            if (collapsedTriangles(islands[i], trial) <= before[i])
+                charts[i] = std::move(trial);
         }
         after[i] = collapsedTriangles(islands[i], charts[i]);
     });
