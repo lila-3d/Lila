@@ -218,6 +218,7 @@ json checks(const Layout& l, const Ground& ground, const Options& o)
             {"inExclusions", inExclusions},
             {"failedPaths", failed},
             {"staleOverrides", l.staleOverrides},
+            {"warnings", l.streetWarnings},
             {"ok", components <= 1 && crossings == 0 && emptyEnvelopes == 0 && inExclusions == 0 && failed.empty() &&
                        (!o.blocks || !l.lots.empty())}};
 }

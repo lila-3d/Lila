@@ -766,6 +766,7 @@ struct Layout
     std::vector<District> districts;
     std::vector<double> edgeAccess;       // per graph edge, 0 to 1 (streetAccess)
     std::vector<std::string> parcelWarnings; // what blocks, lots and envelopes fell back to and why
+    std::vector<std::string> streetWarnings; // what the street network fell back to and why
     std::shared_ptr<RouteBook> routeBook;
     std::string plan; // none, pinned (the pinned plan shown) or stale (inputs changed since it was pinned)
     std::shared_ptr<struct GenLayout> gen; // walls, gates, eras, levels and the rest generators make (Generators.h)

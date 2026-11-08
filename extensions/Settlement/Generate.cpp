@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <format>
 #include <functional>
 #include <limits>
 #include <map>
@@ -452,7 +453,17 @@ void joinComponents(Layout& l, const Ground& g)
         const bool dry = l.water.empty() || cutAtWater(std::vector<Vec2>(ends, ends + 2), l.water).size() == 1;
         if (gap < 3.0 * p.segment && dry && g.gradeAlong(pa, pb) <= p.maxGrade * 1.5 && !crossesExclusion(l, pa, pb))
             graph.addStreet(pa, pb, StreetClass::Local);
-        else if (length < p.segment)
+        else if (length >= p.segment)
+        {
+            // Too far or too steep for a straight link: a street routed over the ground joins it instead.
+            const std::vector<Vec2> path = route(l, g, p, pa, pb);
+            if (path.size() >= 2)
+                graph.addPolyline(path, StreetClass::Local);
+            else
+                l.streetWarnings.push_back(std::format("a street network of {:.0f} m near ({:.0f}, {:.0f}) has no way to the town's: left unconnected",
+                                                       length / 100.0, pa.x / 100.0, pa.y / 100.0));
+        }
+        else
             for (int a : nodes)
             {
                 const std::vector<int> inc = graph.incident(a);
