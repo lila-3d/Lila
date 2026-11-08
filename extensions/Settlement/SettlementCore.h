@@ -545,6 +545,20 @@ struct PathResult
     std::string error;
 };
 
+/**
+ * An asset placed in the settlement (a library building, street furniture), from whatever stage places them. Exports and
+ * settlementSendToUnreal send these: as HISM instances in Unreal, as entries in the engine files.
+ */
+struct Placement
+{
+    std::string id;                  // stable across rebuilds: live sync matches on it
+    std::string asset;               // engine asset path, such as /Game/Props/SM_Bench
+    glm::dvec3 position{0.0};        // world, cm
+    glm::dvec4 rotation{0, 0, 0, 1}; // quaternion x, y, z, w, world
+    glm::dvec3 scale{1.0};
+    std::vector<std::string> tags;
+};
+
 struct Layout
 {
     StreetGraph graph;
@@ -564,6 +578,7 @@ struct Layout
     std::vector<SurfacePath> surfacePaths;
     std::vector<PathResult> pathResults;
     std::vector<uint64_t> staleOverrides; // overrides naming a street this layout does not make
+    std::vector<Placement> placements;
 };
 
 /**

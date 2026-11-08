@@ -1,6 +1,6 @@
 // settlementCreate builds a settlement as a geometry-nodes group anyone can open (a Settlement node fed by a mesh holding
 // the outline, fixed streets and attractors, and optionally a ground mesh); settlementInfo measures and checks it;
-// settlementExport writes its streets, lots and envelopes as JSON; settlementProfiles lists the styles.
+// settlementProfiles lists the styles.
 
 #include "Settlement.h"
 
@@ -712,43 +712,6 @@ void registerCommands(ext::Context& ctx)
     });
 
     ctx.registerCommand({
-        .name = "settlementExport",
-        .doc = "Writes a settlement's layout as JSON (format lila.settlement): street nodes and edges with class, width and "
-               "era; blocks; lots with outline, use, frontages and the street class each side faces; building envelopes with "
-               "footprint, side kinds (street, party, open), floors, floor height, base, ground and top heights, roof and "
-               "facing. 2D points are [x, z] in cm, heights world Y. This is what building generators (Unreal PCG, Masonry, "
-               "library placement) read. Returns the path and counts.",
-        .positionalDoc = "mesh or its settlement modifier (default the selection)",
-        .flags = {{"path", "p", T::String, "", "File to write (.json)."}},
-        .undoable = false,
-        .run = [](const Args& a) -> json {
-            LILA_ZONE();
-
-            Graph& g = Graph::current();
-            std::vector<std::string> names = a.objects();
-            if (names.size() != 1)
-                throw CommandError("settlementExport: give one mesh");
-            const std::string path = a.get<std::string>("path", "");
-            if (path.empty())
-                throw CommandError("settlementExport: path= required");
-            Rebuilt r = rebuild(g, names[0], "settlementExport");
-            const json data = toJson(r.layout);
-            std::error_code ec;
-            if (auto dir = std::filesystem::path(path).parent_path(); !dir.empty())
-                std::filesystem::create_directories(dir, ec);
-            std::ofstream f(std::filesystem::path(path), std::ios::binary);
-            if (!f)
-                throw CommandError("settlementExport: cannot write " + path);
-            f << data.dump(1);
-            return {{"path", path},
-                    {"streets", int64_t(data["streets"].size())},
-                    {"lots", int64_t(data["lots"].size())},
-                    {"envelopes", int64_t(data["envelopes"].size())}};
-        },
-        .examples = {"settlementExport('Settlement', path='C:/work/town.json')"},
-    });
-
-    ctx.registerCommand({
         .name = "settlementProfiles",
         .doc = "The built-in styles with every field, as {name: profile}. Any field can be changed per settlement through "
                "the overrides input (a JSON object of the fields to change).",
@@ -1295,5 +1258,6 @@ void registerCommands(ext::Context& ctx)
     });
 
     registerUnrealCommands(ctx);
+    registerExportCommands(ctx);
 }
 } // namespace settlement

@@ -12,6 +12,10 @@ namespace lila::ext
 {
 class Context;
 }
+namespace lila
+{
+struct Args;
+}
 namespace lila::scene
 {
 class Graph;
@@ -63,4 +67,8 @@ void registerCommands(lila::ext::Context& ctx);
 /** settlementGrade and settlementSendToUnreal. */
 void registerUnrealCommands(lila::ext::Context& ctx);
 void registerUi(lila::ext::Context& ctx);
+/** settlementExport (files: JSON, GeoJSON, USD, DXF, Unity, Godot). */
+void registerExportCommands(lila::ext::Context& ctx);
+/** Appends the placements flag's entries (a list or its JSON text) to the layout's placements; CommandError naming cmd when malformed. */
+void addPlacements(Layout& l, const lila::Args& a, const char* cmd);
 } // namespace settlement
