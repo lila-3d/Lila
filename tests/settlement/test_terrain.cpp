@@ -431,7 +431,7 @@ TEST_CASE("settlement terrain: settlementCheck and settlementExplain on a settle
     CHECK(c["counts"]["envelope"] == 0);
     CHECK(c["counts"]["foundation"] == 0);
     CHECK(c["plan"] == "none");
-    CHECK(c["warnings"].size() == 1);
+    CHECK(c["warnings"].empty());
     CHECK(c["counts"]["laneGraph"] == 0);
     const json reported = run("settlementCheck", {{"args", {mesh}}, {"report", true}});
     CHECK(reported["reported"].get<size_t>() == std::min<size_t>(reported["issues"].size(), 200));

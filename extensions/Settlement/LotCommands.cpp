@@ -25,7 +25,7 @@ using T = ArgType;
 
 json xzJson(Vec2 p) { return json::array({p.x, p.y}); }
 
-Rebuilt settlementOf(const Args& a, const char* cmd)
+Rebuilt lotSettlementOf(const Args& a, const char* cmd)
 {
     const std::vector<std::string> names = a.objects();
     if (names.size() != 1)
@@ -321,7 +321,7 @@ void registerLotCommands(ext::Context& ctx)
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
-            const Rebuilt r = settlementOf(a, "settlementBlocks");
+            const Rebuilt r = lotSettlementOf(a, "settlementBlocks");
             const std::string type = a.get<std::string>("type", "");
             const int64_t limit = a.get<int64_t>("limit", 0);
             json blocks = json::array();
@@ -357,7 +357,7 @@ void registerLotCommands(ext::Context& ctx)
             LILA_ZONE();
 
             const char* cmd = "settlementSubdivide";
-            const Rebuilt r = settlementOf(a, cmd);
+            const Rebuilt r = lotSettlementOf(a, cmd);
             const std::vector<uint64_t> ids = blockTargets(a, r.layout, cmd);
             const bool clear = a.get<bool>("clear", false);
             if (!clear && !a.has("type") && !a.has("method"))
@@ -416,7 +416,7 @@ void registerLotCommands(ext::Context& ctx)
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
-            const Rebuilt r = settlementOf(a, "settlementLots");
+            const Rebuilt r = lotSettlementOf(a, "settlementLots");
             const std::string use = a.get<std::string>("use", "");
             const std::vector<uint64_t> blocks = idList(a, "block", "settlementLots");
             const bool landmarks = a.get<bool>("landmarks", false);
@@ -452,7 +452,7 @@ void registerLotCommands(ext::Context& ctx)
             LILA_ZONE();
 
             const char* cmd = "settlementLandUse";
-            const Rebuilt r = settlementOf(a, cmd);
+            const Rebuilt r = lotSettlementOf(a, cmd);
             const std::vector<uint64_t> ids = lotTargets(a, r.layout, cmd);
             const Layout* l = &r.layout;
             Rebuilt after;
@@ -515,7 +515,7 @@ void registerLotCommands(ext::Context& ctx)
             LILA_ZONE();
 
             const char* cmd = "settlementPlaceLandmark";
-            const Rebuilt r = settlementOf(a, cmd);
+            const Rebuilt r = lotSettlementOf(a, cmd);
             const std::vector<uint64_t> ids = lotTargets(a, r.layout, cmd);
             if (ids.size() != 1)
                 throw CommandError(std::string(cmd) + ": give one lot (lot= or at=)");
@@ -560,7 +560,7 @@ void registerLotCommands(ext::Context& ctx)
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
-            const Rebuilt r = settlementOf(a, "settlementEnvelopes");
+            const Rebuilt r = lotSettlementOf(a, "settlementEnvelopes");
             const std::vector<uint64_t> ids = idList(a, "lot", "settlementEnvelopes");
             const std::string use = a.get<std::string>("use", "");
             const bool landmarks = a.get<bool>("landmarks", false);
@@ -604,7 +604,7 @@ void registerLotCommands(ext::Context& ctx)
             LILA_ZONE();
 
             const char* cmd = "settlementFoundations";
-            const Rebuilt r = settlementOf(a, cmd);
+            const Rebuilt r = lotSettlementOf(a, cmd);
             json edits = editsOf(r, cmd);
             if (a.get<bool>("clear", false))
             {
@@ -673,7 +673,7 @@ void registerLotCommands(ext::Context& ctx)
             LILA_ZONE();
 
             const char* cmd = "settlementBuildings";
-            const Rebuilt r = settlementOf(a, cmd);
+            const Rebuilt r = lotSettlementOf(a, cmd);
             BuildingRoute route;
             if (!parseRoute(a.get<std::string>("route", "outline"), &route))
                 throw CommandError(std::string(cmd) + ": unknown route '" + a.get<std::string>("route") + "' (outline, massing, library, masonry, unreal)");

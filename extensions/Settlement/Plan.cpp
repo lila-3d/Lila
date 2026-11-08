@@ -27,7 +27,7 @@ uint64_t fnv(std::string_view s, uint64_t h = 1469598103934665603ull)
     return h;
 }
 
-json xzOf(Vec2 p) { return json::array({p.x, p.y}); }
+json planXz(Vec2 p) { return json::array({p.x, p.y}); }
 
 Vec2 vec2Of(const json& j)
 {
@@ -55,7 +55,52 @@ Polygon polyOf(const json& j)
     return p;
 }
 
-json blockJson(const Block& b) { return {{"id", b.id}, {"outline", polyJson(b.outline)}, {"area", b.area}, {"use", int(b.use)}}; }
+json polysJson(const std::vector<Polygon>& ps)
+{
+    json a = json::array();
+    for (const Polygon& p : ps)
+        a.push_back(polyJson(p));
+    return a;
+}
+
+std::vector<Polygon> polysOf(const json& j)
+{
+    std::vector<Polygon> ps;
+    for (const json& p : j)
+        ps.push_back(polyOf(p));
+    return ps;
+}
+
+json vec2sJson(const std::vector<Vec2>& ps)
+{
+    json a = json::array();
+    for (Vec2 p : ps)
+        a.push_back(planXz(p));
+    return a;
+}
+
+std::vector<Vec2> vec2sOf(const json& j)
+{
+    std::vector<Vec2> ps;
+    for (const json& p : j)
+        ps.push_back(vec2Of(p));
+    return ps;
+}
+
+// Every field round-trips: a pinned plan replaces what build() made, so anything left out here is lost from the layout.
+json planBlockJson(const Block& b)
+{
+    return {{"id", b.id},
+            {"outline", polyJson(b.outline)},
+            {"area", b.area},
+            {"use", int(b.use)},
+            {"key", b.key},
+            {"type", int(b.type)},
+            {"method", int(b.method)},
+            {"courtyards", polysJson(b.courtyards)},
+            {"water", b.water},
+            {"reasons", b.reasons}};
+}
 
 Block blockOf(const json& j)
 {
@@ -64,6 +109,12 @@ Block blockOf(const json& j)
     b.outline = polyOf(j.at("outline"));
     b.area = j.value("area", 0.0);
     b.use = Use(j.value("use", 0));
+    b.key = j.value("key", uint64_t(0));
+    b.type = BlockType(j.value("type", 0));
+    b.method = LotMethod(j.value("method", 0));
+    b.courtyards = polysOf(j.value("courtyards", json::array()));
+    b.water = j.value("water", false);
+    b.reasons = j.value("reasons", std::vector<std::string>());
     return b;
 }
 
@@ -77,7 +128,13 @@ json lotJson(const Lot& l)
             {"corner", l.corner},
             {"frontClass", int(l.frontClass)},
             {"use", int(l.use)},
-            {"random", l.random}};
+            {"random", l.random},
+            {"key", l.key},
+            {"wealth", l.wealth},
+            {"access", l.access},
+            {"landmark", l.landmark},
+            {"reasons", l.reasons},
+            {"route", int(l.route)}};
 }
 
 Lot lotOf(const json& j)
@@ -92,14 +149,47 @@ Lot lotOf(const json& j)
     l.frontClass = StreetClass(j.value("frontClass", int(StreetClass::Local)));
     l.use = Use(j.value("use", 0));
     l.random = j.value("random", 0.0f);
+    l.key = j.value("key", uint64_t(0));
+    l.wealth = j.value("wealth", 1);
+    l.access = j.value("access", 0.0);
+    l.landmark = j.value("landmark", std::string());
+    l.reasons = j.value("reasons", std::vector<std::string>());
+    l.route = BuildingRoute(j.value("route", 0));
     return l;
 }
 
 json envelopeJson(const Envelope& e)
 {
-    return {{"lot", e.lot},     {"footprint", polyJson(e.footprint)}, {"base", e.base},     {"ground", e.ground}, {"top", e.top},
-            {"height", e.height}, {"floors", e.floors},               {"use", int(e.use)},  {"roof", e.roof},     {"front", xzOf(e.front)},
-            {"random", e.random}};
+    json tiers = json::array();
+    for (const Envelope::Tier& t : e.tiers)
+        tiers.push_back({{"footprint", polyJson(t.footprint)}, {"bottom", t.bottom}, {"top", t.top}});
+    return {{"lot", e.lot},
+            {"footprint", polyJson(e.footprint)},
+            {"base", e.base},
+            {"ground", e.ground},
+            {"top", e.top},
+            {"height", e.height},
+            {"floors", e.floors},
+            {"use", int(e.use)},
+            {"roof", e.roof},
+            {"front", planXz(e.front)},
+            {"random", e.random},
+            {"key", e.key},
+            {"tiers", tiers},
+            {"partyWith", e.partyWith},
+            {"frontSetback", e.frontSetback},
+            {"sideSetback", e.sideSetback},
+            {"ridge", planXz(e.ridge)},
+            {"roofHeight", e.roofHeight},
+            {"entrances", vec2sJson(e.entrances)},
+            {"groundUse", int(e.groundUse)},
+            {"corner", e.corner},
+            {"foundationDepth", e.foundationDepth},
+            {"foundationSource", e.foundationSource},
+            {"landmark", e.landmark},
+            {"era", e.era},
+            {"wealth", e.wealth},
+            {"route", int(e.route)}};
 }
 
 Envelope envelopeOf(const json& j)
@@ -116,6 +206,23 @@ Envelope envelopeOf(const json& j)
     e.roof = j.value("roof", std::string());
     e.front = vec2Of(j.value("front", json::array({0.0, 1.0})));
     e.random = j.value("random", 0.0f);
+    e.key = j.value("key", uint64_t(0));
+    for (const json& t : j.value("tiers", json::array()))
+        e.tiers.push_back({polyOf(t.at("footprint")), t.value("bottom", 0.0), t.value("top", 0.0)});
+    e.partyWith = j.value("partyWith", std::vector<int>());
+    e.frontSetback = j.value("frontSetback", 0.0);
+    e.sideSetback = j.value("sideSetback", 0.0);
+    e.ridge = vec2Of(j.value("ridge", json::array({1.0, 0.0})));
+    e.roofHeight = j.value("roofHeight", 0.0);
+    e.entrances = vec2sOf(j.value("entrances", json::array()));
+    e.groundUse = Use(j.value("groundUse", 0));
+    e.corner = j.value("corner", std::string("none"));
+    e.foundationDepth = j.value("foundationDepth", 0.0);
+    e.foundationSource = j.value("foundationSource", std::string());
+    e.landmark = j.value("landmark", std::string());
+    e.era = j.value("era", std::string());
+    e.wealth = j.value("wealth", 1);
+    e.route = BuildingRoute(j.value("route", 0));
     return e;
 }
 
@@ -232,9 +339,9 @@ json toJson(const RouteBook& b)
     {
         json pts = json::array();
         for (const Vec2& q : e.pts)
-            pts.push_back(xzOf(q));
-        routes.push_back({{"a", xzOf(e.a)},
-                          {"b", xzOf(e.b)},
+            pts.push_back(planXz(q));
+        routes.push_back({{"a", planXz(e.a)},
+                          {"b", planXz(e.b)},
                           {"maxGrade", e.maxGrade},
                           {"points", pts},
                           {"source", e.source},
@@ -296,7 +403,7 @@ uint64_t planKey(const Site& site, const Options& o)
     auto line = [](std::span<const Vec2> pts) {
         json a = json::array();
         for (const Vec2& q : pts)
-            a.push_back(xzOf(q));
+            a.push_back(planXz(q));
         return a;
     };
     j["outline"] = line(site.outline);
@@ -320,13 +427,13 @@ json planToJson(const Layout& l, uint64_t key, const std::string& revision, cons
     for (const StreetEdge& e : l.graph.edges)
         edges.push_back(json::array({e.a, e.b, int(e.cls), e.era, e.alive, e.width, e.profile, e.path, e.street, e.bridge, e.tunnel}));
     for (const Block& b : l.blocks)
-        blocks.push_back(blockJson(b));
+        blocks.push_back(planBlockJson(b));
     for (const Lot& lot : l.lots)
         lots.push_back(lotJson(lot));
     for (const Envelope& e : l.envelopes)
         envelopes.push_back(envelopeJson(e));
     for (const Vec2& b : l.bridges)
-        bridges.push_back(xzOf(b));
+        bridges.push_back(planXz(b));
     return {{"key", std::format("{:016x}", key)},
             {"revision", revision},
             {"terrain", terrain},
@@ -537,7 +644,7 @@ uint64_t blockHash(const Layout& l, int block)
     uint64_t h = fnv("block");
     for (const Block& b : l.blocks)
         if (b.id == block)
-            h = fnv(blockJson(b).dump(), h);
+            h = fnv(planBlockJson(b).dump(), h);
     std::set<int> lots;
     for (const Lot& lot : l.lots)
         if (lot.block == block)

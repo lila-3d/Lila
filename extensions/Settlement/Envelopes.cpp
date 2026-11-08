@@ -383,7 +383,7 @@ void matchPartyWalls(std::vector<Envelope>& envs)
     }
 }
 
-void appendMassing(const Envelope& env, const Layout& l, geo::Mesh& into, const std::function<void(int part)>& tagFace)
+bool appendMassing(const Envelope& env, const Layout& l, geo::Mesh& into, const std::function<void(int part)>& tagFace)
 {
     auto face = [&](const std::vector<geo::Index>& ids, int part) {
         if (into.addFace(std::span<const geo::Index>(ids)) != geo::kInvalid)
@@ -419,7 +419,8 @@ void appendMassing(const Envelope& env, const Layout& l, geo::Mesh& into, const 
             cap(tier.footprint, tier.top, 1);
     }
     if (tiers.empty())
-        return;
+        return true;
+    bool built = true;
     const Polygon& top = tiers.back().footprint;
     const double y = tiers.back().top;
     double across = 0.0, along = 0.0;
@@ -461,7 +462,10 @@ void appendMassing(const Envelope& env, const Layout& l, geo::Mesh& into, const 
     if (env.roof == "gable" || env.roof == "hip")
     {
         if (!skeletonRoof(top, y, pitch, env.roof == "gable"))
+        {
             cap(top, y, 1);
+            built = false;
+        }
     }
     else if (env.roof == "mansard")
     {
@@ -471,10 +475,16 @@ void appendMassing(const Envelope& env, const Layout& l, geo::Mesh& into, const 
         {
             loft(top, y, upper, y1, 1);
             if (!skeletonRoof(upper, y1, 20.0, false))
+            {
                 cap(upper, y1, 1);
+                built = false;
+            }
         }
         else
+        {
             cap(top, y, 1);
+            built = false;
+        }
     }
     else if (env.roof == "dome")
     {
@@ -501,6 +511,7 @@ void appendMassing(const Envelope& env, const Layout& l, geo::Mesh& into, const 
     }
     else
         cap(top, y, 1);
+    return built;
 }
 
 json blockJson(const Block& b)

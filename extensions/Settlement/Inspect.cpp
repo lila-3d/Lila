@@ -1,5 +1,6 @@
 // Settlement: the plan's verification checks on a layout, and why each part is where it is.
 
+#include "Streetscape.h"
 #include "SettlementTerrain.h"
 
 #include <lila/Profile.h>
@@ -120,10 +121,32 @@ const char* useLabel(Use u) { return useName(u); }
 
 json streetscapeLaneChecks(const Layout& l, const Ground& ground)
 {
-    // Hook for the lane graph's validation (Streetscape.h checkLanes); null while it is not built in.
-    (void)l;
-    (void)ground;
-    return nullptr;
+    const json r = checkLanes(l, ground);
+    json issues = json::array();
+    if (!r.is_object())
+        return issues;
+    auto add = [&](const char* severity, const json& id, std::string message) {
+        issues.push_back({{"check", "laneGraph"}, {"severity", severity}, {"id", id.is_string() ? id.get<std::string>() : id.is_null() ? std::string("lanes") : id.dump()}, {"message", std::move(message)}, {"at", nullptr}});
+    };
+    const json modes = r.value("modes", json::object());
+    for (const auto& [mode, m] : modes.items())
+    {
+        if (m.value("components", 0) > 1)
+            add("error", nullptr, std::format("{} lanes split into {} groups; {} lanes cannot reach the rest", mode, m.value("components", 0),
+                                              m.value("isolatedCount", 0)));
+        for (const json& x : m.value("cannotReachExit", json::array()))
+            add("error", x, std::format("{} lane {} cannot reach an exit", mode, x.dump()));
+        for (const json& x : m.value("unreachableExits", json::array()))
+            add("error", x, std::format("{} exit lane {} cannot be reached", mode, x.dump()));
+    }
+    for (const json& c : r.contains("conflictingGreens") ? r["conflictingGreens"] : json::array())
+        add("error", c.value("junction", -1), std::format("junction {} phase {}: two green movements {}", c.value("junction", -1), c.value("phase", -1),
+                                                            c.value("kind", std::string("cross"))));
+    for (const json& u : r.contains("unphasedApproaches") ? r["unphasedApproaches"] : json::array())
+        add("error", u.value("junction", -1), std::format("junction {}: approach {} has no signal phase", u.value("junction", -1), u.value("end", -1)));
+    for (const json& t : r.contains("unreachableRoutes") ? r["unreachableRoutes"] : json::array())
+        add("warning", t.value("route", -1), std::format("transit route {} is not reachable: {}", t.value("name", std::string()), t.value("note", std::string())));
+    return issues;
 }
 
 bool edgeInWater(const Layout& l, int edge)
@@ -320,14 +343,11 @@ json checkLayout(const Layout& l, const Ground& ground, const Options& o)
         c[k] = counts[k];
     json warnings = json::array();
     const json lanes = streetscapeLaneChecks(l, ground);
-    if (lanes.is_null())
-        warnings.push_back("lane checks unavailable: the lane graph's own validation (checkLanes) is not in this build");
-    else
-        for (const json& i : lanes)
-        {
-            ++counts["laneGraph"];
-            issues.push_back(i);
-        }
+    for (const json& i : lanes)
+    {
+        ++counts["laneGraph"];
+        issues.push_back(i);
+    }
     c["laneGraph"] = counts["laneGraph"];
     return {{"ok", issues.empty()}, {"counts", c}, {"issues", issues}, {"warnings", warnings}};
 }

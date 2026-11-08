@@ -6,6 +6,7 @@
 #include <lila/Profile.h>
 
 #include <algorithm>
+#include <format>
 #include <cmath>
 #include <map>
 #include <numeric>
@@ -511,16 +512,18 @@ MeshParts toMeshes(const Layout& l, const Ground& ground, const OutputOptions& o
 
     // Envelopes: closed prisms from the foundation to the top, walls facing out, roof up, floor down.
     std::vector<int32_t> envLot, envUse, envFloors, envPart;
+    std::vector<int> flatRoofs;
     for (const Envelope& env : l.envelopes)
     {
         if (env.route == BuildingRoute::Massing)
         {
-            appendMassing(env, l, out.envelopes, [&](int part) {
-                envLot.push_back(env.lot);
-                envUse.push_back(int32_t(env.use));
-                envFloors.push_back(env.floors);
-                envPart.push_back(part);
-            });
+            if (!appendMassing(env, l, out.envelopes, [&](int part) {
+                    envLot.push_back(env.lot);
+                    envUse.push_back(int32_t(env.use));
+                    envFloors.push_back(env.floors);
+                    envPart.push_back(part);
+                }))
+                flatRoofs.push_back(env.lot);
             continue;
         }
         const size_t n = env.footprint.size();
@@ -549,6 +552,13 @@ MeshParts toMeshes(const Layout& l, const Ground& ground, const OutputOptions& o
         tagFace(2);
     }
     setFaceInts(out.envelopes, {{"lot", envLot}, {"use", envUse}, {"floors", envFloors}, {"part", envPart}});
+    if (!flatRoofs.empty())
+    {
+        std::string lots;
+        for (size_t k = 0; k < flatRoofs.size() && k < 20; ++k)
+            lots += (k ? ", " : "") + std::to_string(flatRoofs[k]);
+        out.warnings.push_back(std::format("{} massing roofs are flat caps: the straight skeleton found no roof on their footprints (lots {}{})", flatRoofs.size(), lots, flatRoofs.size() > 20 ? ", ..." : ""));
+    }
     return out;
 }
 

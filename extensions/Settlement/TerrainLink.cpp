@@ -30,7 +30,7 @@ using scene::Graph;
 using scene::Node;
 using T = ArgType;
 
-uint64_t hashText(std::string_view s)
+uint64_t linkHash(std::string_view s)
 {
     uint64_t h = 1469598103934665603ull;
     for (unsigned char c : s)
@@ -41,7 +41,7 @@ uint64_t hashText(std::string_view s)
     return h;
 }
 
-std::string hex(uint64_t v) { return std::format("{:016x}", v); }
+std::string linkHex(uint64_t v) { return std::format("{:016x}", v); }
 
 json xz(Vec2 p) { return json::array({p.x, p.y}); }
 
@@ -457,7 +457,7 @@ json grade(Graph& g, const std::string& name, const Args& a, const std::string& 
             }
             else
                 c["width"] = std::max(100.0, line.width);
-            roads.push_back({id, "terrainAddRoad", c, hex(hashText(c.dump()))});
+            roads.push_back({id, "terrainAddRoad", c, linkHex(linkHash(c.dump()))});
         }
 
         if (const std::string mode = a.get<std::string>("roundabouts", "arterial"); mode != "none")
@@ -479,7 +479,7 @@ json grade(Graph& g, const std::string& name, const Args& a, const std::string& 
                 std::string ids;
                 for (uint64_t s : streets)
                     ids += std::to_string(s) + ",";
-                const std::string id = key + "/roundabout/" + hex(hashText(ids));
+                const std::string id = key + "/roundabout/" + linkHex(linkHash(ids));
                 json c = {{"id", id},
                           {"layer", roadLayer},
                           {"at", json::array({j.p.x, j.p.z})},
@@ -493,7 +493,7 @@ json grade(Graph& g, const std::string& name, const Args& a, const std::string& 
                         ringRoads[id].push_back(it->second);
                         joined += it->second + ";";
                     }
-                rings.push_back({id, "terrainAddRoundabout", c, hex(hashText(c.dump() + joined))});
+                rings.push_back({id, "terrainAddRoundabout", c, linkHex(linkHash(c.dump() + joined))});
             }
         }
     }
@@ -505,22 +505,23 @@ json grade(Graph& g, const std::string& name, const Args& a, const std::string& 
             byLot[e.lot] = &e;
         for (const Lot& lot : r.layout.lots)
         {
-            if (lot.use == Use::Open || lot.use == Use::Plaza)
+            // Farmland, parks and cemeteries follow the ground; only built lots get a pad.
+            if (lot.use == Use::Open || lot.use == Use::Plaza || lot.use == Use::Farm || lot.use == Use::Park || lot.use == Use::Cemetery)
                 continue;
             auto it = byLot.find(lot.id);
             const Polygon& shape = it != byLot.end() ? it->second->footprint : lot.outline;
-            const std::string id = key + "/lot/" + std::to_string(lot.id);
+            const std::string id = key + "/lot/" + (lot.key ? linkHex(lot.key) : std::to_string(lot.id));
             json c = {{"footprint", xzLine(shape.pts)}, {"id", id}, {"layer", layer}, {"mode", padMode}, {"masks", json::array({"cityFootprint"})}};
-            stamps.push_back({id, "terrainStampPad", c, hex(hashText(c.dump()))});
+            stamps.push_back({id, "terrainStampPad", c, linkHex(linkHash(c.dump()))});
         }
     }
     if (a.get<bool>("plazas", true))
         for (const Lot& lot : r.layout.lots)
             if (lot.use == Use::Plaza)
             {
-                const std::string id = key + "/plaza/" + std::to_string(lot.id);
+                const std::string id = key + "/plaza/" + (lot.key ? linkHex(lot.key) : std::to_string(lot.id));
                 json c = {{"footprint", xzLine(lot.outline.pts)}, {"id", id}, {"layer", layer}, {"mode", "flatten"}, {"masks", json::array({"cityFootprint", "paved"})}};
-                stamps.push_back({id, "terrainStampRegion", c, hex(hashText(c.dump()))});
+                stamps.push_back({id, "terrainStampRegion", c, linkHex(linkHash(c.dump()))});
             }
     if (a.get<bool>("water", true))
         for (size_t k = 0; k < r.layout.water.size(); ++k)
@@ -532,7 +533,7 @@ json grade(Graph& g, const std::string& name, const Args& a, const std::string& 
             if (w.kind == "canal" || w.kind == "moat")
             {
                 json c = {{"id", id}, {"layer", layer}, {"kind", w.kind}, {"path", xzLine(w.pts)}, {"width", w.width}, {"depth", 200.0}};
-                stamps.push_back({id, "terrainAddFeature", c, hex(hashText(c.dump()))});
+                stamps.push_back({id, "terrainAddFeature", c, linkHex(linkHash(c.dump()))});
             }
             else if (w.kind == "quay")
             {
@@ -548,14 +549,14 @@ json grade(Graph& g, const std::string& name, const Args& a, const std::string& 
                     }
                     const std::string qid = id + "/" + side;
                     json c = {{"id", qid}, {"layer", layer}, {"kind", "quay"}, {"side", side}, {"path", xzLine(bank)}, {"width", 400.0}};
-                    stamps.push_back({qid, "terrainStampQuay", c, hex(hashText(c.dump()))});
+                    stamps.push_back({qid, "terrainStampQuay", c, linkHex(linkHash(c.dump()))});
                 }
             }
             else if (w.kind == "river")
             {
                 const std::string rid = key + "/river/" + std::to_string(k);
                 json c = {{"id", rid}, {"path", xzLine(w.pts)}, {"width", w.width}};
-                rivers.push_back({rid, "terrainAddRiver", c, hex(hashText(c.dump()))});
+                rivers.push_back({rid, "terrainAddRiver", c, linkHex(linkHash(c.dump()))});
             }
         }
 

@@ -6,6 +6,7 @@
 
 #include <lila/Extension.h>
 #include <lila/GeometryNodes.h>
+#include <lila/Log.h>
 #include <lila/Profile.h>
 
 #include <algorithm>
@@ -378,6 +379,8 @@ Parts toGeometry(const Layout& l, const Ground& ground)
     LILA_ZONE();
 
     MeshParts meshes = toMeshes(l, ground);
+    for (const std::string& w : meshes.warnings)
+        lila::log::warn("Settlement: {}", w);
 
     gn::CurveSet centre;
     std::vector<int32_t> lineClass, linePath, lineSurface;

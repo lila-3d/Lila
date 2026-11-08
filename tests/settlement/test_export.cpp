@@ -336,7 +336,9 @@ TEST_CASE("settlement export: commands write every format and the engine folders
     CHECK(geo["format"] == "geojson");
     CHECK(geo["layers"]["lot"] == info["lots"]);
     CHECK(geo["layers"]["envelope"] == info["buildings"]);
-    CHECK(geo["layers"]["placement"].get<int>() == 2);
+    // The layout carries its own furniture placements; the flag adds two more.
+    const json base = run("settlementExport", {{"args", {made["mesh"]}}, {"path", (dir / "base.geojson").string()}});
+    CHECK(geo["layers"]["placement"].get<int>() == base["layers"].value("placement", 0) + 2);
     const json usd = run("settlementExport", {{"args", {made["mesh"]}}, {"path", (dir / "town.usda").string()}});
     CHECK(usd["prims"].get<int>() > info["lots"].get<int>());
     const json dxf = run("settlementExport", {{"args", {made["mesh"]}}, {"path", (dir / "town.dxf").string()}});
@@ -370,7 +372,7 @@ TEST_CASE("settlement export: commands write every format and the engine folders
     CHECK(dry["cells"].get<int>() >= 9);
     CHECK(dry["diff"]["removed"].empty());
     CHECK(dry["diff"]["added"].size() + dry["diff"]["changed"].size() + dry["diff"]["unchanged"].get<size_t>() == dry["items"].get<size_t>());
-    CHECK(dry["kinds"]["place"].get<int>() == 1);
+    CHECK(dry["kinds"]["place"].get<int>() >= 1);
     CHECK(dry["kinds"]["roads"].get<int>() >= 9);
 
     std::error_code ec;

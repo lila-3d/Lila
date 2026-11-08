@@ -819,6 +819,7 @@ struct MeshParts
     geo::Mesh lots;      // lot outlines as loose edges, edge attr lot
     geo::Mesh envelopes; // closed volumes, face attrs lot, use, floors
     geo::Mesh water;     // river ribbons, face attr water
+    std::vector<std::string> warnings; // what the meshes fell back to and why
 };
 
 struct OutputOptions

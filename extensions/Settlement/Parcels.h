@@ -82,8 +82,11 @@ json envelopeExtras(const Envelope& env);
 /** Block types, lot methods, uses, wealth, lot area distribution, landmarks and warnings. */
 json parcelStats(const Layout& l);
 
-/** Greybox massing of one envelope: tiers as prisms, the roof from the straight skeleton, a dome or a mansard on top. */
-void appendMassing(const Envelope& env, const Layout& l, geo::Mesh& into, const std::function<void(int part)>& tagFace);
+/**
+ * Greybox massing of one envelope: tiers as prisms, the roof from the straight skeleton, a dome or a mansard on top.
+ * Returns false when the roof the envelope names could not be built on its footprint and a flat cap stands in.
+ */
+bool appendMassing(const Envelope& env, const Layout& l, geo::Mesh& into, const std::function<void(int part)>& tagFace);
 
 /** settlementBlocks, settlementSubdivide, settlementLots, settlementLandUse, settlementPlaceLandmark, settlementEnvelopes, settlementFoundations, settlementBuildings. */
 void registerLotCommands(lila::ext::Context& ctx);
