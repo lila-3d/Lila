@@ -18,6 +18,8 @@ char upperChar(char c) { return char(std::toupper(static_cast<unsigned char>(c))
 
 /** Sides and positions: left, right, centre, middle, front, back, top, and the corners. */
 constexpr const char* kDefaultSuffixes = "L, R, C, M, F, B, T, LF, RF, LB, RB, FL, FR, BL, BR";
+/** Unreal asset and collision prefixes. */
+constexpr const char* kDefaultPrefixes = "SM, SKM, SK, UCX, UBX, USP, UCP, SOCKET, MI, M, T";
 
 /** "L, R" or ["L", "R"]. */
 std::vector<std::string> parseSuffixes(const nlohmann::json& j)
@@ -108,23 +110,17 @@ std::string applyCase(std::string_view name, CaseStyle style, const Underscores&
                 return std::string(p);
             return listed(i);
         };
-        size_t first = 0, body = 1;
+        size_t body = 1;
         if (underscores.suffixesOnly)
         {
             body = parts.size();
             while (body > 1 && suffix(body - 1))
                 --body;
-            if (underscores.prefixes)
-                while (first + 1 < body && listed(first))
-                    ++first;
         }
-        std::string out;
-        for (size_t i = 0; i < first; ++i)
-            out += *listed(i) + "_";
         std::string head;
-        for (size_t i = first; i < body; ++i)
+        for (size_t i = 0; i < body; ++i)
             head += std::string(parts[i]) + " ";
-        out += applyCase(head, first ? CaseStyle::Pascal : style);
+        std::string out = applyCase(head, style);
         for (size_t i = body; i < parts.size(); ++i)
         {
             std::optional<std::string> s = suffix(i);
@@ -176,10 +172,9 @@ nlohmann::json NamingPolicy::defaults()
         {"uniqueNames", false},
         {"allowUnderscores", {{"joint", true}, {"*", true}}},
         {"underscoreSuffixesOnly", true},
-        {"underscorePrefixes", false},
         {"underscoreSuffixes", kDefaultSuffixes},
         {"rules", {{"joint", "snake_case"}, {"*", "PascalCase"}}},
-        {"keepPrefixes", {"UCX_", "UBX_", "USP_", "UCP_", "SOCKET_", "SM_", "SK_", "MI_", "M_", "T_"}},
+        {"prefixes", kDefaultPrefixes},
     };
 }
 
@@ -205,7 +200,6 @@ NamingPolicy NamingPolicy::fromJson(const nlohmann::json& in)
     }
     p.allowUnderscores.emplace_back("*", fallbackUnderscores);
     p.underscoreSuffixesOnly = j.value("underscoreSuffixesOnly", true);
-    p.underscorePrefixes = j.value("underscorePrefixes", false);
     p.underscoreSuffixes = parseSuffixes(j["underscoreSuffixes"]);
     std::string mode = j.value("mode", "fix");
     p.mode = mode == "warn" ? Mode::Warn : mode == "block" ? Mode::Block : Mode::Fix;
@@ -221,15 +215,13 @@ NamingPolicy NamingPolicy::fromJson(const nlohmann::json& in)
             p.rules.emplace_back(type, parseCaseStyle(style.get<std::string>()));
     }
     p.rules.push_back(fallback);
-    for (const auto& pre : j["keepPrefixes"])
-        if (pre.is_string())
-            p.keepPrefixes.push_back(pre.get<std::string>());
+    p.prefixes = parseSuffixes(j["prefixes"]);
     return p;
 }
 
 Underscores NamingPolicy::underscoresFor(const NodeType& type) const
 {
-    Underscores u{.allow = true, .suffixesOnly = underscoreSuffixesOnly, .prefixes = underscorePrefixes, .suffixes = underscoreSuffixes};
+    Underscores u{.allow = true, .suffixesOnly = underscoreSuffixesOnly, .suffixes = underscoreSuffixes};
     for (auto& [t, allow] : allowUnderscores)
         if (t == "*" || type.isA(t))
         {
@@ -261,16 +253,28 @@ std::string NamingPolicy::conform(const NodeType& type, std::string_view name) c
     }
 
     std::string prefix;
-    for (const std::string& pre : keepPrefixes)
-        if (shortName.starts_with(pre) && pre.size() > prefix.size())
-            prefix = pre;
-    shortName.remove_prefix(prefix.size());
+    while (true)
+    {
+        const std::string* match = nullptr;
+        for (const std::string& pre : prefixes)
+            if (shortName.size() > pre.size() + 1 && shortName[pre.size()] == '_' && (!match || pre.size() > match->size()) &&
+                std::ranges::equal(pre, shortName.substr(0, pre.size()), {}, lowerChar, lowerChar))
+                match = &pre;
+        if (!match)
+            break;
+        prefix += *match + "_";
+        shortName.remove_prefix(match->size() + 1);
+    }
+    CaseStyle style = styleFor(type);
+    // SM_MyRock, not SM_myRock.
+    if (!prefix.empty() && style == CaseStyle::Camel)
+        style = CaseStyle::Pascal;
 
     // Uniqueness digits belong to the name as typed, not to a word.
     size_t digits = shortName.size();
     while (digits > 0 && isDigit(shortName[digits - 1]))
         --digits;
-    std::string body = applyCase(shortName.substr(0, digits), styleFor(type), underscoresFor(type));
+    std::string body = applyCase(shortName.substr(0, digits), style, underscoresFor(type));
     return ns + prefix + body + std::string(shortName.substr(digits));
 }
 } // namespace lila::scene

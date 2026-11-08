@@ -1039,17 +1039,16 @@ void addBuiltIns(Registry<prefPages::Page>& r)
             ->widget()
             ->setToolTip("An underscore must be followed by a listed suffix or a number: Arm_L and Wheel_LF stay, Dog_Leg_B becomes DogLeg_B.");
         showLastRowWhen(naming, anyUnderscores);
+        sectionHeader(naming, "Prefixes and Suffixes");
+        text(naming, "Prefixes", "/prefixes", scene::NamingPolicy::defaults()["prefixes"].get<std::string>());
+        naming.form->itemAt(naming.form->rowCount() - 1, QFormLayout::FieldRole)
+            ->widget()
+            ->setToolTip("Comma-separated. Lead the name before an underscore, matched ignoring case and written as listed: sm_rock becomes SM_Rock.");
         text(naming, "Suffixes", "/underscoreSuffixes", scene::NamingPolicy::defaults()["underscoreSuffixes"].get<std::string>());
         naming.form->itemAt(naming.form->rowCount() - 1, QFormLayout::FieldRole)
             ->widget()
             ->setToolTip("Comma-separated. Matched ignoring case and written as listed, so arm_l becomes Arm_L.");
-        auto suffixesOnly = [anyUnderscores] { return anyUnderscores() && PrefStore::get().value<bool>("naming", "/underscoreSuffixesOnly", true); };
-        showLastRowWhen(naming, suffixesOnly);
-        toggleField(naming, "Allow suffixes as prefixes", "/underscorePrefixes", false);
-        naming.form->itemAt(naming.form->rowCount() - 1, QFormLayout::FieldRole)
-            ->widget()
-            ->setToolTip("A listed suffix may also lead the name before an underscore: L_Arm stays, rather than becoming LArm.");
-        showLastRowWhen(naming, suffixesOnly);
+        showLastRowWhen(naming, [anyUnderscores] { return anyUnderscores() && PrefStore::get().value<bool>("naming", "/underscoreSuffixesOnly", true); });
     });
 
     builtIn(r, "sourceControl", "Source Control", "sourceControl", [](Page& sc) {

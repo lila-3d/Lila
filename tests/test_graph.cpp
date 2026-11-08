@@ -141,17 +141,16 @@ TEST_CASE("naming conventions")
     CHECK(applyCase("tail_", CaseStyle::Pascal, sides) == "Tail_");
     CHECK(applyCase("upper_arm", CaseStyle::Camel, sides) == "upperArm");
     CHECK(applyCase("l_arm", CaseStyle::Pascal, sides) == "LArm");
-    Underscores prefixed = sides;
-    prefixed.prefixes = true;
-    CHECK(applyCase("l_arm", CaseStyle::Pascal, prefixed) == "L_Arm");
-    CHECK(applyCase("l_upper_arm_b", CaseStyle::Camel, prefixed) == "L_UpperArm_B");
-    CHECK(applyCase("l_b", CaseStyle::Pascal, prefixed) == "L_B");
 
     const NodeType& loc = *types::find("locator");
     NamingPolicy kept = NamingPolicy::fromJson({{"enabled", true}});
     CHECK(kept.conform(loc, "ns:my_cube_12") == "ns:MyCube_12");
     CHECK(kept.conform(loc, "dog_leg_b") == "DogLeg_B");
     CHECK(kept.conform(loc, "UCX_arm_l") == "UCX_Arm_L");
+    CHECK(kept.conform(loc, "skm_hero_body") == "SKM_HeroBody");
+    NamingPolicy sided = NamingPolicy::fromJson({{"enabled", true}, {"prefixes", "SM, L"}, {"rules", {{"*", "camelCase"}}}});
+    CHECK(sided.conform(loc, "sm_l_upper_arm_b") == "SM_L_UpperArm_B");
+    CHECK(sided.conform(loc, "upper_arm") == "upperArm");
     NamingPolicy p = NamingPolicy::fromJson({{"enabled", true}, {"allowUnderscores", {{"joint", false}, {"*", false}}}});
     CHECK(p.conform(loc, "myCube") == "MyCube");
     CHECK(p.conform(loc, "ns:my_cube12") == "ns:MyCube12");
