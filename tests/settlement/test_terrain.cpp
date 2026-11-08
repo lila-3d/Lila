@@ -454,3 +454,24 @@ TEST_CASE("settlement terrain: settlementCheck and settlementExplain on a settle
     CHECK(site["site"]["kind"] == "market");
     CHECK(site["reasons"].size() >= 5);
 }
+
+TEST_CASE("settlement terrain: every built-in style and era preset passes settlementCheck")
+{
+    terrainLoadPackages();
+    std::vector<std::pair<std::string, json>> cases;
+    const json profiles = run("settlementProfiles");
+    for (const auto& [name, profile] : profiles.items())
+        for (int seed : {1, 2, 7})
+            cases.push_back({name, {{"profile", name}, {"seed", seed}}});
+    for (const char* eras : {"walledTown", "medievalToModern", "gridToSprawl"})
+        cases.push_back({eras, {{"profile", "medievalTown"}, {"seed", 11}, {"eras", eras}}});
+    for (auto& [label, flags] : cases)
+    {
+        run("newScene");
+        flags["size"] = 60000.0;
+        const json made = run("settlementCreate", flags);
+        const json c = run("settlementCheck", {{"args", {made["mesh"]}}});
+        INFO(label << " " << flags.dump() << " " << c["issues"].dump().substr(0, 400));
+        CHECK(c["ok"] == true);
+    }
+}
