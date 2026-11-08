@@ -58,13 +58,14 @@ TEST_CASE("patch layout only turns at the poles")
     compare("cylinder", geo::makeCylinder({.radius = 30.0, .height = 120.0, .subdivAxis = 48, .subdivHeight = 8, .subdivCaps = 4, .capFill = geo::CapFill::Fan}), 600, 8);
 }
 
-TEST_CASE("a shape the patch layout can't cut up comes out by the field, and says so")
+TEST_CASE("a torus, with no poles, comes out as clean patches")
 {
-    // A torus has no poles, so no line starts anywhere.
+    // No line starts anywhere: the layout seeds a loop and cuts across it.
     retopo::QuadRemeshResult r = remesh(geo::makeTorus({.subdivAxis = 64, .subdivHeight = 32}), 800, true);
     REQUIRE(r.ok());
-    CHECK(r.layout != "patches");
-    CHECK(!r.notes.empty());
+    MESSAGE(r.metrics.summary());
+    CHECK(r.layout == "patches");
+    CHECK(r.metrics.irregular == 0);
 }
 
 TEST_CASE("zz seamless corpus timing" * doctest::skip())

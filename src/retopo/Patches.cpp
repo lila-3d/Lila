@@ -2909,9 +2909,15 @@ Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, cons
     Index np = 0;
     // A line across each wanted patch from the middle of its longest traced side, started as that side's line passes;
     // a patch walled in by creases alone (the side of a cylinder) gets it from the middle of its longest wall side, and
-    // one with no side at all (a torus has no poles) from the middle of its first piece.
+    // one with no side at all (a torus has no poles) from the middle of its first piece. On a surface with no poles, a
+    // patch with no corners whose only sides are lines with it on both sides (that seed's loop) gets two lines across,
+    // a quarter and three quarters along the loop: one crossing would leave a patch meeting itself there, its four
+    // corners at one point.
+    int loopRounds = 0;
+    const bool noSources = std::none_of(lay.source.begin(), lay.source.end(), [](uint8_t v) { return v != 0; });
     auto cutsFor = [&](const std::vector<uint8_t>& want) {
         std::vector<double> longest(np, 0.0), longestWall(np, 0.0);
+        std::vector<Index> slitOnly(np, kInvalid);
         std::vector<ExtraStart> cut(np, ExtraStart{kInvalid}), wallCut(np, ExtraStart{kInvalid}), seed(np, ExtraStart{kInvalid});
         for (Index pi = 0; pi < Index(pieces.size()); ++pi)
         {
@@ -2944,7 +2950,10 @@ Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, cons
                     continue;
                 }
                 if (slitTracer[tr.segments[P.side[k] - kSegSide].tracer])
+                {
+                    slitOnly[patch] = tr.segments[P.side[k] - kSegSide].tracer;
                     continue;
+                }
                 const glm::dvec2 a = P.poly[k], b = P.poly[(k + 1) % P.poly.size()];
                 const double len = glm::length(b - a);
                 if (len <= longest[patch])
@@ -2957,13 +2966,41 @@ Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, cons
             }
         }
         std::vector<ExtraStart> out;
+        bool looped = false;
+        auto acrossLoop = [&](Index tracer) {
+            double start = std::numeric_limits<double>::max();
+            for (const Segment& g : tr.segments)
+                if (g.tracer == tracer)
+                    start = std::min(start, g.t0);
+            std::vector<ExtraStart> starts;
+            for (double f : {0.25, 0.75})
+            {
+                const double t = start + f * (tr.end[tracer] - start);
+                for (const Segment& g : tr.segments)
+                    if (const double len = glm::length(g.b - g.a); g.tracer == tracer && len > 0.0 && t >= g.t0 && t <= g.t0 + len)
+                    {
+                        starts.push_back({g.tri, g.a + (t - g.t0) / len * (g.b - g.a), mod4(g.dirK + 1), t});
+                        break;
+                    }
+            }
+            return starts;
+        };
         for (Index p = 0; p < np; ++p)
             if (cut[p].tri != kInvalid)
                 out.push_back(cut[p]);
             else if (wallCut[p].tri != kInvalid)
                 out.push_back(wallCut[p]);
+            else if (slitOnly[p] != kInvalid && corners[p] == 0 && noSources)
+            {
+                for (const ExtraStart& e : acrossLoop(slitOnly[p]))
+                    out.push_back(e);
+                looped = true;
+            }
             else if (seed[p].tri != kInvalid)
                 out.push_back(seed[p]);
+        loopRounds += looped;
+        if (looped && debug)
+            std::fprintf(stderr, "patch cuts: across a loop, round allowance %d\n", 3 + loopRounds);
         return out;
     };
     Extracted ex;
@@ -3098,7 +3135,8 @@ Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, cons
         }
         // A patch with too few corners (a ring round a bare tube, a strip) or a reflex one (where a dropped line left a
         // corner bent inward) gets a line across it from the middle of its longest side, and the layout is traced again.
-        if (round >= 3)
+        // Three rounds of cuts, and one more for each that cut across a loop.
+        if (round >= 3 + loopRounds)
             break;
         // A line with the same patch both sides is the only cut through a tube, which leaves the patch no disk: a
         // second cut from the far side splits it in two.
