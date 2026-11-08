@@ -1,7 +1,8 @@
-// Settlement streetscape: street and district names.
+// Settlement streetscape: road and sidewalk meshes, furniture per road profile, street and district names.
 
 #include "TestUtil.h"
 #include "SettlementCore.h"
+#include "Streetscape.h"
 
 #include "extensions/ExtensionManager.h"
 #include "gn/NodeLib.h"
@@ -30,6 +31,20 @@ Options styled(const char* name, bool blocks = true)
     return o;
 }
 
+double lengthXZ(const std::vector<glm::dvec3>& pts)
+{
+    double len = 0.0;
+    for (size_t k = 0; k + 1 < pts.size(); ++k)
+        len += glm::length(glm::dvec2(pts[k + 1].x - pts[k].x, pts[k + 1].z - pts[k].z));
+    return len;
+}
+
+std::vector<int32_t> faceInts(const geo::Mesh& m, const char* name)
+{
+    std::span<const int32_t> v = m.faceAttrs().get<int32_t>(name);
+    return {v.begin(), v.end()};
+}
+
 std::map<uint64_t, std::string> namesById(const Layout& l)
 {
     std::map<uint64_t, std::string> out;
@@ -39,6 +54,175 @@ std::map<uint64_t, std::string> namesById(const Layout& l)
     return out;
 }
 } // namespace
+
+TEST_CASE("settlement streetscape: road meshes cover each road's carriageway, patch junctions, round kerbs and mark crosswalks")
+{
+    Site site{.size = 120000.0};
+    const Layout l = build(site, Ground::plane(), styled("usTown", false));
+    const RoadNetwork net = roadNetwork(l, Ground::plane());
+    REQUIRE(net.junctions.size() > 10);
+    const RoadMeshes m = roadMeshes(l, net, Ground::plane());
+
+    // Carriageway area is twice the half width times the length of every road with lanes.
+    double expected = 0.0, walk = 0.0;
+    for (const StreetLine& line : net.lines)
+    {
+        const RoadSection s = roadSection(l, line);
+        expected += 2.0 * s.carriage * lengthXZ(line.pts) / kM2;
+        walk += 2.0 * (s.sidewalk + s.verge) * lengthXZ(line.pts) / kM2;
+    }
+    CHECK(m.roadArea == doctest::Approx(expected).epsilon(0.03));
+    CHECK(m.sidewalkArea == doctest::Approx(walk).epsilon(0.08)); // mitred bends add a little
+    CHECK(m.junctionArea > 0.0);
+    CHECK(m.roads.numFaces() > net.lines.size());
+
+    int ends = 0, crosswalks = 0;
+    for (const Junction& j : net.junctions)
+    {
+        ends += int(j.ends.size());
+        crosswalks += int(j.crosswalks.size());
+    }
+    CHECK(m.curbReturns > 0);
+    CHECK(m.curbReturns <= ends);
+    CHECK(m.curbReturnArea > 0.0);
+    CHECK(int(m.crosswalks.size()) == crosswalks);
+    CHECK(m.markingArea > 0.0);
+    for (const DecalPlacement& d : m.crosswalks)
+    {
+        CHECK(d.depth == 300.0);
+        CHECK(d.width > 0.0);
+    }
+    // Every face tagged; sidewalks hold sidewalks, kerbs and returns only.
+    const std::vector<int32_t> parts = faceInts(m.sidewalks, "part");
+    REQUIRE(parts.size() == m.sidewalks.numFaces());
+    std::set<int32_t> kinds(parts.begin(), parts.end());
+    CHECK(kinds.count(int32_t(RoadPart::Sidewalk)));
+    CHECK(kinds.count(int32_t(RoadPart::Curb)));
+    CHECK(kinds.count(int32_t(RoadPart::CurbReturn)));
+    CHECK_FALSE(kinds.count(int32_t(RoadPart::Carriageway)));
+    // Road faces face up.
+    for (geo::Index f = 0; f < std::min<geo::Index>(m.roads.numFaces(), 200); ++f)
+        CHECK(m.roads.faceNormal(f).y > 0.9);
+
+    // Medieval: cobble and earth edge to edge, a gutter, no kerbs or markings.
+    Options mo = styled("medievalTown", false);
+    const Layout ml = build(Site{.size = 60000.0}, Ground::plane(), mo);
+    const RoadNetwork mnet = roadNetwork(ml, Ground::plane());
+    const RoadMeshes mm = roadMeshes(ml, mnet, Ground::plane());
+    CHECK(medievalStyle(ml));
+    CHECK(mm.sidewalks.numFaces() == 0);
+    CHECK(mm.markings.numFaces() == 0);
+    CHECK(mm.curbReturns == 0);
+    double medievalExpected = 0.0;
+    for (const StreetLine& line : mnet.lines)
+        medievalExpected += line.width * lengthXZ(line.pts) / kM2;
+    CHECK(mm.roadArea == doctest::Approx(medievalExpected).epsilon(0.03));
+    std::set<int32_t> surfaces;
+    for (int32_t s : faceInts(mm.roads, "surface"))
+        surfaces.insert(s);
+    CHECK(surfaces.count(int32_t(Surface::Cobble)));
+    CHECK_FALSE(surfaces.count(int32_t(Surface::Asphalt)));
+    double lowest = 1e9;
+    for (geo::Index p = 0; p < mm.roads.numPoints(); ++p)
+        lowest = std::min(lowest, mm.roads.position(p).y);
+    CHECK(lowest == doctest::Approx(2.0 - 8.0)); // lift less the gutter
+}
+
+TEST_CASE("settlement streetscape: furniture follows each road profile's set, junction control and squares, with stable ids")
+{
+    Site site{.size = 120000.0};
+    SitePath avenue;
+    avenue.id = 1;
+    avenue.profile = "avenue";
+    avenue.cls = StreetClass::Arterial;
+    avenue.pts = {{-55000, std::nan(""), 1500}, {55000, std::nan(""), 1500}};
+    site.paths.push_back(avenue);
+    const Layout l = build(site, Ground::plane(), styled("usTown"));
+    const RoadNetwork net = roadNetwork(l, Ground::plane());
+    const std::vector<FurnitureSet> sets = furnitureSets(false);
+    const std::vector<FurniturePlacement> placed = placeFurniture(l, net, Ground::plane(), sets);
+
+    // Lamps on avenues: alternate sides, one per 30 m slot of each avenue line.
+    int lampSlots = 0, hydrants = 0, treeSlots = 0;
+    for (const StreetLine& line : net.lines)
+    {
+        const std::string& prof = l.roads[size_t(line.profile)].name;
+        const double len = lengthXZ(line.pts);
+        if (prof == "avenue" && len >= 1500.0)
+            lampSlots += std::max(1, int(len / 3000.0));
+        if (prof == "avenue" && roadSection(l, line).sidewalk >= 250.0 && len >= 500.0)
+            treeSlots += 2 * std::max(1, int(len / 1000.0));
+        if ((prof == "avenue" || prof == "street" || prof == "parkedStreet") && len >= 4500.0)
+            hydrants += std::max(1, int(len / 9000.0));
+    }
+    std::map<std::string, std::map<std::string, int>> byProfile;
+    std::set<uint64_t> ids;
+    for (const FurniturePlacement& p : placed)
+    {
+        ++byProfile[p.profile][p.kind];
+        CHECK(ids.insert(p.id).second);
+        CHECK(p.id <= kStreetscapeIdMask);
+    }
+    REQUIRE(lampSlots > 0);
+    CHECK(byProfile["avenue"]["lamp"] == lampSlots);
+    CHECK(byProfile["avenue"]["tree"] == treeSlots);
+    int hydrantCount = 0;
+    for (const char* p : {"avenue", "street", "parkedStreet"})
+        hydrantCount += byProfile[p]["hydrant"];
+    CHECK(hydrantCount == hydrants);
+
+    int signalEnds = 0, stopEnds = 0;
+    for (const Junction& j : net.junctions)
+        for (const RoadEnd& e : j.ends)
+            if (e.vehicle)
+            {
+                signalEnds += j.control == Control::Signal;
+                stopEnds += j.control == Control::Stop;
+            }
+    REQUIRE(signalEnds > 0);
+    CHECK(byProfile["junction"]["signal"] == signalEnds);
+    CHECK(byProfile["junction"]["stopSign"] == stopEnds);
+    CHECK(byProfile["junction"]["streetSign"] > 0);
+    // A modern square: benches round it and trees on it.
+    const Layout city = build(Site{.size = 120000.0}, Ground::plane(), styled("europeanCity"));
+    std::map<std::string, int> square;
+    int plazas = 0;
+    for (const Block& b : city.blocks)
+        plazas += b.use == Use::Plaza;
+    REQUIRE(plazas == 1);
+    for (const FurniturePlacement& p : placeFurniture(city, roadNetwork(city, Ground::plane()), Ground::plane(), sets))
+        if (p.profile == "plaza")
+            ++square[p.kind];
+    CHECK(square["bench"] > 0);
+
+    // The same layout gives the same ids; a set given as data changes only its profile.
+    const std::vector<FurniturePlacement> again = placeFurniture(l, net, Ground::plane(), sets);
+    REQUIRE(again.size() == placed.size());
+    for (size_t k = 0; k < placed.size(); ++k)
+        CHECK(again[k].id == placed[k].id);
+    const std::vector<FurnitureSet> custom = applyFurnitureJson(sets, json::parse(R"({"avenue": [{"kind": "lamp", "spacing": 1500, "sides": "both"}]})"));
+    std::map<std::string, int> avenueKinds;
+    for (const FurniturePlacement& p : placeFurniture(l, net, Ground::plane(), custom))
+        if (p.profile == "avenue")
+            ++avenueKinds[p.kind];
+    CHECK(avenueKinds.size() == 1);
+    CHECK(avenueKinds["lamp"] > 2 * lampSlots);
+    CHECK_THROWS(applyFurnitureJson(sets, json::parse(R"({"avenue": [{"kind": "lamp", "where": "roof"}]})")));
+
+    // Medieval: lanterns, a well and market stalls on the square, no signals, hydrants or signs.
+    const Layout ml = build(Site{.size = 60000.0}, Ground::plane(), styled("medievalTown"));
+    const RoadNetwork mnet = roadNetwork(ml, Ground::plane());
+    std::map<std::string, int> medieval;
+    for (const FurniturePlacement& p : placeFurniture(ml, mnet, Ground::plane(), furnitureSets(true)))
+        ++medieval[p.kind];
+    CHECK(medieval["lantern"] > 0);
+    CHECK(medieval["well"] == 1);
+    CHECK(medieval["marketStall"] > 4);
+    CHECK(medieval["cart"] > 0);
+    CHECK(medieval["signal"] == 0);
+    CHECK(medieval["hydrant"] == 0);
+    CHECK(medieval["stopSign"] == 0);
+}
 
 TEST_CASE("settlement streetscape: street and district names are stable by id, overridable, and follow the culture")
 {
@@ -132,13 +316,30 @@ TEST_CASE("settlement streetscape: street and district names are stable by id, o
     CHECK(toJson(a)["districts"].size() == a.districts.size());
 }
 
-TEST_CASE("settlement streetscape: commands name streets and districts, and undo")
+TEST_CASE("settlement streetscape: commands mesh roads, place furniture, name streets and districts, and undo")
 {
     if (!gn::findDecl("Settlement"))
         REQUIRE(extensions::ExtensionManager::get().load(LILA_TEST_SETTLEMENT_PACKAGE) == "Settlement");
     run("newScene");
     const json made = run("settlementCreate", {{"profile", "usTown"}, {"size", 80000.0}, {"blocks", false}});
     const std::string mesh = made["mesh"].get<std::string>();
+
+    const json roads = run("settlementRoadMesh", {{"args", {mesh}}});
+    CHECK(roads["builder"] == "own");
+    CHECK(roads["areaM2"]["roads"].get<double>() > 1000.0);
+    CHECK(roads["curbReturns"].get<int>() > 0);
+    CHECK(roads["meshes"].size() == 3);
+    CHECK(run("objExists", {{"args", {roads["meshes"][0]}}}) == true);
+    const json again = run("settlementRoadMesh", {{"args", {mesh}}, {"markings", "none"}});
+    CHECK(again["meshes"].size() == 2);
+    CHECK(again["crosswalks"].empty());
+
+    const json f = run("settlementFurniture", {{"args", {mesh}}});
+    CHECK(f["count"].get<int>() > 20);
+    CHECK(f["byKind"]["lamp"].get<int>() > 0);
+    CHECK(f["byKind"]["signal"].get<int>() > 0);
+    CHECK(run("settlementFurniture", {{"args", {mesh}}})["placements"] == f["placements"]);
+    CHECK(run("settlementFurniture", {{"args", {mesh}}, {"kinds", {"lamp"}}})["byKind"].size() == 1);
 
     const json names = run("settlementNames", {{"args", {mesh}}});
     CHECK(names["culture"] == "usGrid");

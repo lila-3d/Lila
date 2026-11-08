@@ -1,14 +1,23 @@
-// settlementNames names a settlement's streets and districts.
+// settlementRoadMesh builds road, sidewalk and crosswalk meshes; settlementFurniture places street furniture (through
+// the Set Dressing extension's place command when realized); settlementNames names streets and districts.
 
 #include "Settlement.h"
+#include "Streetscape.h"
 
 #include <lila/Command.h>
+#include <lila/Deformer.h>
 #include <lila/Extension.h>
+#include <lila/GeometryNodes.h>
 #include <lila/Graph.h>
+#include <lila/Log.h>
+#include <lila/Mesh.h>
+#include <lila/Node.h>
 #include <lila/Profile.h>
 
 #include <algorithm>
+#include <cctype>
 #include <map>
+#include <set>
 
 using namespace lila;
 
@@ -17,6 +26,7 @@ namespace settlement
 namespace
 {
 using scene::Graph;
+using scene::Node;
 using T = ArgType;
 
 std::string settlementOf(const Args& a, const char* cmd)
@@ -25,6 +35,71 @@ std::string settlementOf(const Args& a, const char* cmd)
     if (names.size() != 1)
         throw CommandError(std::string(cmd) + ": give one settlement");
     return names[0];
+}
+
+json pointJson(const glm::dvec3& p) { return json::array({p.x, p.y, p.z}); }
+
+std::string baseName(const Rebuilt& r)
+{
+    const std::string& path = r.mesh.empty() ? r.modifier : r.mesh;
+    std::string leaf = path.substr(path.find_last_of('|') == std::string::npos ? 0 : path.find_last_of('|') + 1);
+    for (char& c : leaf)
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_')
+            c = '_';
+    return leaf.empty() ? std::string("Settlement") : leaf;
+}
+
+/** A new mesh object holding m (face attributes kept). Returns its path. */
+std::string meshObject(Graph& g, geo::Mesh m, const std::string& name)
+{
+    const json made = ops::execute("createMesh", {{"points", json::array()}, {"faces", json::array()}, {"name", name}});
+    const std::string path = made.is_string() ? made.get<std::string>() : made.at(0).get<std::string>();
+    g.setValue({g.find(path)->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
+    return path;
+}
+
+/** Terrain roads laid for this settlement's streets ("<settlement>/street/<street id>"), by street id. */
+std::map<uint64_t, std::string> terrainStreetRoads(const Rebuilt& r, std::string* why)
+{
+    std::map<uint64_t, std::string> out;
+    const std::string ground = r.values.value("ground", std::string());
+    if (ground.empty())
+    {
+        *why = "flat ground: no terrain";
+        return out;
+    }
+    if (!ops::find("terrainRoads") || !ops::find("terrainRoadBuild"))
+    {
+        *why = "the Terrain extension (terrainRoads, terrainRoadBuild) is not loaded";
+        return out;
+    }
+    json roads;
+    try
+    {
+        roads = ops::execute("terrainRoads", {{"args", {ground}}});
+    }
+    catch (const std::exception&)
+    {
+        *why = "the ground '" + ground + "' is not a terrain";
+        return out;
+    }
+    const std::string prefix = (r.mesh.empty() ? r.modifier : r.mesh) + "/street/";
+    for (const auto& [layer, list] : roads.value("layers", json::object()).items())
+        for (const json& road : list)
+        {
+            const std::string id = road.value("id", std::string());
+            if (id.rfind(prefix, 0) == 0)
+                try
+                {
+                    out[std::stoull(id.substr(prefix.size()))] = id;
+                }
+                catch (const std::exception&)
+                {
+                }
+        }
+    if (out.empty())
+        *why = "the terrain has no roads laid for this settlement's streets (ids " + prefix + "<street id>)";
+    return out;
 }
 
 json namesJson(const Layout& l)
@@ -48,6 +123,232 @@ json namesJson(const Layout& l)
 
 void registerStreetscapeCommands(ext::Context& ctx)
 {
+    ctx.registerCommand({
+        .name = "settlementRoadMesh",
+        .doc = "Builds a settlement's roads as meshes under a group <settlement>_Streetscape, made again on every call: <name>_Roads "
+               "(carriageways swept along every road with its cross-section at the street's width, and a patch over each "
+               "junction with rounded corners), <name>_Sidewalks (sidewalks raised by curb, kerb faces, medians, verges, and "
+               "curb returns round each corner where both roads have a sidewalk) and <name>_Markings (crosswalk stripes at "
+               "signalised and stop junctions). Medieval styles get cobble and packed earth edge to edge with a gutter down "
+               "the middle and no kerbs or markings. Face attributes part, surface, line and junction.\n\n"
+               "On a Terrain, streets already laid as terrain roads with ids <settlement>/street/<street id> are built by "
+               "terrainRoadBuild instead (builder says which was used, and why). Returns the meshes, areas in m2 (roads, "
+               "junctions, sidewalks, curb returns, markings), counts, and crosswalk decal placements.",
+        .positionalDoc = "settlement mesh or its modifier",
+        .flags = {{"curb", "cb", T::Float, 15.0, "Height of sidewalks and medians above the road, cm.", {}, {}, 0.0},
+                  {"gutter", "gt", T::Float, 8.0, "How far the middle of a kerbless street dips, cm.", {}, {}, 0.0},
+                  {"segment", "sg", T::Float, 500.0, "Longest step between cross-sections, cm.", {}, {}, 10.0},
+                  {"markings", "mk", T::String, "both", "Crosswalks as mesh stripes, decal placements (returned), both or none.",
+                   {"both", "mesh", "decals", "none"}},
+                  {"surface", "sf", T::String, "auto", "Paving for every road; auto from the style and class.", {"auto", "asphalt", "cobble", "earth", "paving"}},
+                  {"builder", "bd", T::String, "auto", "auto: terrainRoadBuild for streets laid as terrain roads, the rest here; own: all here.",
+                   {"auto", "own"}},
+                  {"name", "n", T::String, nullptr, "Base name of the meshes (default the settlement's)."}},
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            const char* cmd = "settlementRoadMesh";
+            Graph& g = Graph::current();
+            const Rebuilt r = rebuildSettlement(g, settlementOf(a, cmd), cmd);
+            RoadMeshOptions o;
+            o.curb = a.get<double>("curb", 15.0);
+            o.gutter = a.get<double>("gutter", 8.0);
+            o.segment = a.get<double>("segment", 500.0);
+            const std::string markings = a.get<std::string>("markings", "both");
+            o.markings = markings == "both" || markings == "mesh";
+            if (const std::string surface = a.get<std::string>("surface", "auto"); surface != "auto")
+            {
+                if (!parseSurface(surface, &o.surface))
+                    throw CommandError(std::string(cmd) + ": unknown surface '" + surface + "'");
+                o.forceSurface = true;
+            }
+            RoadNetwork net = roadNetwork(r.layout, r.ground);
+            json out = json::object();
+            std::string why;
+            std::map<uint64_t, std::string> terrainRoads;
+            if (a.get<std::string>("builder", "auto") == "auto")
+                terrainRoads = terrainStreetRoads(r, &why);
+            else
+                why = "builder='own'";
+            if (!terrainRoads.empty())
+            {
+                json ids = json::array();
+                for (const auto& [street, id] : terrainRoads)
+                    ids.push_back(id);
+                out["terrainBuilt"] = ops::execute("terrainRoadBuild", {{"args", {r.values.value("ground", std::string())}}, {"ids", ids}});
+                // The rest keep their junctions, renumbered; crosswalks and phases name ends by index, so they go.
+                std::vector<int> remap(net.lines.size(), -1);
+                std::vector<StreetLine> kept;
+                for (size_t k = 0; k < net.lines.size(); ++k)
+                    if (!terrainRoads.contains(net.lines[k].street))
+                    {
+                        remap[k] = int(kept.size());
+                        kept.push_back(net.lines[k]);
+                    }
+                for (Junction& j : net.junctions)
+                {
+                    std::erase_if(j.ends, [&](const RoadEnd& e) { return remap[size_t(e.line)] < 0; });
+                    for (RoadEnd& e : j.ends)
+                        e.line = remap[size_t(e.line)];
+                    j.crosswalks.clear();
+                    j.phases.clear();
+                }
+                net.lines = std::move(kept);
+                net.parking.clear();
+            }
+            out["builder"] = terrainRoads.empty() ? "own" : net.lines.empty() ? "terrain" : "mixed";
+            out["builderNote"] = terrainRoads.empty() ? "settlement mesher: " + why
+                                                      : std::to_string(terrainRoads.size()) + " streets built by terrainRoadBuild, the rest here";
+            if (!terrainRoads.empty() && !net.lines.empty())
+                log::warn("{}: {} streets built by terrainRoadBuild; junctions they meet are patched here without crosswalks", cmd, terrainRoads.size());
+
+            RoadMeshes m = roadMeshes(r.layout, net, r.ground, o);
+            const std::string base = a.get<std::string>("name", baseName(r));
+            if (Node* old = g.find(base + "_Streetscape"))
+                ops::execute("delete", {{"args", {old->path()}}});
+            json children = json::array();
+            const size_t roadFaces = m.roads.numFaces(), walkFaces = m.sidewalks.numFaces(), markFaces = m.markings.numFaces();
+            children.push_back(meshObject(g, std::move(m.roads), base + "_Roads"));
+            children.push_back(meshObject(g, std::move(m.sidewalks), base + "_Sidewalks"));
+            if (markFaces > 0)
+                children.push_back(meshObject(g, std::move(m.markings), base + "_Markings"));
+            const json group = ops::execute("group", {{"args", children}, {"name", base + "_Streetscape"}});
+            json decals = json::array();
+            if (markings == "both" || markings == "decals")
+                for (const DecalPlacement& d : m.crosswalks)
+                    decals.push_back({{"point", pointJson(d.p)}, {"width", d.width}, {"depth", d.depth}, {"heading", d.heading}, {"junction", d.junction}});
+            out["group"] = group;
+            out["meshes"] = children;
+            out["faces"] = {{"roads", roadFaces}, {"sidewalks", walkFaces}, {"markings", markFaces}};
+            out["areaM2"] = {{"roads", m.roadArea}, {"junctions", m.junctionArea}, {"sidewalks", m.sidewalkArea},
+                             {"curbReturns", m.curbReturnArea}, {"markings", m.markingArea}};
+            out["roads"] = net.lines.size();
+            out["junctions"] = net.junctions.size();
+            out["curbReturns"] = m.curbReturns;
+            out["crosswalks"] = decals;
+            out["medieval"] = medievalStyle(r.layout);
+            return out;
+        },
+        .examples = {"r = settlementRoadMesh('Settlement')\nr['areaM2']['roads'], r['curbReturns']",
+                     "settlementRoadMesh('Village', surface='cobble', markings='none')"},
+    });
+
+    ctx.registerCommand({
+        .name = "settlementFurniture",
+        .doc = "Places street furniture: along every road from its road profile's set (lamps, street trees, benches, bins, "
+               "hydrants; lanterns in medieval styles), signals on each approach of signalised junctions, stop and yield "
+               "signs by junction control, a street-name sign at each junction, and squares furnished (medieval: a well, market "
+               "stalls and carts; modern: benches, trees, and bollards along the main streets). Every placement has a stable id "
+               "that survives unrelated edits.\n\n"
+               "Sets are data: sets= replaces a profile's rules, {profile: [{kind, spacing, where, sides, minWidth}]} with "
+               "where kerb, back, verge, median or edge and sides both, alternate, right or left. realize=True places a "
+               "Set Dressing library asset for each kind in assets= (lamp defaults to Road/StreetLight) through its place "
+               "command; kinds without an asset are listed in missingAssets. Returns counts by kind and by profile, the "
+               "sets used and the placements.",
+        .positionalDoc = "settlement mesh or its modifier",
+        .flags = {{"sets", "st", T::Any, nullptr, "Furniture rules per road profile, over the built-in ones."},
+                  {"kinds", "k", T::List, nullptr, "Only these kinds."},
+                  {"realize", "rz", T::Bool, false, "Place library assets in the scene (needs the Set Dressing extension)."},
+                  {"assets", "as", T::Any, nullptr, "{kind: library asset id} for realize."},
+                  {"limit", "lm", T::Int, int64_t(2000), "Most placements returned in the list (counts cover all).", {}, {}, 0.0}},
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            const char* cmd = "settlementFurniture";
+            Graph& g = Graph::current();
+            const Rebuilt r = rebuildSettlement(g, settlementOf(a, cmd), cmd);
+            const bool medieval = medievalStyle(r.layout);
+            std::vector<FurnitureSet> sets;
+            try
+            {
+                sets = applyFurnitureJson(furnitureSets(medieval), a.flags.value("sets", json()));
+            }
+            catch (const std::runtime_error& e)
+            {
+                throw CommandError(std::string(cmd) + ": " + e.what());
+            }
+            const RoadNetwork net = roadNetwork(r.layout, r.ground);
+            std::vector<FurniturePlacement> placed = placeFurniture(r.layout, net, r.ground, sets);
+            if (a.has("kinds"))
+            {
+                std::set<std::string> keep;
+                for (const json& k : a.flags["kinds"])
+                    keep.insert(k.get<std::string>());
+                std::erase_if(placed, [&](const FurniturePlacement& p) { return !keep.contains(p.kind); });
+            }
+            json byKind = json::object(), byProfile = json::object(), list = json::array();
+            const size_t limit = size_t(std::max<int64_t>(0, a.get<int64_t>("limit", 2000)));
+            for (const FurniturePlacement& p : placed)
+            {
+                byKind[p.kind] = byKind.value(p.kind, 0) + 1;
+                json& prof = byProfile[p.profile];
+                if (prof.is_null())
+                    prof = json::object();
+                prof[p.kind] = prof.value(p.kind, 0) + 1;
+                if (list.size() < limit)
+                {
+                    json j = {{"id", p.id}, {"kind", p.kind}, {"point", pointJson(p.p)}, {"heading", p.heading}, {"profile", p.profile}};
+                    if (p.street)
+                        j["street"] = p.street;
+                    if (p.junction >= 0)
+                        j["junction"] = p.junction;
+                    if (p.block >= 0)
+                        j["block"] = p.block;
+                    list.push_back(std::move(j));
+                }
+            }
+            json setsJson = json::object();
+            for (const FurnitureSet& s : sets)
+                setsJson[s.profile] = toJson(s);
+            json out = {{"count", placed.size()}, {"byKind", byKind}, {"byProfile", byProfile}, {"sets", setsJson},
+                        {"medieval", medieval}, {"placements", list}};
+            if (a.get<bool>("realize", false))
+            {
+                if (!ops::find("place"))
+                    throw CommandError(std::string(cmd) + ": realize needs the place command; load the Set Dressing (Stagehand) extension");
+                json assets = {{"lamp", "Road/StreetLight"}};
+                if (a.has("assets"))
+                {
+                    if (!a.flags["assets"].is_object())
+                        throw CommandError(std::string(cmd) + ": assets is {kind: asset id}");
+                    assets.update(a.flags["assets"]);
+                }
+                std::set<std::string> missing;
+                json roots = json::array();
+                std::map<std::string, std::string> failed;
+                for (const FurniturePlacement& p : placed)
+                {
+                    if (!assets.contains(p.kind) || !assets[p.kind].is_string())
+                    {
+                        missing.insert(p.kind);
+                        continue;
+                    }
+                    if (failed.contains(p.kind))
+                        continue;
+                    try
+                    {
+                        const json made = ops::execute("place", {{"args", {assets[p.kind]}}, {"at", pointJson(p.p)}, {"snap", false}, {"rotate", p.heading}});
+                        if (made.is_array() && !made.empty())
+                            roots.push_back(made[0].value("root", made[0].value("name", json())));
+                    }
+                    catch (const std::exception& e)
+                    {
+                        failed[p.kind] = e.what();
+                    }
+                }
+                out["placed"] = roots.size();
+                out["missingAssets"] = missing;
+                out["failedAssets"] = failed;
+                if (!missing.empty())
+                    log::warn("{}: no library asset for {} kinds (assets= names them); their placements are data only", cmd, missing.size());
+            }
+            return out;
+        },
+        .examples = {"f = settlementFurniture('Settlement')\nf['byKind']['lamp'], f['byProfile']['avenue']",
+                     "settlementFurniture('Settlement', sets={'street': [{'kind': 'lamp', 'spacing': 2500, 'sides': 'both'}]}, kinds=['lamp'])",
+                     "settlementFurniture('Settlement', realize=True, assets={'bench': 'Street/Bench'})"},
+    });
+
     ctx.registerCommand({
         .name = "settlementNames",
         .doc = "Street and district names. Every street through its junctions has one name from the naming culture "
@@ -113,6 +414,5 @@ void registerStreetscapeCommands(ext::Context& ctx)
         .examples = {"settlementNames('Settlement', culture='french')['streets'][0]['name']",
                      "d = settlementNames('Settlement')['districts'][0]['id']\nsettlementNames('Settlement', district=d, name='Old Town')"},
     });
-
 }
 } // namespace settlement

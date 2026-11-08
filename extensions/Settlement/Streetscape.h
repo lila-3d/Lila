@@ -1,0 +1,144 @@
+#pragma once
+
+#include "SettlementCore.h"
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+/**
+ * Streetscape: road and sidewalk meshes, street furniture, the lane graph with transit routes, and its checks. All built
+ * from a Layout and its RoadNetwork; nothing here changes the layout.
+ */
+namespace settlement
+{
+/** Ids made here fit in 52 bits, so they survive JSON readers that keep numbers as doubles. */
+inline constexpr uint64_t kStreetscapeIdMask = (1ull << 52) - 1;
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Road meshes
+
+/** What a road is paved with. Medieval styles get cobble and packed earth with a gutter, the rest asphalt and paving. */
+enum class Surface : uint8_t
+{
+    Asphalt,
+    Cobble,
+    Earth,
+    Paving,
+};
+
+const char* surfaceName(Surface s);
+bool parseSurface(std::string_view name, Surface* out);
+/** True for the styles whose roads are cobble and earth without kerbs (hamlets, villages, medieval towns). */
+bool medievalStyle(const Layout& l);
+/** The surface a street of this class and profile takes in this layout. */
+Surface streetSurface(const Layout& l, StreetClass c, const RoadProfile& p);
+
+/** A road's cross-section at its own width: the profile scaled so its parts add up to the street's width. cm. */
+struct RoadSection
+{
+    double carriage = 0.0; // half width of the driving surface, parking included
+    double median = 0.0;   // full width
+    double sidewalk = 0.0, verge = 0.0;
+    bool kerbless = false; // medieval: one surface edge to edge, with a gutter
+    Surface surface = Surface::Asphalt;
+    double half() const { return carriage + sidewalk + verge; }
+};
+
+/** The section of a road network line; kerbless only where the style asks for it and allowKerbless. */
+RoadSection roadSection(const Layout& l, const StreetLine& line, bool allowKerbless = true);
+
+struct RoadMeshOptions
+{
+    double curb = 15.0;      // cm a sidewalk stands above the road
+    double gutter = 8.0;     // cm the gutter of a kerbless street dips at its middle
+    double segment = 500.0;  // cm between cross-sections along a road
+    double lift = 2.0;       // cm above the ground
+    bool markings = true;    // crosswalk stripes as mesh
+    bool forceSurface = false;
+    Surface surface = Surface::Asphalt; // every road, when forceSurface
+};
+
+/** A crosswalk marking as a decal: its middle, size across and along the road (cm), and heading (degrees about +Y). */
+struct DecalPlacement
+{
+    glm::dvec3 p{0.0};
+    double width = 0.0, depth = 0.0;
+    double heading = 0.0;
+    int junction = -1;
+};
+
+/**
+ * The road surfaces (carriageways swept along each road, junction patches), sidewalks (kerb faces, sidewalks, medians,
+ * verges and the curb returns rounding each corner) and crosswalk stripes. Face attributes: part (RoadPart), surface,
+ * line (RoadNetwork line, -1 for junction pieces), junction (-1 along roads).
+ */
+struct RoadMeshes
+{
+    geo::Mesh roads, sidewalks, markings;
+    std::vector<DecalPlacement> crosswalks;
+    double roadArea = 0.0, junctionArea = 0.0, sidewalkArea = 0.0, curbReturnArea = 0.0, markingArea = 0.0; // m2, seen from above
+    int curbReturns = 0;
+};
+
+enum class RoadPart : uint8_t
+{
+    Carriageway,
+    Junction,
+    Sidewalk,
+    Curb,
+    CurbReturn,
+    Median,
+    Verge,
+    Marking,
+};
+
+RoadMeshes roadMeshes(const Layout& l, const RoadNetwork& net, const Ground& ground, const RoadMeshOptions& o = {});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Street furniture
+
+/** One kind of furniture repeated along a road: where across it, how far apart, on which sides. */
+struct FurnitureRule
+{
+    std::string kind;          // lamp, tree, hydrant, bench, bollard, bin, lantern...
+    double spacing = 3000.0;   // cm along the road
+    std::string where = "kerb"; // kerb, back (of the sidewalk), verge, median, edge (of a kerbless road)
+    std::string sides = "both"; // both, alternate, right, left
+    double minWidth = 0.0;     // cm the place must have (sidewalk, verge or median), else the rule is skipped there
+};
+
+/** The furniture a road profile carries, by profile name. Medieval styles use their own sets. */
+struct FurnitureSet
+{
+    std::string profile;
+    std::vector<FurnitureRule> rules;
+};
+
+/** The built-in sets: modern ones per road profile, and medieval ones (lanterns, no hydrants, signals or signs). */
+std::vector<FurnitureSet> furnitureSets(bool medieval);
+json toJson(const FurnitureSet& s);
+/** Sets over base from {profile: [{kind, spacing, where, sides, minWidth}, ...]}. Throws std::runtime_error on bad data. */
+std::vector<FurnitureSet> applyFurnitureJson(std::vector<FurnitureSet> base, const json& j);
+
+/** A placed piece: stable id (by street, kind, side and slot, or junction and approach, or plaza and slot). */
+struct FurniturePlacement
+{
+    uint64_t id = 0;
+    std::string kind;
+    glm::dvec3 p{0.0};
+    double heading = 0.0; // degrees about +Y, 0 facing +Z
+    uint64_t street = 0;  // 0 at junctions and plazas
+    int junction = -1;
+    int block = -1;       // plaza block
+    std::string profile;  // road profile the rule came from; "junction" or "plaza" otherwise
+};
+
+/**
+ * Furniture along every road from its profile's set, signals at signalised junctions (one per vehicle approach), stop
+ * and yield signs by junction control, a street-name sign per junction, and squares furnished (medieval: a well, market
+ * stalls and carts; modern: benches, trees and bollards).
+ */
+std::vector<FurniturePlacement> placeFurniture(const Layout& l, const RoadNetwork& net, const Ground& ground, const std::vector<FurnitureSet>& sets);
+
+} // namespace settlement
