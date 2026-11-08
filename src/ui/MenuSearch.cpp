@@ -3,6 +3,7 @@
 
 #include "core/Log.h"
 #include "ops/Command.h"
+#include "ui/Actions.h"
 #include "scene/Graph.h"
 #include "ui/AchievementRules.h"
 #include "ui/ApiReference.h"
@@ -50,9 +51,29 @@ QString plain(const QAction* a)
     return t;
 }
 
+QStringList keywordsOf(const QAction* a)
+{
+    QStringList out;
+    if (const Action* action = actions::find(a->data().toString().toStdString()))
+        for (const std::string& k : action->keywords)
+            out << QString::fromStdString(k);
+    return out;
+}
+
+bool keywordMatch(const QStringList& keywords, const QString& query)
+{
+    return !query.isEmpty() &&
+           std::any_of(keywords.begin(), keywords.end(), [&](const QString& k) { return k.startsWith(query, Qt::CaseInsensitive); });
+}
+
+bool keywordMatch(const QAction* a, const QString& query)
+{
+    return !query.isEmpty() && keywordMatch(keywordsOf(a), query);
+}
+
 bool matches(const QAction* a, const QString& text, int depth = 0)
 {
-    if (plain(a).contains(text, Qt::CaseInsensitive))
+    if (plain(a).contains(text, Qt::CaseInsensitive) || keywordMatch(a, text))
         return true;
     if (QMenu* sub = a->menu(); sub && depth < 8)
         for (const QAction* c : sub->actions())
@@ -230,6 +251,7 @@ struct TearOffItem
     QString section;
     QString label;
     QString path;
+    QStringList keywords; // of the rows it holds directly, so a search by keyword finds the section to tear off
 };
 
 void collectTearOffs(QMenu* menu, const QString& label, const QString& path, std::vector<TearOffItem>& out, int depth)
@@ -237,16 +259,23 @@ void collectTearOffs(QMenu* menu, const QString& label, const QString& path, std
     if (depth > 8 || menu->property(kNoSearchProperty).toBool())
         return;
     Q_EMIT menu->aboutToShow();
+    const size_t self = out.size();
     out.push_back({menu, {}, label, path});
+    size_t holder = self;
     const QString inside = path.isEmpty() ? label : path + " > " + label;
     for (QAction* a : menu->actions())
     {
         if (!a->isVisible() || qobject_cast<QWidgetAction*>(a))
             continue;
         if (a->isSeparator() && !a->text().isEmpty())
+        {
+            holder = out.size();
             out.push_back({menu, a->text(), a->text(), inside});
+        }
         else if (QMenu* sub = a->menu(); sub && !plain(a).isEmpty())
             collectTearOffs(sub, plain(a), inside, out, depth + 1);
+        else if (!a->isSeparator())
+            out[holder].keywords << keywordsOf(a);
     }
 }
 
@@ -614,8 +643,8 @@ private:
         std::vector<std::pair<int, const Item*>> hits;
         for (const Item& it : mItems)
             if (it.action)
-                if (int s = score(it.label, it.path, q))
-                    hits.emplace_back(-s, &it);
+                if (int s = score(it.label, it.path, q); s || keywordMatch(it.action, q))
+                    hits.emplace_back(-std::max(s, 1), &it);
         std::stable_sort(hits.begin(), hits.end(), [](auto& a, auto& b) { return a.first < b.first; });
         QBrush dim = palette().brush(QPalette::Disabled, QPalette::Text);
         for (auto& [s, it] : hits)
@@ -647,8 +676,8 @@ private:
         std::vector<std::pair<int, size_t>> hits;
         for (size_t i = 0; i < mTearOffs.size(); ++i)
             if (mTearOffs[i].menu)
-                if (int s = score(mTearOffs[i].label, mTearOffs[i].path, q))
-                    hits.emplace_back(-s, i);
+                if (int s = score(mTearOffs[i].label, mTearOffs[i].path, q); s || keywordMatch(mTearOffs[i].keywords, q))
+                    hits.emplace_back(-std::max(s, 1), i);
         std::stable_sort(hits.begin(), hits.end(), [](auto& a, auto& b) { return a.first < b.first; });
         QBrush dim = palette().brush(QPalette::Disabled, QPalette::Text);
         for (auto& [s, i] : hits)

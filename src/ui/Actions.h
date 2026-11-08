@@ -38,6 +38,11 @@ struct Action
     std::function<bool()> checked;
     /** A Tabler icon name for menu rows; see iconFor() for what an empty one falls back to. */
     std::string icon;
+    /**
+     * Other names menu search finds it by, such as another app's term. A query matches when it starts a keyword, so "blend"
+     * finds "blendshape" while "shape" does not.
+     */
+    std::vector<std::string> keywords;
 };
 
 namespace actions

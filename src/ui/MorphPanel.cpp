@@ -865,5 +865,10 @@ void registerMorphUi()
                  .icon = "link",
                  .open = false,
                  .toggleAction = "window.drivenChannels"});
+
+    // The common industry name, so users who know morph targets by it find them.
+    for (const char* id : {"deform.morph", "deform.addMorphTarget", "deform.editMorphTarget", "deform.extractMorphTarget", "deform.removeMorphTarget", "window.morphTargets"})
+        if (Action* a = actions::registry().find(id))
+            a->keywords = {"blendshape", "blend shape"};
 }
 } // namespace lila::ui
