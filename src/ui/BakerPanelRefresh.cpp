@@ -333,6 +333,9 @@ void BakerPanel::refresh()
 
     mUpdating = true;
     refreshProjects();
+    updateLintWatch();
+    if (mProject != mLintedProject)
+        scheduleLint();
     refreshTargets();
     refreshGroups();
     refreshDetails();
