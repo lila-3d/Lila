@@ -87,4 +87,10 @@ LILA_SCENE_API Binding bindPoints(std::span<const Curve> rest, std::span<const g
 /** The bound points on the posed chains. */
 LILA_SCENE_API void deformPoints(std::span<const Curve> rest, std::span<const Curve> posed, const Binding& b, const Options& o,
                                  std::span<glm::dvec3> points);
+
+/** The curve's frame (tangent, normal, binormal as columns) and point at arc length s, as a matrix. */
+LILA_SCENE_API glm::dmat4 matrixAt(const Curve& c, double s);
+
+/** Arc lengths splitting each bone into perBone even segments, plus the chain's end: where baked segment joints go. */
+LILA_SCENE_API std::vector<double> segmentLengths(const Curve& c, int perBone);
 } // namespace lila::deform::bendbones

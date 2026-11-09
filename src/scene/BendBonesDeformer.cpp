@@ -4,19 +4,30 @@
 
 #include "scene/BendBonesDeformer.h"
 
+#include "core/Profile.h"
 #include "deform/BendBones.h"
+#include "deform/Ssdr.h"
+#include "geo/Mesh.h"
 #include "ops/Command.h"
 #include "scene/Deformers.h"
+#include "scene/Anim.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
+#include "scene/Modifiers.h"
 #include "scene/Relocate.h"
 #include "scene/Rig.h"
 #include "scene/RigUtil.h"
+#include "scene/Skin.h"
 #include "scene/Transform.h"
+#include "scene/UnrealCheck.h"
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <cmath>
+#include <optional>
+#include <random>
 #include <map>
 #include <mutex>
 
@@ -109,45 +120,76 @@ std::vector<bb::Chain> chainsOf(const Bound& b, const std::vector<glm::dmat4>& j
     return out;
 }
 
+/** Where the bone CVs sit at rest, in world. */
+std::vector<glm::dvec3> restCvs(const Bound& b)
+{
+    std::vector<glm::dvec3> out;
+    for (size_t i = 0; i < b.cvRest.size() && i < b.cvBone.size(); ++i)
+        out.push_back(glm::dvec3(b.rest[size_t(b.cvBone[i])] * glm::dvec4(b.cvRest[i], 1.0)));
+    return out;
+}
+
+/** Rest and posed curves of every chain, from posed joint matrices and CV positions (world). */
+std::pair<std::vector<bb::Curve>, std::vector<bb::Curve>> curvesOf(const Bound& b, const std::vector<glm::dmat4>& joints, std::vector<glm::dvec3> cvs)
+{
+    std::vector<glm::dvec3> cvRest = restCvs(b);
+    cvs.resize(std::min(cvs.size(), cvRest.size()));
+    cvRest.resize(cvs.size());
+    std::pair<std::vector<bb::Curve>, std::vector<bb::Curve>> out;
+    size_t at = 0;
+    const std::vector<bb::Chain> restChains = chainsOf(b, b.rest, cvRest), posedChains = chainsOf(b, joints, cvs);
+    for (size_t c = 0; c < restChains.size(); ++c)
+    {
+        const std::vector<glm::dvec3> normals(b.normals.begin() + long(at), b.normals.begin() + long(at + restChains[c].position.size()));
+        at += restChains[c].position.size();
+        out.first.push_back(bb::build(restChains[c], normals));
+        out.second.push_back(bb::build(posedChains[c], normals));
+    }
+    return out;
+}
+
+/** The bound points on the posed curves, in the mesh's space at bind. */
+void deformed(const Bound& b, const std::vector<bb::Curve>& rest, const std::vector<bb::Curve>& posed, const bb::Options& o, std::vector<glm::dvec3>& points)
+{
+    const glm::dmat4 toLocal = glm::inverse(b.meshWorld);
+    bb::deformPoints(rest, posed, b.binding, o, points);
+    for (glm::dvec3& p : points)
+        p = glm::dvec3(toLocal * glm::dvec4(p, 1.0));
+}
+
 class BendBonesNode : public DeformerNode
 {
 public:
     void deform(const geo::Mesh&, std::vector<glm::dvec3>& points) const override
     {
-        Bound b = bound();
-        // The world-space parts of the bind live in matrix attrs, which relocating the scene moves.
-        for (const auto& [i, v] : elements(type().attrIndex("restMatrix")))
-            b.rest.push_back(std::get<glm::dmat4>(v));
-        b.meshWorld = as<glm::dmat4>(type().attrIndex("bindMeshMatrix"));
+        const Bound b = boundWithRest();
         if (b.sizes.empty() || b.binding.offsets.size() != points.size() + 1)
             return;
         std::vector<glm::dmat4> joints;
         for (const auto& [i, v] : elements(type().attrIndex("matrix")))
             joints.push_back(std::get<glm::dmat4>(v));
-        std::vector<glm::dvec3> cvs, cvRest;
+        std::vector<glm::dvec3> cvs;
         for (const auto& [i, v] : elements(type().attrIndex("cvMatrix")))
             cvs.push_back(glm::dvec3(std::get<glm::dmat4>(v)[3]));
         if (joints.size() != b.rest.size())
             return;
-        for (size_t i = 0; i < b.cvRest.size() && i < b.cvBone.size(); ++i)
-            cvRest.push_back(glm::dvec3(b.rest[size_t(b.cvBone[i])] * glm::dvec4(b.cvRest[i], 1.0)));
-        cvs.resize(std::min(cvs.size(), cvRest.size()));
-        cvRest.resize(cvs.size());
-        std::vector<bb::Curve> rest, posed;
-        size_t at = 0;
-        const std::vector<bb::Chain> restChains = chainsOf(b, b.rest, cvRest), posedChains = chainsOf(b, joints, cvs);
-        for (size_t c = 0; c < restChains.size(); ++c)
-        {
-            const std::vector<glm::dvec3> normals(b.normals.begin() + long(at), b.normals.begin() + long(at + restChains[c].position.size()));
-            at += restChains[c].position.size();
-            rest.push_back(bb::build(restChains[c], normals));
-            posed.push_back(bb::build(posedChains[c], normals));
-        }
-        const bb::Options o{.volume = as<double>(type().attrIndex("volume")), .evenBend = as<double>(type().attrIndex("evenBend"))};
-        const glm::dmat4 toLocal = glm::inverse(b.meshWorld);
-        bb::deformPoints(rest, posed, b.binding, o, points);
-        for (glm::dvec3& p : points)
-            p = glm::dvec3(toLocal * glm::dvec4(p, 1.0));
+        const auto [rest, posed] = curvesOf(b, joints, cvs);
+        deformed(b, rest, posed, options(), points);
+    }
+
+    /** The bind with its world-space parts, which live in matrix attrs so relocating the scene moves them. */
+    Bound boundWithRest() const
+    {
+        Bound b = bound();
+        for (const auto& [i, v] : elements(type().attrIndex("restMatrix")))
+            b.rest.push_back(std::get<glm::dmat4>(v));
+        b.meshWorld = as<glm::dmat4>(type().attrIndex("bindMeshMatrix"));
+        return b;
+    }
+
+    bb::Options options() const
+    {
+        return {.volume = as<double>(type().attrIndex("volume")), .evenBend = as<double>(type().attrIndex("evenBend"))};
     }
 
 private:
@@ -181,6 +223,277 @@ NodeId jointArg(Graph& g, const json& name, const char* command)
     if (!n || !rig::isJoint(*n))
         throw CommandError(std::string(command) + ": " + name.get<std::string>() + " is not a joint");
     return n->id();
+}
+/** The joints feeding a deformer's matrix array (the chains, in order) and its bone CVs. */
+std::pair<std::vector<NodeId>, std::vector<NodeId>> inputsOf(Graph& g, const Node& d)
+{
+    std::pair<std::vector<NodeId>, std::vector<NodeId>> out;
+    for (const PlugRef& e : g.elements({d.id(), d.type().attrIndex("matrix"), -1}))
+        if (const auto src = g.source(e))
+            out.first.push_back(src->node);
+    for (const PlugRef& e : g.elements({d.id(), d.type().attrIndex("cvMatrix"), -1}))
+        if (const auto src = g.source(e))
+            out.second.push_back(src->node);
+    return out;
+}
+
+/** A pose for the fit: every joint turned at random about its own axes, children following, CVs riding their bones. */
+std::pair<std::vector<glm::dmat4>, std::vector<glm::dvec3>> randomPose(const Bound& b, double degrees, std::mt19937& rng)
+{
+    std::uniform_real_distribution<double> u(-1.0, 1.0);
+    std::vector<glm::dmat4> posed;
+    size_t at = 0;
+    for (int n : b.sizes)
+        for (int k = 0; k < n; ++k, ++at)
+        {
+            const glm::dvec3 e = glm::radians(degrees) * glm::dvec3(u(rng), u(rng), u(rng));
+            const glm::dmat4 turn = glm::dmat4(glm::mat3_cast(glm::dquat(e)));
+            posed.push_back(k == 0 ? b.rest[at] * turn : posed[at - 1] * glm::inverse(b.rest[at - 1]) * b.rest[at] * turn);
+        }
+    std::vector<glm::dvec3> cvs;
+    for (size_t i = 0; i < b.cvRest.size() && i < b.cvBone.size(); ++i)
+        cvs.push_back(glm::dvec3(posed[size_t(b.cvBone[i])] * glm::dvec4(b.cvRest[i], 1.0)));
+    return {posed, cvs};
+}
+
+/** Segment joint world matrices along each chain's curve, chains in order. */
+std::vector<glm::dmat4> segmentsOf(const std::vector<bb::Curve>& curves, int perBone)
+{
+    std::vector<glm::dmat4> out;
+    for (const bb::Curve& c : curves)
+        for (double s : bb::segmentLengths(c, perBone))
+            out.push_back(bb::matrixAt(c, s));
+    return out;
+}
+
+size_t segmentCount(int chainSize, int perBone) { return size_t((chainSize - 1) * perBone + 1); }
+
+/** Starting weights for the fit: each point split between the two segment joints its bind place sits between. */
+void startingWeights(const Bound& b, int perBone, deform::SsdrProblem& p)
+{
+    std::vector<uint32_t> first;
+    uint32_t total = 0;
+    for (int n : b.sizes)
+    {
+        first.push_back(total);
+        total += uint32_t(segmentCount(n, perBone));
+    }
+    p.offsets = {0};
+    for (size_t pt = 0; pt + 1 < b.binding.offsets.size(); ++pt)
+    {
+        std::map<uint32_t, float> w;
+        for (uint32_t k = b.binding.offsets[pt]; k < b.binding.offsets[pt + 1]; ++k)
+        {
+            const uint32_t c = b.binding.chain[k];
+            const bb::Place& pl = b.binding.place[k];
+            const double along = (double(pl.segment) + std::clamp(pl.fraction, 0.0, 1.0)) * perBone;
+            const uint32_t last = first[c] + uint32_t(segmentCount(b.sizes[c], perBone)) - 1;
+            const uint32_t i = std::min(first[c] + uint32_t(std::floor(along)), last);
+            const double t = along - std::floor(along);
+            w[i] += float(b.binding.weight[k] * (1.0 - t));
+            w[std::min(i + 1, last)] += float(b.binding.weight[k] * t);
+        }
+        for (const auto& [i, v] : w)
+            if (v > 0.0f)
+            {
+                p.influences.push_back(i);
+                p.weights.push_back(v);
+            }
+        p.offsets.push_back(uint32_t(p.influences.size()));
+    }
+}
+
+/** Writes a joint's local matrix as translate and rotate, keyed at time or set when there is none. */
+void writeLocal(Graph& g, NodeId j, const glm::dmat4& local, std::optional<double> time, glm::dvec3& near)
+{
+    near = eulerNear(orthonormal(glm::dmat3(local)), RotateOrder(g.node(j)->as<int64_t>(Transform::kRotateOrder)), near);
+    if (!time)
+    {
+        g.setValue({j, Transform::kTranslate, -1}, glm::dvec3(local[3]));
+        g.setValue({j, Transform::kRotate, -1}, near);
+        return;
+    }
+    for (int c = 0; c < 3; ++c)
+        anim::setKey(g, {j, Transform::kTranslate, c}, *time, local[3][c]);
+    anim::setRotationKey(g, {j, Transform::kRotate, -1}, *time, near);
+}
+
+bool moves(const std::vector<std::vector<glm::dmat4>>& frames, size_t count)
+{
+    for (size_t f = 1; f < count; ++f)
+        for (size_t i = 0; i < frames[f].size(); ++i)
+            for (int c = 0; c < 4; ++c)
+                if (glm::length(frames[f][i][c] - frames[0][i][c]) > 1e-7)
+                    return true;
+    return false;
+}
+
+json bake(Graph& g, Node& d, const Args& a)
+{
+    LILA_ZONE();
+    const auto& node = static_cast<const BendBonesNode&>(d);
+    const int perBone = std::max(1, a.get<int>("segments", 3));
+    g.evaluate();
+    const Bound b = node.boundWithRest();
+    const auto [chainJoints, cvNodes] = inputsOf(g, d);
+    if (b.sizes.empty() || chainJoints.size() != b.rest.size())
+        throw CommandError("bakeBendBones: " + d.path() + " has no bind to bake");
+    const NodeId mesh = modifiers::meshOf(g, d.id());
+    if (mesh == kNoNode)
+        throw CommandError("bakeBendBones: " + d.path() + " deforms no mesh");
+    if (skin::find(g, mesh) != kNoNode)
+        throw CommandError("bakeBendBones: " + g.node(mesh)->path() + " is already skinned; bake bend bones on a mesh they alone deform");
+    const MeshPtr in = d.as<MeshPtr>(DeformerNode::kInMesh);
+    if (!in || b.binding.offsets.size() != in->positions().size() + 1)
+        throw CommandError("bakeBendBones: the mesh changed since it was bound; bind it again");
+    const bb::Options o = node.options();
+
+    // Samples: the animation range, then random poses so the weights hold beyond the motion the scene happens to have.
+    const anim::Playback& pb = anim::playback();
+    const double fps = std::max(pb.fps, 1e-6);
+    const int64_t start = a.has("start") ? a.get<int>("start") : int64_t(std::llround(pb.minTime * fps));
+    const int64_t end = a.has("end") ? a.get<int>("end") : int64_t(std::llround(pb.maxTime * fps));
+    std::vector<double> times;
+    for (int64_t f = start; f <= end; f += std::max(1, a.get<int>("step", 1)))
+        times.push_back(double(f) / fps);
+    if (times.empty())
+        times.push_back(g.time());
+
+    const size_t pointCount = in->positions().size();
+    std::vector<glm::dvec3> targets;
+    std::vector<std::vector<glm::dmat4>> segWorld; // per sample
+    std::vector<std::vector<glm::dmat4>> parentWorld; // per frame, the parent of each chain's first joint
+    std::vector<NodeId> chainParent;
+    for (size_t at = 0; int n : b.sizes)
+    {
+        chainParent.push_back(g.parent(chainJoints[at]));
+        at += size_t(n);
+    }
+    auto sample = [&](const std::vector<glm::dmat4>& joints, const std::vector<glm::dvec3>& cvs) {
+        const auto [rest, posed] = curvesOf(b, joints, cvs);
+        std::vector<glm::dvec3> pts(pointCount);
+        deformed(b, rest, posed, o, pts);
+        targets.insert(targets.end(), pts.begin(), pts.end());
+        segWorld.push_back(segmentsOf(posed, perBone));
+    };
+    const double saved = g.time();
+    for (double t : times)
+    {
+        g.setTime(t);
+        g.evaluate();
+        std::vector<glm::dmat4> joints, parents;
+        std::vector<glm::dvec3> cvs;
+        for (NodeId j : chainJoints)
+            joints.push_back(worldOf(*g.node(j)));
+        for (NodeId c : cvNodes)
+            cvs.push_back(glm::dvec3(worldOf(*g.node(c))[3]));
+        for (NodeId p : chainParent)
+            parents.push_back(p != kNoNode ? worldOf(*g.node(p)) : glm::dmat4(1.0));
+        sample(joints, cvs);
+        parentWorld.push_back(std::move(parents));
+    }
+    g.setTime(saved);
+    g.evaluate();
+    std::mt19937 rng(uint32_t(a.get<int>("seed", 1)));
+    const int poses = std::max(0, a.get<int>("poses", 24));
+    for (int k = 0; k < poses; ++k)
+    {
+        const auto [joints, cvs] = randomPose(b, a.get<double>("angle", 45.0), rng);
+        sample(joints, cvs);
+    }
+
+    const std::vector<glm::dmat4> segRest = segmentsOf(curvesOf(b, b.rest, restCvs(b)).first, perBone);
+    deform::SsdrProblem p;
+    p.rest.assign(in->positions().begin(), in->positions().end());
+    for (geo::Index f = 0; f < in->faceCapacity(); ++f)
+        if (in->faceValid(f))
+        {
+            std::vector<int> poly;
+            for (geo::Index v : in->facePoints(f))
+                poly.push_back(int(v));
+            p.polygons.push_back(std::move(poly));
+        }
+    p.frames = int(segWorld.size());
+    p.targets = std::move(targets);
+    p.bones = int(segRest.size());
+    const glm::dmat4 toLocal = glm::inverse(b.meshWorld);
+    for (const std::vector<glm::dmat4>& frame : segWorld)
+        for (size_t i = 0; i < frame.size(); ++i)
+            p.transforms.push_back(toLocal * frame[i] * glm::inverse(segRest[i]) * b.meshWorld);
+    startingWeights(b, perBone, p);
+    p.maxInfluences = std::max(1, a.get<int>("maxInfluences", 4));
+    p.iterations = std::max(1, a.get<int>("iterations", 3));
+    const deform::SsdrResult fit = deform::ssdrFit(p);
+
+    // A chain of segment joints per bend-bones chain, beside the original under the same parent.
+    const bool animated = moves(segWorld, times.size());
+    std::vector<NodeId> segs, roots;
+    json chains = json::array();
+    for (size_t c = 0, first = 0, at = 0; c < b.sizes.size(); ++c)
+    {
+        const size_t count = segmentCount(b.sizes[c], perBone);
+        const std::string base = g.node(chainJoints[at])->name() + "_bend";
+        json names = json::array();
+        for (size_t k = 0; k < count; ++k)
+        {
+            const NodeId parent = k == 0 ? chainParent[c] : segs.back();
+            Node* j = g.createNode(*types::find("joint"), base + std::to_string(k + 1), parent);
+            segs.push_back(j->id());
+            if (k == 0)
+                roots.push_back(j->id());
+            names.push_back(j->path());
+            glm::dvec3 near(0.0);
+            auto parentAt = [&](size_t f) { return k == 0 ? parentWorld[f][c] : segWorld[f][first + k - 1]; };
+            if (!animated)
+            {
+                writeLocal(g, j->id(), glm::inverse(parentAt(0)) * segWorld[0][first + k], std::nullopt, near);
+                continue;
+            }
+            for (size_t f = 0; f < times.size(); ++f)
+                writeLocal(g, j->id(), glm::inverse(parentAt(f)) * segWorld[f][first + k], times[f], near);
+        }
+        chains.push_back(names);
+        first += count;
+        at += size_t(b.sizes[c]);
+    }
+
+    json args = json::array();
+    for (NodeId j : segs)
+        args.push_back(g.node(j)->path());
+    args.push_back(g.node(mesh)->path());
+    const std::string skinName =
+        ops::execute("skinCluster", {{"args", args}, {"bindTo", "selected"}, {"maxInfluences", p.maxInfluences}, {"name", "BendBonesSkin"}}).get<std::string>();
+    const NodeId skin = skin::resolve(g, skinName, "bakeBendBones");
+    g.setValue({skin, SkinClusterNode::kGeomMatrix, -1}, b.meshWorld);
+    std::map<NodeId, uint32_t> influenceOf;
+    for (const skin::Influence& i : skin::influences(g, skin))
+        if (const auto it = std::find(segs.begin(), segs.end(), i.joint); it != segs.end())
+        {
+            influenceOf[i.joint] = i.index;
+            g.setValue({i.link, SkinInfluenceNode::kBindPreMatrix, -1}, glm::inverse(segRest[size_t(it - segs.begin())]));
+        }
+    WeightTable t;
+    t.points.resize(pointCount);
+    for (size_t pt = 0; pt < pointCount; ++pt)
+        for (uint32_t k = fit.offsets[pt]; k < fit.offsets[pt + 1]; ++k)
+            t.points[pt].push_back({influenceOf[segs[fit.influences[k]]], fit.weights[k]});
+    skin::setWeights(g, skin, t);
+    g.setValue({d.id(), DeformerNode::kEnabled, -1}, false);
+
+    // U1: the baked skeleton under Unreal's transform rules over the frames it was keyed on.
+    uecheck::Options uo{.roots = roots, .start = times.front(), .end = times.back(), .fps = fps, .tolerance = a.get<double>("tolerance", 0.01)};
+    const uecheck::Report r = uecheck::check(g, uo);
+    uecheck::reportIssues(g, r);
+    json mismatches = json::array();
+    for (const uecheck::Mismatch& m : r.mismatches)
+        mismatches.push_back({{"joint", g.node(m.joint)->path()}, {"error", m.error}, {"time", m.time}});
+    return {{"joints", chains},
+            {"skinCluster", g.node(skin)->path()},
+            {"rmse", fit.rmse},
+            {"maxError", fit.maxError},
+            {"frames", int(times.size())},
+            {"poses", poses},
+            {"unrealCheck", {{"worst", r.worst}, {"frames", r.frames}, {"mismatches", mismatches}}}};
 }
 } // namespace
 
@@ -347,6 +660,34 @@ void registerCommands()
             g.connect({cv->id(), Transform::kWorldMatrix, -1}, {d->id(), cvMatrix, -1, int(b.cvBone.size() - 1)});
             g.setValue({d->id(), d->type().attrIndex("binding"), -1}, boundJson(b).dump());
             return cv->path();
+        },
+    });
+    ops::registerCommand({
+        .name = "bakeBendBones",
+        .doc = "Bake a bendBones deformer to plain joints for Unreal: each bone gets segment joints along its curve, keyed on "
+               "every sampled frame, and the mesh is skinned to them with weights fitted (SSDR) to the bend bones' result over "
+               "the animation and random poses. The deformer is turned off so the viewport shows what Unreal gets. Returns "
+               "{joints, skinCluster, rmse, maxError, frames, poses, unrealCheck}: the fit error in cm and the Unreal round-trip check.",
+        .positionalDoc = "deformer",
+        .flags = {
+            {"segments", "sg", T::Int, 3, "Segment joints per bone.", {}, {}, 1.0, 16.0},
+            {"start", "", T::Int, nullptr, "First frame (the playback start by default)."},
+            {"end", "", T::Int, nullptr, "Last frame (the playback end by default)."},
+            {"step", "", T::Int, 1, "Frames between samples.", {}, {}, 1.0},
+            {"poses", "", T::Int, 24, "Random poses added to the fit so the weights hold beyond the animation.", {}, {}, 0.0},
+            {"angle", "", T::Float, 45.0, "Degrees the random poses turn each joint, at most.", {}, {}, 0.0, 180.0},
+            {"seed", "", T::Int, 1, "Seed of the random poses."},
+            {"maxInfluences", "mi", T::Int, 4, "Influences per point.", {}, {}, 1.0, 12.0},
+            {"iterations", "", T::Int, 3, "Fit passes.", {}, {}, 1.0},
+            {"tolerance", "", T::Float, 0.01, "cm the Unreal check allows.", {}, {}, 0.0},
+        },
+        .run = [](const Args& a) -> json {
+            Graph& g = graph();
+            const std::vector<std::string> objs = a.objects();
+            Node* d = objs.empty() ? nullptr : g.find(objs.front());
+            if (!d || d->type().name != kType)
+                throw CommandError("bakeBendBones: give a bendBones deformer");
+            return bake(g, *d, a);
         },
     });
 }

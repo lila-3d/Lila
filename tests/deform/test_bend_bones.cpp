@@ -232,3 +232,45 @@ TEST_CASE("bendBones deformer: a cylinder bound to a leg bends with the knee and
     CHECK(run("bendBoneCV", {{"args", {d}}, {"joint", "knee"}}).is_string());
     CHECK_THROWS(run("bendBoneCV", {{"args", {d}}, {"joint", "ankle"}}));
 }
+
+TEST_CASE("bakeBendBones: segment joints keyed along the curve and fitted weights reproduce the bend for Unreal")
+{
+    using namespace deformtest;
+    run("newScene");
+    run("autoKeyframe", {{"state", false}});
+    run("playbackOptions", {{"minTime", 0.0}, {"maxTime", 10.0 / 30.0}, {"fps", 30.0}});
+    run("joint", {{"position", v3(0, 45, 0)}, {"name", "hip"}});
+    run("joint", {{"position", v3(0, 0, 0)}, {"name", "knee"}});
+    run("joint", {{"position", v3(0, -45, 0)}, {"name", "ankle"}});
+    const std::string mesh = run("polyCylinder", {{"name", "Leg"}, {"radius", 6}, {"height", 90}, {"subdivisionsHeight", 30}})[0];
+    const std::string d = run("bendBones", {{"args", {mesh}}, {"chains", {{"hip", "knee", "ankle"}}}}).get<std::string>();
+    run("setKeyframe", {{"args", {"knee.rz"}}, {"time", 0.0}, {"value", 0.0}});
+    run("setKeyframe", {{"args", {"knee.rz"}}, {"time", 10.0 / 30.0}, {"value", 70.0}});
+    run("currentTime", {{"args", {10.0 / 30.0}}});
+    const auto bent = outMesh(mesh);
+    const std::vector<glm::dvec3> reference(bent->positions().begin(), bent->positions().end());
+
+    const auto r = run("bakeBendBones", {{"args", {d}}, {"segments", 3}, {"maxInfluences", 4}});
+    REQUIRE(r["joints"].size() == 1);
+    CHECK(r["joints"][0].size() == 7);
+    CHECK(r["frames"].get<int>() == 11);
+    CHECK(r["rmse"].get<double>() < 0.5);
+    CHECK(r["unrealCheck"]["mismatches"].empty());
+
+    // The skinned mesh at the keyed bend matches the bend bones' result.
+    run("currentTime", {{"args", {0.0}}});
+    run("currentTime", {{"args", {10.0 / 30.0}}});
+    const auto baked = outMesh(mesh);
+    double worst = 0.0, sum = 0.0;
+    for (size_t i = 0; i < reference.size(); ++i)
+    {
+        const double e = glm::length(baked->positions()[i] - reference[i]);
+        worst = std::max(worst, e);
+        sum += e;
+    }
+    MESSAGE("baked vs bend bones: mean " << sum / double(reference.size()) << " cm, worst " << worst << " cm");
+    CHECK(sum / double(reference.size()) < 1.0);
+    CHECK(worst < 3.0);
+    run("undo");
+    CHECK(run("ls", {{"type", "skinCluster"}}).empty());
+}

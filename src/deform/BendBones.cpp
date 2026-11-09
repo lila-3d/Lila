@@ -330,4 +330,26 @@ void deformPoints(std::span<const Curve> rest, std::span<const Curve> posed, con
             points[i] = sum / total;
     }
 }
+
+glm::dmat4 matrixAt(const Curve& c, double s)
+{
+    glm::dmat4 m(frameAt(c, s));
+    m[3] = glm::dvec4(pointAt(c, s), 1.0);
+    return m;
+}
+
+std::vector<double> segmentLengths(const Curve& c, int perBone)
+{
+    std::vector<double> out;
+    perBone = std::max(1, perBone);
+    for (size_t k = 0; k + 1 < c.knot.size(); ++k)
+    {
+        const double a = c.length[size_t(c.knot[k])], b = c.length[size_t(c.knot[k + 1])];
+        for (int i = 0; i < perBone; ++i)
+            out.push_back(a + (b - a) * double(i) / double(perBone));
+    }
+    if (!c.knot.empty())
+        out.push_back(c.length[size_t(c.knot.back())]);
+    return out;
+}
 } // namespace lila::deform::bendbones
