@@ -6,6 +6,7 @@
 #include "groom/Attrs.h"
 #include "groom/GroomEdit.h"
 #include "groom/GroomExport.h"
+#include "groom/GroomLook.h"
 #include "groom/GroomGraph.h"
 #include "groom/GroomLabBridge.h"
 #include "groom/GuideData.h"
@@ -220,6 +221,7 @@ int part(Splines& s, const std::vector<D3>& line, double radius, double strength
 void registerLockCommands()
 {
     registerIoCommands();
+    registerLookCommands();
     presets::registerCommands();
     std::vector<std::string> styles, shapes, presets, profiles;
     for (int k = 0; k < int(Style::Count); ++k)

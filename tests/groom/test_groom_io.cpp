@@ -147,3 +147,50 @@ TEST_CASE("groomCards and groomBakeCards: a preset's Cards node, its maps baked 
         CHECK_MESSAGE(std::filesystem::exists(m.get<std::string>()), m.get<std::string>());
     CHECK(std::get<std::string>(gr->value(gr->type().attrIndex("cardMaps"))).find("Coverage=") != std::string::npos);
 }
+
+TEST_CASE("groomLook and groomPreview: look nodes added and set; a preview shows params without setting them, ending it restores")
+{
+    const json made = groomedHead();
+    const std::string groom = made["groom"], strandsCurve = made["strands"];
+    scene::Graph& g = scene::Graph::current();
+    const json added = ops::execute("groomLook", {{"args", {groom}}, {"edit", "add"}, {"type", "Clump"}});
+    const std::string clump = added["node"];
+    REQUIRE(added["look"].size() == 1);
+    bool hasStrength = false;
+    for (const json& p : added["look"][0]["params"])
+        hasStrength = hasStrength || p["name"] == "strength";
+    CHECK(hasStrength);
+    ops::execute("groomLook", {{"args", {groom}}, {"edit", "set"}, {"node", clump}, {"params", R"({"strength": 0.2})"}});
+
+    scene::Node* gr = g.find(groom);
+    auto shown = [&] {
+        g.evaluate();
+        return curve::splinesOf(g.find(strandsCurve)->value(curve::CurveShape::kLocal));
+    };
+    const curve::Splines committed = shown();
+    const std::string graph = std::get<std::string>(gr->value(gr->type().attrIndex("graph")));
+    UndoStack& undo = UndoStack::get();
+    const size_t steps = undo.canUndo() ? 1 : 0;
+    (void)steps;
+
+    const json r = ops::execute("groomPreview", {{"args", {groom}}, {"node", clump}, {"params", R"({"strength": 0.95})"}});
+    CHECK(r["gpu"] == false);
+    CHECK_FALSE(r["why"].get<std::string>().empty());
+    const curve::Splines previewed = shown();
+    REQUIRE(previewed.size() == committed.size());
+    double moved = 0.0;
+    for (size_t k = 0; k < previewed.size(); ++k)
+        if (!previewed[k].points.empty())
+            moved = std::max(moved, glm::distance(previewed[k].points.back(), committed[k].points.back()));
+    CHECK(moved > 0.05);
+    CHECK(std::get<std::string>(gr->value(gr->type().attrIndex("graph"))) == graph);
+
+    ops::execute("groomEndPreview", {{"args", {groom}}});
+    const curve::Splines back = shown();
+    REQUIRE(back.size() == committed.size());
+    for (size_t k = 0; k < back.size(); ++k)
+        CHECK(back[k].points == committed[k].points);
+
+    const json removed = ops::execute("groomLook", {{"args", {groom}}, {"edit", "remove"}, {"node", clump}});
+    CHECK(removed.empty());
+}
