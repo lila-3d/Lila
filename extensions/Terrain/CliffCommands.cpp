@@ -959,8 +959,16 @@ json sendKit(Graph& g, const json& entry, const std::string& kitAs, const std::s
     const std::string name = identifier(entry.value("name", std::string("Kit")));
     if (!host)
         throw std::runtime_error(name + ": the kit's mesh is gone");
+    const std::string group = id + "/kits/" + name;
     if (kitAs == "hism")
-        return ops::execute("unrealPlaceInstances", {{"args", {host->path()}}, {"mode", "hism"}, {"folder", content + "/Kits"}, {"wait", true}});
+    {
+        call("removePlacements", {{"groups", json::array({group})}});
+        json place = {{"args", {host->path()}}, {"mode", "hism"}, {"folder", content + "/Kits"}, {"wait", true}};
+        if (!hlod.empty())
+            place["hlodLayer"] = hlod;
+        return ops::execute("unrealPlaceInstances", place);
+    }
+    ops::execute("unrealRemovePlacements", {{"args", {host->path()}}});
 
     link::PlacementOptions o;
     o.folder = content + "/Kits/" + name;
@@ -1019,7 +1027,6 @@ json sendKit(Graph& g, const json& entry, const std::string& kitAs, const std::s
     for (const json& made : imported.value("assets", json::array()))
         if (made.is_string() && made.get<std::string>().ends_with("/" + root + "." + root))
             assembly = made.get<std::string>();
-    const std::string group = id + "/kits/" + name;
     json params = {{"group", group},
                    {"label", root},
                    {"mesh", assembly},
