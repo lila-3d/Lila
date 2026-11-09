@@ -118,9 +118,6 @@ void setGraph(GroomEvaluator& evaluator, const std::string& graphJson)
 /** The evaluator's strands at `seconds` on its scalp and guides as set; throws when it makes none. */
 const GroomEvaluator::Result& evaluateAt(GroomEvaluator& evaluator, double seconds)
 {
-    // Sizes stay in scene units: a reference area isn't stored with the scene, so the first one measured would differ
-    // after a reload.
-    evaluator.setScaleWithScalp(false);
     GroomEvaluator::Request request;
     request.time = seconds;
     const GroomEvaluator::Result& result = evaluator.evaluate(request);
@@ -143,6 +140,8 @@ GrownStrands growStrands(const geo::Mesh& scalp, const Splines& guides, const st
     LILA_ZONE();
     using namespace groomLabBridge;
     GroomEvaluator evaluator;
+    // One evaluation: the first area measured is the reference, so k would be 1 anyway.
+    evaluator.setScaleWithScalp(false);
     setGraph(evaluator, graphJson);
     const std::shared_ptr<const groomlab::ScalpMesh> mesh = scalpMesh(scalp);
     evaluator.setScalp(mesh);
@@ -208,6 +207,9 @@ public:
                 GroomEvaluator& evaluator = *mEvaluator;
                 setGraph(evaluator, s(*this, "graph"));
                 evaluator.setFramesPerSecond(anim::playback().fps);
+                const bool scale = b(*this, "scaleWithScalp");
+                evaluator.setScaleWithScalp(scale);
+                evaluator.setScaleReference(f(*this, "scaleReference"));
                 if (m != mScalpFrom || matrix != mScalpMatrix || !mScalp)
                 {
                     mScalp = scalpMesh(*m, matrix);
@@ -228,6 +230,7 @@ public:
                 const GroomEvaluator::Result& result = evaluateAt(evaluator, seconds);
                 mMissedHistory = !historyAt(ctx.time) && evaluator.scalpHistoryFrames() > 0;
                 mMissedFeed = first && steppedPast(evaluator);
+                mReferenceToStore = scale && !(f(*this, "scaleReference") > 0.0) ? evaluator.scaleReference() : 0.0;
                 // A frame that grows the same strands (nothing in the graph moves) hands on the same curve data.
                 if (result.strands != mGrownFrom || !mGrown)
                 {
@@ -391,6 +394,9 @@ public:
      * through feedSimulation. */
     bool missedFeed() const { return mMissedFeed; }
 
+    /** The area the groom is 1x at, measured on a compute while Scale Reference was 0, for the hook to store (0: none). */
+    double referenceToStore() const { return mReferenceToStore; }
+
     void restartSimulation()
     {
         if (mEvaluator)
@@ -431,12 +437,13 @@ private:
     double mHistoryAt = 0.0;
     bool mMissedHistory = false;
     bool mMissedFeed = false;
+    double mReferenceToStore = 0.0;
 };
 
 /**
  * Before each evaluation every groomStrands node whose graph reads the scalp's earlier frames gets them and its Simulate
  * nodes step the frames skipped; after it, a node that computed without them (its first compute) gets them and computes
- * again.
+ * again, and a scalp area measured as the scale reference is stored on the node.
  */
 void sampleHistories(Graph& g, bool after)
 {
@@ -455,6 +462,11 @@ void sampleHistories(Graph& g, bool after)
         if (!n || n->type().name != "groomStrands")
             continue;
         auto* node = static_cast<GroomStrandsNode*>(n);
+        if (after && node->referenceToStore() > 0.0)
+        {
+            g.setValue({id, node->type().attrIndex("scaleReference"), -1}, node->referenceToStore());
+            touched = true;
+        }
         const bool missedFeed = node->missedFeed();
         if (after && !node->missedHistory() && !missedFeed)
             continue;
@@ -489,6 +501,8 @@ void registerGroomLabType()
         sAttrDefault("graph", "", "The groom graph as JSON; empty grows the default hair.", c),
         bAttr("useSceneTime", true, "Wind, Jiggle and Simulate run on the scene's time; off, on Time.", c),
         fAttr("time", 0.0, "Seconds the graph is evaluated at while Use Scene Time is off.", c),
+        bAttr("scaleWithScalp", true, "Lengths, widths and densities scale with the scalp's area against Scale Reference.", c),
+        fAttr("scaleReference", 0.0, "The scalp area the graph's sizes are 1x at; 0 takes the area on the next evaluation.", c),
         dataOut("outCurve", "The strands, world space, with a width per point."),
         {.name = "strandCount", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = AttrOutput, .doc = "Strands grown."},
         stringOut("warning", "Problems with the last evaluation."),

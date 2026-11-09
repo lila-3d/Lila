@@ -186,6 +186,47 @@ StrandsScene strandsScene(double radius)
 }
 } // namespace
 
+TEST_CASE("groomStrands: sizes scale with the scalp's area against the reference stored on the node")
+{
+    StrandsScene s = strandsScene(10.0);
+    scene::Graph& g = scene::Graph::current();
+    s.grown();
+    const int64_t count = s.strands->as<int64_t>(s.at("strandCount"));
+    REQUIRE(count > 1000);
+
+    // The first evaluation stores the sphere's area as the reference.
+    const double reference = s.strands->as<double>(s.at("scaleReference"));
+    CHECK(reference == doctest::Approx(4.0 * glm::pi<double>() * 100.0).epsilon(0.02));
+
+    // A head twice the size grows about as many strands (the density scales with it), and four times as many with
+    // scaling off.
+    curvetest::run("setAttr", {{"args", {s.head + ".scaleX", 2.0}}});
+    curvetest::run("setAttr", {{"args", {s.head + ".scaleY", 2.0}}});
+    curvetest::run("setAttr", {{"args", {s.head + ".scaleZ", 2.0}}});
+    s.grown();
+    CHECK(double(s.strands->as<int64_t>(s.at("strandCount"))) == doctest::Approx(double(count)).epsilon(0.05));
+    CHECK(s.strands->as<double>(s.at("scaleReference")) == reference);
+    g.setValue({s.strands->id(), s.at("scaleWithScalp"), -1}, false);
+    s.grown();
+    CHECK(double(s.strands->as<int64_t>(s.at("strandCount"))) == doctest::Approx(4.0 * double(count)).epsilon(0.05));
+    g.setValue({s.strands->id(), s.at("scaleWithScalp"), -1}, true);
+
+    // Saved and opened with the head at 2x: the stored reference keeps the same strands.
+    const uint64_t bits = bitsOf(s.grown());
+    const auto path = std::filesystem::temp_directory_path() / "lila_groomstrands_scale.lila";
+    curvetest::run("saveScene", {{"args", {path.string()}}});
+    g.clear();
+    UndoStack::get().clear();
+    curvetest::run("openScene", {{"args", {path.string()}}});
+    scene::Graph& opened = scene::Graph::current();
+    opened.evaluate();
+    scene::Node* node = opened.find("Strands");
+    REQUIRE(node);
+    CHECK(node->as<double>(node->type().attrIndex("scaleReference")) == reference);
+    CHECK(bitsOf(curve::splinesOf(node->value(node->type().attrIndex("outCurve")))) == bits);
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("groomStrands: the same strands bit for bit on any thread count, evaluated again, and after save and load")
 {
     const double radius = 10.0;
