@@ -14,6 +14,7 @@
 #include "ui/Deletion.h"
 #include "ui/Ghosting.h"
 #include "ui/Icons.h"
+#include "ui/Menus.h"
 #include "ui/SpinScrub.h"
 #include "ui/UiCommands.h"
 #include "ui/UiCommon.h"
@@ -380,6 +381,15 @@ private:
             }
             menu.addAction("Clear Range", [] { runUi("timeRange", {{"clear", true}}); });
             menu.addSeparator();
+            if (!menus::itemsIn(menus::kTimeSliderRange).empty())
+            {
+                for (const menus::Item* item : menus::itemsIn(menus::kTimeSliderRange))
+                    if (item->kind == menus::Kind::Separator)
+                        menu.addSeparator();
+                    else if (item->kind == menus::Kind::Action)
+                        menus::addActionRow(&menu, item->action);
+                menu.addSeparator();
+            }
         }
         audio::fillMenu(menu.addMenu("Audio"));
         QMenu* speed = menu.addMenu("Playback Speed");

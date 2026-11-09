@@ -227,10 +227,12 @@ void registerMenus(ext::Context& ctx)
     menus::addItem(ctx, {.menu = "Puppeteer", .kind = menus::Kind::Submenu, .label = "Strings"});
     for (const char* a : {"puppeteer.strings.forward", "puppeteer.strings.backward", "puppeteer.strings.ik", "puppeteer.strings.fullBody",
                           "", "puppeteer.strings.lineOfAction", "", "puppeteer.strings.contacts", "puppeteer.strings.onLayer", "puppeteer.strings.stretch", "puppeteer.strings.zero", "puppeteer.strings.restoreLengths",
-                          "puppeteer.strings.overshoot", "puppeteer.strings.smooth", "puppeteer.strings.fill", "puppeteer.strings.trail", "",
+                          "puppeteer.strings.overshoot", "puppeteer.strings.smooth", "puppeteer.strings.fill", "puppeteer.strings.retime", "puppeteer.strings.trail", "",
                           "puppeteer.strings.glue", "puppeteer.strings.attach", "puppeteer.strings.unglue"})
         menus::addItem(ctx, *a ? menus::Item{.menu = "Puppeteer/Strings", .action = a}
                                : menus::Item{.menu = "Puppeteer/Strings", .kind = menus::Kind::Separator});
+    for (const char* a : {"puppeteer.strings.smooth", "puppeteer.strings.fill", "puppeteer.strings.retime"})
+        menus::addItem(ctx, {.menu = menus::kTimeSliderRange, .action = a});
 }
 
 void registerShelf(ext::Context& ctx)

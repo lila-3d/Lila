@@ -7,6 +7,7 @@
 #include <lila/Prefs.h>
 #include <lila/Curves.h>
 #include <lila/Ghosts.h>
+#include <lila/OptionBox.h>
 #include <lila/SplineChain.h>
 #include <lila/Strings.h>
 #include <lila/UI.h>
@@ -1837,6 +1838,162 @@ json stringsFill(const Args& a)
     return {{"filled", filled}, {"between", keys.size() - 1}};
 }
 
+/**
+ * A time-warp curve over a range: the fraction of the range each output fraction takes its pose from, monotone from
+ * (0, 0) to (1, 1). warp points pass through a monotone cubic (Fritsch-Carlson); without them easeIn and easeOut set the
+ * slopes at the ends, 1 holding the motion still there and -1 running it at double speed.
+ */
+std::function<double(double)> warpOf(const Args& a)
+{
+    std::vector<glm::dvec2> pts{{0.0, 0.0}};
+    if (a.has("warp"))
+        for (const json& p : a.flags["warp"])
+        {
+            if (!p.is_array() || p.size() != 2)
+                throw CommandError("stringsRetime: warp is a list of [x, y] pairs, fractions of the range");
+            const glm::dvec2 v(p[0].get<double>(), p[1].get<double>());
+            if (v.x <= 0.0 || v.x >= 1.0)
+                continue;
+            if (v.x <= pts.back().x || v.y < pts.back().y || v.y > 1.0)
+                throw CommandError("stringsRetime: warp points rise from (0, 0) to (1, 1), x increasing, y never falling");
+            pts.push_back(v);
+        }
+    pts.push_back({1.0, 1.0});
+    std::vector<double> m(pts.size());
+    if (pts.size() == 2)
+    {
+        m[0] = 1.0 - std::clamp(a.get<double>("easeIn", 0.0), -1.0, 1.0);
+        m[1] = 1.0 - std::clamp(a.get<double>("easeOut", 0.0), -1.0, 1.0);
+    }
+    else
+    {
+        std::vector<double> d(pts.size() - 1);
+        for (size_t i = 0; i < d.size(); ++i)
+            d[i] = (pts[i + 1].y - pts[i].y) / (pts[i + 1].x - pts[i].x);
+        m.front() = d.front();
+        m.back() = d.back();
+        for (size_t i = 1; i + 1 < pts.size(); ++i)
+            m[i] = d[i - 1] * d[i] <= 0.0 ? 0.0 : (d[i - 1] + d[i]) * 0.5;
+        for (size_t i = 0; i < d.size(); ++i)
+        {
+            if (d[i] == 0.0)
+            {
+                m[i] = m[i + 1] = 0.0;
+                continue;
+            }
+            const double al = m[i] / d[i], be = m[i + 1] / d[i];
+            if (const double h = al * al + be * be; h > 9.0)
+            {
+                const double k = 3.0 / std::sqrt(h);
+                m[i] = k * al * d[i];
+                m[i + 1] = k * be * d[i];
+            }
+        }
+    }
+    return [pts, m](double x) {
+        x = std::clamp(x, 0.0, 1.0);
+        size_t i = 0;
+        while (i + 2 < pts.size() && x > pts[i + 1].x)
+            ++i;
+        const double h = pts[i + 1].x - pts[i].x, t = (x - pts[i].x) / h;
+        const double t2 = t * t, t3 = t2 * t;
+        return std::clamp((2 * t3 - 3 * t2 + 1) * pts[i].y + (t3 - 2 * t2 + t) * h * m[i] + (-2 * t3 + 3 * t2) * pts[i + 1].y +
+                              (t3 - t2) * h * m[i + 1],
+                          0.0, 1.0);
+    };
+}
+
+/**
+ * Retime in place: every frame of the range takes the pose from the time the warp maps it to, sampled from the motion as
+ * it is (keys or dense frames alike) and keyed on every frame. The range's ends keep their poses and the frames outside
+ * it keep theirs: where the curves are sparse, the frames out to the neighbouring keys are keyed at what they showed.
+ */
+json stringsRetime(const Args& a)
+{
+    Graph& g = graph();
+    const std::vector<NodeId> picked = poseJoints(g, a, "stringsRetime");
+    const auto [start, end] = rangeArg(a, "stringsRetime");
+    if (lila::scene::anim::frameOf(end) - lila::scene::anim::frameOf(start) < 2.0 - 1e-6)
+        throw CommandError("stringsRetime: the range needs three frames or more");
+    const std::function<double(double)> warp = warpOf(a);
+    std::vector<std::pair<NodeId, int>> plugs;
+    for (NodeId j : picked)
+    {
+        std::vector<int> attrs;
+        for (const lila::scene::anim::AnimatedPlug& p : lila::scene::anim::animatedPlugs(g, j))
+            if ((p.plug.attr == Transform::kTranslate || p.plug.attr == Transform::kRotate || p.plug.attr == Transform::kScale) &&
+                std::find(attrs.begin(), attrs.end(), p.plug.attr) == attrs.end())
+                attrs.push_back(p.plug.attr);
+        for (int attr : attrs)
+            plugs.push_back({j, attr});
+    }
+    if (plugs.empty())
+        throw CommandError("stringsRetime: nothing given is animated");
+    std::vector<NodeId> animated;
+    for (const auto& [j, attr] : plugs)
+        animated.push_back(j);
+    const std::vector<double> keys = lila::scene::anim::keyTimes(g, animated);
+    std::vector<double> edges;
+    {
+        const auto before = std::find_if(keys.rbegin(), keys.rend(), [&](double k) { return k < start - 1e-6; });
+        const auto after = std::find_if(keys.begin(), keys.end(), [&](double k) { return k > end + 1e-6; });
+        if (before != keys.rend())
+            for (double t : framesOf(*before, start))
+                if (t > *before + 1e-6 && t < start - 1e-6)
+                    edges.push_back(t);
+        if (after != keys.end())
+            for (double t : framesOf(end, *after))
+                if (t > end + 1e-6 && t < *after - 1e-6)
+                    edges.push_back(t);
+    }
+    auto nameOf = [](int attr) { return attr == Transform::kTranslate ? "translate" : attr == Transform::kRotate ? "rotate" : "scale"; };
+
+    // Everything is sampled before anything is keyed: a key set early would change the frames sampled after it.
+    struct Sample
+    {
+        double t;
+        std::vector<glm::dvec3> values;
+    };
+    std::vector<Sample> samples;
+    const double now = g.time();
+    auto sampleAt = [&](double src, double t) {
+        g.setTime(src, false);
+        g.evaluate();
+        Sample s{t, {}};
+        for (const auto& [j, attr] : plugs)
+            s.values.push_back(vecOf(g, j, attr));
+        samples.push_back(std::move(s));
+    };
+    const std::vector<double> frames = framesOf(start, end);
+    auto sourceOf = [&](double t) { return start + warp((t - start) / (end - start)) * (end - start); };
+    for (double t : frames)
+        sampleAt(sourceOf(t), t);
+    for (double t : edges)
+        sampleAt(t, t);
+    g.setTime(now, false);
+    g.evaluate();
+
+    const bool autoKeyWas = lila::scene::anim::autoKey();
+    lila::scene::anim::setAutoKey(false);
+    try
+    {
+        for (const Sample& s : samples)
+            for (size_t i = 0; i < plugs.size(); ++i)
+                keyVec(g.node(plugs[i].first)->path(), nameOf(plugs[i].second), s.values[i], s.t);
+    }
+    catch (...)
+    {
+        lila::scene::anim::setAutoKey(autoKeyWas);
+        throw;
+    }
+    lila::scene::anim::setAutoKey(autoKeyWas);
+    g.evaluate();
+    json map = json::array();
+    for (double t : frames)
+        map.push_back(json::array({lila::scene::anim::frameOf(t), lila::scene::anim::frameOf(sourceOf(t))}));
+    return {{"frames", frames.size()}, {"kept", edges.size()}, {"map", map}};
+}
+
 json stringsPose(const Args& a)
 {
     Graph& g = graph();
@@ -1978,6 +2135,14 @@ void registerActions(ext::Context& ctx)
                        .doc = "Key inbetweens between the keys in the time slider's range: rotations on arcs, feet in world.",
                        .command = "stringsFill",
                        .icon = "timeline"});
+    actions::add(ctx, {.id = "puppeteer.strings.retime",
+                       .label = "Retime Range",
+                       .category = cat,
+                       .doc = "Retime the motion inside the time slider's range along a time-warp curve: ease into it, out of it, or "
+                              "both, on every frame. The frames outside the range don't change.",
+                       .command = "stringsRetime",
+                       .icon = "clock-play",
+                       .keywords = {"time warp", "timewarp", "speed ramp", "retime", "mocap", "dense"}});
     actions::add(ctx, {.id = "puppeteer.strings.glue",
                        .label = "Glue",
                        .category = cat,
@@ -2017,6 +2182,7 @@ void registerActions(ext::Context& ctx)
                                                  {{"label", "Overshoot"}, {"action", "puppeteer.strings.overshoot"}},
                                                  {{"label", "Smooth Poses Over Range"}, {"action", "puppeteer.strings.smooth"}},
                                                  {{"label", "Fill Inbetweens"}, {"action", "puppeteer.strings.fill"}},
+                                                 {{"label", "Retime Range"}, {"action", "puppeteer.strings.retime"}},
                                                  {{"label", "Motion Trail"}, {"action", "puppeteer.strings.trail"}},
                                                  {{"label", "Restore Bone Lengths"}, {"action", "puppeteer.strings.restoreLengths"}},
                                                  {{"separator", true}},
@@ -2262,6 +2428,24 @@ void registerStrings(ext::Context& ctx)
         },
         .run = stringsFill,
     });
+    ctx.registerCommand({
+        .name = "stringsRetime",
+        .doc = "Retime in place along a time-warp curve: every frame of the range takes the pose from the time the curve "
+               "maps it to, sampled from the motion as it is (keyed or dense) and keyed on every frame. The range's ends "
+               "and every frame outside it keep their poses. Acts on the time slider's range without one. Returns "
+               "{frames, kept, map}: frames keyed in the range, frames outside keyed to keep their pose, and [frame, "
+               "source frame] pairs.",
+        .positionalDoc = "joints or characters (default the selection)",
+        .flags = {
+            {"range", "r", T::List, nullptr, "[start, end] seconds; default the time slider's range."},
+            {"easeIn", "ei", T::Float, 0.0, "1 eases into the range (the motion starts still), -1 starts at double speed.", {}, {}, -1.0, 1.0},
+            {"easeOut", "eo", T::Float, 0.0, "1 eases out of the range (the motion settles), -1 ends at double speed.", {}, {}, -1.0, 1.0},
+            {"warp", "wp", T::List, nullptr, "[[x, y], ...]: the curve through these points instead, x the fraction of the range and y the "
+                                            "fraction its pose comes from, rising from (0, 0) to (1, 1)."},
+        },
+        .run = stringsRetime,
+    });
+    ops::options::setOverride("stringsRetime", {.order = {"easeIn", "easeOut"}, .hidden = {"range", "warp"}});
     ctx.registerCommand({
         .name = "stringsRestoreLengths",
         .doc = "Put stretched bones back to the length they were bound at, each keeping its direction. Joints that drive no "

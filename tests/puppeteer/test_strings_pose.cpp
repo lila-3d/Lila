@@ -8,6 +8,7 @@
 #include "ui/Actions.h"
 #include "ui/Gizmo.h"
 #include "ui/MarkingMenu.h"
+#include "ui/Menus.h"
 #include "ui/Overlay.h"
 #include "render/FrameState.h"
 
@@ -1012,4 +1013,77 @@ TEST_CASE("spinner: a range drag previews on the ghosts while dragging and keys 
     run("timeRange", {{"clear", true}});
     run("ghosting", {{"enable", false}});
     ui::actions::run("puppeteer.spinner.rotate");
+}
+
+TEST_CASE("stringsRetime: dense motion resampled along the warp, the ends and every frame outside identical")
+{
+    loadPuppeteer();
+    stringsBiped();
+    run("playbackOptions", {{"fps", 30.0}});
+    // Dense motion: the hips keyed on every frame, rising 1 cm a frame.
+    for (int f = 0; f <= 40; ++f)
+    {
+        run("currentTime", {{"args", {sec(f)}}});
+        run("move", {{"args", {"hips"}}, {"to", v3(0, 100 + f, 0)}});
+        run("setKeyframe", {{"args", {"hips"}}});
+    }
+    std::map<int, glm::dvec3> before;
+    for (int f = 0; f <= 40; ++f)
+    {
+        run("currentTime", {{"args", {sec(f)}}});
+        before[f] = pos("hips");
+    }
+    const json r = run("stringsRetime", {{"args", {"hero"}}, {"range", {sec(10), sec(30)}}, {"easeIn", 1.0}, {"easeOut", 1.0}});
+    CHECK(r["frames"].get<int>() == 21);
+    CHECK(r["kept"].get<int>() == 0);
+    for (int f = 0; f <= 40; ++f)
+    {
+        run("currentTime", {{"args", {sec(f)}}});
+        CAPTURE(f);
+        if (f <= 10 || f >= 30)
+            CHECK(near(pos("hips"), before[f], 1e-9));
+    }
+    // Eased both ends: slow near the ends, the middle frame where it was (symmetric), faster through it.
+    auto y = [&](int f) {
+        run("currentTime", {{"args", {sec(f)}}});
+        return pos("hips").y;
+    };
+    CHECK(y(11) - y(10) < 0.5);
+    CHECK(y(20) == doctest::Approx(before[20].y).epsilon(1e-6));
+    CHECK(y(21) - y(20) > 1.2);
+    CHECK(y(30) - y(29) < 0.5);
+    run("undo");
+    CHECK(y(11) == doctest::Approx(before[11].y));
+
+    // Warp points: the first half of the range plays the first quarter of the motion.
+    run("stringsRetime", {{"args", {"hips"}}, {"range", {sec(10), sec(30)}}, {"warp", {{0.5, 0.25}}}});
+    CHECK(y(20) == doctest::Approx(before[15].y).epsilon(1e-6));
+    CHECK_THROWS(run("stringsRetime", {{"args", {"hips"}}, {"range", {sec(10), sec(30)}}, {"warp", {{0.5, 0.6}, {0.6, 0.4}}}}));
+}
+
+TEST_CASE("stringsRetime on sparse keys: the frames out to the neighbouring keys keep their pose")
+{
+    loadPuppeteer();
+    keyedBiped();
+    std::map<int, glm::dvec3> before;
+    for (int f = 0; f <= 40; ++f)
+    {
+        run("currentTime", {{"args", {sec(f)}}});
+        before[f] = pos("hips");
+    }
+    const json r = run("stringsRetime", {{"args", {"hips"}}, {"range", {sec(14), sec(26)}}, {"easeIn", 0.5}});
+    CHECK(r["kept"].get<int>() == 6);
+    for (int f = 0; f <= 40; ++f)
+    {
+        if (f > 14 && f < 26)
+            continue;
+        run("currentTime", {{"args", {sec(f)}}});
+        CAPTURE(f);
+        CHECK(near(pos("hips"), before[f], 1e-6));
+    }
+    // The range shows in the time slider's menu with a range selected.
+    bool listed = false;
+    for (const ui::menus::Item* item : ui::menus::itemsIn(ui::menus::kTimeSliderRange))
+        listed = listed || item->action == "puppeteer.strings.retime";
+    CHECK(listed);
 }
