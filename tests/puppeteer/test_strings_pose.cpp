@@ -818,3 +818,18 @@ TEST_CASE("spinner IK drag: the wheel sets how many bones bend, shown in the rea
     CHECK(run("stringsPose", {{"args", {"hand_l"}}, {"mode", "ik"}, {"by", v3(0, 5, 0)}, {"chainLength", 3}})["chain"].size() == 3);
     ui::actions::run("puppeteer.spinner.rotate");
 }
+
+TEST_CASE("stringsZero relativeTo: the spine zeroes and the head keeps its place; forward says it zeroed backward")
+{
+    loadPuppeteer();
+    stringsBiped();
+    run("rotate", {{"args", {"spine_01"}}, {"to", v3(0, 0, 20)}});
+    run("rotate", {{"args", {"spine_02"}}, {"to", v3(0, 0, 15)}});
+    const glm::dvec3 head = pos("head");
+    const json r = run("stringsZero", {{"args", {"spine_01", "spine_02"}}, {"mode", "forward"}, {"relativeTo", {"head"}}});
+    REQUIRE(r.size() == 2);
+    CHECK(r[0].contains("fallback"));
+    CHECK(near(pos("head"), head, 1e-3));
+    const json rot = run("getAttr", {{"args", {"spine_02.rotate"}}});
+    CHECK(std::abs(rot[2].get<double>()) < 1e-3);
+}

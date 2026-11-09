@@ -179,6 +179,20 @@ void registerStringsUi(ext::Context& ctx)
                            },
                        .doc = "The character's contacts and limbs go back to what its rig template or rig elements say.",
                        .icon = "restore"});
+    actions::add(ctx, {.id = "puppeteer.strings.zeroRelative",
+                       .label = "Zero Relative to Last",
+                       .category = "Puppeteer Strings",
+                       .run =
+                           [] {
+                               const auto [joints, character] = selectedJoints();
+                               if (joints.size() < 2)
+                                   return log::write(LogLevel::Warning, "Zero Relative to Last: select the joints to zero, then the one to zero relative to");
+                               const std::vector<std::string> zeroed(joints.begin(), joints.end() - 1);
+                               runCommand("stringsZero", {{"args", zeroed}, {"relativeTo", {joints.back()}}});
+                           },
+                       .doc = "Zero the selected joints' rotations while the last selected keeps its place in the world.",
+                       .icon = "circle-dashed",
+                       .keywords = {"reset", "relative", "zero"}});
     attributeEditor::addSection(ctx, kCharacterType, "Strings", [](NodeId id) { return rulesSection(id); });
 }
 } // namespace puppeteer

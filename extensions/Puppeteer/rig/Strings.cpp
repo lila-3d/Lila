@@ -572,13 +572,35 @@ std::vector<NodeId> characterJoints(Graph& g, const Args& a, const char* command
 json stringsZero(const Args& a)
 {
     Graph& g = graph();
-    const strings::Mode mode = modeArg(a, "stringsZero");
+    strings::Mode mode = modeArg(a, "stringsZero");
     PoseInput in{.rotation = glm::dquat(1.0, 0.0, 0.0, 0.0), .holds = a.get<bool>("holds", true), .stretch = std::max(1.0, a.get<double>("stretch", 1.0))};
+    // Relative zero: what it is relative to holds still in the world while the rest zeroes around it.
+    std::vector<NodeId> relative;
+    if (a.has("relativeTo"))
+        for (const json& n : a.flags["relativeTo"])
+            relative.push_back(jointNamed(g, n.get<std::string>(), "stringsZero").id());
+    std::string fallback;
+    if (!relative.empty())
+    {
+        in.anchors = relative;
+        in.holds = true;
+        if (mode == strings::Mode::Forward)
+        {
+            mode = strings::Mode::Backward;
+            fallback = "forward moves nothing to keep what it is relative to still; zeroed backward";
+            log::write(LogLevel::Info, "stringsZero: " + fallback);
+        }
+    }
     json out = json::array();
     for (NodeId j : characterJoints(g, a, "stringsZero"))
     {
+        if (std::find(relative.begin(), relative.end(), j) != relative.end())
+            continue;
         g.evaluate();
-        out.push_back(poseJoint(g, j, mode, in));
+        json r = poseJoint(g, j, mode, in);
+        if (!fallback.empty())
+            r["fallback"] = fallback;
+        out.push_back(r);
     }
     return out;
 }
@@ -1814,6 +1836,7 @@ void registerActions(ext::Context& ctx)
                        {"SW", {{"label", "Attach to Last"}, {"action", "puppeteer.strings.attach"}}},
                        {"overflow", json::array({{{"label", "Contacts Hold"}, {"action", "puppeteer.strings.contacts"}},
                                                  {{"label", "Zero Pose"}, {"action", "puppeteer.strings.zero"}},
+                                                 {{"label", "Zero Relative to Last"}, {"action", "puppeteer.strings.zeroRelative"}},
                                                  {{"label", "Line of Action"}, {"action", "puppeteer.strings.lineOfAction"}},
                                                  {{"label", "Overshoot"}, {"action", "puppeteer.strings.overshoot"}},
                                                  {{"label", "Smooth Poses Over Range"}, {"action", "puppeteer.strings.smooth"}},
@@ -1934,13 +1957,15 @@ void registerStrings(ext::Context& ctx)
     ctx.registerCommand({
         .name = "stringsZero",
         .doc = "Zero joints' rotations in a Strings mode: forward zeroes them as they are, backward keeps what is pinned below "
-               "still and swings the body, and so on. Parents first. Returns what each pose did.",
+               "still and swings the body, and so on. relativeTo zeroes relative to other joints, which stay where they are. "
+               "Parents first. Returns what each pose did.",
         .positionalDoc = "joints (default the selection)",
         .flags = {
             {"mode", "m", T::String, nullptr, "forward, backward, ik or fullBody; default the current Strings mode.",
              {"forward", "backward", "ik", "fullBody"}},
             {"holds", "h", T::Bool, true, "False ignores pins and locks."},
             {"stretch", "st", T::Float, 1.0, "Above 1 lets bones lengthen up to this multiple."},
+            {"relativeTo", "rt", T::List, nullptr, "Joints that keep their place in the world while the others zero (relative zero)."},
         },
         .run = stringsZero,
     });
