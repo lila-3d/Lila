@@ -2372,6 +2372,29 @@ Extracted buildPatchMesh(const Layout& lay, const std::vector<uint8_t>& blocked,
                     ids.push_back(sidePoint(side, c));
             }
             ok = b.corners.size() >= 3;
+            // Four sides, one collapsed, leaving a triangle whose longest side is as long as the other two together, by
+            // count and on the lattice: a strip with a corner partway along one side. Filled as a triangle its two poles land
+            // on one point, so it is filled as a rectangle with its fourth corner on the long side.
+            if (b.corners.size() == 3 && shape.sides.size() == 4)
+            {
+                int cnt[3];
+                double lat[3] = {};
+                for (int k = 0; k < 3; ++k)
+                    cnt[k] = (k + 1 < 3 ? b.corners[k + 1] : int(ids.size())) - b.corners[k];
+                for (int k = 0; const Side& side : shape.sides)
+                    if (sideCount(side) != 0 && k < 3)
+                        lat[k++] = latticeLength(side);
+                for (int m = 0; m < 3; ++m)
+                {
+                    const int i = (m + 1) % 3, j = (m + 2) % 3;
+                    if (cnt[i] > 0 && cnt[j] > 0 && cnt[m] == cnt[i] + cnt[j] && lat[m] >= 0.93 * (lat[i] + lat[j]) && lat[m] <= 1.02 * (lat[i] + lat[j]))
+                    {
+                        b.corners.push_back(b.corners[m] + cnt[i]);
+                        std::sort(b.corners.begin(), b.corners.end());
+                        break;
+                    }
+                }
+            }
             for (Index id : ids)
                 b.points.push_back(ex.mesh.position(id));
             if (!ok)
