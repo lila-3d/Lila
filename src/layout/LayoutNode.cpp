@@ -672,8 +672,8 @@ void registerCommands()
     ops::registerCommand({
         .name = "panelLineMaterials",
         .doc = "Make the Unreal side of panel line decal strips through LilaLink: MF_LilaPanelLine (the groove drawn from the strip's "
-               "UVs, for your own materials) and M_LilaPanelLine (masked) and M_LilaPanelLineTranslucent built on it. Assign one to "
-               "the PanelLineDecal material slot. Returns the asset paths.",
+               "UVs, for your own materials) and M_LilaPanelLine (masked) and M_LilaPanelLineTranslucent built on it. Meshes sent "
+               "afterwards get M_LilaPanelLine on their LilaPanelLine slot. Returns the asset paths.",
         .flags = {{"regenerate", "", T::Bool, false, "Rebuild them even when they are up to date."}},
         .undoable = false,
         .run = [](const Args& a) -> json {

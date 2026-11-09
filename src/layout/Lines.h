@@ -38,12 +38,12 @@ LILA_SCENE_API size_t cutRun(geo::Mesh& mesh, const geo::Mesh& original, const g
 /** Moves every point of the mesh in along its normal by the depth of the grooves the masked outputs make there. */
 LILA_SCENE_API void displace(const Resolved& resolved, geo::Mesh& mesh, uint32_t outputMask);
 
-/** Material slot decal strips use, for the decal material in the engine. */
-inline constexpr const char* kDecalMaterial = "PanelLineDecal";
+/** Material slot decal strips use; LilaLink fills it with M_LilaPanelLine. */
+inline constexpr const char* kDecalMaterial = "LilaPanelLine";
 
 /**
  * Strips along every Decal line: its width, lifted just off the surface, U along the line in widths and V across, on the
- * PanelLineDecal material slot, for a mesh decal in the engine.
+ * LilaPanelLine material slot, which LilaLink gives M_LilaPanelLine once that is built.
  */
 LILA_SCENE_API geo::Mesh decalStrips(const Resolved& resolved);
 

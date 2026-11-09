@@ -1846,7 +1846,7 @@ void registerLayoutPencil()
                   .label = "Unreal Panel Line Materials",
                   .category = "Mesh",
                   .doc = "Make MF_LilaPanelLine and the masked and translucent panel line materials in Unreal over LilaLink, for the "
-                         "PanelLineDecal slot of Decal lines.",
+                         "LilaPanelLine slot of Decal lines.",
                   .python = ops::toPython("panelLineMaterials", json::object()),
                   .command = "panelLineMaterials",
                   .call = json::object(),
