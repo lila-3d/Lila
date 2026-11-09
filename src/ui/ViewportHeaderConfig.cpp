@@ -100,10 +100,11 @@ json defaultConfig()
 {
     return {
         {"left",
-         {"componentMode", "shading", kSeparator, "symmetry", "softSelect", kSeparator, "selectionMasks", kSeparator,
+         {"componentMode", "shading", kSeparator, "symmetry", "softSelect", kSeparator, "selectionMasks",
+          {{"action", "viewport.toggleHighlightSelection"}}, {{"action", "viewport.togglePreselectObjects"}}, kSeparator,
           {{"menu", "Display"}, {"icon", "adjustments-horizontal"}, {"items",
-            {"viewport.wireOnShaded", "viewport.defaultMaterial", "viewport.greyBaseColor", kSeparator, "viewport.toggleHighlightSelection",
-             "viewport.togglePreselectObjects", "viewport.togglePreselectComponents", kSeparator, "jointSize"}}}}},
+            {"viewport.wireOnShaded", "viewport.defaultMaterial", "viewport.greyBaseColor", kSeparator,
+             "viewport.togglePreselectComponents", kSeparator, "jointSize"}}}}},
         {"right",
          {"snap", "overlays", "camera", kSeparator, {{"action", "viewport.isolate"}}, {{"action", "viewport.toggleImagePlanes"}}, kSeparator,
           {{"action", "view.presenter"}}, {{"action", "viewport.frameSelected"}},
