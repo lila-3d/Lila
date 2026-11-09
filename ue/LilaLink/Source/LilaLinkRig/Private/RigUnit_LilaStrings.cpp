@@ -29,6 +29,7 @@ struct FRuleWeb
 	TArray<FName> Parents;
 	TArray<bool> Solve;
 	TArray<double> Stiffness;
+	TArray<FLimit> Limits;
 	TArray<FName> Contacts;
 	TArray<TArray<FName>> Chains;
 	double LengthScale = 0.0;
@@ -43,6 +44,31 @@ TArray<FName> ReadNames(const TArray<TSharedPtr<FJsonValue>>& Values)
 		Out.Add(FName(*V->AsString()));
 	}
 	return Out;
+}
+
+FVector ReadVector3(const TSharedPtr<FJsonObject>& Obj, const TCHAR* Field, const FVector& Fallback)
+{
+	const TArray<TSharedPtr<FJsonValue>>* V = nullptr;
+	return Obj->TryGetArrayField(Field, V) && V->Num() == 3 ? FVector((*V)[0]->AsNumber(), (*V)[1]->AsNumber(), (*V)[2]->AsNumber()) : Fallback;
+}
+
+/** A bone's limit as stringsRuleWeb writes it, already in Unreal's local-rotation space. */
+FLimit ReadLimit(const TSharedPtr<FJsonObject>& Obj)
+{
+	FLimit L;
+	const FString Kind = Obj->GetStringField(TEXT("kind"));
+	L.Kind = Kind == TEXT("hinge") ? FLimit::EKind::Hinge : Kind == TEXT("cone") ? FLimit::EKind::Cone : FLimit::EKind::None;
+	L.Axis = ReadVector3(Obj, TEXT("axis"), FVector::ZAxisVector);
+	L.BoneDir = ReadVector3(Obj, TEXT("bone"), FVector::XAxisVector);
+	Obj->TryGetNumberField(TEXT("min"), L.Min);
+	Obj->TryGetNumberField(TEXT("max"), L.Max);
+	Obj->TryGetNumberField(TEXT("cone"), L.Cone);
+	const TArray<TSharedPtr<FJsonValue>>* Post = nullptr;
+	if (Obj->TryGetArrayField(TEXT("post"), Post) && Post->Num() == 4)
+	{
+		L.Post = FQuat((*Post)[0]->AsNumber(), (*Post)[1]->AsNumber(), (*Post)[2]->AsNumber(), (*Post)[3]->AsNumber()).GetNormalized();
+	}
+	return L;
 }
 
 TSharedPtr<FRuleWeb> Parse(const FString& Text)
@@ -60,6 +86,8 @@ TSharedPtr<FRuleWeb> Parse(const FString& Text)
 	Web->Hips = FName(*Root->GetStringField(TEXT("hips")));
 	const TSharedPtr<FJsonObject>* Stiff = nullptr;
 	Root->TryGetObjectField(TEXT("stiffness"), Stiff);
+	const TSharedPtr<FJsonObject>* LimitsOf = nullptr;
+	Root->TryGetObjectField(TEXT("limits"), LimitsOf);
 	const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
 	if (Root->TryGetArrayField(TEXT("bones"), Values))
 	{
@@ -79,6 +107,8 @@ TSharedPtr<FRuleWeb> Parse(const FString& Text)
 			Web->Parents.Add(ParentName.IsEmpty() ? NAME_None : FName(*ParentName));
 			Web->Solve.Add(bSolve);
 			Web->Stiffness.Add(Stiffness);
+			const TSharedPtr<FJsonObject>* Limit = nullptr;
+			Web->Limits.Add(LimitsOf && (*LimitsOf)->TryGetObjectField(Name, Limit) ? ReadLimit(*Limit) : FLimit());
 		}
 	}
 	if (Root->TryGetArrayField(TEXT("contacts"), Values))
@@ -144,6 +174,7 @@ bool ProblemOf(URigHierarchy* H, const FRuleWeb& W, FProblem& Out, FRules& Rules
 		B.Rotation = B.Reference = Local.GetRotation().GetNormalized();
 		B.bSolve = W.Solve[I];
 		B.Stiffness = W.Stiffness[I];
+		B.Limit = W.Limits[I];
 		Index.Add(W.Bones[I], I);
 		Lo = Lo.ComponentMin(Global.GetLocation());
 		Hi = Hi.ComponentMax(Global.GetLocation());

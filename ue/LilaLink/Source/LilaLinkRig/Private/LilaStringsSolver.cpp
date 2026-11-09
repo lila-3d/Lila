@@ -20,6 +20,52 @@ PRAGMA_DEFAULT_VISIBILITY_END
 
 namespace LilaStrings
 {
+FQuat ClampRotation(const FLimit& L, const FQuat& R)
+{
+	// The limit is on S = R * Post^-1, the part of the local rotation Lila's rotate becomes.
+	FQuat S = R * L.Post.Inverse();
+	if (S.W < 0.0)
+	{
+		S = FQuat(-S.X, -S.Y, -S.Z, -S.W);
+	}
+	const FVector V(S.X, S.Y, S.Z);
+	switch (L.Kind)
+	{
+	case FLimit::EKind::Hinge:
+	{
+		const FVector A = L.Axis.SizeSquared() > 1e-24 ? L.Axis.GetUnsafeNormal() : FVector::ZAxisVector;
+		const double Angle = 2.0 * FMath::Atan2(FVector::DotProduct(V, A), S.W);
+		return FQuat(A, FMath::Clamp(Angle, FMath::Min(L.Min, L.Max), FMath::Max(L.Min, L.Max))) * L.Post;
+	}
+	case FLimit::EKind::Cone:
+	{
+		const FVector B = L.BoneDir.SizeSquared() > 1e-24 ? L.BoneDir.GetUnsafeNormal() : FVector::XAxisVector;
+		// S = swing * twist, the twist about the bone: only the swing moves where the bone points.
+		const double Along = FVector::DotProduct(V, B);
+		FQuat Twist = FQuat::Identity;
+		if (FMath::Abs(Along) + FMath::Abs(S.W) > 1e-12)
+		{
+			Twist = FQuat(B.X * Along, B.Y * Along, B.Z * Along, S.W).GetNormalized();
+		}
+		FQuat Swing = S * Twist.Inverse();
+		if (Swing.W < 0.0)
+		{
+			Swing = FQuat(-Swing.X, -Swing.Y, -Swing.Z, -Swing.W);
+		}
+		const double Cone = FMath::Max(L.Cone, 0.0);
+		const FVector Axis(Swing.X, Swing.Y, Swing.Z);
+		if (2.0 * FMath::Acos(FMath::Clamp(Swing.W, -1.0, 1.0)) <= Cone || Axis.SizeSquared() < 1e-24)
+		{
+			return R;
+		}
+		return FQuat(Axis.GetUnsafeNormal(), Cone) * Twist * L.Post;
+	}
+	case FLimit::EKind::None:
+		break;
+	}
+	return R;
+}
+
 namespace
 {
 /** The largest turn a joint takes in one iteration, radians. */
@@ -412,6 +458,10 @@ FSolution SolveFrom(const FProblem& P, FSolution Out, const bool bStretching)
 					W *= MaxStep / A;
 				}
 				TrialRot[I] = (FromRotationVector(F.Frame[I].GetTransposed().TransformVector(W)) * Out.Rotation[I]).GetNormalized();
+				if (P.Bones[I].Limit.Kind != FLimit::EKind::None)
+				{
+					TrialRot[I] = ClampRotation(P.Bones[I].Limit, TrialRot[I]).GetNormalized();
+				}
 			}
 			if (MoveCol[I] >= 0)
 			{

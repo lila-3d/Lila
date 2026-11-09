@@ -4,6 +4,7 @@
 #include "Puppeteer.h"
 #include "rig/Rig.h"
 
+#include <lila/Math.h>
 #include <lila/Prefs.h>
 #include <lila/Curves.h>
 #include <lila/Ghosts.h>
@@ -726,9 +727,51 @@ json stringsRules(const Args& a)
     return rulesJson(rulesOf(g, character));
 }
 
+/** Lila space to Unreal space as a 3x3 map on vectors (left-handed, so its determinant is -1). */
+glm::dmat3 unrealBasis()
+{
+    glm::dmat3 b(0.0);
+    for (int c = 0; c < 3; ++c)
+    {
+        lila::math::Vector e(c == 0 ? 1.0 : 0.0, c == 1 ? 1.0 : 0.0, c == 2 ? 1.0 : 0.0);
+        const lila::math::Vector u = lila::math::toUnreal(e);
+        b[c] = glm::dvec3(u.x, u.y, u.z);
+    }
+    return b;
+}
+
+/**
+ * A joint limit as Unreal's Rig Units clamp it. Unreal holds a bone's whole local rotation, Lila's frame * rotate * post
+ * carried into Unreal space; there it is S * K with K the constant (frame * post) part and S rotate turned by the
+ * frame, so the limit's axis and bone direction go through the frame and the basis, and its angles stay.
+ */
+json unrealLimit(const ik::JointLimit& l)
+{
+    const glm::dmat3 b = unrealBasis();
+    const glm::dmat3 frame = b * glm::mat3_cast(l.frame);
+    const double handed = glm::determinant(b) < 0.0 ? -1.0 : 1.0;
+    const glm::dmat3 k = b * glm::mat3_cast(l.frame * l.post) * glm::inverse(b);
+    const glm::dquat kq = glm::normalize(glm::quat_cast(k));
+    auto vec = [](const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); };
+    json out = {{"kind", l.kind == ik::JointLimit::Kind::Hinge ? "hinge" : "cone"}, {"post", {kq.x, kq.y, kq.z, kq.w}}};
+    if (l.kind == ik::JointLimit::Kind::Hinge)
+    {
+        out["axis"] = vec(glm::normalize(frame * l.axis) * handed);
+        out["min"] = l.minAngle;
+        out["max"] = l.maxAngle;
+    }
+    else
+    {
+        out["bone"] = vec(glm::normalize(frame * l.bone));
+        out["cone"] = l.cone;
+    }
+    return out;
+}
+
 /**
  * The rule web as plain data for Unreal: bone names as the skeleton has them (the joints' names), the hips, contacts,
- * limbs, lines of action and each bone's full-body stiffness. Nothing positional: the Rig Units read the skeleton itself.
+ * limbs, lines of action, each bone's full-body stiffness and joint limits (in Unreal's local-rotation space). Nothing
+ * positional: the Rig Units read the skeleton itself.
  */
 json ruleWeb(Graph& g, NodeId character)
 {
@@ -738,7 +781,7 @@ json ruleWeb(Graph& g, NodeId character)
     const CharacterRules r = rulesOf(g, character);
     // The bones exactly as Strings solves them, parents first, so Unreal builds the same problem.
     const strings::Skeleton k = strings::snapshot(g, root, stiffnessOf(g, character, fullBodyJoints(g, root)));
-    json bones = json::array(), stiffness = json::object();
+    json bones = json::array(), stiffness = json::object(), limits = json::object();
     for (size_t i = 0; i < k.joints.size(); ++i)
     {
         const fbik::Bone& b = k.problem.bones[i];
@@ -749,6 +792,8 @@ json ruleWeb(Graph& g, NodeId character)
         bones.push_back(std::move(bone));
         if (b.stiffness != 0.0)
             stiffness[name] = b.stiffness;
+        if (b.limit.kind != ik::JointLimit::Kind::None)
+            limits[name] = unrealLimit(b.limit);
     }
     return {{"version", 1},
             {"character", g.node(character)->name()},
@@ -759,6 +804,7 @@ json ruleWeb(Graph& g, NodeId character)
             {"chains", r.chains},
             {"lines", r.lines},
             {"stiffness", stiffness},
+            {"limits", limits},
             {"lengthScale", k.problem.lengthScale}};
 }
 

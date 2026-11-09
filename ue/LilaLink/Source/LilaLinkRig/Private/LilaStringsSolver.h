@@ -8,6 +8,29 @@
  */
 namespace LilaStrings
 {
+/**
+ * How far a bone may turn, as Lila's ik::JointLimit (src/scene/IkSolver.h) carried into Unreal: R is S * Post, and the
+ * limit is on S, a hinge about Axis within [Min, Max] or a cone of half-angle Cone about where BoneDir points.
+ */
+struct FLimit
+{
+	enum class EKind
+	{
+		None,
+		Hinge,
+		Cone,
+	};
+	EKind Kind = EKind::None;
+	FVector Axis = FVector::ZAxisVector;
+	double Min = -UE_DOUBLE_PI, Max = UE_DOUBLE_PI;
+	FVector BoneDir = FVector::XAxisVector;
+	double Cone = UE_DOUBLE_PI;
+	FQuat Post = FQuat::Identity;
+};
+
+/** R moved to the nearest rotation the limit allows (Lila's ik::clampRotate on S). */
+FQuat ClampRotation(const FLimit& Limit, const FQuat& R);
+
 /** One joint of the solve. Bones are ordered parents first; a bone's local is Before * R * After. */
 struct FBone
 {
@@ -26,6 +49,7 @@ struct FBone
 	bool bTranslate = false;
 	FVector Offset = FVector::ZeroVector;
 	double MaxStretch = 1.0;
+	FLimit Limit;
 };
 
 struct FEffector
