@@ -50,6 +50,9 @@ lila::scene::strings::Mode stringsMode();
 void setStringsMode(lila::scene::strings::Mode m);
 /** How far drags may stretch bones: 1 with Stretch off. */
 double stringsStretch();
+/** The additive layer drags across a time range key onto: StringsEdits while that option is on, else empty (the base). */
+std::string stringsLayer();
+inline constexpr const char* kStringsLayer = "StringsEdits";
 /** Whether node is glued or attached to anything. */
 bool stringsRelated(lila::scene::NodeId node);
 /** Each glue or attach set's members, for drawing; attach sets lead with their last. */

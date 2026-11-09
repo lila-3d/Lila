@@ -295,6 +295,8 @@ private:
         {
             call["range"] = {sel.start, sel.end};
             call["falloff"] = sel.falloff;
+            if (const std::string layer = stringsLayer(); !layer.empty())
+                call["layer"] = layer;
         }
         runCommand("lineOfAction", call);
     }

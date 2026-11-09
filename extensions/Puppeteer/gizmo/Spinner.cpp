@@ -1704,6 +1704,8 @@ private:
             {
                 call["range"] = json::array({range.start, range.end});
                 call["falloff"] = range.falloff;
+                if (const std::string layer = stringsLayer(); !layer.empty())
+                    call["layer"] = layer;
             }
             runCommand(name, call);
             return;

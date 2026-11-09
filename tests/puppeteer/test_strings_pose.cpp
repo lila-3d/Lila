@@ -857,3 +857,32 @@ TEST_CASE("stringsBreakdown parts and favour: an arm held at its own weight, ext
     const double fore = run("getAttr", {{"args", {"lowerarm_l.rotate"}}})[2].get<double>();
     CHECK(fore < spine - 1.0);
 }
+
+#include "scene/AnimLayer.h"
+
+TEST_CASE("stringsPose across a range onto a layer: the base keeps its keys, the layer's weight takes the edit away")
+{
+    loadPuppeteer();
+    keyedBiped();
+    std::map<int, glm::dvec3> hips;
+    for (int f : {10, 20, 30})
+    {
+        run("currentTime", {{"args", {sec(f)}}});
+        hips[f] = pos("hips");
+    }
+    run("currentTime", {{"args", {sec(20)}}});
+    run("stringsPose", {{"args", {"hips"}}, {"mode", "forward"}, {"by", v3(0, 0, 8)}, {"range", {sec(10), sec(30)}}, {"layer", "StringsEdit"}});
+    CHECK(anim::activeLayer(graph()) == kNoNode);
+    for (int f : {10, 20, 30})
+    {
+        run("currentTime", {{"args", {sec(f)}}});
+        CAPTURE(f);
+        CHECK(near(pos("hips"), hips[f] + glm::dvec3(0, 0, 8), 1e-3));
+    }
+    run("setAttr", {{"args", {"StringsEdit.weight", 0.0}}});
+    for (int f : {10, 20, 30})
+    {
+        run("currentTime", {{"args", {sec(f)}}});
+        CHECK(near(pos("hips"), hips[f], 1e-3));
+    }
+}

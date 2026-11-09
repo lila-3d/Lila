@@ -46,6 +46,12 @@ bool& stretchRef()
     return on;
 }
 
+bool& onLayerRef()
+{
+    static bool on = PrefStore::get().value<bool>(kPrefs, "/strings/onLayer", false);
+    return on;
+}
+
 bool& contactsRef()
 {
     static bool on = PrefStore::get().value<bool>(kPrefs, kContactsPref, true);
@@ -737,6 +743,41 @@ glm::dmat3 spaceAt(Graph& g, NodeId grabbed, const std::string& space)
 }
 
 /**
+ * While one lives, keys go to the additive layer named (made when missing) instead of the base animation, so an edit can
+ * be reviewed, weighted or dropped; the layer that was active comes back after. An empty name leaves keys where they go.
+ */
+struct LayerScope
+{
+    std::string was;
+
+    explicit LayerScope(Graph& g, const std::string& name)
+    {
+        if (name.empty())
+            return;
+        const NodeId active = lila::scene::anim::activeLayer(g);
+        was = active ? g.node(active)->name() : std::string(lila::scene::anim::kBaseLayerName);
+        Node* n = g.find(name);
+        if (!n || !n->type().isA("animLayer"))
+            ops::execute("createAnimLayer", {{"name", name}, {"empty", true}});
+        ops::execute("setActiveAnimLayer", {{"args", {name}}});
+    }
+    ~LayerScope()
+    {
+        if (!was.empty())
+            try
+            {
+                ops::execute("setActiveAnimLayer", {{"args", {was}}});
+            }
+            catch (const std::exception& e)
+            {
+                log::write(LogLevel::Warning, std::string("strings: could not make ") + was + " active again: " + e.what());
+            }
+    }
+    LayerScope(const LayerScope&) = delete;
+    LayerScope& operator=(const LayerScope&) = delete;
+};
+
+/**
  * The same pose at every frame of a set, each solved on that frame's own pose so holds and contacts keep per frame, and
  * keyed there. Relative offsets each frame by the drag (in space), scaled by the falloff weight; absolute brings each
  * frame to where the drag put the joint now.
@@ -901,6 +942,7 @@ json poseAcrossFrames(Graph& g, const std::vector<NodeId>& nodes, const Args& a,
         }
     }
     finish();
+    LayerScope onLayer(g, a.get<std::string>("layer", ""));
     for (const Solved& f : solved)
         for (const auto& [plug, v] : f.values)
         {
@@ -964,8 +1006,9 @@ struct FrameKeys
         }
         frames.push_back({t, std::move(values)});
     }
-    void key()
+    void key(const std::string& layer = {})
     {
+        LayerScope onLayer(g, layer);
         lila::scene::anim::setAutoKey(autoKeyWas);
         g.setTime(now, false);
         for (const auto& [t, values] : frames)
@@ -1108,7 +1151,7 @@ json stringsSmooth(const Args& a)
         all.erase(std::unique(all.begin(), all.end()), all.end());
         keys.record(t, all);
     }
-    keys.key();
+    keys.key(a.get<std::string>("layer", ""));
     return {{"frames", frames.size()}, {"joints", joints.size()}};
 }
 
@@ -1595,7 +1638,7 @@ json lineOfAction(const Args& a)
         keys.record(t, touched);
         frames.push_back({{"time", t}, {"weight", w}, {"error", r.error}});
     }
-    keys.key();
+    keys.key(a.get<std::string>("layer", ""));
     out["frames"] = frames;
     return out;
 }
@@ -1708,7 +1751,7 @@ json stringsFill(const Args& a)
             ++filled;
         }
     }
-    out.key();
+    out.key(a.get<std::string>("layer", ""));
     return {{"filled", filled}, {"between", keys.size() - 1}};
 }
 
@@ -1797,6 +1840,19 @@ void registerActions(ext::Context& ctx)
                        .doc = "Let bones lengthen, up to half again, when turning alone can't reach.",
                        .checked = [] { return stretchRef(); },
                        .icon = "arrows-diagonal"});
+    actions::add(ctx, {.id = "puppeteer.strings.onLayer",
+                       .label = "Range Edits on a Layer",
+                       .category = cat,
+                       .run =
+                           [] {
+                               onLayerRef() = !onLayerRef();
+                               PrefStore::get().set(kPrefs, "/strings/onLayer", onLayerRef());
+                           },
+                       .doc = "Drags across a time range key onto the additive layer " + std::string(kStringsLayer) +
+                              " instead of the base animation, to review, weight or drop.",
+                       .checked = [] { return onLayerRef(); },
+                       .icon = "stack-2",
+                       .keywords = {"additive", "anim layer", "non-destructive"}});
 
     actions::add(ctx, {.id = "puppeteer.strings.contacts",
                        .label = "Contacts Hold",
@@ -1872,6 +1928,7 @@ void registerActions(ext::Context& ctx)
                        {"NW", {{"label", "Glue"}, {"action", "puppeteer.strings.glue"}}},
                        {"SW", {{"label", "Attach to Last"}, {"action", "puppeteer.strings.attach"}}},
                        {"overflow", json::array({{{"label", "Contacts Hold"}, {"action", "puppeteer.strings.contacts"}},
+                                                 {{"label", "Range Edits on a Layer"}, {"action", "puppeteer.strings.onLayer"}},
                                                  {{"label", "Zero Pose"}, {"action", "puppeteer.strings.zero"}},
                                                  {{"label", "Zero Relative to Last"}, {"action", "puppeteer.strings.zeroRelative"}},
                                                  {{"label", "Line of Action"}, {"action", "puppeteer.strings.lineOfAction"}},
@@ -1895,6 +1952,8 @@ void setStringsMode(strings::Mode m)
 }
 
 double stringsStretch() { return stretchRef() ? kStretchLimit : 1.0; }
+
+std::string stringsLayer() { return onLayerRef() ? kStringsLayer : std::string(); }
 
 bool stringsRelated(NodeId node) { return related(graph(), node); }
 
@@ -1958,6 +2017,7 @@ void registerStrings(ext::Context& ctx)
                "Backward kept still, and any fallback.",
         .positionalDoc = "joints (default the selection)",
         .flags = {
+            {"layer", "ly", T::String, nullptr, "Key the edit onto this additive animation layer (made if missing) instead of the base."},
             {"mode", "m", T::String, nullptr, "forward, backward, ik or fullBody; default the current Strings mode.",
              {"forward", "backward", "ik", "fullBody"}},
             {"by", "by", T::Vec3, nullptr, "World offset, cm."},
@@ -2030,6 +2090,7 @@ void registerStrings(ext::Context& ctx)
                "Returns the line, its joints and the error.",
         .positionalDoc = "character or one of its joints (default the selection)",
         .flags = {
+            {"layer", "ly", T::String, nullptr, "Key the edit onto this additive animation layer (made if missing) instead of the base."},
             {"stroke", "st", T::List, nullptr, "World points along the stroke, [[x, y, z], ...]."},
             {"line", "l", T::String, nullptr, "A line of action the character's rules name (body, a limb); default the one nearest the stroke."},
             {"joints", "j", T::List, nullptr, "[top joint, end joint] instead of a named line."},
@@ -2050,6 +2111,7 @@ void registerStrings(ext::Context& ctx)
                "frame in the range. Acts on the time slider's range without one.",
         .positionalDoc = "joints or characters (default the selection)",
         .flags = {
+            {"layer", "ly", T::String, nullptr, "Key the edit onto this additive animation layer (made if missing) instead of the base."},
             {"range", "r", T::List, nullptr, "[start, end] seconds; default the time slider's range."},
             {"strength", "s", T::Float, 0.5, "0 leaves the poses, 1 takes the average.", {}, {}, 0.0, 1.0},
             {"radius", "rad", T::Int, 2, "Frames either side averaged.", {}, {}, 1.0, 30.0},
@@ -2108,6 +2170,7 @@ void registerStrings(ext::Context& ctx)
                "range without one.",
         .positionalDoc = "joints or a character (default the selection)",
         .flags = {
+            {"layer", "ly", T::String, nullptr, "Key the edit onto this additive animation layer (made if missing) instead of the base."},
             {"range", "r", T::List, nullptr, "[start, end] seconds; default the time slider's range."},
             {"step", "st", T::Int, 1, "1 every frame, 2 on twos, 3 on threes.", {}, {}, 1.0, 4.0},
             {"spacing", "sp", T::String, "easeInOut", "How the inbetweens are spaced.", {"linear", "easeIn", "easeOut", "easeInOut"}},
