@@ -385,3 +385,90 @@ TEST_CASE("softNet multi-mesh: a garment over the body follows the same lines")
     CHECK(std::abs(b.y - s.y) < 0.15);
     CHECK(std::abs(s.y) > 2.0);
 }
+
+TEST_CASE("softNetLimbStations: rings round a limb and rails along it, crossing at junctions a net binds")
+{
+    scene::Graph::current().clear();
+    UndoStack::get().clear();
+    const std::string limb = softnettest::run("polyCylinder", {{"name", "Arm"}, {"radius", 5.0}, {"height", 40.0}, {"subdivisionsAxis", 32}, {"subdivisionsHeight", 40}})[0];
+    const json rootMade = softnettest::run("joint", {{"position", {0.0, -18.0, 0.0}}, {"name", "upper"}, {"parent", ""}});
+    const std::string root = rootMade.is_array() ? rootMade[0].get<std::string>() : rootMade.get<std::string>();
+    softnettest::run("joint", {{"position", {0.0, 0.0, 0.0}}, {"name", "lower"}, {"parent", root}});
+    softnettest::run("joint", {{"position", {0.0, 18.0, 0.0}}, {"name", "hand"}});
+    const json made = softnettest::run("softNetLimbStations", {{"args", {limb}}, {"spine", root}, {"rings", 4}, {"rails", 4}});
+    MESSAGE(made.dump());
+    CHECK(made["rings"].get<int>() == 4);
+    CHECK(made["rails"].get<int>() == 4);
+    const json net = softnettest::run("softNet", {{"args", {limb}}, {"reach", 6.0}});
+    int junctions = 0;
+    for (const json& k : softnettest::run("softNetKnots", {{"args", {net["knotsGroup"]}}}))
+        junctions += k["degree"].get<int>() >= 3 ? 1 : 0;
+    MESSAGE("knots ", net["knots"].size(), " junctions ", junctions);
+    CHECK(junctions >= 16);
+}
+
+TEST_CASE("Soft Net mouth (Mochi style): a loop with spokes gives one junction per spoke, frames on the surface, and mirrored pairs")
+{
+    namespace sn = deform::softnet;
+    scene::Graph::current().clear();
+    UndoStack::get().clear();
+    const std::string head = softnettest::run("polySphere", {{"name", "Head"}, {"radius", 10.0}, {"subdivisionsAxis", 64}, {"subdivisionsHeight", 48}})[0];
+    const std::string layout = softnettest::run("panelLayout", {{"args", {head}}, {"mirror", "x"}})[0];
+    softnettest::run("panelLayoutLineSet", {{"args", {layout}}, {"set", "Major"}, {"output", "none"}});
+    // The left eye: a loop on the +x side of the face, the mirror making the right one.
+    auto onHead = [](glm::dvec3 d) { return glm::normalize(d) * 10.0; };
+    json eye = json::array();
+    for (int i = 0; i < 48; ++i)
+    {
+        const double a = 2.0 * 3.14159265358979 * i / 48;
+        const glm::dvec3 p = onHead({0.35 + 0.16 * std::cos(a), 0.3 + 0.1 * std::sin(a), 1.0});
+        eye.push_back({p.x, p.y, p.z});
+    }
+    const json spokes = softnettest::run("panelLayoutLoopSpokes", {{"args", {layout}}, {"points", eye}, {"count", 8}, {"length", 1.5}, {"cornerBias", 1.0}});
+    CHECK(spokes["spokes"].get<int>() == 8);
+    const json net = softnettest::run("softNet", {{"args", {head}}, {"reach", 2.0}});
+    const json knots = softnettest::run("softNetKnots", {{"args", {net["knotsGroup"]}}});
+    int junctions = 0, ends = 0, paired = 0;
+    for (const json& k : knots)
+    {
+        junctions += k["degree"].get<int>() == 3 ? 1 : 0;
+        ends += k["degree"].get<int>() == 1 ? 1 : 0;
+        paired += k["partner"].is_null() ? 0 : 1;
+    }
+    MESSAGE("knots ", knots.size(), " junctions ", junctions, " ends ", ends, " paired ", paired);
+    CHECK(junctions == 16);
+    CHECK(ends == 16);
+    CHECK(paired == int(knots.size()));
+    // Every knot's frame: z on the sphere's normal, x across it.
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    for (const json& k : knots)
+    {
+        const glm::dmat4 w = g.find(k["knot"].get<std::string>())->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+        const glm::dvec3 n = glm::normalize(glm::dvec3(w[3]));
+        CHECK(glm::dot(glm::normalize(glm::dvec3(w[2])), n) > 0.99);
+        CHECK(std::abs(glm::dot(glm::dvec3(w[0]), glm::dvec3(w[2]))) < 1e-9);
+    }
+    // Opening the left eye with mirror opens the right alike.
+    const scene::MeshPtr before = softnettest::outMesh(head);
+    std::string top;
+    double best = -1e300;
+    for (const json& k : knots)
+    {
+        const glm::dvec3 p = glm::dvec3(g.find(k["knot"].get<std::string>())->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]);
+        if (p.x > 0 && k["degree"].get<int>() == 3 && p.y > best)
+        {
+            best = p.y;
+            top = k["knot"].get<std::string>();
+        }
+    }
+    REQUIRE(!top.empty());
+    const glm::dvec3 topAt = glm::dvec3(g.find(top)->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]);
+    softnettest::run("softNetPose", {{"args", {top}}, {"translate", {0.0, 0.0, 0.6}}, {"mirror", true}});
+    const scene::MeshPtr after = softnettest::outMesh(head);
+    const glm::dvec3 l = softnettest::moved(*before, *after, softnettest::near(*before, topAt));
+    const glm::dvec3 r = softnettest::moved(*before, *after, softnettest::near(*before, {-topAt.x, topAt.y, topAt.z}));
+    MESSAGE("left lid ", l.x, " ", l.y, " ", l.z, " right lid ", r.x, " ", r.y, " ", r.z);
+    CHECK(glm::length(l) > 0.2);
+    CHECK(glm::length(glm::dvec3(-l.x, l.y, l.z) - r) < 0.02 * glm::length(l) + 1e-3);
+}

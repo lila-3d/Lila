@@ -227,14 +227,18 @@ void registerSoftNetPoseCommands()
                "line ends), its partner across the mirror and its tangent handles. showAll shows or hides the knots inside lines. "
                "Returns [{knot, junction, degree, exposed, partner, tangents}].",
         .positionalDoc = "net (its knots group, a knot, the deformer or a mesh it binds)",
-        .flags = {{"showAll", "sa", T::Bool, nullptr, "Show every knot (true) or junctions and line ends only (false)."}},
+        .flags = {{"showAll", "sa", T::Bool, nullptr, "Show every knot (true) or junctions and line ends only (false)."},
+                  {"toggleShowAll", "ts", T::Bool, false, "Flip showAll."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             if (a.objects().empty())
                 throw CommandError("softNetKnots: give a Soft Net");
             const NodeId hub = hubArg(g, a.objects().front(), "softNetKnots");
+            const int showAll = g.node(hub)->type().attrIndex("showAllKnots");
             if (a.has("showAll"))
-                g.setValue({hub, g.node(hub)->type().attrIndex("showAllKnots"), -1}, a.get<bool>("showAll"));
+                g.setValue({hub, showAll, -1}, a.get<bool>("showAll"));
+            else if (a.get<bool>("toggleShowAll"))
+                g.setValue({hub, showAll, -1}, !g.node(hub)->as<bool>(showAll));
             const NetView v = viewOf(g, hub);
             json out = json::array();
             for (size_t k = 0; k < v.knots.size(); ++k)

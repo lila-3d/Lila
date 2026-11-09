@@ -246,7 +246,7 @@ void MainWindow::buildMenus()
                        "rig.bindSkinHeatmap", "rig.unbindSkin", "rig.goToBindPose", "rig.editSkeleton", "#Weights", "rig.paintWeights", "rig.mirrorSkinWeights",
                        "rig.copySkinWeights", "rig.normalizeWeights", "rig.pruneWeights", "rig.relaxWeights", "rig.settleWeights", "rig.settleWeightsSimulate", "rig.selectAutomaticWeights", "rig.acceptWeights", "#Constraints", "rig.parentConstraint", "rig.pointConstraint",
                        "rig.orientConstraint", "rig.aimConstraint", "rig.removeConstraint", "rig.pin", "rig.bakePin", "#Curve Controls", "curve.controls",
-                       "curve.removeControls", "#IK", "rig.ikHandle", "#Bend Bones", "rig.bendBones", "rig.splineChain", "rig.hoseLimb", "rig.hoseFingers", "rig.bendBoneCV", "rig.mirrorBoneCVs", "rig.bakeBendBones", "#Soft Net", "rig.softNet", "#Display", "rig.xrayJoints", "rig.showIkLimits",
+                       "curve.removeControls", "#IK", "rig.ikHandle", "#Bend Bones", "rig.bendBones", "rig.splineChain", "rig.hoseLimb", "rig.hoseFingers", "rig.bendBoneCV", "rig.mirrorBoneCVs", "rig.bakeBendBones", "#Soft Net", "rig.softNet", "rig.softNetLimbStations", "rig.softNetRebind", "rig.mirrorSoftNetKnots", "rig.softNetShowAllKnots", "#Display", "rig.xrayJoints", "rig.showIkLimits",
                        "rig.dominantInfluenceSelect"});
     addSubmenu("Rig", "Weight Proxy");
     menus::addActions("Rig/Weight Proxy", {"rig.createWeightProxy", "rig.pushProxyWeights", "rig.pullProxyWeights"});

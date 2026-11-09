@@ -501,6 +501,14 @@ void registerRigActions()
                          "every junction gets a knot control to move, turn or scale.",
                   .python = "softNet()",
                   .keywords = {"curvenet", "curve net", "profile curves", "face rig", "shaping", "knot", "surface curves"}});
+    add("rig.softNetRebind", "Rebind Soft Net", [] { command("softNetRebind"); }, "softNetRebind()",
+        "Binds the selected Soft Net again after its Panel Layout changed, keeping knot controls and their keys on the junctions that remain.");
+    add("rig.mirrorSoftNetKnots", "Mirror Soft Net Knots", [] { command("mirrorSoftNetKnots"); }, "mirrorSoftNetKnots()",
+        "Copies the selected Soft Net knots' poses to their partners across the mirror; on a whole net, the + side over the - side.");
+    add("rig.softNetShowAllKnots", "Show All Soft Net Knots", [] { command("softNetKnots", {{"toggleShowAll", true}}); }, "softNetKnots(toggleShowAll=True)",
+        "Shows or hides the selected Soft Net's knots inside lines; junctions and line ends always show.");
+    add("rig.softNetLimbStations", "Soft Net Limb Stations", [] { command("softNetLimbStations"); }, "softNetLimbStations()",
+        "Lays rings and rails for a Soft Net round the selected mesh's limb, along the selected curve or joint chain (select the mesh, then the chain).");
     actions::add({.id = "rig.editSkeleton", .label = "Edit Skeleton", .category = "Rig", .run = [] { command("editSkeleton"); },
                   .doc = "Toggles skeleton editing: the skinned skeleton goes to bind pose so joints can be moved and reoriented "
                          "without deforming the mesh; turning it off rebinds and keeps the animation.",

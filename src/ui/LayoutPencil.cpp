@@ -85,6 +85,11 @@ struct PencilSettings
     double smoothRadiusPx = 40.0;
     double smoothStrength = 0.6;
     bool keys = true;
+    /** A closed stroke also gets spokes running out from it (panelLayoutLoopSpokes). */
+    bool spokes = false;
+    int spokeCount = 8;
+    double spokeLength = 0.0;
+    double spokeBias = 1.0;
 
     void load()
     {
@@ -94,6 +99,10 @@ struct PencilSettings
         smoothRadiusPx = prefD("smoothRadiusPx", 40.0);
         smoothStrength = prefD("smoothStrength", 0.6);
         keys = prefB("keys", true);
+        spokes = prefB("spokes", false);
+        spokeCount = std::clamp(int(std::lround(prefD("spokeCount", 8.0))), 3, 64);
+        spokeLength = prefD("spokeLength", 0.0);
+        spokeBias = prefD("spokeBias", 1.0);
         mode = Mode(std::clamp(int(std::lround(prefD("mode", 0.0))), 0, 3));
     }
 };
@@ -431,6 +440,58 @@ public:
             viewportTools::requestRedraw();
         });
         pf->addRow(mKeys);
+        mSpokes = new QCheckBox("Loop Spokes", pencilBox);
+        mSpokes->setObjectName("spokes");
+        mSpokes->setToolTip("Loop Spokes: a stroke that closes on itself also gets spokes running out across the surface, "
+                            "crowded toward its corners. For mouths and eyes under a Soft Net.");
+        connect(mSpokes, &QCheckBox::toggled, this, [this](bool on) {
+            mSpokeBox->setVisible(on);
+            if (mSyncing)
+                return;
+            settings().spokes = on;
+            setPref("spokes", on);
+        });
+        pf->addRow(mSpokes);
+        mSpokeBox = new QWidget(pencilBox);
+        auto* sf = new QFormLayout(mSpokeBox);
+        sf->setContentsMargins(0, 0, 0, 0);
+        sf->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        sf->setVerticalSpacing(4);
+        mSpokeCount = controls::valueField(3.0, 64.0, 0, QString(), mSpokeBox);
+        mSpokeCount->setObjectName("spokeCount");
+        mSpokeCount->setToolTip("Spokes: how many run out from the loop.");
+        setSpinDefault(mSpokeCount, 8.0);
+        connect(mSpokeCount, &QDoubleSpinBox::valueChanged, this, [this](double v) {
+            if (mSyncing)
+                return;
+            settings().spokeCount = int(std::lround(v));
+            setPref("spokeCount", v);
+        });
+        sf->addRow("Spokes", mSpokeCount);
+        mSpokeLength = controls::valueField(0.0, 1e4, 2, "cm", mSpokeBox);
+        mSpokeLength->setObjectName("spokeLength");
+        mSpokeLength->setToolTip("Spoke Length: 0 is 0.6 of the loop's radius.");
+        setSpinDefault(mSpokeLength, 0.0);
+        connect(mSpokeLength, &QDoubleSpinBox::valueChanged, this, [this](double v) {
+            if (mSyncing)
+                return;
+            settings().spokeLength = v;
+            setPref("spokeLength", v);
+        });
+        sf->addRow("Length", mSpokeLength);
+        mSpokeBias = controls::valueField(0.0, 10.0, 2, QString(), mSpokeBox);
+        mSpokeBias->setObjectName("spokeBias");
+        mSpokeBias->setToolTip("Corner Bias: how strongly spokes crowd toward the loop's corners; 0 spaces them evenly.");
+        setSpinDefault(mSpokeBias, 1.0);
+        connect(mSpokeBias, &QDoubleSpinBox::valueChanged, this, [this](double v) {
+            if (mSyncing)
+                return;
+            settings().spokeBias = v;
+            setPref("spokeBias", v);
+        });
+        sf->addRow("Corner Bias", mSpokeBias);
+        pf->addRow(mSpokeBox);
+        mSpokeBox->setVisible(settings().spokes);
         buildPlates(v, kSections);
         buildFasteners(v, kSections);
         buildPatterns(v, kSections);
@@ -804,6 +865,10 @@ public:
         mCleanup->setValue(settings().cleanup);
         mCorner->setValue(settings().cornerAngle);
         mKeys->setChecked(settings().keys);
+        mSpokes->setChecked(settings().spokes);
+        mSpokeCount->setValue(settings().spokeCount);
+        mSpokeLength->setValue(settings().spokeLength);
+        mSpokeBias->setValue(settings().spokeBias);
         if (l)
         {
             mSets->clear();
@@ -943,7 +1008,9 @@ private:
     QDoubleSpinBox *mWidth = nullptr, *mDepth = nullptr, *mCorner = nullptr;
     controls::Segmented* mProfile = nullptr;
     controls::SliderField* mCleanup = nullptr;
-    QCheckBox *mMirror = nullptr, *mKeys = nullptr;
+    QCheckBox *mMirror = nullptr, *mKeys = nullptr, *mSpokes = nullptr;
+    QWidget* mSpokeBox = nullptr;
+    QDoubleSpinBox *mSpokeCount = nullptr, *mSpokeLength = nullptr, *mSpokeBias = nullptr;
     QTimer* mRefresh = nullptr;
     int mGraphListener = 0;
     bool mSyncing = false;
@@ -1521,6 +1588,16 @@ private:
             if (std::string(mode) != "draw" || !mTarget.mesh)
                 return;
             run("panelLayout", {{"args", {mTarget.mesh->path()}}, {"mirror", prefB("mirror", true) ? "x" : "off"}});
+        }
+        // A closed stroke with Loop Spokes on becomes the loop and its spokes.
+        if (std::string(mode) == "draw" && settings().spokes && mStroke.size() > 3 &&
+            glm::length(mStroke.front() - mStroke.back()) < mToleranceLocal() * 3.0)
+        {
+            layoutCall("panelLayoutLoopSpokes", {{"points", pts},
+                                                 {"count", settings().spokeCount},
+                                                 {"length", settings().spokeLength},
+                                                 {"cornerBias", settings().spokeBias}});
+            return;
         }
         json call = {{"points", pts}, {"mode", mode}};
         if (std::string(mode) == "draw")

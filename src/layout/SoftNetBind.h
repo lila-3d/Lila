@@ -14,6 +14,7 @@
 namespace lila::scene
 {
 class Graph;
+class Node;
 }
 
 /** Soft Net internals shared by its command files: the stored bindings and the net's node lookups. */
@@ -56,6 +57,10 @@ LILA_SCENE_API std::vector<scene::NodeId> netDeformers(scene::Graph& g, scene::N
 LILA_SCENE_API std::vector<scene::NodeId> netMeshes(scene::Graph& g, scene::NodeId knotsNode);
 /** The knots group of the net a node belongs to (the group, a knot, a handle, a deformer, or a mesh it deforms), or kNoNode. */
 LILA_SCENE_API scene::NodeId netOf(scene::Graph& g, scene::NodeId node);
+
+/** Draws a closed loop and spokes out from it on a Panel Layout (panelLayoutLoopSpokes, the Layout Pencil's Loop with Spokes). */
+LILA_SCENE_API nlohmann::json loopWithSpokes(scene::Graph& g, scene::Node& layoutNode, const std::vector<glm::dvec3>& loop, int count, double spacing,
+                                             double length, double cornerBias, double tolerance);
 
 void registerSoftNetBindCommands();
 void registerSoftNetPoseCommands();
