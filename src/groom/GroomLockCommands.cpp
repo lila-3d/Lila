@@ -232,12 +232,13 @@ void registerLockCommands()
         .name = "createGroom",
         .doc = "A new groom growing from a scalp mesh: a guide curve (empty, or the curve given, or count guides grown from the "
                "scalp), the groom node and its locks mesh. Draw locks with groomDraw or the Draw Lock tool, style them with "
-               "groomAddStyle. Returns {groom, guides, locks}.",
+               "groomAddStyle. Returns {groom, guides, locks} and, with strands, the strands curve.",
         .positionalDoc = "scalp",
         .flags = withFlags({nodeFlag({"guides", "", T::String, nullptr, "An existing curve to use as the guides."}, "curve"),
                             {"count", "c", T::Int, 0, "Guides to grow straight out of the scalp; 0 starts empty.", {}, {}, 0.0, 100000.0},
                             {"length", "l", T::Float, 10.0, "Length of grown guides, cm.", {}, {}, 0.0},
                             {"symmetry", "sym", T::String, "x", "Mirror the guides across the world plane: off, x, y or z.", {"off", "x", "y", "z"}},
+                            {"strands", "", T::Bool, false, "Also a curve showing the groom's strands, interpolated from its locks."},
                             {"name", "n", T::String, "Hair", "Base name of the new nodes."}},
                            lockFlags()),
         .run = [](const Args& a) -> json {
@@ -302,8 +303,15 @@ void registerLockCommands()
             g.connect({groom->id(), idx(*groom, "outGuides"), -1}, {guides->id(), CurveShape::kCreate, -1});
             Node* locks = g.createNode(*types::find("mesh"), base + "Locks", kNoNode, true);
             g.connect({groom->id(), idx(*groom, "outMesh"), -1}, {locks->id(), MeshNode::kInMesh, -1});
+            json out = {{"groom", groom->path()}, {"guides", guides->path()}, {"locks", locks->path()}};
+            if (a.get<bool>("strands"))
+            {
+                Node* strands = g.createNode(*types::find("curve"), base + "Strands", kNoNode, true);
+                g.connect({groom->id(), idx(*groom, "outStrands"), -1}, {strands->id(), CurveShape::kCreate, -1});
+                out["strands"] = strands->path();
+            }
             g.select({guides->id()});
-            return {{"groom", groom->path()}, {"guides", guides->path()}, {"locks", locks->path()}};
+            return out;
         },
     });
 

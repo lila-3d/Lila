@@ -149,7 +149,7 @@ TEST_CASE("Hair geometry nodes: one per GroomLab operator, the same strands as t
     CHECK(curves.pointAttrs.get<float>("width").size() == curves.numPoints());
 }
 
-TEST_CASE("groomStrands node: grows on the connected scalp, follows its transform and the guides curve")
+TEST_CASE("groom node strands: grows on the connected scalp, follows its transform and the guides curve")
 {
     scene::Graph& g = scene::Graph::current();
     g.clear();
@@ -160,24 +160,25 @@ TEST_CASE("groomStrands node: grows on the connected scalp, follows its transfor
     scene::Node* scalp = g.find(head);
     REQUIRE(scalp);
     scene::Node* guides = curve::helpers::createCurve(g, crownGuides(radius), "Guides");
-    scene::Node* strands = g.createNode(*scene::types::find("groomStrands"), "Strands");
+    scene::Node* strands = g.createNode(*scene::types::find("groom"), "Strands");
     REQUIRE(strands);
     const auto at = [&](const char* a) { return strands->type().attrIndex(a); };
     g.connect({scalp->id(), scene::MeshNode::kOutMesh, -1}, {strands->id(), at("inMesh"), -1});
     g.connect({scalp->id(), scene::Transform::kWorldMatrix, -1}, {strands->id(), at("meshMatrix"), -1});
     g.connect({guides->id(), curve::CurveShape::kWorldSpace, -1}, {strands->id(), at("inCurve"), -1});
+    g.connect({strands->id(), at("outStrands"), -1}, {curve::helpers::createCurve(g, {}, "StrandsView")->id(), curve::CurveShape::kCreate, -1});
     g.setValue({strands->id(), at("graph"), -1}, scatterGraph(2.0));
 
     g.evaluate();
     CHECK(strands->as<std::string>(at("warning")).empty());
     const int64_t count = strands->as<int64_t>(at("strandCount"));
-    checkStrands(curve::splinesOf(strands->value(at("outCurve"))), radius);
+    checkStrands(curve::splinesOf(strands->value(at("outStrands"))), radius);
 
     // Moving the head moves the strands' roots with it.
     curvetest::run("setAttr", {{"args", {head + ".translateX", 50.0}}});
     g.evaluate();
     CHECK(strands->as<int64_t>(at("strandCount")) == count);
-    for (const curve::Spline& s : curve::splinesOf(strands->value(at("outCurve"))))
+    for (const curve::Spline& s : curve::splinesOf(strands->value(at("outStrands"))))
         CHECK(glm::length(s.points.front() - D3(50.0, 0.0, 0.0)) == doctest::Approx(radius).epsilon(0.01));
 
     // The default graph (empty) grows hair too.
@@ -229,11 +230,11 @@ struct StrandsScene
     curve::Splines grown() const
     {
         scene::Graph::current().evaluate();
-        return curve::splinesOf(strands->value(at("outCurve")));
+        return curve::splinesOf(strands->value(at("outStrands")));
     }
 };
 
-/** A head, guides on its crown and a groomStrands node growing the default graph's hair on it. */
+/** A head, guides on its crown and a groom growing the default graph's strands on it, shown by a curve. */
 StrandsScene strandsScene(double radius)
 {
     scene::Graph& g = scene::Graph::current();
@@ -243,15 +244,18 @@ StrandsScene strandsScene(double radius)
     out.head = curvetest::run("polySphere", {{"name", "Head"}, {"radius", radius}, {"subdivisionsAxis", 40}, {"subdivisionsHeight", 30}})[0];
     scene::Node* scalp = g.find(out.head);
     scene::Node* guides = curve::helpers::createCurve(g, crownGuides(radius), "Guides");
-    out.strands = g.createNode(*scene::types::find("groomStrands"), "Strands");
+    out.strands = g.createNode(*scene::types::find("groom"), "Strands");
     g.connect({scalp->id(), scene::MeshNode::kOutMesh, -1}, {out.strands->id(), out.at("inMesh"), -1});
     g.connect({scalp->id(), scene::Transform::kWorldMatrix, -1}, {out.strands->id(), out.at("meshMatrix"), -1});
     g.connect({guides->id(), curve::CurveShape::kWorldSpace, -1}, {out.strands->id(), out.at("inCurve"), -1});
+    // The strands are grown for what reads them: a curve shows them.
+    scene::Node* view = curve::helpers::createCurve(g, {}, "StrandsView");
+    g.connect({out.strands->id(), out.at("outStrands"), -1}, {view->id(), curve::CurveShape::kCreate, -1});
     return out;
 }
 } // namespace
 
-TEST_CASE("groomStrands: sizes scale with the scalp's area against the reference stored on the node")
+TEST_CASE("groom strands: sizes scale with the scalp's area against the reference stored on the node")
 {
     StrandsScene s = strandsScene(10.0);
     scene::Graph& g = scene::Graph::current();
@@ -288,11 +292,11 @@ TEST_CASE("groomStrands: sizes scale with the scalp's area against the reference
     scene::Node* node = opened.find("Strands");
     REQUIRE(node);
     CHECK(node->as<double>(node->type().attrIndex("scaleReference")) == reference);
-    CHECK(bitsOf(curve::splinesOf(node->value(node->type().attrIndex("outCurve")))) == bits);
+    CHECK(bitsOf(curve::splinesOf(node->value(node->type().attrIndex("outStrands")))) == bits);
     std::filesystem::remove(path);
 }
 
-TEST_CASE("groomStrands: the same strands bit for bit on any thread count, evaluated again, and after save and load")
+TEST_CASE("groom strands: the same strands bit for bit on any thread count, evaluated again, and after save and load")
 {
     const double radius = 10.0;
     const curve::Splines first = strandsScene(radius).grown();
@@ -329,7 +333,7 @@ TEST_CASE("groomStrands: the same strands bit for bit on any thread count, evalu
     g.evaluate();
     scene::Node* opened = g.find("Strands");
     REQUIRE(opened);
-    CHECK(bitsOf(curve::splinesOf(opened->value(opened->type().attrIndex("outCurve")))) == bits);
+    CHECK(bitsOf(curve::splinesOf(opened->value(opened->type().attrIndex("outStrands")))) == bits);
     std::filesystem::remove(path);
 }
 
@@ -403,7 +407,22 @@ std::vector<uint64_t> played(const StrandsScene& s, int last)
 }
 } // namespace
 
-TEST_CASE("groomStrands: Wind moves with the scene's time, or holds at the node's own time")
+TEST_CASE("groom cards: a graph's Cards node hands its cards out as a mesh with atlas uvs")
+{
+    StrandsScene s = strandsScene(10.0);
+    scene::Graph& g = scene::Graph::current();
+    g.setValue({s.strands->id(), s.at("graph"), -1}, motionGraph(R"({"name": "motion", "type": "Cards"})"));
+    scene::Node* cards = g.createNode(*scene::types::find("mesh"), "Cards");
+    g.connect({s.strands->id(), s.at("outCards"), -1}, {cards->id(), scene::MeshNode::kInMesh, -1});
+    g.evaluate();
+    const scene::MeshPtr m = cards->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+    REQUIRE(m);
+    CHECK(m->numFaces() > 10);
+    CHECK(m->cornerAttrs().has(geo::attr::uvName(0)));
+    CHECK(m->cornerAttrs().has(geo::attr::uvName(1)));
+}
+
+TEST_CASE("groom strands: Wind moves with the scene's time, or holds at the node's own time")
 {
     StrandsScene s = strandsScene(10.0);
     scene::Graph& g = scene::Graph::current();
@@ -428,7 +447,7 @@ TEST_CASE("groomStrands: Wind moves with the scene's time, or holds at the node'
     CHECK(bitsOf(s.grown()) == atZero);
 }
 
-TEST_CASE("groomStrands: Jiggle reads the scalp's earlier frames, the same bits played, jumped to and on any thread count")
+TEST_CASE("groom strands: Jiggle reads the scalp's earlier frames, the same bits played, jumped to and on any thread count")
 {
     const StrandsScene s = movingScene(motionGraph(kJiggle));
     const std::vector<uint64_t> bits = played(s, 8);
@@ -452,7 +471,7 @@ TEST_CASE("groomStrands: Jiggle reads the scalp's earlier frames, the same bits 
     CHECK(scene::Graph::current().time() == doctest::Approx(scene::anim::secondsOf(8.0)));
 }
 
-TEST_CASE("groomStrands: Simulate steps frame by frame, scrubbing back reads its frames, the same bits on any thread count")
+TEST_CASE("groom strands: Simulate steps frame by frame, scrubbing back reads its frames, the same bits on any thread count")
 {
     const StrandsScene s = movingScene(simulateGraph());
     const std::vector<uint64_t> bits = played(s, 8);

@@ -94,153 +94,6 @@ protected:
     }
 };
 
-/** Guides at least this far apart are the same guide drawn on the mirror plane: no copy is made of it. */
-constexpr double kOnPlane = 1e-4;
-/** Set on the IDs of the guides the groom mirrors across its symmetry plane. */
-constexpr std::uint64_t kMirrorBit = std::uint64_t(1) << 62;
-
-float& component(groomlab::Vec3f& v, int axis)
-{
-    return axis == 0 ? v.x : axis == 1 ? v.y : v.z;
-}
-
-/**
- * The groom: its guides (a GroomLab guide hierarchy, the `hierarchy` JSON) through its graph. Hands out the guides as
- * lock splines (outGuides, what the guides curve shows and the lock tools edit), the locks the Locks node's guides make
- * (outCurve resolved, outMesh swept) and the graph's strands (outStrands); each only when something reads it.
- */
-class GroomNode final : public WarningNode
-{
-public:
-    void compute(const EvalContext& ctx) override
-    {
-        LILA_ZONE();
-        std::vector<std::string> warnings;
-        const LockOptions o = lockOptionsOf(*this);
-        try
-        {
-            const MeshPtr& m = as<MeshPtr>(idx(*this, "inMesh"));
-            const glm::dmat4& matrix = as<glm::dmat4>(idx(*this, "meshMatrix"));
-            if (m != mScalpFrom || matrix != mScalpMatrix)
-            {
-                mScalpFrom = m;
-                mScalpMatrix = matrix;
-                mGroomScalp = m && m->numFaces() > 0 ? groomLabBridge::scalpMesh(*m, matrix) : nullptr;
-            }
-            const std::string& text = s(*this, "hierarchy");
-            if (text != mHierarchyText || !mHierarchy)
-            {
-                mHierarchyText = text;
-                mHierarchy = std::make_shared<groomlab::GuideHierarchy>(text.empty() ? groomlab::GuideHierarchy()
-                                                                                     : groomlab::GuideHierarchy::fromJson(text));
-            }
-            groomlab::GuideHierarchy posed = *mHierarchy;
-            posed.evaluate(mGroomScalp.get());
-            setOutput(idx(*this, "outGuides"), makeCurveData(lockSplines(posed, o)));
-
-            Graph& g = Graph::current();
-            auto read = [&](const char* a) { return !g.destinations({id(), idx(*this, a), -1}).empty(); };
-            const bool locks = read("outMesh") || read("outCurve");
-            const bool strands = read("outStrands");
-            if (!locks && !strands)
-            {
-                report(warnings);
-                return;
-            }
-            if (!mEvaluator)
-                mEvaluator = std::make_unique<GroomEvaluator>();
-            GroomEvaluator& e = *mEvaluator;
-            e.setScaleWithScalp(false);
-            const std::string& graph = s(*this, "graph");
-            e.setGraphJson(graph.empty() ? groomGraph::defaultGraph() : graph);
-            e.setFramesPerSecond(anim::playback().fps);
-            e.setScalp(mGroomScalp);
-            e.setGuides(flatGuides(posed));
-            GroomEvaluator::Request request;
-            request.time = b(*this, "useSceneTime") ? ctx.time : f(*this, "time");
-            if (!strands)
-                request.stopAt = groomGraph::kLocks;
-            const GroomEvaluator::Result& result = e.evaluate(request);
-            for (const std::string& w : result.errors)
-                warnings.push_back(w);
-            if (strands)
-            {
-                if (result.strands != mStrandsFrom || !mStrands)
-                {
-                    mStrands = curve::makeCurveData(groomLabBridge::toSplines(*result.strands));
-                    mStrandsFrom = result.strands;
-                }
-                setOutput(idx(*this, "outStrands"), mStrands);
-                setOutput(idx(*this, "strandCount"), int64_t(result.strands ? result.strands->strandCount() : 0));
-            }
-            if (locks)
-            {
-                const groomlab::GuidesPtr made = groomlab::valueAs<groomlab::GuidesPtr>(e.evaluateNode(groomGraph::kLocks, 1.0f, request.time));
-                Splines curves;
-                if (made)
-                    for (const groomlab::Guide& guide : made->guides())
-                        curves.push_back(lockSplineOf(guide, o));
-                Splines resolved = resolveLocks(curves, mScalp.get(*this), o, &warnings);
-                LockMesh lm = lockMesh(resolved, o);
-                setOutput(idx(*this, "lockCount"), int64_t(lm.locks));
-                setOutput(idx(*this, "outCurve"), makeCurveData(std::move(resolved)));
-                setOutput(idx(*this, "outMesh"), MeshPtr(std::make_shared<geo::Mesh>(std::move(lm.mesh))));
-            }
-        }
-        catch (const std::exception& e)
-        {
-            warnings.push_back(e.what());
-            setOutput(idx(*this, "outMesh"), MeshPtr());
-        }
-        report(warnings);
-    }
-
-private:
-    /** The hierarchy's guides as the graph's flat guides, with their mirror copies when the symmetry is on. */
-    groomlab::GuidesPtr flatGuides(const groomlab::GuideHierarchy& posed) const
-    {
-        auto flat = std::make_shared<groomlab::GuideSet>(posed.flatten());
-        const int axis = int(i(*this, "symmetry")) - 1;
-        if (axis >= 0 && axis < 3)
-        {
-            std::vector<groomlab::Guide> copies;
-            for (const groomlab::Guide& g : flat->guides())
-            {
-                groomlab::Guide c = g;
-                bool onPlane = true;
-                for (groomlab::Vec3f& p : c.points)
-                {
-                    onPlane = onPlane && std::abs(component(p, axis)) < kOnPlane;
-                    component(p, axis) = -component(p, axis);
-                }
-                if (onPlane)
-                    continue;
-                c.id = g.id | kMirrorBit;
-                component(c.frameUp, axis) = -component(c.frameUp, axis);
-                copies.push_back(std::move(c));
-            }
-            for (groomlab::Guide& c : copies)
-            {
-                const std::uint64_t id = c.id;
-                flat->add(id, c.points) = std::move(c);
-            }
-        }
-        if (mGroomScalp && !mGroomScalp->triangles().empty())
-            flat->rootOnMesh(*mGroomScalp);
-        return flat;
-    }
-
-    ScalpCache mScalp;
-    MeshPtr mScalpFrom;
-    glm::dmat4 mScalpMatrix{0.0};
-    std::shared_ptr<const groomlab::ScalpMesh> mGroomScalp;
-    std::string mHierarchyText;
-    std::shared_ptr<const groomlab::GuideHierarchy> mHierarchy;
-    std::unique_ptr<GroomEvaluator> mEvaluator;
-    groomlab::StrandsPtr mStrandsFrom;
-    DataPtr mStrands;
-};
-
 /** The shell: resolved locks into one surface, re-meshing only what a change touched. */
 class ShellNode final : public WarningNode
 {
@@ -420,6 +273,7 @@ void registerTypes()
     t.ownAttrs = {
         {.name = "inMesh", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrHidden, .doc = "The scalp."},
         {.name = "meshMatrix", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = AttrInput | AttrHidden, .doc = "The scalp's world matrix."},
+        {.name = "inCurve", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = kIn | AttrHidden, .doc = "More guides: curves, world space, rooted on the scalp at their first point."},
         {.name = "hierarchy", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrHidden, .doc = "The guides: a GroomLab guide hierarchy as JSON."},
     };
     for (AttrDef d : std::vector<AttrDef>{
@@ -427,6 +281,8 @@ void registerTypes()
              eAttr("symmetry", {"off", "x", "y", "z"}, 1, "Mirrors the guides across the world plane facing this axis.", graphCat),
              bAttr("useSceneTime", true, "The graph runs at the scene's time; off, at Time.", graphCat),
              fAttr("time", 0.0, "Seconds the graph runs at while Use Scene Time is off.", graphCat),
+             bAttr("scaleWithScalp", true, "The graph's lengths, widths and densities scale with the scalp's area against Scale Reference.", graphCat),
+             fAttr("scaleReference", 0.0, "The scalp area the graph's sizes are 1x at; 0 takes the area on the next evaluation.", graphCat),
              fAttr("width", 2.0, "Lock width, cm, times each lock's width and its points' radius.", lock, 0.0),
              fAttr("thickness", 0.35, "Thickness as a fraction of width; 1 is round.", lock, 0.02, 4.0),
              eAttr("profile", profileNames(), int64_t(LockProfile::Ribbon), "Cross-section of every lock without one of its own.", lock),
@@ -452,10 +308,11 @@ void registerTypes()
     t.ownAttrs.push_back(meshOut());
     t.ownAttrs.push_back(dataOut("outCurve", "The resolved locks (curves with their cross-sections), world space."));
     t.ownAttrs.push_back(dataOut("outStrands", "The graph's strands, world space, with a width per point."));
+    t.ownAttrs.push_back({.name = "outCards", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrOutput, .doc = "The graph's Cards nodes' cards as one mesh: uv0 their atlas cells, uv1 a layout of their own."});
     t.ownAttrs.push_back({.name = "lockCount", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = AttrOutput, .doc = "Locks made."});
     t.ownAttrs.push_back({.name = "strandCount", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = AttrOutput, .doc = "Strands grown."});
     t.ownAttrs.push_back(stringOut("warning", "Problems with the last build."));
-    t.create = [] { return std::make_unique<GroomNode>(); };
+    t.create = [] { return makeGroomNode(); };
     types::registerType(std::move(t));
 
     NodeType sh;

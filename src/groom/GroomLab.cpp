@@ -7,14 +7,21 @@
 #include "groom/Attrs.h"
 #include "groom/Groom.h"
 #include "groom/GroomEvaluator.h"
+#include "groom/Locks.h"
+#include "groom/GuideData.h"
+#include "groom/GroomNodes.h"
+#include "groom/GroomGraph.h"
 #include "groom/GroomGnNodes.h"
 #include "groom/LockOps.h"
 #include "groom/GroomLabBridge.h"
+#include "ops/Undo.h"
 #include "scene/Anim.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Simulation.h"
 
+#include <groomlab/cards.h>
+#include <groomlab/guide_hierarchy.h>
 #include <groomlab/guide_set.h>
 #include <groomlab/scalp_history.h>
 #include <groomlab/scalp_mesh.h>
@@ -161,9 +168,7 @@ namespace
 using namespace scene;
 using namespace curve::helpers;
 
-class GroomStrandsNode;
-
-/** The groomStrands nodes computed so far, for the hook that reads their scalps' earlier frames. */
+/** The groom nodes computed so far, for the hook that reads their scalps' earlier frames and feeds their simulations. */
 struct Registry
 {
     std::mutex mutex;
@@ -176,11 +181,60 @@ Registry& registry()
     return r;
 }
 
-/** Strands grown on the scalp by a GroomLab graph, guided by the incoming curves. */
-class GroomStrandsNode final : public Node
+/** Guides at least this close to the mirror plane are the same guide drawn on it: no copy is made of it. */
+constexpr float kOnPlane = 1e-4f;
+/** Set on the IDs of the guides the groom mirrors across its symmetry plane. */
+constexpr std::uint64_t kMirrorBit = std::uint64_t(1) << 62;
+
+float& component(groomlab::Vec3f& v, int axis)
+{
+    return axis == 0 ? v.x : axis == 1 ? v.y : v.z;
+}
+
+/** The scalp as a Lila surface for the lock mesher. */
+std::unique_ptr<Surface> surfaceOf(const geo::Mesh& m, const glm::dmat4& matrix)
+{
+    geo::Mesh out = m;
+    for (geo::Index p = 0; p < out.pointCapacity(); ++p)
+        if (out.pointValid(p))
+            out.setPosition(p, D3(matrix * glm::dvec4(out.position(p), 1.0)));
+    return std::make_unique<Surface>(std::move(out));
+}
+
+/** The Cards nodes' cards as a mesh: quads, uv0 the atlas cell, uv1 the unique world layout. */
+geo::Mesh cardsMesh(const groomlab::CardMesh& c)
+{
+    geo::Mesh m;
+    for (const groomlab::Vec3f& p : c.positions)
+        m.addPoint({p.x, p.y, p.z});
+    for (size_t q = 0; q + 3 < c.quads.size(); q += 4)
+    {
+        const geo::Index v[4] = {geo::Index(c.quads[q]), geo::Index(c.quads[q + 1]), geo::Index(c.quads[q + 2]), geo::Index(c.quads[q + 3])};
+        const geo::Index f = m.addFace(std::span<const geo::Index>(v, 4));
+        if (f == geo::kInvalid)
+            continue;
+        auto uv0 = m.cornerAttrs().getOrAdd<glm::vec2>(geo::attr::uvName(0));
+        auto uv1 = m.cornerAttrs().getOrAdd<glm::vec2>(geo::attr::uvName(1));
+        size_t k = 0;
+        m.forEachFaceCorner(f, [&](geo::Index cn) {
+            const size_t i = v[k++];
+            uv0[cn] = {i < c.u.size() ? c.u[i] : 0.0f, i < c.v.size() ? c.v[i] : 0.0f};
+            uv1[cn] = {i < c.worldU.size() ? c.worldU[i] : 0.0f, i < c.worldV.size() ? c.worldV[i] : 0.0f};
+        });
+    }
+    return m;
+}
+
+/**
+ * The groom: its guides (the stored GroomLab hierarchy, posed on the scalp, plus any curves connected to inCurve)
+ * through its graph. Hands out the hierarchy as lock splines (outGuides, what the guides curve shows and the lock tools
+ * edit), the locks the Locks node's guides make (outCurve resolved, outMesh swept), the graph's strands (outStrands) and
+ * its cards (outCards); each only when something reads it.
+ */
+class GroomNode final : public Node
 {
 public:
-    ~GroomStrandsNode() override
+    ~GroomNode() override
     {
         std::lock_guard lock(registry().mutex);
         registry().nodes.erase(id());
@@ -194,70 +248,124 @@ public:
             std::lock_guard lock(registry().mutex);
             first = registry().nodes.insert(id()).second;
         }
-        using namespace groomLabBridge;
-        const MeshPtr& m = as<MeshPtr>(idx(*this, "inMesh"));
-        const double seconds = b(*this, "useSceneTime") ? ctx.time : f(*this, "time");
-        std::string warning;
-        DataPtr out;
-        int64_t count = 0;
-        if (m && m->numFaces() > 0)
+        std::vector<std::string> warnings;
+        const LockOptions o = lockOptionsOf(*this);
+        mMissedHistory = mMissedFeed = false;
+        mReferenceToStore = 0.0;
+        try
         {
-            try
+            const MeshPtr& m = as<MeshPtr>(idx(*this, "inMesh"));
+            const glm::dmat4& matrix = as<glm::dmat4>(idx(*this, "meshMatrix"));
+            if (m != mScalpFrom || matrix != mScalpMatrix)
             {
-                const glm::dmat4& matrix = as<glm::dmat4>(idx(*this, "meshMatrix"));
-                if (!mEvaluator)
-                    mEvaluator = std::make_unique<GroomEvaluator>();
-                GroomEvaluator& evaluator = *mEvaluator;
-                setGraph(evaluator, s(*this, "graph"));
-                evaluator.setFramesPerSecond(anim::playback().fps);
-                const bool scale = b(*this, "scaleWithScalp");
-                evaluator.setScaleWithScalp(scale);
-                evaluator.setScaleReference(f(*this, "scaleReference"));
-                if (m != mScalpFrom || matrix != mScalpMatrix || !mScalp)
-                {
-                    mScalp = scalpMesh(*m, matrix);
-                    mScalpFrom = m;
-                    mScalpMatrix = matrix;
-                    mGuidesFrom.reset();
-                }
-                evaluator.setScalp(mScalp);
-                const DataPtr& guides = as<DataPtr>(idx(*this, "inCurve"));
-                if (guides != mGuidesFrom || !mGuides)
-                {
-                    const Splines& curves = curve::splinesOf(value(idx(*this, "inCurve")));
-                    mGuides = curves.empty() ? nullptr : guideSet(curves, *mScalp);
-                    mGuidesFrom = guides;
-                }
-                evaluator.setGuides(mGuides);
-                evaluator.setScalpHistory(historyAt(ctx.time));
-                const GroomEvaluator::Result& result = evaluateAt(evaluator, seconds);
-                mMissedHistory = !historyAt(ctx.time) && evaluator.scalpHistoryFrames() > 0;
-                mMissedFeed = first && steppedPast(evaluator);
-                mReferenceToStore = scale && !(f(*this, "scaleReference") > 0.0) ? evaluator.scaleReference() : 0.0;
-                // A frame that grows the same strands (nothing in the graph moves) hands on the same curve data.
-                if (result.strands != mGrownFrom || !mGrown)
-                {
-                    mGrown = curve::makeCurveData(toSplines(*result.strands));
-                    mGrownFrom = result.strands;
-                    mGrownCount = int64_t(result.strands->strandCount());
-                }
-                out = mGrown;
-                count = mGrownCount;
-                for (const std::string& w : warningsOf(evaluator, result))
-                    warning += (warning.empty() ? "" : "; ") + w;
+                mScalpFrom = m;
+                mScalpMatrix = matrix;
+                mScalp = m && m->numFaces() > 0 ? groomLabBridge::scalpMesh(*m, matrix) : nullptr;
+                mSurface.reset();
             }
-            catch (const std::exception& e)
+            const std::string& text = s(*this, "hierarchy");
+            if (text != mHierarchyText || !mHierarchy)
             {
-                warning = e.what();
+                mHierarchyText = text;
+                mHierarchy = std::make_shared<const groomlab::GuideHierarchy>(text.empty() ? groomlab::GuideHierarchy()
+                                                                                           : groomlab::GuideHierarchy::fromJson(text));
+            }
+            groomlab::GuideHierarchy posed = *mHierarchy;
+            posed.evaluate(mScalp.get());
+            setOutput(idx(*this, "outGuides"), makeCurveData(lockSplines(posed, o)));
+
+            Graph& g = Graph::current();
+            auto read = [&](const char* a) { return !g.destinations({id(), idx(*this, a), -1}).empty(); };
+            const bool locks = read("outMesh") || read("outCurve");
+            const bool strands = read("outStrands");
+            const bool cards = read("outCards");
+            if (!locks && !strands && !cards)
+            {
+                report(warnings);
+                return;
+            }
+            if (!mEvaluator)
+                mEvaluator = std::make_unique<GroomEvaluator>();
+            GroomEvaluator& e = *mEvaluator;
+            setGraph(e);
+            e.setFramesPerSecond(anim::playback().fps);
+            const bool scale = b(*this, "scaleWithScalp");
+            e.setScaleWithScalp(scale);
+            e.setScaleReference(f(*this, "scaleReference"));
+            e.setScalp(mScalp);
+            const DataPtr& curves = as<DataPtr>(idx(*this, "inCurve"));
+            if (curves != mCurvesFrom || mGuidesHierarchy != mHierarchy || mGuidesScalp != mScalp || !mGuides)
+            {
+                mGuides = guides(posed, curve::splinesOf(value(idx(*this, "inCurve"))), mScalp.get());
+                mCurvesFrom = curves;
+                mGuidesHierarchy = mHierarchy;
+                mGuidesScalp = mScalp;
+            }
+            e.setGuides(mGuides);
+            e.setScalpHistory(historyAt(ctx.time));
+            GroomEvaluator::Request request;
+            request.time = b(*this, "useSceneTime") ? ctx.time : f(*this, "time");
+            request.wantCards = cards;
+            if (!strands && !cards)
+                request.stopAt = groomGraph::kLocks;
+            const GroomEvaluator::Result& result = e.evaluate(request);
+            for (const std::string& w : result.errors)
+                warnings.push_back(w);
+            for (const auto& [name, note] : e.nodeNotes())
+                warnings.push_back(name + ": " + note);
+            mMissedHistory = !historyAt(ctx.time) && e.scalpHistoryFrames() > 0;
+            mMissedFeed = first && steppedPast(e);
+            mReferenceToStore = scale && !(f(*this, "scaleReference") > 0.0) ? e.scaleReference() : 0.0;
+            if (strands)
+            {
+                if (result.strands != mStrandsFrom || !mStrands)
+                {
+                    mStrands = makeCurveData(result.strands ? groomLabBridge::toSplines(*result.strands) : Splines());
+                    mStrandsFrom = result.strands;
+                }
+                setOutput(idx(*this, "outStrands"), mStrands);
+                setOutput(idx(*this, "strandCount"), int64_t(result.strands ? result.strands->strandCount() : 0));
+            }
+            if (cards)
+            {
+                if (result.cards != mCardsFrom || !mCards)
+                {
+                    mCards = std::make_shared<geo::Mesh>(result.cards ? cardsMesh(*result.cards) : geo::Mesh());
+                    mCardsFrom = result.cards;
+                }
+                setOutput(idx(*this, "outCards"), MeshPtr(mCards));
+            }
+            if (locks)
+            {
+                const groomlab::GuidesPtr made =
+                    groomlab::valueAs<groomlab::GuidesPtr>(e.evaluateNode(groomGraph::kLocks, 1.0f, request.time));
+                Splines lockCurves;
+                if (made)
+                    for (const groomlab::Guide& guide : made->guides())
+                        lockCurves.push_back(lockSplineOf(guide, o));
+                if (!mSurface && m && m->numFaces() > 0)
+                    mSurface = surfaceOf(*m, matrix);
+                Splines resolved = resolveLocks(lockCurves, mSurface.get(), o, &warnings);
+                LockMesh lm = lockMesh(resolved, o);
+                setOutput(idx(*this, "lockCount"), int64_t(lm.locks));
+                setOutput(idx(*this, "outCurve"), makeCurveData(std::move(resolved)));
+                setOutput(idx(*this, "outMesh"), MeshPtr(std::make_shared<geo::Mesh>(std::move(lm.mesh))));
             }
         }
-        if (!out)
-            out = curve::makeCurveData(Splines());
-        if (!warning.empty() && warning != as<std::string>(idx(*this, "warning")))
-            log::warn("{}: {}", name(), warning);
-        setOutput(idx(*this, "strandCount"), count);
-        setOutput(idx(*this, "outCurve"), out);
-        setOutput(idx(*this, "warning"), warning);
+        catch (const std::exception& e)
+        {
+            // Nothing grows from a graph that can't load.
+            warnings.push_back(e.what());
+            setOutput(idx(*this, "outMesh"), MeshPtr());
+            setOutput(idx(*this, "outCards"), MeshPtr());
+            setOutput(idx(*this, "outStrands"), makeCurveData(Splines()));
+            setOutput(idx(*this, "outCurve"), makeCurveData(Splines()));
+            setOutput(idx(*this, "strandCount"), int64_t(0));
+            setOutput(idx(*this, "lockCount"), int64_t(0));
+            mStrands.reset();
+            mStrandsFrom.reset();
+        }
+        report(warnings);
     }
 
     /**
@@ -266,34 +374,19 @@ public:
      */
     bool sampleHistory(Graph& g, double now)
     {
-        if (!mEvaluator)
-            mEvaluator = std::make_unique<GroomEvaluator>();
-        try
-        {
-            mEvaluator->setGraphJson(s(*this, "graph"));
-        }
-        catch (const std::exception&)
-        {
+        if (!prepare())
             return dropHistory();
-        }
         const int frames = mEvaluator->scalpHistoryFrames();
         if (frames <= 0)
             return dropHistory();
-        const std::optional<PlugRef> meshSource = g.source({id(), idx(*this, "inMesh"), -1});
-        if (!meshSource)
+        Sources src = sources(g);
+        if (!src.mesh)
             return dropHistory();
-        const std::optional<PlugRef> matrixSource = g.source({id(), idx(*this, "meshMatrix"), -1});
-        std::vector<NodeId> reads{meshSource->node};
-        if (matrixSource)
-            reads.push_back(matrixSource->node);
         const auto pointsNow = [&]() -> std::vector<groomlab::Vec3f> {
-            g.evaluateUpstream(reads);
-            const Node* source = g.node(meshSource->node);
-            const MeshPtr mesh = source ? source->as<MeshPtr>(meshSource->attr) : MeshPtr();
-            if (!mesh)
-                return {};
-            const Node* matrixNode = matrixSource ? g.node(matrixSource->node) : nullptr;
-            return groomLabBridge::worldPoints(*mesh, matrixNode ? matrixNode->as<glm::dmat4>(matrixSource->attr) : glm::dmat4(1.0));
+            g.evaluateUpstream(src.reads);
+            const Node* source = g.node(src.mesh->node);
+            const MeshPtr mesh = source ? source->as<MeshPtr>(src.mesh->attr) : MeshPtr();
+            return mesh ? groomLabBridge::worldPoints(*mesh, src.matrixAt(g)) : std::vector<groomlab::Vec3f>{};
         };
         const std::vector<groomlab::Vec3f> current = pointsNow();
         if (current.empty())
@@ -339,52 +432,34 @@ public:
      */
     bool feedSimulation(Graph& g, double now)
     {
-        mMissedFeed = false;
-        if (!b(*this, "useSceneTime"))
+        if (!b(*this, "useSceneTime") || !prepare())
             return false;
-        if (!mEvaluator)
-            mEvaluator = std::make_unique<GroomEvaluator>();
-        try
-        {
-            mEvaluator->setGraphJson(s(*this, "graph"));
-        }
-        catch (const std::exception&)
-        {
+        Sources src = sources(g);
+        if (!src.mesh)
             return false;
-        }
-        const std::optional<PlugRef> meshSource = g.source({id(), idx(*this, "inMesh"), -1});
-        if (!meshSource)
-            return false;
-        const std::optional<PlugRef> matrixSource = g.source({id(), idx(*this, "meshMatrix"), -1});
-        const std::optional<PlugRef> guideSource = g.source({id(), idx(*this, "inCurve"), -1});
-        std::vector<NodeId> reads{meshSource->node};
-        if (matrixSource)
-            reads.push_back(matrixSource->node);
-        if (guideSource)
-            reads.push_back(guideSource->node);
-        GroomEvaluator& evaluator = *mEvaluator;
-        evaluator.setFramesPerSecond(anim::playback().fps);
+        GroomEvaluator& e = *mEvaluator;
+        e.setFramesPerSecond(anim::playback().fps);
         bool moved = false;
-        evaluator.setSimulationFeed([&](double seconds) {
+        e.setSimulationFeed([&](double seconds) {
             moved = true;
             g.setTime(seconds, false);
-            g.evaluateUpstream(reads);
-            const Node* source = g.node(meshSource->node);
-            const MeshPtr mesh = source ? source->as<MeshPtr>(meshSource->attr) : MeshPtr();
+            g.evaluateUpstream(src.reads);
+            const Node* source = g.node(src.mesh->node);
+            const MeshPtr mesh = source ? source->as<MeshPtr>(src.mesh->attr) : MeshPtr();
             if (!mesh || mesh->numFaces() == 0)
                 return false;
-            const Node* matrixNode = matrixSource ? g.node(matrixSource->node) : nullptr;
-            const auto scalp =
-                groomLabBridge::scalpMesh(*mesh, matrixNode ? matrixNode->as<glm::dmat4>(matrixSource->attr) : glm::dmat4(1.0));
-            const Node* guideNode = guideSource ? g.node(guideSource->node) : nullptr;
+            const auto scalp = groomLabBridge::scalpMesh(*mesh, src.matrixAt(g));
             static const Splines none;
-            const Splines& curves = guideNode ? curve::splinesOf(guideNode->value(guideSource->attr)) : none;
-            evaluator.setScalp(scalp);
-            evaluator.setGuides(curves.empty() ? nullptr : groomLabBridge::guideSet(curves, *scalp));
+            const Node* curveNode = src.curves ? g.node(src.curves->node) : nullptr;
+            const Splines& curves = curveNode ? curve::splinesOf(curveNode->value(src.curves->attr)) : none;
+            groomlab::GuideHierarchy posed = mHierarchy ? *mHierarchy : groomlab::GuideHierarchy();
+            posed.evaluate(scalp.get());
+            e.setScalp(scalp);
+            e.setGuides(guides(posed, curves, scalp.get()));
             return true;
         });
-        const groomlab::SimRun run = evaluator.simulateBefore(now);
-        evaluator.setSimulationFeed({});
+        const groomlab::SimRun run = e.simulateBefore(now);
+        e.setSimulationFeed({});
         if (moved)
             g.setTime(now, false);
         return run.frames > 0;
@@ -392,11 +467,8 @@ public:
 
     /** The last compute needed the scalp's earlier frames and had none (its first, before the hook knew its graph). */
     bool missedHistory() const { return mMissedHistory; }
-
-    /** The node's first compute stepped its Simulate nodes over earlier frames without the scalp there: they start again
-     * through feedSimulation. */
+    /** The node's first compute stepped its Simulate nodes over earlier frames without the scalp there. */
     bool missedFeed() const { return mMissedFeed; }
-
     /** The area the groom is 1x at, measured on a compute while Scale Reference was 0, for the hook to store (0: none). */
     double referenceToStore() const { return mReferenceToStore; }
 
@@ -407,6 +479,99 @@ public:
     }
 
 private:
+    /** Where the scalp, its matrix and the guide curves come from, for reading them at another time. */
+    struct Sources
+    {
+        std::optional<PlugRef> mesh, matrix, curves;
+        std::vector<NodeId> reads;
+
+        glm::dmat4 matrixAt(Graph& g) const
+        {
+            const Node* n = matrix ? g.node(matrix->node) : nullptr;
+            return n ? n->as<glm::dmat4>(matrix->attr) : glm::dmat4(1.0);
+        }
+    };
+
+    Sources sources(Graph& g) const
+    {
+        Sources out;
+        out.mesh = g.source({id(), idx(*this, "inMesh"), -1});
+        out.matrix = g.source({id(), idx(*this, "meshMatrix"), -1});
+        out.curves = g.source({id(), idx(*this, "inCurve"), -1});
+        for (const auto& p : {out.mesh, out.matrix, out.curves})
+            if (p)
+                out.reads.push_back(p->node);
+        return out;
+    }
+
+    /** The evaluator holds the node's graph; false when it can't load. */
+    bool prepare()
+    {
+        if (!mEvaluator)
+            mEvaluator = std::make_unique<GroomEvaluator>();
+        try
+        {
+            setGraph(*mEvaluator);
+            return true;
+        }
+        catch (const std::exception&)
+        {
+            return false;
+        }
+    }
+
+    void setGraph(GroomEvaluator& e) const
+    {
+        const std::string& graph = s(*this, "graph");
+        groomLabBridge::setGraph(e, graph.empty() ? groomGraph::defaultGraph() : graph);
+    }
+
+    /** The hierarchy's guides with their mirror copies when the symmetry is on, then the connected curves. */
+    groomlab::GuidesPtr guides(const groomlab::GuideHierarchy& posed, const Splines& curves, const groomlab::ScalpMesh* scalp) const
+    {
+        auto flat = std::make_shared<groomlab::GuideSet>(posed.flatten());
+        const int axis = int(i(*this, "symmetry")) - 1;
+        if (axis >= 0 && axis < 3)
+        {
+            std::vector<groomlab::Guide> copies;
+            for (const groomlab::Guide& g : flat->guides())
+            {
+                groomlab::Guide c = g;
+                bool onPlane = true;
+                for (groomlab::Vec3f& p : c.points)
+                {
+                    onPlane = onPlane && std::abs(component(p, axis)) < kOnPlane;
+                    component(p, axis) = -component(p, axis);
+                }
+                if (onPlane)
+                    continue;
+                c.id = g.id | kMirrorBit;
+                component(c.frameUp, axis) = -component(c.frameUp, axis);
+                copies.push_back(std::move(c));
+            }
+            for (groomlab::Guide& c : copies)
+            {
+                const std::uint64_t cid = c.id;
+                flat->add(cid, c.points) = std::move(c);
+            }
+        }
+        std::uint64_t next = 1;
+        for (const groomlab::Guide& g : flat->guides())
+            next = std::max(next, (g.id & ~kMirrorBit) + 1);
+        for (const Spline& sp : curves)
+        {
+            if (sp.size() < 2)
+                continue;
+            std::vector<groomlab::Vec3f> points;
+            for (const D3& p : sp.points)
+                points.push_back(groomLabBridge::toVec(p));
+            flat->add(next++, std::move(points));
+        }
+        if (scalp && !scalp->triangles().empty())
+            flat->rootOnMesh(*scalp);
+        return flat;
+    }
+
     static bool steppedPast(const GroomEvaluator& evaluator)
     {
         for (const groomlab::SimStatus& status : evaluator.simulationStatus())
@@ -425,16 +590,32 @@ private:
         return had;
     }
 
+    void report(const std::vector<std::string>& warnings)
+    {
+        std::string w;
+        for (const std::string& line : warnings)
+            w += (w.empty() ? "" : "; ") + line;
+        if (!w.empty() && w != as<std::string>(idx(*this, "warning")))
+            log::warn("{}: {}", name(), w);
+        setOutput(idx(*this, "warning"), w);
+    }
+
+    MeshPtr mScalpFrom;
+    glm::dmat4 mScalpMatrix{0.0};
+    std::shared_ptr<const groomlab::ScalpMesh> mScalp;
+    std::unique_ptr<Surface> mSurface;
+    std::string mHierarchyText;
+    std::shared_ptr<const groomlab::GuideHierarchy> mHierarchy;
+    DataPtr mCurvesFrom;
+    std::shared_ptr<const groomlab::GuideHierarchy> mGuidesHierarchy;
+    std::shared_ptr<const groomlab::ScalpMesh> mGuidesScalp;
+    groomlab::GuidesPtr mGuides;
     /** Keeps the graph's results between evaluations, so an edit re-runs only the nodes it reaches. */
     std::unique_ptr<GroomEvaluator> mEvaluator;
-    MeshPtr mScalpFrom;
-    glm::dmat4 mScalpMatrix{1.0};
-    std::shared_ptr<const groomlab::ScalpMesh> mScalp;
-    DataPtr mGuidesFrom;
-    std::shared_ptr<const groomlab::GuideSet> mGuides;
-    groomlab::StrandsPtr mGrownFrom;
-    DataPtr mGrown;
-    int64_t mGrownCount = 0;
+    groomlab::StrandsPtr mStrandsFrom;
+    DataPtr mStrands;
+    std::shared_ptr<const groomlab::CardMesh> mCardsFrom;
+    std::shared_ptr<geo::Mesh> mCards;
     groomlab::ScalpHistorySampler mSampler;
     groomlab::ScalpHistoryPtr mHistory;
     double mHistoryAt = 0.0;
@@ -444,9 +625,9 @@ private:
 };
 
 /**
- * Before each evaluation every groomStrands node whose graph reads the scalp's earlier frames gets them and its Simulate
- * nodes step the frames skipped; after it, a node that computed without them (its first compute) gets them and computes
- * again, and a scalp area measured as the scale reference is stored on the node.
+ * Before each evaluation every groom whose graph reads the scalp's earlier frames gets them and its Simulate nodes step
+ * the frames skipped; after it, a groom that computed without them (its first compute) gets them and computes again,
+ * and a scalp area measured as the scale reference is stored on the node.
  */
 void sampleHistories(Graph& g, bool after)
 {
@@ -462,12 +643,17 @@ void sampleHistories(Graph& g, bool after)
     for (NodeId id : ids)
     {
         Node* n = g.node(id);
-        if (!n || n->type().name != "groomStrands")
+        if (!n || n->type().name != "groom")
             continue;
-        auto* node = static_cast<GroomStrandsNode*>(n);
+        auto* node = static_cast<GroomNode*>(n);
         if (after && node->referenceToStore() > 0.0)
         {
+            // Measured, not an edit: no undo step of its own.
+            UndoStack& u = UndoStack::get();
+            const bool was = u.enabled();
+            u.setEnabled(false);
             g.setValue({id, node->type().attrIndex("scaleReference"), -1}, node->referenceToStore());
+            u.setEnabled(was);
             touched = true;
         }
         const bool missedFeed = node->missedFeed();
@@ -488,30 +674,13 @@ void sampleHistories(Graph& g, bool after)
 }
 } // namespace
 
+std::unique_ptr<scene::Node> makeGroomNode()
+{
+    return std::make_unique<GroomNode>();
+}
+
 void registerGroomLabType()
 {
-    NodeType t;
-    t.name = "groomStrands";
-    t.icon = "feather";
-    t.timeDependent = true;
-    t.doc = "Strands grown on the scalp by a groom graph (scatter, interpolate, clump, curl, noise and the rest), guided by "
-            "the incoming curves.";
-    const std::string c = "Strands";
-    t.ownAttrs = {
-        {.name = "inCurve", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = kIn | AttrHidden, .doc = "Guides, world space."},
-        {.name = "inMesh", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrHidden, .doc = "The scalp."},
-        {.name = "meshMatrix", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = AttrInput | AttrHidden, .doc = "The scalp's world matrix."},
-        sAttrDefault("graph", "", "The groom graph as JSON; empty grows the default hair.", c),
-        bAttr("useSceneTime", true, "Wind, Jiggle and Simulate run on the scene's time; off, on Time.", c),
-        fAttr("time", 0.0, "Seconds the graph is evaluated at while Use Scene Time is off.", c),
-        bAttr("scaleWithScalp", true, "Lengths, widths and densities scale with the scalp's area against Scale Reference.", c),
-        fAttr("scaleReference", 0.0, "The scalp area the graph's sizes are 1x at; 0 takes the area on the next evaluation.", c),
-        dataOut("outCurve", "The strands, world space, with a width per point."),
-        {.name = "strandCount", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = AttrOutput, .doc = "Strands grown."},
-        stringOut("warning", "Problems with the last evaluation."),
-    };
-    t.create = [] { return std::make_unique<GroomStrandsNode>(); };
-    types::registerType(std::move(t));
     Graph::addEvaluateHook(sampleHistories);
     registerLockOps();
     registerGroomGnNodes();
