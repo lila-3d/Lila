@@ -1966,7 +1966,12 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         for (const DensityHandle& handle : opts.densityHandles)
             if (std::abs(std::log(std::max(handle.scale, 1e-3))) > std::log(1.3))
                 crosses.push_back(handle.position);
-        Extracted ex = layoutPatches(s, qLayout, scale, double(opts.targetFaces) * (symmetric ? 0.5 : 1.0), &why, crosses);
+        // An edge length asked for sets the count, as it does for the field.
+        const double half = symmetric ? 0.5 : 1.0;
+        const double patchFaces = opts.targetEdgeLength > 0.0
+                                      ? std::max(8.0, s.totalArea() * half / (opts.targetEdgeLength * opts.targetEdgeLength))
+                                      : double(opts.targetFaces) * half;
+        Extracted ex = layoutPatches(s, qLayout, scale, patchFaces, &why, crosses);
         clock.lap("patches");
         if (const char* raw = std::getenv("LILA_PATCH_RAW"); raw && ex.mesh.numFaces() > 0)
             dumpObj(ex.mesh, raw);

@@ -23,6 +23,7 @@
 #include "scene/Rig.h"
 #include "scene/Skin.h"
 #include "scene/SkinPaint.h"
+#include "scene/WeightProxy.h"
 #include "ui/Actions.h"
 #include "ui/Controls.h"
 #include "ui/Icons.h"
@@ -166,6 +167,8 @@ struct PaletteState
     std::shared_ptr<const scene::SkinLayers> layers;
     /** Influences with weight under the brush, for the Under Brush filter. */
     std::unordered_set<uint32_t> underBrush;
+    /** The render meshes when the painted mesh is a weight proxy. */
+    QStringList proxyFor;
 };
 PaletteState paletteState();
 
@@ -332,6 +335,15 @@ public:
                                                   "rig.settleWeightsSimulate", "rig.normalizeWeights", "rig.pruneWeights"},
                                                  optBox));
         opt->addLayout(actionsRow);
+        mProxyRow = new QWidget(optBox);
+        auto* proxyRow = new QHBoxLayout(mProxyRow);
+        proxyRow->setContentsMargins(0, 0, 0, 0);
+        mProxyLabel = new QLabel(mProxyRow);
+        controls::setRole(mProxyLabel, "dim");
+        proxyRow->addWidget(mProxyLabel, 1);
+        proxyRow->addWidget(controls::push("rig.pullProxyWeights", mProxyRow, "Pull"));
+        proxyRow->addWidget(controls::push("rig.pushProxyWeights", mProxyRow, "Push"));
+        opt->addWidget(mProxyRow);
         v->addWidget(controls::section("Options", optBox, this, kSections));
 
         // Layers.
@@ -423,6 +435,9 @@ public:
         mValue->setEnabled(s.brush != Brush::Relax && s.brush != Brush::Settle);
         rebuildTree(st);
         rebuildLayers(st);
+        mProxyRow->setVisible(!st.proxyFor.isEmpty());
+        mProxyLabel->setText("Proxy for " + st.proxyFor.join(", "));
+        mProxyLabel->setToolTip("Painting a weight proxy: Push copies its weights onto these meshes, Pull copies theirs onto it.");
         mUnder = st.underBrush;
         applyFilter();
         mSyncing = false;
@@ -683,6 +698,8 @@ private:
     QDoubleSpinBox* mRadius = nullptr;
     QCheckBox *mStrict = nullptr, *mMirror = nullptr, *mShowAutomatic = nullptr;
     QListWidget* mLayers = nullptr;
+    QWidget* mProxyRow = nullptr;
+    QLabel* mProxyLabel = nullptr;
     brush::ui::StrokeOptions* mStrokeOptions = nullptr;
     std::unordered_set<uint32_t> mUnder;
     bool mSyncing = false;
@@ -708,6 +725,8 @@ class WeightPaintTool final : public ViewportTool, public brush::DabSink
 {
 public:
     const char* name() const override { return "weightPaint"; }
+    // The brush ring and its centre dot are the cursor.
+    std::optional<QCursor> cursor() const override { return QCursor(Qt::BlankCursor); }
 
     void activate() override
     {
@@ -841,6 +860,9 @@ public:
             st.flags = {{"Strict", strict()}};
             if (auto l = scene::skin::layers(g, mSkin))
                 st.fields.push_back({"layer", activeLayerName()});
+            if (const auto targets = scene::weightproxy::targetsOf(g, mMesh); !targets.empty())
+                st.fields.push_back({"proxy for", QString::fromStdString(g.node(targets.front())->name()) +
+                                                      (targets.size() > 1 ? QString(" +%1").arg(targets.size() - 1) : QString())});
         }
         st.keys = {{"Shift", "relax"}, {"Ctrl", "subtract"}};
         st.symmetry = ToolSymmetry{ws.stroke.mirror, QString(QChar('X' + ws.mirrorAxis))};
@@ -882,6 +904,9 @@ public:
         st.maps = mMaps;
         st.layers = mSkin != kNoNode && g.node(mSkin) ? scene::skin::layers(g, mSkin) : nullptr;
         st.underBrush = mUnderBrush;
+        if (mMesh != kNoNode && g.node(mMesh))
+            for (NodeId m : scene::weightproxy::targetsOf(g, mMesh))
+                st.proxyFor << QString::fromStdString(g.node(m)->name());
         return st;
     }
 
@@ -1719,6 +1744,13 @@ void registerWeightPaint()
         "Relaxes the posed mesh toward its rest shape, keeping folds apart, then fits the weights to it.");
     add("rig.flattenWeightLayers", "Flatten Weight Layers", [] { runWeightCommand("flattenSkinLayers"); }, "flattenSkinLayers()",
         "Merges the weight layers into plain weights.");
+    add("rig.createWeightProxy", "Create Weight Proxy", [] { runWeightCommand("createWeightProxy"); }, "createWeightProxy()",
+        "Makes a light, single-sided mesh over the selected meshes to paint weights on, with edge loops at the joints. Push "
+        "its weights back when done.");
+    add("rig.pushProxyWeights", "Push Proxy Weights", [] { runWeightCommand("pushProxyWeights"); }, "pushProxyWeights()",
+        "Copies the weight proxy's weights onto its render meshes.");
+    add("rig.pullProxyWeights", "Pull Proxy Weights", [] { runWeightCommand("pullProxyWeights"); }, "pullProxyWeights()",
+        "Copies the render meshes' weights onto their weight proxy.");
     actions::setEnabledWhen("rig.floodWeights", [] { return gWeightTool != nullptr; });
 }
 } // namespace lila::ui

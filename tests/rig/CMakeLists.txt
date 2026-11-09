@@ -3,6 +3,7 @@ add_executable(lila_rig_tests
     test_joints.cpp
     test_skin.cpp
     test_weight_paint.cpp
+    test_weight_proxy.cpp
     test_constraints.cpp
     test_center.cpp
     test_ik.cpp

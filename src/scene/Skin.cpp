@@ -15,6 +15,7 @@
 #include "scene/RigUtil.h"
 #include "scene/SkinMethods.h"
 #include "scene/SkinPaint.h"
+#include "scene/WeightProxy.h"
 
 #include <glm/gtc/quaternion.hpp>
 #include <tbb/parallel_for.h>
@@ -1872,5 +1873,6 @@ void registerSkinCommands()
 {
     registerSkinCommandsImpl();
     skinpaint::registerCommands();
+    weightproxy::registerCommands();
 }
 } // namespace lila::scene

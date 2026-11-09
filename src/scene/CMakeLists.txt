@@ -106,6 +106,7 @@ lila_module(lila_scene Scene
     SkinBake.cpp SkinBake.h
     SkinMethods.cpp SkinMethods.h
     SkinPaint.cpp SkinPaint.h
+    WeightProxy.cpp WeightProxy.h
     Jiggle.cpp Jiggle.h
     SmartJoin.cpp
     SplitMesh.cpp SplitMesh.h

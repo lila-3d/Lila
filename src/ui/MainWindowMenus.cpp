@@ -246,6 +246,8 @@ void MainWindow::buildMenus()
                        "rig.orientConstraint", "rig.aimConstraint", "rig.removeConstraint", "rig.pin", "rig.bakePin", "#Curve Controls", "curve.controls",
                        "curve.removeControls", "#IK", "rig.ikHandle", "rig.splineChain", "rig.hoseLimb", "rig.hoseFingers", "#Display", "rig.xrayJoints", "rig.showIkLimits",
                        "rig.dominantInfluenceSelect"});
+    addSubmenu("Rig", "Weight Proxy");
+    menus::addActions("Rig/Weight Proxy", {"rig.createWeightProxy", "rig.pushProxyWeights", "rig.pullProxyWeights"});
     addSubmenu("Rig", "Spaces");
     setupSpacesMenu();
     addSubmenu("Rig", "Skinning Method");

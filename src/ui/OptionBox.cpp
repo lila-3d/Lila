@@ -865,7 +865,7 @@ void install()
 {
     for (auto [id, command] : {std::pair{"rig.orientJoint", "orientJoint"}, {"rig.mirrorJoints", "mirrorJoints"}, {"rig.insertJoint", "insertJoint"},
                                {"rig.bindSkin", "skinCluster"}, {"rig.mirrorSkinWeights", "mirrorSkinWeights"},
-                               {"rig.copySkinWeights", "copySkinWeights"}, {"rig.pruneWeights", "pruneWeights"},
+                               {"rig.copySkinWeights", "copySkinWeights"}, {"rig.pruneWeights", "pruneWeights"}, {"rig.createWeightProxy", "createWeightProxy"},
                                {"rig.parentConstraint", "parentConstraint"}, {"rig.pointConstraint", "pointConstraint"},
                                {"rig.orientConstraint", "orientConstraint"}, {"rig.aimConstraint", "aimConstraint"}, {"rig.pin", "pin"},
                                {"rig.bakePin", "bakePin"}, {"rig.splineChain", "splineChain"}, {"rig.hoseLimb", "hoseLimb"},
