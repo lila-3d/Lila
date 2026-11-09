@@ -462,6 +462,7 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"rig.bendBones", "vector-bezier-2"},
     {"rig.softNet", "topology-ring"},
     {"rig.softNetRebind", "refresh"},
+    {"rig.softNetUnreal", "send"},
     {"rig.mirrorSoftNetKnots", "flip-horizontal"},
     {"rig.softNetShowAllKnots", "eye"},
     {"rig.softNetLimbStations", "topology-star-ring-3"},

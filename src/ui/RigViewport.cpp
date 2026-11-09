@@ -507,6 +507,8 @@ void registerRigActions()
         "Copies the selected Soft Net knots' poses to their partners across the mirror; on a whole net, the + side over the - side.");
     add("rig.softNetShowAllKnots", "Show All Soft Net Knots", [] { command("softNetKnots", {{"toggleShowAll", true}}); }, "softNetKnots(toggleShowAll=True)",
         "Shows or hides the selected Soft Net's knots inside lines; junctions and line ends always show.");
+    add("rig.softNetUnreal", "Soft Net to Unreal", [] { command("softNetUnreal"); }, "softNetUnreal()",
+        "Sends the selected mesh's Soft Net to Unreal: baked to knot joints, weights and correctives (default), live as a Deformer Graph, or as a geometry cache.");
     add("rig.softNetLimbStations", "Soft Net Limb Stations", [] { command("softNetLimbStations"); }, "softNetLimbStations()",
         "Lays rings and rails for a Soft Net round the selected mesh's limb, along the selected curve or joint chain (select the mesh, then the chain).");
     actions::add({.id = "rig.editSkeleton", .label = "Edit Skeleton", .category = "Rig", .run = [] { command("editSkeleton"); },
