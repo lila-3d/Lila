@@ -1160,3 +1160,95 @@ TEST_CASE("spinner breakdown in a Strings mode: dragging down lags the extremiti
     run("undo");
     CHECK(run("getAttr", {{"args", {"spine_01.rotate"}}})[2].get<double>() == doctest::Approx(0.0).scale(1.0).epsilon(1e-6));
 }
+
+#include "ui/Controls.h"
+#include "ui/Panels.h"
+#include <QLabel>
+#include <QMouseEvent>
+#include <QToolButton>
+
+namespace
+{
+void mouse(QWidget* w, QEvent::Type type, QPointF at)
+{
+    QMouseEvent e(type, at, w->mapToGlobal(at), Qt::LeftButton, type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton,
+                  Qt::NoModifier);
+    QApplication::sendEvent(w, &e);
+}
+
+void click(QWidget* w, QPointF at)
+{
+    mouse(w, QEvent::MouseButtonPress, at);
+    mouse(w, QEvent::MouseButtonRelease, at);
+}
+
+void dragOn(QWidget* w, QPointF from, QPointF to)
+{
+    mouse(w, QEvent::MouseButtonPress, from);
+    mouse(w, QEvent::MouseMove, (from + to) * 0.5);
+    mouse(w, QEvent::MouseMove, to);
+    mouse(w, QEvent::MouseButtonRelease, to);
+}
+
+void pickLayer(QWidget* editor, const char* label)
+{
+    for (QToolButton* b : editor->findChildren<QToolButton*>())
+        if (b->text() == label)
+            b->click();
+}
+} // namespace
+
+TEST_CASE("Strings Rules editor: contacts, limbs and lines toggle on the joint graph, and a test drag poses then puts back")
+{
+    loadPuppeteer();
+    stringsBiped();
+    run("select", {{"args", {"hips"}}});
+    const ui::panels::Panel* panel = ui::panels::registry().find("puppeteerStringsRules");
+    REQUIRE(panel);
+    std::unique_ptr<QWidget> editor(panel->create(nullptr));
+    editor->resize(420, 620);
+    editor->show();
+    QApplication::processEvents();
+    QWidget* canvas = editor->findChild<QWidget*>("stringsRulesCanvas");
+    REQUIRE(canvas);
+    CHECK(canvas->property("jointCount").toInt() == 17);
+    auto at = [&](const char* joint) { return canvas->property("joints").toMap()[joint].toPointF(); };
+    auto rules = [] { return run("stringsRules", {{"args", {"hero"}}}); };
+
+    // Contacts: a click toggles the joint.
+    const size_t contacts = rules()["contacts"].size();
+    click(canvas, at("hand_l"));
+    CHECK(rules()["contacts"].size() == contacts + 1);
+    click(canvas, at("hand_l"));
+    CHECK(rules()["contacts"].size() == contacts);
+
+    // Limbs: a drag from a joint to one below it adds one (either direction), a click on it removes it.
+    pickLayer(editor.get(), "Limbs");
+    const size_t limbs = rules()["chains"].size();
+    dragOn(canvas, at("hand_r"), at("upperarm_r"));
+    REQUIRE(rules()["chains"].size() == limbs + 1);
+    CHECK(rules()["chains"].back().front() == "upperarm_r");
+    CHECK(canvas->property("limbCount").toInt() == int(limbs + 1));
+    click(canvas, at("lowerarm_r"));
+    CHECK(rules()["chains"].size() == limbs);
+
+    // Lines: the same gestures.
+    pickLayer(editor.get(), "Lines");
+    dragOn(canvas, at("spine_01"), at("head"));
+    CHECK(rules()["lines"].contains("head"));
+    click(canvas, at("neck"));
+    CHECK_FALSE(rules()["lines"].contains("head"));
+
+    // Test: IK drags the hand while the mouse is down; release puts every joint back with nothing on the undo stack.
+    ModeScope scope("puppeteer.strings.ik");
+    pickLayer(editor.get(), "Test");
+    const glm::dvec3 hand = pos("hand_l");
+    const json undo = run("undoInfo")["undo"];
+    mouse(canvas, QEvent::MouseButtonPress, at("hand_l"));
+    mouse(canvas, QEvent::MouseMove, at("hand_l") + QPointF(0.0, -40.0));
+    CHECK(pos("hand_l").y > hand.y + 5.0);
+    CHECK(editor->findChild<QLabel*>("stringsRulesStatus")->text().startsWith("Test IK"));
+    mouse(canvas, QEvent::MouseButtonRelease, at("hand_l") + QPointF(0.0, -40.0));
+    CHECK(near(pos("hand_l"), hand, 1e-9));
+    CHECK(run("undoInfo")["undo"] == undo);
+}

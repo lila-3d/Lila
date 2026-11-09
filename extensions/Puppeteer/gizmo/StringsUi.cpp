@@ -80,6 +80,7 @@ QWidget* rulesSection(NodeId character)
     row->addWidget(controls::push("puppeteer.strings.contactsFromSelection", w, "Contacts from Selection"));
     row->addWidget(controls::push("puppeteer.strings.limbFromSelection", w, "Limb from Selection"));
     row->addWidget(controls::push("puppeteer.strings.resetRules", w, "Reset to Template"));
+    row->addWidget(controls::push("window.puppeteerStringsRules", w, "Edit Rules"));
     row->addStretch(1);
     v->addLayout(row);
 

@@ -211,7 +211,7 @@ void registerModeActions(ext::Context& ctx)
 void registerMenus(ext::Context& ctx)
 {
     menus::addMenu(ctx, {.id = "Puppeteer", .title = "Puppeteer", .sets = {"Rig", "Animate"}});
-    for (const char* a : {"mode.puppeteerRig", "mode.puppeteerAnimate", "", "puppeteer.rig.character", "puppeteer.rig.ikChain",
+    for (const char* a : {"mode.puppeteerRig", "mode.puppeteerAnimate", "", "puppeteer.rig.character", "window.puppeteerStringsRules", "puppeteer.rig.ikChain",
                           "puppeteer.rig.reverseFoot", "puppeteer.rig.looker", "puppeteer.rig.space", "rig.bendBones",
                           "rig.bendBoneCV", "rig.mirrorBoneCVs", "rig.bakeBendBones"})
         menus::addItem(ctx, *a ? menus::Item{.menu = "Puppeteer", .action = a} : menus::Item{.menu = "Puppeteer", .kind = menus::Kind::Separator});
@@ -226,7 +226,7 @@ void registerMenus(ext::Context& ctx)
         menus::addItem(ctx, {.menu = "Puppeteer", .action = a});
     menus::addItem(ctx, {.menu = "Puppeteer", .kind = menus::Kind::Submenu, .label = "Strings"});
     for (const char* a : {"puppeteer.strings.forward", "puppeteer.strings.backward", "puppeteer.strings.ik", "puppeteer.strings.fullBody",
-                          "", "puppeteer.strings.lineOfAction", "", "puppeteer.strings.contacts", "puppeteer.strings.onLayer", "puppeteer.strings.stretch", "puppeteer.strings.zero", "puppeteer.strings.restoreLengths",
+                          "", "puppeteer.strings.lineOfAction", "window.puppeteerStringsRules", "", "puppeteer.strings.contacts", "puppeteer.strings.onLayer", "puppeteer.strings.stretch", "puppeteer.strings.zero", "puppeteer.strings.restoreLengths",
                           "puppeteer.strings.overshoot", "puppeteer.strings.smooth", "puppeteer.strings.fill", "puppeteer.strings.retime", "puppeteer.strings.trail", "",
                           "puppeteer.strings.breakdownParts", "puppeteer.strings.clearBreakdownParts", "",
                           "puppeteer.strings.glue", "puppeteer.strings.attach", "puppeteer.strings.unglue"})

@@ -695,6 +695,29 @@ json stringsRules(const Args& a)
         own["lines"][l[0].get<std::string>()] = {bareJoint(g.node(top)->name()), bareJoint(g.node(end)->name())};
         changed = true;
     }
+    if (a.has("removeChain"))
+    {
+        const std::string joint = bareJoint(jointNamed(g, a.get<std::string>("removeChain"), "stringsRules").name());
+        if (!own.contains("chains"))
+            own["chains"] = rulesOf(g, character).chains;
+        json kept = json::array();
+        for (const json& c : own["chains"])
+            if (std::none_of(c.begin(), c.end(), [&](const json& n) { return n.get<std::string>() == joint; }))
+                kept.push_back(c);
+        if (kept.size() == own["chains"].size())
+            throw CommandError("stringsRules: " + joint + " is in no limb");
+        own["chains"] = kept;
+        changed = true;
+    }
+    if (a.has("removeLine"))
+    {
+        if (!own.contains("lines"))
+            own["lines"] = rulesOf(g, character).lines;
+        if (!own["lines"].contains(a.get<std::string>("removeLine")))
+            throw CommandError("stringsRules: no line named " + a.get<std::string>("removeLine"));
+        own["lines"].erase(a.get<std::string>("removeLine"));
+        changed = true;
+    }
     if (changed)
         g.setValue(plug, own.dump());
     return rulesJson(rulesOf(g, character));
@@ -2384,6 +2407,8 @@ void registerStrings(ext::Context& ctx)
             {"contacts", "ct", T::List, nullptr, "Joints that hold by default, replacing the inherited ones."},
             {"addChain", "ac", T::List, nullptr, "[top joint, end joint]: a limb from top down to end, replacing limbs it overlaps."},
             {"addLine", "al", T::List, nullptr, "[name, top joint, end joint]: a line of action a stroke may bind to."},
+            {"removeChain", "rc", T::String, nullptr, "A joint: the limb it is in goes."},
+            {"removeLine", "rl", T::String, nullptr, "The line of action with this name goes."},
             {"reset", "rs", T::Bool, false, "Forget this character's own rules first."},
         },
         .run = stringsRules,
