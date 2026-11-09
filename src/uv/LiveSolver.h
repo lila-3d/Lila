@@ -20,6 +20,7 @@ namespace lila::uv
 namespace detail
 {
 class FinalOperator;
+struct CageHold;
 }
 
 struct LiveOptions
@@ -192,6 +193,7 @@ private:
     std::vector<Frame> mFinalFrames;
     std::shared_ptr<const UninfluencedFill> mFinalFill;
     std::shared_ptr<const detail::FinalOperator> mFinalOp;
+    std::shared_ptr<const detail::CageHold> mCageHold;
     std::vector<float> mStiff;
     std::vector<glm::dvec2> mX;
     std::vector<glm::dvec2> mPinAt;

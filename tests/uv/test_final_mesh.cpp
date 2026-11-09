@@ -529,6 +529,25 @@ TEST_CASE("final mesh: pack measures density on the exported mesh")
     CHECK(std::abs(std::sqrt(d0 / d1) - 1.0) < 0.1);
 }
 
+TEST_CASE("final mesh: a live relax on the export keeps cage uvs it barely reads with their neighbours")
+{
+    geo::Mesh m = lidPlate(0.4, 3);
+    const std::vector<uv::Chart> before = islandsOf(m);
+    std::vector<uv::LiveIsland> islands = uv::liveIslands(m, {}, "uv0");
+    uv::attachFinal(islands, m, "uv0", bevelSubdivStack(0.13, 3, 2));
+    for (uv::LiveIsland& is : islands)
+        is.solve(200);
+    uv::writeLiveIslands(m, islands, "uv0", false);
+    const std::vector<uv::Chart> after = islandsOf(m);
+    REQUIRE(before.size() == after.size());
+    for (size_t i = 0; i < before.size(); ++i)
+    {
+        const glm::dvec2 sb = before[i].uvMax() - before[i].uvMin(), sa = after[i].uvMax() - after[i].uvMin();
+        INFO("island " << i << ", grows " << std::max(sa.x / sb.x, sa.y / sb.y));
+        CHECK(std::max(sa.x / sb.x, sa.y / sb.y) < 1.1);
+    }
+}
+
 TEST_CASE("final mesh: solve time on a big export" * doctest::skip())
 {
     geo::CubeOptions co;

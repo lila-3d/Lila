@@ -41,10 +41,6 @@ constexpr int kLayersPerRun = 16;
 constexpr int kIslandLayersPerRun = 64;
 /** The solve opens triangles to this many times the collapsed fraction, so the written uvs keep them open. */
 constexpr double kSolveMargin = 3.0;
-/** Cage vertices the export reads by less than this (largest weight) are held to their cage shape, fully below kWeakInfluence. */
-constexpr double kHoldReach = 0.5;
-/** How hard the hold pulls, as a share of the export's mean stiffness per vertex. */
-constexpr double kCageHold = 0.05;
 constexpr const char* kNotABlend = "its uvs are not a blend of the cage's";
 
 /** Wedge (chart vertex over the whole mesh, from uv agreement) of every corner, and a representative corner per wedge. */
@@ -1591,97 +1587,82 @@ void setDensityArea(Chart& chart, const FinalIsland& isl)
     chart.densityArea = std::clamp(ex3 * cageUv / exUv, a3 / 16.0, a3 * 16.0);
 }
 
+namespace detail
+{
+CageHold::CageHold(const Chart& ch, const FinalIsland& isl, std::span<const glm::dvec2> x0)
+{
+    const size_t V = ch.pos.size();
+    std::vector<double> reach(V, 0.0);
+    for (size_t k = 0; k < isl.cols.size(); ++k)
+        if (isl.cols[k] < V)
+            reach[isl.cols[k]] = std::max(reach[isl.cols[k]], std::abs(isl.weights[k]));
+    std::vector<double> weak(V);
+    for (size_t v = 0; v < V; ++v)
+        weak[v] = std::clamp((kHoldReach - reach[v]) / (kHoldReach - kWeakInfluence), 0.0, 1.0);
+    std::map<std::pair<Index, Index>, double> w;
+    for (const auto& t : ch.tris)
+        for (int k = 0; k < 3; ++k)
+        {
+            Index a = t[(k + 1) % 3], b = t[(k + 2) % 3];
+            const double ww = 0.5 * (weak[a] + weak[b]);
+            if (ww <= 0.0)
+                continue;
+            const glm::dvec3 u = ch.pos[a] - ch.pos[t[k]], v = ch.pos[b] - ch.pos[t[k]];
+            const double sn = glm::length(glm::cross(u, v));
+            // Clamped cotan weights, as the uninfluenced fill uses: the cage's own triangles can be poor.
+            const double c = 0.5 * std::max(sn > 1e-300 ? glm::dot(u, v) / sn : 0.0, 0.0) + 1e-3;
+            if (a > b)
+                std::swap(a, b);
+            w[{a, b}] += ww * c;
+        }
+    rest.assign(V, glm::dvec2(0.0));
+    std::vector<double> diag(V, 0.0);
+    for (const auto& [e, we] : w)
+    {
+        const auto [a, b] = e;
+        edges.push_back({a, b});
+        weight.push_back(we);
+        start.push_back(x0[b] - x0[a]);
+        laplacian.emplace_back(int(a), int(a), we);
+        laplacian.emplace_back(int(b), int(b), we);
+        laplacian.emplace_back(int(a), int(b), -we);
+        laplacian.emplace_back(int(b), int(a), -we);
+        rest[a] -= we * (x0[b] - x0[a]);
+        rest[b] += we * (x0[b] - x0[a]);
+        diag[a] += we;
+        diag[b] += we;
+    }
+    size_t held = 0;
+    for (size_t v = 0; v < V; ++v)
+        if (diag[v] > 0.0)
+        {
+            diagMean += diag[v];
+            ++held;
+        }
+    diagMean = held ? diagMean / double(held) : 0.0;
+}
+
+
+double CageHold::energy(std::span<const glm::dvec2> x) const
+{
+    double e = 0.0;
+    for (size_t k = 0; k < edges.size(); ++k)
+    {
+        const glm::dvec2 d = x[edges[k][1]] - x[edges[k][0]] - start[k];
+        e += weight[k] * glm::dot(d, d);
+    }
+    return e;
+}
+} // namespace detail
+
 namespace
 {
-/**
- * Holds a chart's own shape where the export barely reads it: each cage edge keeps the uv vector it started with, weighed
- * by how weakly the export reads its ends. Without it the solve uses barely read vertices as long levers, flinging them
- * far out (over other islands) to open one more sliver. A quadratic term, (x - x0)^T L (x - x0) with L a weighted
- * Laplacian of the cage.
- */
-struct CageHold
-{
-    std::vector<Triplet> laplacian; // V x V
-    std::vector<glm::dvec2> rest;   // L x0
-    std::vector<std::array<Index, 2>> edges;
-    std::vector<double> weight;
-    std::vector<glm::dvec2> start;  // per edge, x0[b] - x0[a]
-    double diagMean = 0.0;
-
-    CageHold(const Chart& ch, const FinalIsland& isl, std::span<const glm::dvec2> x0)
-    {
-        const size_t V = ch.pos.size();
-        std::vector<double> reach(V, 0.0);
-        for (size_t k = 0; k < isl.cols.size(); ++k)
-            if (isl.cols[k] < V)
-                reach[isl.cols[k]] = std::max(reach[isl.cols[k]], std::abs(isl.weights[k]));
-        std::vector<double> weak(V);
-        for (size_t v = 0; v < V; ++v)
-            weak[v] = std::clamp((kHoldReach - reach[v]) / (kHoldReach - kWeakInfluence), 0.0, 1.0);
-        std::map<std::pair<Index, Index>, double> w;
-        for (const auto& t : ch.tris)
-            for (int k = 0; k < 3; ++k)
-            {
-                Index a = t[(k + 1) % 3], b = t[(k + 2) % 3];
-                const double ww = 0.5 * (weak[a] + weak[b]);
-                if (ww <= 0.0)
-                    continue;
-                const glm::dvec3 u = ch.pos[a] - ch.pos[t[k]], v = ch.pos[b] - ch.pos[t[k]];
-                const double sn = glm::length(glm::cross(u, v));
-                // Clamped cotan weights, as the uninfluenced fill uses: the cage's own triangles can be poor.
-                const double c = 0.5 * std::max(sn > 1e-300 ? glm::dot(u, v) / sn : 0.0, 0.0) + 1e-3;
-                if (a > b)
-                    std::swap(a, b);
-                w[{a, b}] += ww * c;
-            }
-        rest.assign(V, glm::dvec2(0.0));
-        std::vector<double> diag(V, 0.0);
-        for (const auto& [e, we] : w)
-        {
-            const auto [a, b] = e;
-            edges.push_back({a, b});
-            weight.push_back(we);
-            start.push_back(x0[b] - x0[a]);
-            laplacian.emplace_back(int(a), int(a), we);
-            laplacian.emplace_back(int(b), int(b), we);
-            laplacian.emplace_back(int(a), int(b), -we);
-            laplacian.emplace_back(int(b), int(a), -we);
-            rest[a] -= we * (x0[b] - x0[a]);
-            rest[b] += we * (x0[b] - x0[a]);
-            diag[a] += we;
-            diag[b] += we;
-        }
-        size_t held = 0;
-        for (size_t v = 0; v < V; ++v)
-            if (diag[v] > 0.0)
-            {
-                diagMean += diag[v];
-                ++held;
-            }
-        diagMean = held ? diagMean / double(held) : 0.0;
-    }
-
-    /** The factor that makes the hold the given share of the export's mean stiffness per vertex. */
-    double scaleFor(double share, double exportDiag) const { return diagMean > 0.0 ? share * exportDiag / diagMean : 0.0; }
-
-    double energy(std::span<const glm::dvec2> x) const
-    {
-        double e = 0.0;
-        for (size_t k = 0; k < edges.size(); ++k)
-        {
-            const glm::dvec2 d = x[edges[k][1]] - x[edges[k][0]] - start[k];
-            e += weight[k] * glm::dot(d, d);
-        }
-        return e;
-    }
-};
-
 OptimizeResult solveHeld(Chart& ch, const FinalIsland& exact, const FinalSolveOptions& o, double holdShare);
 } // namespace
 
 OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveOptions& o)
 {
-    return solveHeld(ch, exact, o, kCageHold);
+    return solveHeld(ch, exact, o, detail::kCageHold);
 }
 
 namespace
@@ -1765,7 +1746,7 @@ OptimizeResult solveHeld(Chart& ch, const FinalIsland& exact, const FinalSolveOp
         offV[Eigen::Index(c)] = off[c].y;
     }
     std::vector<Coupling> kfc;
-    const CageHold hold(ch, isl, x);
+    const detail::CageHold hold(ch, isl, x);
     double holdScale = 0.0;
     auto solver = std::make_unique<UvFactor>();
     auto factor = [&](const std::vector<double>& wt) {

@@ -68,6 +68,7 @@ struct LiveIsland::Factor
     std::vector<int> bndSlot;  // 9 per boundary vertex
     double mean = 1.0;         // mean diagonal of the elastic part
     double prox = 0.0;
+    double hold = 0.0;         // the cage hold's factor (exported-mesh mode)
     bool ok = false;
     // Exported-mesh mode: the exported corners' stiffness matrix, and the system's factor (complex when weights rotate).
     SpMat s;
@@ -238,6 +239,7 @@ void LiveIsland::setFinal(std::shared_ptr<const FinalIsland> island)
     mFinalFrames.clear();
     mFinalFill.reset();
     mFinalOp.reset();
+    mCageHold.reset();
     if (mFinal)
         prepareFinal();
     mFactor.reset();
@@ -255,6 +257,7 @@ void LiveIsland::prepareFinal()
     }
     const FinalIsland& isl = *mFinal;
     mFinalOp = std::make_shared<const detail::FinalOperator>(isl, size_t(vertexCount()), mSign < 0.0);
+    mCageHold = std::make_shared<const detail::CageHold>(mChart, isl, mX);
     mFinalFrames.assign(isl.tris.size(), {});
     for (size_t i = 0; i < isl.tris.size(); ++i)
     {
@@ -318,6 +321,12 @@ void LiveIsland::factorFinal()
     f->mean = V > 0 && trace > 0.0 ? trace / double(V) : 1.0;
     f->prox = 1e-7 * f->mean;
     trips.clear();
+    if (mCageHold)
+    {
+        f->hold = mCageHold->scaleFor(detail::kCageHold, f->mean);
+        for (const Triplet& t : mCageHold->laplacian)
+            trips.emplace_back(t.row(), t.col(), f->hold * t.value());
+    }
     for (Index v = 0; v < V; ++v)
     {
         double d = f->prox;
@@ -424,6 +433,15 @@ double LiveIsland::finalStep(std::vector<double>& bu, std::vector<double>& bv) c
     {
         bu[v] = r[v].x;
         bv[v] = r[v].y;
+    }
+    if (mCageHold && f.hold > 0.0)
+    {
+        for (size_t v = 0; v < r.size(); ++v)
+        {
+            bu[v] += f.hold * mCageHold->rest[v].x;
+            bv[v] += f.hold * mCageHold->rest[v].y;
+        }
+        energy += f.hold * mCageHold->energy(mX);
     }
     return energy;
 }

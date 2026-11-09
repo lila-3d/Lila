@@ -6,6 +6,7 @@
 #include <Eigen/Dense>
 #include <Eigen/SparseCholesky>
 
+#include <array>
 #include <complex>
 #include <span>
 #include <utility>
@@ -77,5 +78,31 @@ private:
     Eigen::SimplicialLDLT<SpMat> mReal;
     mutable bool mCxReady = false;
     mutable Eigen::SimplicialLDLT<CSpMat> mCx;
+};
+/** Cage vertices the export reads by less than this (largest weight) are held to their cage shape, fully below kWeakInfluence. */
+inline constexpr double kHoldReach = 0.5;
+/** How hard the hold pulls, as a share of the export's mean stiffness per vertex. */
+inline constexpr double kCageHold = 0.05;
+
+/**
+ * Holds a chart's own shape where the export barely reads it: each cage edge keeps the uv vector it started with, weighed
+ * by how weakly the export reads its ends. Without it a solve uses barely read vertices as long levers, flinging them far
+ * out (over other islands) to open one more sliver. A quadratic term, (x - x0)^T L (x - x0) with L a weighted Laplacian of
+ * the cage.
+ */
+struct CageHold
+{
+    CageHold(const Chart& ch, const FinalIsland& isl, std::span<const glm::dvec2> x0);
+
+    /** The factor that makes the hold the given share of the export's mean stiffness per vertex. */
+    double scaleFor(double share, double exportDiag) const { return diagMean > 0.0 ? share * exportDiag / diagMean : 0.0; }
+    double energy(std::span<const glm::dvec2> x) const;
+
+    std::vector<Eigen::Triplet<double>> laplacian; // V x V
+    std::vector<glm::dvec2> rest;                  // L x0
+    std::vector<std::array<Index, 2>> edges;
+    std::vector<double> weight;
+    std::vector<glm::dvec2> start;                 // per edge, x0[b] - x0[a]
+    double diagMean = 0.0;
 };
 } // namespace lila::uv::detail
