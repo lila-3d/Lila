@@ -10,6 +10,7 @@
 #include "groom/GroomLabBridge.h"
 #include "groom/GuideData.h"
 #include "groom/GroomPresets.h"
+#include "groom/RodSettle.h"
 #include "groom/Settle.h"
 #include "groom/Shapes.h"
 #include "ops/Command.h"
@@ -579,7 +580,7 @@ void registerLockCommands()
             so.lockCollisions = a.get<bool>("lockCollisions", true);
             so.gravity = D3(toLocal * glm::dvec4(vec(a.flags.value("gravity", json()), D3(0, -981, 0)), 0.0));
             SettleStats st;
-            settle(s, radii, scalp.get(), so, &st);
+            settleOnRods(s, radii, scalp.get(), so, &st);
             storeGuides(g, guides, std::move(s));
             return {{"curves", st.curves}, {"contacts", st.contacts}, {"motion", st.lastMotion / scale}, {"penetration", st.maxPenetration / scale}};
         },
