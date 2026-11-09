@@ -10,6 +10,7 @@
 #include <glm/gtx/component_wise.hpp>
 
 #include <cmath>
+#include <limits>
 #include <set>
 
 using namespace lila::geo;
@@ -664,6 +665,29 @@ TEST_CASE("bevel: clamp closes faces that run out of room")
     for (Index p = 0; p < a.pointCapacity(); ++p)
         if (a.pointValid(p))
             CHECK(glm::distance(a.position(p), b.position(p)) < 1e-12);
+}
+
+TEST_CASE("bevel: clamp reports which edges hold the offset back")
+{
+    // A narrow chamfer on one top edge: its two edges limit a wide bevel of every edge, edges far from it don't.
+    Mesh m = makeCube({.width = 100.0, .height = 100.0, .depth = 100.0});
+    const Index top = edgeBetween(m, {-50.0, 50.0, 50.0}, {50.0, 50.0, 50.0});
+    REQUIRE(top != kInvalid);
+    bevelEdges(m, std::vector<Index>{top}, {.offset = 1.0});
+    std::vector<double> limits;
+    double applied = 0.0;
+    const Mesh before = m;
+    bevelEdges(m, allEdges(before), {.offset = 20.0, .appliedOffset = &applied, .edgeLimits = &limits});
+    REQUIRE(limits.size() == before.edgeCapacity());
+    double least = std::numeric_limits<double>::infinity();
+    for (Index e = 0; e < before.edgeCapacity(); ++e)
+        if (before.edgeValid(e))
+            least = std::min(least, limits[e]);
+    CHECK(applied < 1.0);
+    CHECK(least == doctest::Approx(applied).epsilon(0.05));
+    const Index far = edgeBetween(before, {-50.0, -50.0, -50.0}, {50.0, -50.0, -50.0});
+    REQUIRE(far != kInvalid);
+    CHECK(limits[far] > 20.0);
 }
 
 TEST_CASE("bevel: symmetry")

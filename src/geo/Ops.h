@@ -117,6 +117,11 @@ struct BevelOptions
     const SymmetryMap* symmetry = nullptr;
     /** When set, receives the offset actually used after clamping. */
     double* appliedOffset = nullptr;
+    /**
+     * When set (and clamping), receives per edge of the input mesh the largest offset the clamp leaves that bevelled edge,
+     * infinity where nothing limits it.
+     */
+    std::vector<double>* edgeLimits = nullptr;
 };
 
 /** Bevels manifold edges. Returns the new bevel and corner faces. */

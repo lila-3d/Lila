@@ -667,6 +667,15 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
     // they meet the edge closes, and its points are welded at the end.
     double offset = std::max(0.0, opts.offset);
     bool collapses = false;
+    // Each limit goes to the bevelled edges at the points whose replacements meet.
+    std::vector<double> limits(opts.edgeLimits && opts.clamp ? mesh.edgeCapacity() : 0, std::numeric_limits<double>::infinity());
+    auto limitAt = [&](Index p, double limit) {
+        if (!limits.empty())
+            mesh.forEachPointEdge(p, [&](Index e) {
+                if (bev[e])
+                    limits[e] = std::min(limits[e], limit);
+            });
+    };
     if (opts.clamp)
         for (Index f : touchedFaces)
             mesh.forEachFaceCorner(f, [&](Index c) {
@@ -681,7 +690,13 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
                 if (auto it = fanSlot.find(cn); it != fanSlot.end())
                     db = verts[it->second.first].chain[it->second.second].front().dir;
                 const double k = glm::dot(da - db, (b - a) / len);
-                if (k > 1e-12 && len / k < offset)
+                if (k <= 1e-12)
+                    return;
+                if (da != glm::dvec3(0.0))
+                    limitAt(mesh.cornerPoint(c), len / k);
+                if (db != glm::dvec3(0.0))
+                    limitAt(mesh.cornerPoint(cn), len / k);
+                if (len / k < offset)
                 {
                     offset = len / k;
                     collapses = true;
@@ -721,6 +736,7 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
                 crossing.push_back(f);
         if (!crossing.empty())
         {
+            const double start = offset;
             double lo = 0.0, hi = offset;
             for (int it = 0; it < 40; ++it)
             {
@@ -730,6 +746,16 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
             }
             offset = lo * (1.0 - kClampMargin);
             collapses = false;
+            for (Index f : limits.empty() ? std::vector<Index>{} : crossing)
+            {
+                double flo = 0.0, fhi = start;
+                for (int it = 0; it < 40; ++it)
+                {
+                    const double mid = 0.5 * (flo + fhi);
+                    (simpleAt(f, mid) ? flo : fhi) = mid;
+                }
+                mesh.forEachFaceCorner(f, [&](Index c) { limitAt(mesh.cornerPoint(c), flo); });
+            }
         }
     }
     // Closing is clean where the meeting points weld; where a point lands on a vertex mesh's side instead, the patch
@@ -749,6 +775,8 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
     }
     if (opts.appliedOffset)
         *opts.appliedOffset = offset;
+    if (opts.edgeLimits)
+        *opts.edgeLimits = limits;
     if (offset <= 0.0)
         return {};
 
