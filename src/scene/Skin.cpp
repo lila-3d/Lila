@@ -21,6 +21,7 @@
 #include <tbb/parallel_for.h>
 
 #include <algorithm>
+#include <map>
 #include <numeric>
 #include <unordered_map>
 
@@ -457,6 +458,57 @@ void SkinClusterNode::compute(const EvalContext&)
 
 namespace skin
 {
+namespace
+{
+std::map<std::string, WeightHost, std::less<>>& hosts()
+{
+    static std::map<std::string, WeightHost, std::less<>> h;
+    return h;
+}
+
+const WeightHost& skinHost()
+{
+    static const WeightHost h{.weights = SkinClusterNode::kWeights,
+                              .layers = SkinClusterNode::kWeightLayers,
+                              .geomMatrix = SkinClusterNode::kGeomMatrix,
+                              .inMesh = SkinClusterNode::kInMesh,
+                              .outMesh = SkinClusterNode::kOutMesh,
+                              .maxInfluences = SkinClusterNode::kMaxInfluences};
+    return h;
+}
+} // namespace
+
+void registerWeightHost(const std::string& type, WeightHost host) { hosts()[type] = std::move(host); }
+
+const WeightHost* weightHost(const Graph& g, NodeId node)
+{
+    const Node* n = g.node(node);
+    if (!n)
+        return nullptr;
+    if (dynamic_cast<const SkinClusterNode*>(n))
+        return &skinHost();
+    const auto it = hosts().find(n->type().name);
+    return it != hosts().end() ? &it->second : nullptr;
+}
+
+NodeId findPainted(Graph& g, NodeId mesh)
+{
+    if (const NodeId s = find(g, mesh); s != kNoNode)
+        return s;
+    for (NodeId id : modifiers::stack(g, mesh))
+        if (weightHost(g, id))
+            return id;
+    return kNoNode;
+}
+
+int maxInfluencesOf(Graph& g, NodeId skin)
+{
+    const WeightHost* h = weightHost(g, skin);
+    if (!h)
+        return 4;
+    return h->maxInfluences >= 0 ? int(g.node(skin)->as<int64_t>(h->maxInfluences)) : h->fixedMaxInfluences;
+}
+
 NodeId find(Graph& g, NodeId mesh)
 {
     for (NodeId id : modifiers::stack(g, mesh))
@@ -500,6 +552,8 @@ NodeId meshOf(Graph& g, NodeId skin)
 
 std::vector<Influence> influences(Graph& g, NodeId skin)
 {
+    if (const WeightHost* h = weightHost(g, skin); h && h->influences)
+        return h->influences(g, skin);
     std::vector<Influence> out;
     PlugRef plug{skin, SkinClusterNode::kInfluences, -1};
     while (auto src = g.source(plug))
@@ -545,19 +599,24 @@ std::vector<char> lockMask(const std::vector<Influence>& infs)
 
 MeshPtr inputMesh(Graph& g, NodeId skin)
 {
-    return std::get<MeshPtr>(g.value({skin, SkinClusterNode::kInMesh, -1}));
+    const WeightHost* h = weightHost(g, skin);
+    return std::get<MeshPtr>(g.value({skin, h ? h->inMesh : int(SkinClusterNode::kInMesh), -1}));
 }
 
 WeightTable table(Graph& g, NodeId skin)
 {
+    const WeightHost* h = weightHost(g, skin);
     MeshPtr m = inputMesh(g, skin);
-    const auto* w = dynamic_cast<const SkinWeights*>(std::get<DataPtr>(g.storedValue({skin, SkinClusterNode::kWeights, -1})).get());
+    const auto* w = dynamic_cast<const SkinWeights*>(std::get<DataPtr>(g.storedValue({skin, h ? h->weights : int(SkinClusterNode::kWeights), -1})).get());
+    if (!w && h && h->seed)
+        return h->seed(g, skin);
     return WeightTable::from(w, m ? m->pointCapacity() : (w ? w->pointCount() : 0));
 }
 
 void setWeights(Graph& g, NodeId skin, const WeightTable& t)
 {
-    g.setValue({skin, SkinClusterNode::kWeights, -1}, DataPtr(t.pack()));
+    const WeightHost* h = weightHost(g, skin);
+    g.setValue({skin, h ? h->weights : int(SkinClusterNode::kWeights), -1}, DataPtr(t.pack()));
 }
 
 uint32_t addInfluence(Graph& g, NodeId skin, NodeId joint)
@@ -806,15 +865,19 @@ std::vector<glm::dmat4> objectMatrices(Graph& g, NodeId skin)
 
 std::shared_ptr<const SkinLayers> layers(Graph& g, NodeId skin)
 {
-    if (!g.node(skin))
+    const WeightHost* h = weightHost(g, skin);
+    if (!h || h->layers < 0)
         return nullptr;
-    auto l = std::dynamic_pointer_cast<const SkinLayers>(std::get<DataPtr>(g.storedValue({skin, SkinClusterNode::kWeightLayers, -1})));
+    auto l = std::dynamic_pointer_cast<const SkinLayers>(std::get<DataPtr>(g.storedValue({skin, h->layers, -1})));
     return l && !l->layers.empty() ? l : nullptr;
 }
 
 void setLayers(Graph& g, NodeId skin, std::shared_ptr<const SkinLayers> l)
 {
-    g.setValue({skin, SkinClusterNode::kWeightLayers, -1}, DataPtr(std::move(l)));
+    const WeightHost* h = weightHost(g, skin);
+    if (!h || h->layers < 0)
+        throw CommandError(g.node(skin)->name() + " has no weight layers");
+    g.setValue({skin, h->layers, -1}, DataPtr(std::move(l)));
 }
 
 namespace
@@ -904,7 +967,7 @@ WeightEdit::WeightEdit(Graph& g, NodeId skin) : mGraph(g), mSkin(skin)
 {
     mInfluences = skin::influences(g, skin);
     mLocked = lockMask(mInfluences);
-    mMaxInf = int(g.node(skin)->as<int64_t>(SkinClusterNode::kMaxInfluences));
+    mMaxInf = maxInfluencesOf(g, skin);
     mLayers = skin::layers(g, skin);
     if (!mLayers)
     {

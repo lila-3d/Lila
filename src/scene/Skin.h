@@ -4,6 +4,7 @@
 
 #include "scene/Modifiers.h"
 
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -182,6 +183,25 @@ struct Influence
     std::string name;
     bool locked = false;
 };
+
+/**
+ * A node the weight tools paint like a skinCluster: per-point weights over influences stored as SkinWeights. Attrs are
+ * indices on the node's type; layers and maxInfluences are -1 when it has none.
+ */
+struct WeightHost
+{
+    int weights = -1, layers = -1, geomMatrix = -1, inMesh = -1, outMesh = -1, maxInfluences = -1;
+    int fixedMaxInfluences = 4;
+    std::function<std::vector<Influence>(Graph&, NodeId)> influences;
+    /** The table before anything is stored in weights. */
+    std::function<WeightTable(Graph&, NodeId)> seed;
+};
+LILA_SCENE_API void registerWeightHost(const std::string& type, WeightHost host);
+/** The host of a skinCluster or a registered type, or null. */
+LILA_SCENE_API const WeightHost* weightHost(const Graph& g, NodeId node);
+/** The node the weight tools paint on a mesh: its skinCluster, else the first weight host in its stack, else kNoNode. */
+LILA_SCENE_API NodeId findPainted(Graph& g, NodeId mesh);
+LILA_SCENE_API int maxInfluencesOf(Graph& g, NodeId skin);
 
 /** The skinCluster in a mesh's stack, or kNoNode. */
 LILA_SCENE_API NodeId find(Graph& g, NodeId mesh);

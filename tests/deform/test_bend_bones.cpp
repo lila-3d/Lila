@@ -274,3 +274,44 @@ TEST_CASE("bakeBendBones: segment joints keyed along the curve and fitted weight
     run("undo");
     CHECK(run("ls", {{"type", "skinCluster"}}).empty());
 }
+
+#include "scene/Skin.h"
+
+TEST_CASE("bendBones chain weights paint like skin weights: one influence per chain")
+{
+    using namespace deformtest;
+    run("newScene");
+    run("autoKeyframe", {{"state", false}});
+    run("joint", {{"position", v3(0, 45, 0)}, {"name", "hipL"}});
+    run("joint", {{"position", v3(0, 0, 0)}, {"name", "kneeL"}});
+    run("select", {{"clear", true}});
+    run("joint", {{"position", v3(20, 45, 0)}, {"name", "hipR"}});
+    run("joint", {{"position", v3(20, 0, 0)}, {"name", "kneeR"}});
+    const std::string mesh = run("polyCylinder", {{"name", "Leg"}, {"radius", 6}, {"height", 45}, {"subdivisionsHeight", 10}})[0];
+    run("move", {{"args", {mesh}}, {"to", v3(0, 22.5, 0)}});
+    const std::string d = run("bendBones", {{"args", {mesh}}, {"chains", nlohmann::json::array({nlohmann::json::array({"hipL", "kneeL"}), nlohmann::json::array({"hipR", "kneeR"})})}}).get<std::string>();
+    namespace scene = lila::scene;
+    scene::Graph& g = scene::Graph::current();
+    const scene::NodeId meshId = g.find(mesh)->id(), dId = g.find(d)->id();
+    REQUIRE(scene::skin::findPainted(g, meshId) == dId);
+    const auto infs = scene::skin::influences(g, dId);
+    REQUIRE(infs.size() == 2);
+    CHECK(infs[0].name == "hipL");
+    scene::WeightTable t = scene::skin::table(g, dId);
+    for (const auto& pt : t.points)
+        CHECK((pt.size() == 1 && pt[0].first == 0));
+
+    // Everything painted to the far chain: moving that chain carries the whole mesh, the near one none of it.
+    for (auto& pt : t.points)
+        pt = {{1u, 1.0f}};
+    scene::skin::setWeights(g, dId, t);
+    const auto before = outMesh(mesh);
+    const std::vector<glm::dvec3> rest(before->positions().begin(), before->positions().end());
+    run("move", {{"args", {"hipR"}}, {"by", v3(0, 0, 10)}});
+    for (size_t i = 0; i < rest.size(); ++i)
+        CHECK(outMesh(mesh)->positions()[i].z - rest[i].z == doctest::Approx(10.0).epsilon(1e-6));
+    run("move", {{"args", {"hipR"}}, {"by", v3(0, 0, -10)}});
+    run("move", {{"args", {"hipL"}}, {"by", v3(0, 0, 10)}});
+    for (size_t i = 0; i < rest.size(); ++i)
+        CHECK(std::abs(outMesh(mesh)->positions()[i].z - rest[i].z) < 1e-6);
+}

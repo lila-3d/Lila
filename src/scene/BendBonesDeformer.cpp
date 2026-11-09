@@ -28,6 +28,7 @@
 #include <cmath>
 #include <optional>
 #include <random>
+#include <span>
 #include <map>
 #include <mutex>
 
@@ -157,6 +158,50 @@ void deformed(const Bound& b, const std::vector<bb::Curve>& rest, const std::vec
         p = glm::dvec3(toLocal * glm::dvec4(p, 1.0));
 }
 
+/**
+ * The bind with painted chain weights in place of its own: each point's places on the chains it is painted to, located on
+ * the rest curve where the bind had none.
+ */
+bb::Binding paintedBinding(const Bound& b, const SkinWeights& w, const std::vector<bb::Curve>& rest, std::span<const glm::dvec3> input)
+{
+    bb::Binding out;
+    for (size_t p = 0; p + 1 < b.binding.offsets.size() && p < input.size(); ++p)
+    {
+        double total = 0.0;
+        if (p < w.pointCount())
+            for (uint32_t k = w.offsets[p]; k < w.offsets[p + 1]; ++k)
+                total += std::max(0.0f, w.weights[k]);
+        if (total <= 0.0)
+        {
+            for (uint32_t k = b.binding.offsets[p]; k < b.binding.offsets[p + 1]; ++k)
+            {
+                out.chain.push_back(b.binding.chain[k]);
+                out.weight.push_back(b.binding.weight[k]);
+                out.place.push_back(b.binding.place[k]);
+            }
+            out.offsets.push_back(uint32_t(out.chain.size()));
+            continue;
+        }
+        for (uint32_t k = w.offsets[p]; k < w.offsets[p + 1]; ++k)
+        {
+            const uint32_t c = w.influences[k];
+            if (w.weights[k] <= 0.0f || c >= rest.size())
+                continue;
+            std::optional<bb::Place> place;
+            for (uint32_t e = b.binding.offsets[p]; e < b.binding.offsets[p + 1]; ++e)
+                if (b.binding.chain[e] == c)
+                    place = b.binding.place[e];
+            if (!place)
+                place = bb::locate(rest[c], glm::dvec3(b.meshWorld * glm::dvec4(input[p], 1.0)));
+            out.chain.push_back(c);
+            out.weight.push_back(double(w.weights[k]) / total);
+            out.place.push_back(*place);
+        }
+        out.offsets.push_back(uint32_t(out.chain.size()));
+    }
+    return out;
+}
+
 class BendBonesNode : public DeformerNode
 {
 public:
@@ -174,7 +219,26 @@ public:
         if (joints.size() != b.rest.size())
             return;
         const auto [rest, posed] = curvesOf(b, joints, cvs);
-        deformed(b, rest, posed, options(), points);
+        Bound painted = b;
+        painted.binding = binding(b, rest, points);
+        deformed(painted, rest, posed, options(), points);
+    }
+
+    /** The binding the points deform by: the bind's own, or the painted chain weights' when there are any. */
+    bb::Binding binding(const Bound& b, const std::vector<bb::Curve>& rest, std::span<const glm::dvec3> input) const
+    {
+        const DataPtr w = as<DataPtr>(type().attrIndex("chainWeights"));
+        const auto* sw = dynamic_cast<const SkinWeights*>(w.get());
+        if (!sw)
+            return b.binding;
+        std::lock_guard lock(mMutex);
+        if (mPaintedFor != w || mPaintedText != mText)
+        {
+            mPainted = paintedBinding(b, *sw, rest, input);
+            mPaintedFor = w;
+            mPaintedText = mText;
+        }
+        return mPainted;
     }
 
     /** The bind with its world-space parts, which live in matrix attrs so relocating the scene moves them. */
@@ -209,6 +273,9 @@ private:
     mutable std::mutex mMutex;
     mutable std::string mText;
     mutable Bound mBound;
+    mutable DataPtr mPaintedFor;
+    mutable std::string mPaintedText;
+    mutable bb::Binding mPainted;
 };
 
 AttrDef param(std::string name, PlugType type, PlugValue def, std::string doc, uint32_t flags)
@@ -334,9 +401,9 @@ json bake(Graph& g, Node& d, const Args& a)
     const auto& node = static_cast<const BendBonesNode&>(d);
     const int perBone = std::max(1, a.get<int>("segments", 3));
     g.evaluate();
-    const Bound b = node.boundWithRest();
+    const Bound bound = node.boundWithRest();
     const auto [chainJoints, cvNodes] = inputsOf(g, d);
-    if (b.sizes.empty() || chainJoints.size() != b.rest.size())
+    if (bound.sizes.empty() || chainJoints.size() != bound.rest.size())
         throw CommandError("bakeBendBones: " + d.path() + " has no bind to bake");
     const NodeId mesh = modifiers::meshOf(g, d.id());
     if (mesh == kNoNode)
@@ -344,9 +411,11 @@ json bake(Graph& g, Node& d, const Args& a)
     if (skin::find(g, mesh) != kNoNode)
         throw CommandError("bakeBendBones: " + g.node(mesh)->path() + " is already skinned; bake bend bones on a mesh they alone deform");
     const MeshPtr in = d.as<MeshPtr>(DeformerNode::kInMesh);
-    if (!in || b.binding.offsets.size() != in->positions().size() + 1)
+    if (!in || bound.binding.offsets.size() != in->positions().size() + 1)
         throw CommandError("bakeBendBones: the mesh changed since it was bound; bind it again");
     const bb::Options o = node.options();
+    Bound b = bound;
+    b.binding = node.binding(bound, curvesOf(bound, bound.rest, restCvs(bound)).first, in->positions());
 
     // Samples: the animation range, then random poses so the weights hold beyond the motion the scene happens to have.
     const anim::Playback& pb = anim::playback();
@@ -495,6 +564,42 @@ json bake(Graph& g, Node& d, const Args& a)
             {"poses", poses},
             {"unrealCheck", {{"worst", r.worst}, {"frames", r.frames}, {"mismatches", mismatches}}}};
 }
+
+/** The chains as influences the weight tools paint: one per chain, named after its first joint, indexed by chain. */
+std::vector<skin::Influence> chainInfluences(Graph& g, NodeId d)
+{
+    const Node& n = *g.node(d);
+    const Bound b = boundOf(json::parse(n.as<std::string>(n.type().attrIndex("binding")), nullptr, false));
+    const std::vector<NodeId> joints = inputsOf(g, n).first;
+    std::vector<skin::Influence> out;
+    size_t at = 0;
+    for (size_t c = 0; c < b.sizes.size() && at < joints.size(); at += size_t(b.sizes[c]), ++c)
+        out.push_back({.link = kNoNode, .joint = joints[at], .index = uint32_t(c), .name = g.node(joints[at])->name()});
+    return out;
+}
+
+WeightTable bindWeights(Graph& g, NodeId d)
+{
+    const Node& n = *g.node(d);
+    const Bound b = boundOf(json::parse(n.as<std::string>(n.type().attrIndex("binding")), nullptr, false));
+    WeightTable t;
+    t.points.resize(b.binding.offsets.size() - 1);
+    for (size_t p = 0; p < t.points.size(); ++p)
+        for (uint32_t k = b.binding.offsets[p]; k < b.binding.offsets[p + 1]; ++k)
+            t.points[p].push_back({b.binding.chain[k], float(b.binding.weight[k])});
+    return t;
+}
+
+void registerWeightHost()
+{
+    const NodeType& t = *types::find(kType);
+    skin::registerWeightHost(kType, {.weights = t.attrIndex("chainWeights"),
+                                     .geomMatrix = t.attrIndex("bindMeshMatrix"),
+                                     .inMesh = DeformerNode::kInMesh,
+                                     .outMesh = t.attrIndex("outMesh"),
+                                     .influences = chainInfluences,
+                                     .seed = bindWeights});
+}
 } // namespace
 
 void registerTypes()
@@ -513,7 +618,9 @@ void registerTypes()
           param("cvMatrix", PlugType::Matrix, glm::dmat4(1.0), "World matrices of the bone CVs.", AttrInput | AttrHidden | AttrArray),
           param("binding", PlugType::String, std::string(), "The bind: chains, bone CVs and where each point sits.", AttrInput | AttrStorable | AttrHidden),
           param("restMatrix", PlugType::Matrix, glm::dmat4(1.0), "World matrices of the chains' joints at bind.", AttrInput | AttrStorable | AttrHidden | AttrArray),
-          param("bindMeshMatrix", PlugType::Matrix, glm::dmat4(1.0), "The mesh's world matrix at bind.", AttrInput | AttrStorable | AttrHidden)},
+          param("bindMeshMatrix", PlugType::Matrix, glm::dmat4(1.0), "The mesh's world matrix at bind.", AttrInput | AttrStorable | AttrHidden),
+          param("chainWeights", PlugType::Data, DataPtr(), "Painted weights over the chains, one influence per chain; empty uses the bind.",
+                AttrInput | AttrStorable | AttrHidden)},
          [] { return std::make_unique<BendBonesNode>(); }});
 
     NodeType cv{.name = kCvType,
@@ -525,6 +632,7 @@ void registerTypes()
                 .create = types::find("transform")->create};
     types::registerType(std::move(cv));
     relocate::registerWorldAttrs(kType, {.matrices = {"restMatrix", "bindMeshMatrix"}});
+    registerWeightHost();
     relocate::registerNeutral(kCvType);
 }
 
@@ -600,6 +708,7 @@ void registerCommands()
             for (size_t i = 0; i < b.rest.size(); ++i)
                 g.setValue({d.id(), restMatrix, -1, int(i)}, b.rest[i]);
             g.setValue({d.id(), d.type().attrIndex("bindMeshMatrix"), -1}, b.meshWorld);
+            g.setValue({d.id(), d.type().attrIndex("chainWeights"), -1}, DataPtr(bindWeights(g, d.id()).pack()));
             return d.path();
         },
     });

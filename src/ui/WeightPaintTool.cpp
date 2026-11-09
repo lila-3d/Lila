@@ -68,6 +68,13 @@ using scene::WeightTable;
 using scene::skin::PaintOutcome;
 namespace skinpaint = scene::skinpaint;
 
+/** An attr of the painted node: a skinCluster's own, or a weight host's (bend bones chains); -1 when it has none. */
+int skinAttr(NodeId skin, int scene::skin::WeightHost::*field)
+{
+    const auto* h = scene::skin::weightHost(scene::Graph::current(), skin);
+    return h ? h->*field : -1;
+}
+
 enum class Brush
 {
     Add,
@@ -1049,7 +1056,7 @@ private:
             scene::MeshPtr shown = g.node(mMesh) ? g.node(mMesh)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh) : nullptr;
             return shown && mMap.mesh && shown->pointCapacity() == mMap.mesh->pointCapacity() ? shown : mMap.mesh;
         }
-        return g.node(mSkin)->as<scene::MeshPtr>(scene::SkinClusterNode::kOutMesh);
+        return g.node(mSkin)->as<scene::MeshPtr>(skinAttr(mSkin, &scene::skin::WeightHost::outMesh));
     }
 
     /** What changes when the painted map changes, for redraws. */
@@ -1063,7 +1070,8 @@ private:
             int attr = mMap.layer < 0 ? int(scene::DeformerNode::kWeights) : int(scene::fields::kLayers);
             return std::get<scene::DataPtr>(g.storedValue({mMap.node, attr, -1}));
         }
-        return std::get<scene::DataPtr>(g.storedValue({mSkin, scene::SkinClusterNode::kWeightLayers, -1}));
+        const int layers = skinAttr(mSkin, &scene::skin::WeightHost::layers);
+        return layers >= 0 ? std::get<scene::DataPtr>(g.storedValue({mSkin, layers, -1})) : nullptr;
     }
 
     void retarget()
@@ -1078,7 +1086,7 @@ private:
                 continue;
             if (n->type().isA("mesh") && !n->type().isA("lattice"))
             {
-                skin = scene::skin::find(g, n->id());
+                skin = scene::skin::findPainted(g, n->id());
                 if (skin != kNoNode || !scene::deformers::list(g, n->id()).empty())
                     mesh = n->id();
             }
@@ -1087,10 +1095,15 @@ private:
                 skin = n->id();
                 mesh = scene::skin::meshOf(g, skin);
             }
+            else if (scene::skin::weightHost(g, n->id()))
+            {
+                skin = n->id();
+                mesh = scene::modifiers::meshOf(g, skin);
+            }
             else if (scene::deformers::isDeformer(*n))
             {
                 mesh = scene::modifiers::meshOf(g, n->id());
-                skin = mesh != kNoNode ? scene::skin::find(g, mesh) : kNoNode;
+                skin = mesh != kNoNode ? scene::skin::findPainted(g, mesh) : kNoNode;
                 weightPaintSettings().mapNode = n->id();
                 weightPaintSettings().mapLayer = -1;
             }
@@ -1225,7 +1238,7 @@ private:
         ensureBvh();
         const auto pts = pointsAt(mHover, view);
         const scene::SkinWeights* w =
-            dynamic_cast<const scene::SkinWeights*>(std::get<scene::DataPtr>(scene::Graph::current().storedValue({mSkin, scene::SkinClusterNode::kWeights, -1})).get());
+            dynamic_cast<const scene::SkinWeights*>(std::get<scene::DataPtr>(scene::Graph::current().storedValue({mSkin, skinAttr(mSkin, &scene::skin::WeightHost::weights), -1})).get());
         std::unordered_set<uint32_t> under;
         if (w)
             for (auto [p, f] : pts)
@@ -1245,7 +1258,7 @@ private:
         if (mHoverFor.get() != w)
         {
             mHoverTable = WeightTable::from(w, mBvhMesh ? mBvhMesh->pointCapacity() : 0);
-            mHoverFor = std::get<scene::DataPtr>(scene::Graph::current().storedValue({mSkin, scene::SkinClusterNode::kWeights, -1}));
+            mHoverFor = std::get<scene::DataPtr>(scene::Graph::current().storedValue({mSkin, skinAttr(mSkin, &scene::skin::WeightHost::weights), -1}));
         }
         const auto report = skinpaint::paintPoints(mHoverTable, pts, paintMode(b), mods & Qt::ControlModifier, weightPaintSettings().value,
                                                    float(weightPaintSettings().stroke.strength), scene::skin::lockMask(mInfluences), paintOptions(), true);
@@ -1260,7 +1273,7 @@ private:
         o.receiver = receiver == -2 ? s.receiver : receiver;
         o.strict = strict();
         o.maxInfluences = mSkin != kNoNode && scene::Graph::current().node(mSkin)
-                              ? int(scene::Graph::current().node(mSkin)->as<int64_t>(scene::SkinClusterNode::kMaxInfluences))
+                              ? scene::skin::maxInfluencesOf(scene::Graph::current(), mSkin)
                               : 4;
         return o;
     }
@@ -1280,8 +1293,9 @@ private:
                 buildSymmetry();
             return;
         }
-        mStart = std::get<scene::DataPtr>(g.storedValue({mSkin, scene::SkinClusterNode::kWeights, -1}));
-        mLayersStart = std::get<scene::DataPtr>(g.storedValue({mSkin, scene::SkinClusterNode::kWeightLayers, -1}));
+        mStart = std::get<scene::DataPtr>(g.storedValue({mSkin, skinAttr(mSkin, &scene::skin::WeightHost::weights), -1}));
+        const int layers = skinAttr(mSkin, &scene::skin::WeightHost::layers);
+        mLayersStart = layers >= 0 ? std::get<scene::DataPtr>(g.storedValue({mSkin, layers, -1})) : nullptr;
         mInfluences = scene::skin::influences(g, mSkin);
         mRest = scene::skin::inputMesh(g, mSkin);
         if (maskMode())
@@ -1308,7 +1322,7 @@ private:
         if (!input || (input == mSymmetryFor && mSymmetryAxis == weightPaintSettings().mirrorAxis))
             return;
         geo::Mesh world = *input;
-        glm::dmat4 geom = mapMode() ? mMap.world : g.node(mSkin)->as<glm::dmat4>(scene::SkinClusterNode::kGeomMatrix);
+        glm::dmat4 geom = mapMode() ? mMap.world : g.node(mSkin)->as<glm::dmat4>(skinAttr(mSkin, &scene::skin::WeightHost::geomMatrix));
         for (geo::Index p = 0; p < world.pointCapacity(); ++p)
             world.setPosition(p, glm::dvec3(geom * glm::dvec4(input->position(p), 1.0)));
         geo::SymmetryPlane plane;
@@ -1439,7 +1453,7 @@ private:
         else if (maskMode())
             skinpaint::setLayerMask(g, mSkin, mMaskLayer, mMapWork);
         else
-            g.setValue({mSkin, scene::SkinClusterNode::kWeights, -1}, scene::DataPtr(mLive.pack()));
+            g.setValue({mSkin, skinAttr(mSkin, &scene::skin::WeightHost::weights), -1}, scene::DataPtr(mLive.pack()));
         u.setEnabled(was);
         viewportTools::requestRedraw();
     }
@@ -1467,8 +1481,9 @@ private:
             return;
         bool was = u.enabled();
         u.setEnabled(false);
-        g.setValue({mSkin, scene::SkinClusterNode::kWeights, -1}, mStart);
-        g.setValue({mSkin, scene::SkinClusterNode::kWeightLayers, -1}, mLayersStart);
+        g.setValue({mSkin, skinAttr(mSkin, &scene::skin::WeightHost::weights), -1}, mStart);
+        if (const int layers = skinAttr(mSkin, &scene::skin::WeightHost::layers); layers >= 0)
+            g.setValue({mSkin, layers, -1}, mLayersStart);
         u.setEnabled(was);
         if (mEdit)
         {
@@ -1501,7 +1516,7 @@ private:
 
         scene::Graph& g = scene::Graph::current();
         scene::MeshPtr m = deformed();
-        scene::DataPtr w = mapMode() ? mapKey() : std::get<scene::DataPtr>(g.storedValue({mSkin, scene::SkinClusterNode::kWeights, -1}));
+        scene::DataPtr w = mapMode() ? mapKey() : std::get<scene::DataPtr>(g.storedValue({mSkin, skinAttr(mSkin, &scene::skin::WeightHost::weights), -1}));
         scene::DataPtr layers = mapMode() ? nullptr : mapKey();
         glm::dmat4 world = meshWorld();
         const bool mask = maskMode();
@@ -1583,7 +1598,7 @@ private:
         {
             if (!mAutomaticCloud)
             {
-                const auto* sw = dynamic_cast<const scene::SkinWeights*>(std::get<scene::DataPtr>(g.storedValue({mSkin, scene::SkinClusterNode::kWeights, -1})).get());
+                const auto* sw = dynamic_cast<const scene::SkinWeights*>(std::get<scene::DataPtr>(g.storedValue({mSkin, skinAttr(mSkin, &scene::skin::WeightHost::weights), -1})).get());
                 std::vector<uint32_t> pts;
                 if (sw && !sw->automatic.empty())
                     for (uint32_t p = 0; p < sw->pointCount(); ++p)
