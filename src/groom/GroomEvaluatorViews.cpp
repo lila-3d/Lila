@@ -1,6 +1,7 @@
 // Adapted from GroomLab's groom_session.cpp (github.com/thekesslereffect/groomlab, Apache-2.0,
 // see src/groom/groomlab/LICENSE and NOTICE).
 #include "groom/GroomEvaluator.h"
+#include "groom/GroomDisplay.h"
 
 #include <groomlab/random.h>
 #include <groomlab/card_files.h>
@@ -457,5 +458,29 @@ void GroomEvaluator::setPreviewTextureMap(const std::string& name, std::shared_p
     mPreviewMapName = name;
     mPreviewMapImage = std::move(image);
     ++mPreviewMapVersion;
+}
+DisplayInputs displayInputs(const GroomEvaluator::Result& view, bool stroke)
+{
+    DisplayInputs in;
+    in.strands = view.strands;
+    in.viewedRoots = view.viewedRoots;
+    in.clumpCenters = view.clumpCenters;
+    in.movingGuides = view.movingGuides;
+    in.scalp = view.scalp;
+    in.hierarchy = view.hierarchy;
+    in.parts = view.parts;
+    in.flow = view.flow;
+    in.cards = view.cards;
+    in.strandsVersion = view.versions.strands;
+    in.strandsSerial = view.strandsSerial;
+    in.changesBase = view.changesBase;
+    in.strandsChanges = view.strandsChanges;
+    in.follow = view.follow;
+    in.hierarchyVersion = view.versions.hierarchy;
+    in.cardsVersion = view.versions.cards;
+    in.strandMeshes = view.strandMeshes;
+    in.strandMeshVersion = view.versions.strandMeshes;
+    in.stroke = stroke;
+    return in;
 }
 } // namespace lila::groom

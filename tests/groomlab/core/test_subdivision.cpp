@@ -17,6 +17,7 @@
 
 #include "groomlab/display.h"
 #include "groomlab/groom_file.h"
+#include "groom/GroomDisplay.h"
 #include "groom/GroomEvaluator.h"
 #include "groomlab/flow.h"
 #include "groomlab/guide_hierarchy.h"
@@ -899,6 +900,52 @@ TEST(SubdivisionBinding, TheLevelKeepsTheStrandsAndTheirClumps) {
 
 // Focus on a Clump picking its own centers: its strands, its centers as dots at their roots on the
 // scalp drawn (the guides' dots, in the theme's clumpCenters color). Off again: no dots.
+TEST(ClumpCenterDots, AViewedClumpDrawsItsCenters) {
+    const auto head = quadSphere(12, 16);
+    for (const char* level : {"off", "2"}) {
+        SCOPED_TRACE(level);
+        GroomData data;
+        data.graphJson = layoutGraph(level, R"("density": 3)");
+        data.scalp = head;
+        GroomEvaluator session(data);
+        const Layout layout = layoutOf(session);
+        ASSERT_TRUE(layout.centers && layout.scattered);
+        const ScalpMesh& surface = *session.scalp();
+        DisplayBuilder builder;
+        DisplaySettings settings;
+        settings.guides = false;  // the centers' dots show without the guides
+        GroomEvaluator::Request request;
+        request.density = 1.0f;
+        request.viewNode = "auto";
+        const GroomEvaluator::Result& autoView = session.evaluate(request);
+        EXPECT_EQ(autoView.viewedNode, "auto");
+        ASSERT_TRUE(autoView.strands && autoView.clumpCenters);
+        EXPECT_EQ(autoView.strands->strandCount(), layout.scattered->strandCount());  // its strands
+        ASSERT_EQ(autoView.clumpCenters->size(), layout.centers->size());
+        for (std::size_t c = 0; c < layout.centers->size(); ++c) {
+            const Vec3f& dot = (*autoView.clumpCenters)[c];
+            EXPECT_LT((dot - surface.position(layout.centers->guides()[c].root)).length(), 1e-5f);
+            EXPECT_LT((surface.closestPoint(dot).position - dot).length(), 1e-4f);  // on the scalp drawn
+        }
+        const DisplayFrame& frame = builder.update(lila::groom::displayInputs(autoView), settings);
+        ASSERT_EQ(frame.dots.points.size(), layout.centers->size());
+        for (const auto& c : frame.dots.colors) EXPECT_EQ(c, settings.theme.clumpCenters);
+        // Another, picking its own among the first's.
+        request.viewNode = "own";
+        const GroomEvaluator::Result& ownView = session.evaluate(request);
+        ASSERT_TRUE(ownView.clumpCenters);
+        const std::vector<float>& ownClumps = *ownView.strands->strandChannel("ownClump");
+        std::set<float> clumps(ownClumps.begin(), ownClumps.end());
+        clumps.erase(-1.0f);
+        EXPECT_EQ(ownView.clumpCenters->size(), clumps.size());  // a dot a clump
+        EXPECT_EQ(builder.update(lila::groom::displayInputs(ownView), settings).dots.points.size(), ownView.clumpCenters->size());
+        // Back to the output: none.
+        request.viewNode.clear();
+        const GroomEvaluator::Result& output = session.evaluate(request);
+        EXPECT_FALSE(output.clumpCenters);
+        EXPECT_TRUE(builder.update(lila::groom::displayInputs(output), settings).dots.points.empty());
+    }
+}
 
 // The same refined groom from two sessions, to the bit.
 TEST(SubdivisionBinding, RefinedLayoutIsDeterministic) {
