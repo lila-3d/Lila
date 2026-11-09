@@ -798,11 +798,14 @@ void copyField(const char* what, std::vector<std::string> fields)
 
 void registerMeasureActions()
 {
-    auto add = [](const char* id, const char* label, std::function<void()> fn, const char* python = "", const char* doc = "") {
-        actions::add({.id = id, .label = label, .category = "Measure", .run = std::move(fn), .doc = doc, .python = python});
+    auto add = [](const char* id, const char* label, std::function<void()> fn, const char* python = "", const char* doc = "",
+                  std::vector<std::string> keywords = {}) {
+        actions::add({.id = id, .label = label, .category = "Measure", .run = std::move(fn), .doc = doc, .python = python,
+                      .keywords = std::move(keywords)});
     };
+    // The keyword also lets tear-off search find the Display > Measure section by "distance".
     add("measure.selection", "Measure Selection", measureSelectionUi, "lila.ops.measureSelection()",
-        "Distance, length, angle, circle, area or size of the selection, shown in the viewport and copied to the clipboard.");
+        "Distance, length, angle, circle, area or size of the selection, shown in the viewport and copied to the clipboard.", {"distance"});
     add("measure.copyDistance", "Copy Distance", [] { copyField("distance", {"distance", "length"}); }, "lila.ops.measureSelection()[\"distance\"]",
         "Copies the distance across the selection to the clipboard, in the clipboard units.");
     add("measure.copyDiameter", "Copy Diameter", [] { copyField("diameter", {"diameter"}); }, "lila.ops.measureSelection()[\"diameter\"]",
