@@ -506,6 +506,11 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     mPaint->setToolTip("Paint While Sculpting: shape brushes also paint the color wherever they move the surface");
     setCheckDefault(mPaint, SculptSettings{}.paint);
     pform->addRow("", mPaint);
+    mCavityPaint = new QCheckBox("Only Where It Digs", paintBox);
+    mCavityPaint->setToolTip("Only Where It Digs: Paint While Sculpting colors only where a stroke cuts in, darker the deeper, so Dam "
+                             "Standard and Crease lines come out painted along their grooves");
+    setCheckDefault(mCavityPaint, SculptSettings{}.cavityPaint);
+    pform->addRow("", mCavityPaint);
     pform->addRow("", controls::grid({controls::push("sculpt.colorFill", paintBox, "Fill"), controls::push("sculpt.colorClear", paintBox, "Clear")}, 2,
                                      paintBox));
     col->addWidget(controls::section("Polypaint", paintBox, this, kSections));
@@ -570,6 +575,7 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     });
     connect(mFrontFaces, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().frontFacesOnly = on; changed(); });
     connect(mPaint, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().paint = on; changed(); });
+    connect(mCavityPaint, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().cavityPaint = on; changed(); });
     connect(mShareRadius, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().shareRadius = on; changed(); });
     connect(mShareStrength, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().shareStrength = on; changed(); });
     connect(mShareStroke, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().shareStroke = on; changed(); });
@@ -854,6 +860,8 @@ void SculptPanel::syncFromSettings()
         mBrushes->setExclusive(true);
     }
     mPaint->setChecked(s.paint);
+    mCavityPaint->setChecked(s.cavityPaint);
+    mCavityPaint->setEnabled(s.paint);
     mColor->setStyleSheet(QString("QToolButton { background: %1; border: none; border-radius: 3px; min-height: 18px; }").arg(swatchColor(s.color).name()));
     mRadius->setValue(s.stroke.radius);
     mStrength->setValue(s.stroke.strength);

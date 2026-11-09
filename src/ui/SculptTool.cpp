@@ -55,6 +55,7 @@ SculptSettings loadSettings()
     }
     s.preset = p.value<std::string>("general", "/sculpt/preset", s.preset);
     s.paint = p.value<bool>("general", "/sculpt/paint", s.paint);
+    s.cavityPaint = p.value<bool>("general", "/sculpt/cavityPaint", s.cavityPaint);
     if (json c = p.value("general", "/sculpt/color"); c.is_array() && c.size() == 3 && c[0].is_number() && c[1].is_number() && c[2].is_number())
         s.color = glm::vec3(c[0].get<float>(), c[1].get<float>(), c[2].get<float>());
     s.stroke.loadPrefs("/sculpt");
@@ -193,6 +194,9 @@ class SculptTool final : public ViewportTool, public brush::DabSink
 {
 public:
     const char* name() const override { return "sculpt"; }
+    // The brush ring and its centre dot are the cursor.
+    std::optional<QCursor> cursor() const override { return QCursor(Qt::BlankCursor); }
+    std::string markingMenu(std::string_view base) const override { return base == "viewportShift" ? "sculptShift" : std::string(); }
 
     void activate() override
     {
@@ -227,7 +231,8 @@ public:
         if (!s || !scene::Graph::current().node(s->node))
             return true;
         Hit hit;
-        const bool line = sculptSettings().stroke.mode == brush::StrokeMode::Line && !sculpt::dragsCursor(sculptSettings().brush);
+        const brush::StrokeMode mode = sculptSettings().stroke.mode;
+        const bool line = (mode == brush::StrokeMode::Line || mode == brush::StrokeMode::Curve) && !sculpt::dragsCursor(sculptSettings().brush);
         if (!surfaceHit(*s, e->position(), view, hit) && !line)
             return false;
         beginStroke(*s, e, view);
@@ -381,6 +386,7 @@ private:
         mSettings.brush = smoothing ? sculpt::Brush::Smooth : st.brush;
         mSettings.custom = st.custom;
         mSettings.paint = st.paint;
+        mSettings.cavityPaint = st.cavityPaint;
         mSettings.color = st.color;
         mSettings.falloff = st.stroke.resolveFalloff();
         mFalloffName = st.stroke.falloff;
@@ -661,6 +667,7 @@ void sculptSettingsChanged()
     p.set("general", "/sculpt/brush", s.brush == sculpt::Brush::Custom ? s.custom : std::string(sculpt::brushName(s.brush)));
     p.set("general", "/sculpt/preset", s.preset);
     p.set("general", "/sculpt/paint", s.paint);
+    p.set("general", "/sculpt/cavityPaint", s.cavityPaint);
     p.set("general", "/sculpt/color", json::array({s.color.r, s.color.g, s.color.b}));
     s.stroke.savePrefs("/sculpt");
     p.set("general", "/sculpt/frontFacesOnly", s.frontFacesOnly);
