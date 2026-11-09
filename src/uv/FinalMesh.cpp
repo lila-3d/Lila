@@ -1144,14 +1144,15 @@ SpMat detail::FinalOperator::gram(const SpMat& s) const
         for (Eigen::Index i = 0; i < m; ++i)
             for (Eigen::Index j = 0; j < m; ++j)
                 extra.emplace_back(int(b.cols[size_t(i)]), int(b.cols[size_t(j)]), dgd(i, j));
+        // Chart vertices are few, so the cross term is a dense vertices x columns product.
         const SpMat x = zt * mR;
-        for (int col = 0; col < x.outerSize(); ++col)
-            for (SpMat::InnerIterator it(x, col); it; ++it)
-                for (Eigen::Index i = 0; i < m; ++i)
+        const Eigen::MatrixXd cross = SpMat(x.transpose()) * b.d;
+        for (Eigen::Index col = 0; col < cross.rows(); ++col)
+            for (Eigen::Index i = 0; i < m; ++i)
+                if (const double v = cross(col, i); v != 0.0)
                 {
-                    const double v = b.d(it.row(), i) * it.value();
-                    extra.emplace_back(int(b.cols[size_t(i)]), col, v);
-                    extra.emplace_back(col, int(b.cols[size_t(i)]), v);
+                    extra.emplace_back(int(b.cols[size_t(i)]), int(col), v);
+                    extra.emplace_back(int(col), int(b.cols[size_t(i)]), v);
                 }
     }
     SpMat add(k.rows(), k.cols());
@@ -1487,6 +1488,12 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
         double w;
     };
     SpMat S(static_cast<Eigen::Index>(C), static_cast<Eigen::Index>(C));
+    Eigen::VectorXd offU(static_cast<Eigen::Index>(C)), offV(static_cast<Eigen::Index>(C)), soU, soV;
+    for (size_t c = 0; c < C; ++c)
+    {
+        offU[Eigen::Index(c)] = off[c].x;
+        offV[Eigen::Index(c)] = off[c].y;
+    }
     std::vector<Coupling> kfc;
     auto solver = std::make_unique<Eigen::SimplicialLDLT<SpMat>>();
     auto factor = [&](const std::vector<double>& wt) {
@@ -1502,6 +1509,8 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
                     trips.push_back(Triplet(int(isl.tris[i][p]), int(isl.tris[i][q]), a * glm::dot(fr[i].g[p], fr[i].g[q])));
         }
         S.setFromTriplets(trips.begin(), trips.end());
+        soU = S * offU;
+        soV = S * offV;
         const SpMat K = op.gram(S);
         std::vector<Triplet> kff;
         kfc.clear();
@@ -1664,18 +1673,8 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
                                                fr[i].g[p].x * target[i].c + fr[i].g[p].y * target[i].d);
             }
             // rhs = R^T (be - S off), then moved over the fixed vertices.
-            const auto nC = static_cast<Eigen::Index>(C);
-            Eigen::VectorXd eu(nC), ev(nC), ou(nC), ov(nC);
             for (size_t c = 0; c < C; ++c)
-            {
-                eu[Eigen::Index(c)] = be[c].x;
-                ev[Eigen::Index(c)] = be[c].y;
-                ou[Eigen::Index(c)] = off[c].x;
-                ov[Eigen::Index(c)] = off[c].y;
-            }
-            const Eigen::VectorXd gu = eu - S * ou, gv = ev - S * ov;
-            for (size_t c = 0; c < C; ++c)
-                gc[c] = glm::dvec2(gu[Eigen::Index(c)], gv[Eigen::Index(c)]);
+                gc[c] = be[c] - glm::dvec2(soU[Eigen::Index(c)], soV[Eigen::Index(c)]);
             op.applyTransposed(gc, fuv);
             for (size_t v = 0; v < V; ++v)
                 if (freeIdx[v] >= 0)
