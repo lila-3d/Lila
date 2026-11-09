@@ -130,6 +130,7 @@ lila_module(lila_ui UI
     ArrayTool.cpp ArrayTool.h
     ClayTool.cpp
     ClayUi.cpp ClayUi.h
+    LayoutPencil.cpp LayoutPencil.h
     ConformTool.cpp ConformTool.h
     PythonBridge.cpp PythonBridge.h
     RigViewport.cpp RigViewport.h WeightPaintTool.cpp WeightPaintTool.h RigHandles.cpp RigHandles.h

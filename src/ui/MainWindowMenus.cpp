@@ -149,6 +149,8 @@ void MainWindow::buildMenus()
                                "#Mirror", "mesh.mirror", "#Booleans", "mesh.booleanUnion", "mesh.booleanDifference", "mesh.booleanIntersection"});
     addSubmenu("Mesh", "Clay");
     menus::addActions("Mesh/Clay", {"clay.create", "clay.tool", "clay.addShape", "clay.addCut", "clay.group", "", "clay.refresh", "clay.convert"});
+    addSubmenu("Mesh", "Plating");
+    menus::addActions("Mesh/Plating", {"layout.pencil", "layout.plates", "layout.fasteners", "layout.patterns", "", "layout.loosen", "layout.deleteLines", "layout.clear"});
     addSubmenu("Mesh", "Symmetry");
     menus::addActions("Mesh/Symmetry", {"mesh.toggleSymmetry", "mesh.symmetryX", "mesh.symmetryY", "mesh.symmetryZ", "mesh.symmetryRadial", "mesh.symmetryOff", "viewport.toggleSymmetryLine", "",
                                  "mesh.symmetryCheck", "mesh.symmetrizePositive", "mesh.symmetrizeNegative", "mesh.symmetryRebuild", "mesh.symmetrizeRadial",
@@ -216,7 +218,7 @@ void MainWindow::buildMenus()
     menus::addActions("Sculpt", {"#Sculpt", "sculpt.tool", "sculpt.enter", "sculpt.exit", "sculpt.cancel", "sculpt.toggleSeeThrough", "window.sculpt", "#Levels",
                                  "sculpt.levelUp", "sculpt.levelDown", "sculpt.addLevel", "sculpt.reconstruct", "sculpt.deleteLower", "sculpt.deleteHigher",
                                  "sculpt.deleteLevels", "#Duplicate", "sculpt.duplicate", "sculpt.duplicateHide", "#Shape", "sculpt.remesh",
-                                 "mesh.relaxKeepForm", "mesh.reproject", "mesh.transferShape"});
+                                 "mesh.relaxKeepForm", "mesh.reproject", "mesh.transferShape", "#Hard Surface", "layout.pencil", "layout.plates", "layout.fasteners", "layout.patterns"});
 
     // The modifier kinds fill in above these rows each time it opens.
     menu("Modifiers", "Modifiers", Area::MenuBar, [](QMenu* m) { fillAddModifierMenu(m, false); }, "", {"Model", "Level"});
