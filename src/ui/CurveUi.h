@@ -75,6 +75,8 @@ QWidget* makeGroomBrushPage(QWidget* parent);
 void syncGroomBrushPage(QWidget* page);
 void hideGroomPalette();
 void syncGroomPalette();
+/** Groom strands on a curve node drawn as hair into a frame (captures; the viewport draws them itself). False: not strands. */
+bool drawStrandsFor(render::FrameState& frame, const scene::Node& n, const glm::dmat4& world, const ViewInfo& view);
 /** Whether the tools list their keys in the corner of the view. */
 bool groomKeysShown();
 /** Text, Bevel Plus, curve booleans, region offsets and the straight skeleton tools (PlanarCurveUi.cpp); called by registerCurveUi. */
