@@ -88,7 +88,7 @@ void MainWindow::buildMenus()
         });
     });
     menus::addActions("File", {"file.save", "file.saveAs", "file.incrementAndSave", "file.versions", "file.saveSceneTemplate", "#Validate", "validate.run", "window.validation", "#Import and Export", "file.import", "file.convertMaya",
-                        "file.exportSelection", "file.gameExporter", "file.exportMeshSequence", "file.exportWebViewer", "window.batchRun", "file.createReference", "#Unreal", "unreal.send", "animated.sendOptions", "unreal.sync", "unreal.sendBake",
+                        "file.exportSelection", "file.gameExporter", "file.exportMeshSequence", "file.exportWebViewer", "window.batchRun", "file.createReference", "#Unreal", "unreal.send", "animated.sendOptions", "unreal.sync", "unreal.sendBake", "groom.sendToUnreal",
                         "deform.exportMLDeformer", "unreal.expressionRig", "unreal.connect","#Workspace", "file.openFolder"});
     addSubmenu("File", "Recent Folders", [this](QMenu* recent) {
         recent->setProperty(menuSearch::kNoSearchProperty, true);
@@ -199,7 +199,7 @@ void MainWindow::buildMenus()
     addSubmenu("Curves", "Sketch");
     menus::addActions("Curves/Sketch", {"curve.sketchTool", "", "curve.sketchCombine", "curve.sketchSolve", "curve.sketchClear"});
     addSubmenu("Curves", "Groom");
-    menus::addActions("Curves/Groom", {"groom.create", "groom.drawHair", "groom.brushes", "curve.sculptCurves", "groom.cards", "groom.bakeCards", "groom.import", "groom.importYeti", "groom.export"});
+    menus::addActions("Curves/Groom", {"groom.create", "groom.drawHair", "groom.brushes", "curve.sculptCurves", "groom.cards", "groom.bakeCards", "groom.import", "groom.importYeti", "groom.export", "groom.sendToUnreal"});
     addSubmenu("Curves/Groom", "Style");
     menus::addActions("Curves/Groom/Style", {"groom.style.split", "groom.style.clump", "groom.style.curl", "groom.style.wave", "groom.style.frizz",
                                              "groom.style.noise", "groom.style.length", "groom.style.cut", "groom.style.flyaways"});

@@ -60,6 +60,7 @@ public class LilaLink : ModuleRules
 			"BlueprintGraph",
 			"ControlRig",
 			"ControlRigDeveloper",
+			"HairStrandsCore",
 		});
 
 		// Editor modules that register component exporters include LilaComponentExporter.h, which uses FJsonObject.

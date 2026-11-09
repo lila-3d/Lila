@@ -1386,6 +1386,15 @@ void registerGroomUi()
                          "meshes are in the scene.",
                   .python = "importYeti(\"scene.ma\")",
                   .keywords = {"yeti", "peregrine", "maya", "groom", "hair", "fur", "import"}});
+    actions::add({.id = "groom.sendToUnreal",
+                  .label = "Send Groom to Unreal",
+                  .category = "Groom",
+                  .doc = "Sends the selected groom to the connected Unreal editor as a groom asset with its guides and M_LilaHair, built on "
+                         "MF_LilaHair. Sending again reimports the same asset.",
+                  .python = ops::toPython("unrealSendGroom", json::object()),
+                  .command = "unrealSendGroom",
+                  .call = json::object(),
+                  .keywords = {"unreal", "groom", "hair", "send", "lilalink", "alembic"}});
     actions::add({.id = "groom.cards",
                   .label = "Hair Cards Preset",
                   .category = "Groom",
