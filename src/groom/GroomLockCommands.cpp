@@ -624,10 +624,12 @@ void registerLockCommands()
 
     std::vector<FlagDef> shellFlags = attrFlags("groomShell");
     shellFlags.push_back({"name", "n", T::String, nullptr, "Mesh name; default <groom>Shell."});
+    shellFlags.push_back({"quads", "q", T::Int, 0, "Also quad remesh the shell (quadRemesh) to about this many faces; 0 leaves it as it is.", {}, {}, 0.0, 1000000.0});
     ops::registerCommand({
         .name = "groomShell",
         .doc = "One watertight mesh over a groom's locks, smooth-unioned so they join into a single surface ready for retopology "
-               "(quadRemesh). Live: it follows the groom. Returns [mesh, groomShell].",
+               "(quadRemesh). Live: it follows the groom. With quads, also the quad remeshed shell. Returns [mesh, groomShell] and, "
+               "with quads, quadRemesh's reply last.",
         .positionalDoc = "groom",
         .flags = shellFlags,
         .run = [](const Args& a) -> json {
@@ -647,7 +649,10 @@ void registerLockCommands()
             Node* mesh = g.createNode(*types::find("mesh"), name, kNoNode, true);
             g.connect({op->id(), idx(*op, "outMesh"), -1}, {mesh->id(), MeshNode::kInMesh, -1});
             g.select({mesh->id()});
-            return json::array({mesh->path(), op->path()});
+            json out = json::array({mesh->path(), op->path()});
+            if (const int quads = a.get<int>("quads", 0); quads > 0)
+                out.push_back(ops::execute("quadRemesh", {{"args", {mesh->path()}}, {"targetFaces", quads}}));
+            return out;
         },
     });
 }
