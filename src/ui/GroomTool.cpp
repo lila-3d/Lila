@@ -1386,5 +1386,25 @@ void registerGroomUi()
                          "meshes are in the scene.",
                   .python = "importYeti(\"scene.ma\")",
                   .keywords = {"yeti", "peregrine", "maya", "groom", "hair", "fur", "import"}});
+    actions::add({.id = "groom.cards",
+                  .label = "Hair Cards Preset",
+                  .category = "Groom",
+                  .doc = "Gives the selected groom a Cards node set from a hero, mid or low preset; outCards holds the cards.",
+                  .python = ops::toPython("groomCards", {{"lod", "mid"}}),
+                  .command = "groomCards",
+                  .call = json::object(),
+                  .keywords = {"cards", "lod", "game", "hair cards", "groom"}});
+    actions::add({.id = "groom.bakeCards",
+                  .label = "Bake Hair Cards...",
+                  .category = "Groom",
+                  .run =
+                      [] {
+                          const QString folder = fileDialog::getExistingDirectory(QApplication::activeWindow(), "Bake Hair Cards");
+                          if (!folder.isEmpty())
+                              actions::runWithOptions("groomBakeCards", {{"folder", folder.toStdString()}});
+                      },
+                  .doc = "Bakes the selected groom's cards into texture maps and an atlas in a folder; the cards keep their cells from it.",
+                  .python = ops::toPython("groomBakeCards", {{"folder", "cards"}}),
+                  .keywords = {"cards", "bake", "atlas", "textures", "groom"}});
 }
 } // namespace lila::ui

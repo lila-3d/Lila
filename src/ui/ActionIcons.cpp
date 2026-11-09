@@ -337,6 +337,8 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"groom.export", "file-export"},
     {"groom.import", "file-import"},
     {"groom.importYeti", "file-import"},
+    {"groom.cards", "layout-cards"},
+    {"groom.bakeCards", "photo"},
     {"groom.settle", "arrow-bar-to-down"},
     {"groom.shell", "blob"},
     {"curve.handleAuto", "vector-bezier"},
