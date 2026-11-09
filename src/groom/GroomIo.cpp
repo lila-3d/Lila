@@ -13,6 +13,8 @@
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 
+#include <groomlab/card_files.h>
+#include <groomlab/card_presets.h>
 #include <groomlab/engine_export.h>
 #include <groomlab/flow.h>
 #include <groomlab/groom_file.h>
@@ -206,6 +208,97 @@ geo::Mesh meshOf(const groomlab::ScalpMesh& scalp)
     return m;
 }
 
+/** The graph's Cards node, one added after the hair (before the output) when it has none. */
+std::string cardsNode(json& graph)
+{
+    for (const json& n : graph["nodes"])
+        if (n.value("type", std::string()) == "Cards")
+            return n["name"];
+    json& connections = graph["connections"];
+    std::string from;
+    for (json& c : connections)
+        if (c["to"] == graph.value("output", std::string("output")))
+        {
+            from = c["from"];
+            c["from"] = "cards";
+        }
+    if (from.empty())
+        throw CommandError("groomCards: the graph has no output to put cards before");
+    graph["nodes"].push_back({{"name", "cards"}, {"type", "Cards"}});
+    connections.push_back({{"from", from}, {"to", "cards"}, {"input", "strands"}});
+    return "cards";
+}
+
+json paramJson(const groomlab::ParamValue& v)
+{
+    if (const auto* b = std::get_if<bool>(&v))
+        return *b;
+    if (const auto* i = std::get_if<std::int64_t>(&v))
+        return *i;
+    if (const auto* d = std::get_if<double>(&v))
+        return *d;
+    if (const auto* s = std::get_if<std::string>(&v))
+        return *s;
+    return nullptr;
+}
+
+json cardsPreset(const Args& a)
+{
+    Graph& g = Graph::current();
+    Node& gr = groomArg(g, a, "groomCards");
+    const std::string stored = text(gr, "graph");
+    json graph = json::parse(stored.empty() ? groomGraph::defaultGraph() : stored);
+    const std::string node = cardsNode(graph);
+    const std::string lod = a.get<std::string>("lod", "mid");
+    std::vector<std::pair<std::string, groomlab::ParamValue>> params;
+    try
+    {
+        const std::string kind = groomlab::cardNodeKind(graph.dump(), node);
+        params = groomlab::cardPresetParams(lod, kind.empty() ? "hair" : kind,
+                                            a.has("triangles") ? std::optional<int>(int(a.get<int64_t>("triangles"))) : std::nullopt);
+    }
+    catch (const std::exception& e)
+    {
+        throw CommandError(std::string("groomCards: ") + e.what());
+    }
+    for (json& n : graph["nodes"])
+        if (n["name"] == node)
+            for (const auto& [name, value] : params)
+                if (json j = paramJson(value); !j.is_null())
+                    n["params"][name] = j;
+    g.setValue({gr.id(), gr.type().attrIndex("graph"), -1}, graph.dump());
+    return {{"node", node}, {"lod", lod}};
+}
+
+json bakeCards(const Args& a)
+{
+    Graph& g = Graph::current();
+    Node& gr = groomArg(g, a, "groomBakeCards");
+    const std::string folder = a.get<std::string>("folder", "");
+    if (folder.empty())
+        throw CommandError("groomBakeCards: give a folder");
+    const std::string name = a.get<std::string>("name", gr.name());
+    const GroomExportFrame frame = groomExportFrame(g, gr.id(), g.time());
+    std::string stamp;
+    groomlab::CardBakePaths at = groomlab::CardBakePaths::in(folder, name);
+    try
+    {
+        const groomlab::CardBake bake = groomlab::bakeCardsInMemory(frame.cardStrands ? frame.cardStrands : frame.strands, frame.scalp, int(a.get<int64_t>("resolution", 0)),
+                                                                    float(a.get<double>("occlusion", 1.0)));
+        stamp = groomlab::writeCardBake(bake, at, true);
+    }
+    catch (const std::exception& e)
+    {
+        throw CommandError(std::string("groomBakeCards: ") + e.what());
+    }
+    const std::string maps = groomlab::formatCardMaps(at.prefix, stamp, 1);
+    g.setValue({gr.id(), gr.type().attrIndex("cardMaps"), -1}, maps);
+    json files = json::array();
+    for (const std::string& m : groomlab::cardMapNames())
+        files.push_back(at.map(m));
+    return {{"prefix", at.prefix}, {"maps", files}};
+}
+
 json importFile(const Args& a)
 {
     Graph& g = Graph::current();
@@ -298,6 +391,27 @@ void registerIoCommands()
                   {"strands", "", T::Bool, true, "Also a curve showing the strands."},
                   {"name", "n", T::String, nullptr, "Base name of the new nodes; the file's name when left out."}},
         .run = importFile,
+    });
+    ops::registerCommand({
+        .name = "groomCards",
+        .doc = "Gives the groom a Cards node (after the hair) set from a level-of-detail preset: hero, mid or low, its card count "
+               "from the preset's triangle budget or triangles. The groom's outCards then holds the cards. Returns {node, lod}.",
+        .positionalDoc = "groom",
+        .flags = {{"lod", "l", T::String, "mid", "The preset.", {"hero", "mid", "low"}},
+                  {"triangles", "t", T::Int, nullptr, "The triangle budget instead of the preset's.", {}, {}, 1.0}},
+        .run = cardsPreset,
+    });
+    ops::registerCommand({
+        .name = "groomBakeCards",
+        .doc = "Bakes the groom's cards into texture maps (Depth, Coverage, Tangent, Attribute, Color, AO, Normal as .tga), the "
+               "atlas layout and a preview, in folder as <name>_<Map>.tga; the cards keep their atlas cells from it after. "
+               "Needs a Cards node (groomCards). Returns {prefix, maps}.",
+        .positionalDoc = "groom",
+        .flags = {{"folder", "f", T::String, nullptr, "Folder to write into."},
+                  {"name", "n", T::String, nullptr, "File name prefix; the groom's name when left out."},
+                  {"resolution", "r", T::Int, 0, "Map size in pixels; 0: the Cards node's atlas size.", {}, {}, 0.0, 8192.0},
+                  {"occlusion", "", T::Float, 1.0, "Ambient occlusion strength, 0 to 1.", {}, {}, 0.0, 1.0}},
+        .run = bakeCards,
     });
 }
 } // namespace lila::groom

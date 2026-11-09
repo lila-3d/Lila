@@ -279,6 +279,7 @@ void registerTypes()
         {.name = "flow", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrHidden, .doc = "Flow arrows and sinks on the scalp: a GroomLab flow set as JSON."},
         {.name = "scalpMaps", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrHidden, .doc = "Maps painted on the scalp's vertices: GroomLab scalp maps as JSON."},
         {.name = "sculpts", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrHidden, .doc = "Sculpt nodes' stored edits: a GroomLab sculpt set as JSON."},
+        {.name = "cardMaps", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrHidden, .doc = "The last card bake's maps (groomBakeCards): cards keep their atlas cells from it."},
         {.name = "correctives", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrHidden, .doc = "Shot sculpts: GroomLab correctives as JSON."},
     };
     for (AttrDef d : std::vector<AttrDef>{

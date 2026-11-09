@@ -122,3 +122,23 @@ TEST_CASE("importYeti: a .ma's Yeti nodes become grooms, their grooms guides and
     CHECK(std::get<int64_t>(gr->value(gr->type().attrIndex("strandCount"))) > 100);
     CHECK(std::get<std::string>(gr->value(gr->type().attrIndex("graph"))).find("\"Clump\"") != std::string::npos);
 }
+
+TEST_CASE("groomCards and groomBakeCards: a preset's Cards node, its maps baked and kept on the groom")
+{
+    const json made = groomedHead();
+    const std::string groom = made["groom"];
+    scene::Graph& g = scene::Graph::current();
+    const json preset = ops::execute("groomCards", {{"args", {groom}}, {"lod", "low"}});
+    CHECK(preset["node"] == "cards");
+    scene::Node* gr = g.find(groom);
+    const std::string graph = std::get<std::string>(gr->value(gr->type().attrIndex("graph")));
+    CHECK(graph.find("\"Cards\"") != std::string::npos);
+
+    const auto folder = scratch("cards");
+    std::filesystem::remove_all(folder);
+    const json baked = ops::execute("groomBakeCards", {{"args", {groom}}, {"folder", folder.string()}, {"resolution", 256}});
+    REQUIRE(baked["maps"].size() >= 5);
+    for (const json& m : baked["maps"])
+        CHECK_MESSAGE(std::filesystem::exists(m.get<std::string>()), m.get<std::string>());
+    CHECK(std::get<std::string>(gr->value(gr->type().attrIndex("cardMaps"))).find("Coverage=") != std::string::npos);
+}

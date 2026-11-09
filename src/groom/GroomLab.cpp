@@ -355,6 +355,7 @@ public:
             setScalpMaps(e, warnings);
             e.setSculptsJson(s(*this, "sculpts"));
             e.setCorrectivesJson(s(*this, "correctives"));
+            e.setCardMaps(s(*this, "cardMaps"));
             e.setFramesPerSecond(anim::playback().fps);
             const bool scale = b(*this, "scaleWithScalp");
             e.setScaleWithScalp(scale);
@@ -372,7 +373,7 @@ public:
             e.setScalpHistory(historyAt(ctx.time));
             GroomEvaluator::Request request;
             request.time = b(*this, "useSceneTime") ? ctx.time : f(*this, "time");
-            request.wantCards = cards;
+            request.wantCards = cards || (mExport && e.hasCardsNode());
             // A graph from elsewhere (an imported .groom) has no Locks node: no locks from it.
             const bool lockNode = e.hasNode(groomGraph::kLocks);
             if (!strands && !cards && lockNode)
@@ -388,6 +389,7 @@ public:
             if (mExport)
             {
                 mExported.strands = result.strands;
+                mExported.cardStrands = result.cardStrands;
                 mExported.scalp = mScalp;
                 mExported.guides = groomlab::StrandSet();
                 // The primary guides, what Unreal simulates the hair on.

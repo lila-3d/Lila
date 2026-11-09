@@ -13,6 +13,8 @@ namespace lila::groom
 struct GroomExportFrame
 {
     std::shared_ptr<const groomlab::StrandSet> strands;
+    /** The strands the Cards nodes made cards from, with their card layers; null without Cards nodes. */
+    std::shared_ptr<const groomlab::StrandSet> cardStrands;
     groomlab::StrandSet guides;
     std::shared_ptr<const groomlab::ScalpMesh> scalp;
 };
