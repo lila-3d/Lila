@@ -251,7 +251,7 @@ void MainWindow::registerPanels()
     panels::add({.id = kGraphEditorDock, .title = "Graph Editor", .create = make([](QWidget* p) { return new GraphEditor(p); }),
                  .area = Qt::BottomDockWidgetArea, .icon = "chart-line", .open = false});
     panels::add({.id = kNodeEditorDock, .title = "Node Editor", .create = make([](QWidget* p) { return new NodeEditor(p); }),
-                 .area = Qt::BottomDockWidgetArea, .icon = "schema", .open = false, .place = [this, dock](QDockWidget* nodeDock) {
+                 .area = Qt::BottomDockWidgetArea, .icon = "node-editor", .open = false, .place = [this, dock](QDockWidget* nodeDock) {
                      arrangeBottomDocks(this, {dock("scriptOutput"), dock(kScriptEditorDock), dock(kTerminalDock), dock(kGraphEditorDock), nodeDock},
                                         dock(kScriptEditorDock), dock(kTimeSliderDock));
                  }, .docs = "node-editor"});

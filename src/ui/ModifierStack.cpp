@@ -792,7 +792,7 @@ ModifierStackWidget::ModifierStackWidget(QWidget* parent) : QWidget(parent)
     fillAddModifierMenu(addMenu);
     mAdd->setMenu(addMenu);
     top->addWidget(mAdd, 1);
-    auto* graph = stackButton("schema", "<b>Show in Node Editor</b><br>The stack as nodes, with every connection.", mHeader);
+    auto* graph = stackButton("node-editor", "<b>Show in Node Editor</b><br>The stack as nodes, with every connection.", mHeader);
     connect(graph, &QToolButton::clicked, this, [] { actions::run("nodeEditor.showHistory"); });
     top->addWidget(graph);
     mMore = stackButton("dots","<b>Stack Actions</b><br>Apply or bake the whole stack, expand or collapse every card.", mHeader);
