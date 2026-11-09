@@ -191,10 +191,18 @@ struct FinalRefineResult
 };
 
 /**
- * Re-solves the uv islands of the faces (all when empty) against the exported mesh and writes them back. Does nothing
- * when the stack leaves the surface alone.
+ * Re-solves the uv islands of the faces (all when empty) against the exported mesh and writes them back, then re-solves
+ * those the written uvs still collapse (a Fit Surface subdivision respaces borders from the new uvs) for a few rounds.
+ * Does nothing when the stack leaves the surface alone.
  */
 LILA_SCENE_API FinalRefineResult refineFinal(geo::Mesh& cage, std::span<const Index> faces, std::string_view uvSet, const Stack& stack,
+                                             const FinalSolveOptions& opts = {});
+
+/**
+ * Re-solves only the islands of the faces (all when empty) whose exported triangles collapse, as refineFinal's later
+ * rounds do: for tools that move uvs some other way first, like Live Relax.
+ */
+LILA_SCENE_API FinalRefineResult repairFinal(geo::Mesh& cage, std::span<const Index> faces, std::string_view uvSet, const Stack& stack,
                                              const FinalSolveOptions& opts = {});
 
 /** Moves an island that grew past its UDIM tile back inside, shrinking it only when it is bigger than the tile. */

@@ -334,6 +334,32 @@ TEST_CASE("final mesh: a fill the stack changes after the subdivision is probed 
     CHECK(worstMiss(map, m) < 1e-3);
 }
 
+TEST_CASE("final mesh: refine reports the slivers the written uvs leave, and repair solves only islands with slivers")
+{
+    // The lid island's thin sides folded flat onto the top's edge: its rim strips collapse on the export.
+    geo::Mesh m = lidPlate(0.4, 3);
+    const uv::Stack stack = bevelSubdivStack(0.13, 3, 2);
+    std::vector<uv::Chart> charts = islandsOf(m);
+    REQUIRE(charts.size() == 2);
+    const size_t lid = charts[0].area3d() > charts[1].area3d() ? 0 : 1;
+    uv::Chart& ch = charts[lid];
+    for (size_t v = 0; v < ch.pos.size(); ++v)
+        if (ch.pos[v].y < 0.0)
+            for (size_t t = 0; t < ch.pos.size(); ++t)
+                if (ch.pos[t].y > 0.0 && glm::length(glm::dvec2(ch.pos[t].x - ch.pos[v].x, ch.pos[t].z - ch.pos[v].z)) < 1e-6)
+                    ch.uv[v] = glm::mix(ch.uv[t], ch.uv[v], 0.01);
+    uv::writeCharts(m, charts, "uv0");
+    const std::vector<glm::dvec2> other = islandsOf(m)[1 - lid].uv;
+    REQUIRE(exportState(m, stack).collapsed > 0);
+
+    const uv::FinalRefineResult r = uv::repairFinal(m, {}, "uv0", stack);
+    const ExportState after = exportState(m, stack);
+    MESSAGE("collapsed " << r.collapsedBefore << " -> " << r.collapsedAfter << ", export shows " << after.collapsed);
+    CHECK(r.collapsedAfter == after.collapsed);
+    CHECK(after.collapsed == 0);
+    CHECK(islandsOf(m)[1 - lid].uv == other);
+}
+
 TEST_CASE("final mesh: islands stay where they were")
 {
     geo::Mesh m = plate();

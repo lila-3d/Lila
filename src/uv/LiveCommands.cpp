@@ -141,6 +141,13 @@ RelaxStats relaxIslands(geo::Mesh& m, std::span<const Index> faces, std::string_
                     islands[i].setUv(v, c.uv[v]);
         }
     writeLiveIslands(m, islands, set, false);
+    // The relax reads a fit's respacing as it was; where the new uvs respace the border into slivers, solve those again.
+    if (!stack.empty() && std::ranges::any_of(islands, [](const LiveIsland& is) { return is.hasFinal(); }))
+    {
+        FinalSolveOptions fo;
+        fo.usePins = usePins;
+        repairFinal(m, scope, set, stack, fo);
+    }
     return st;
 }
 
