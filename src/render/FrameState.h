@@ -63,6 +63,42 @@ struct PointDraw
     float selectedSize = 6.0f;
 };
 
+/** One hair segment: its ends with their world widths and root-to-tip parameter, its strand's thinning rank and colour. */
+struct StrandSegment
+{
+    glm::vec3 a{0.0f};
+    float widthA = 0.0f;
+    glm::vec3 b{0.0f};
+    float widthB = 0.0f;
+    glm::vec2 t{0.0f}; // root (0) to tip (1) at a and b
+    /** The strand's place in its clump's thinning order, 0 to 1: drawn while below the draw's keep. */
+    float rank = 0.0f;
+    uint32_t color = 0xff000000u; // sRGB, R in the low byte
+};
+static_assert(sizeof(StrandSegment) == 48, "matches the strands vertex input");
+
+/** Hair strands kept on the GPU between frames. */
+struct StrandCloud
+{
+    std::vector<StrandSegment> segments;
+    size_t strands = 0;
+    uint64_t key = nextResourceKey();
+};
+
+/**
+ * Strands drawn as camera-facing ribbons with hair shading. Thinner than a pixel they draw a pixel wide and dither to
+ * their coverage; at a distance only the strands ranked under `keep` draw, widened by `widthScale` to cover the same.
+ */
+struct StrandDraw
+{
+    std::shared_ptr<const StrandCloud> cloud;
+    glm::mat4 world{1.0f};
+    float keep = 1.0f;
+    float widthScale = 1.0f;
+    /** Highlight colour (linear) mixed in for a selected or preselected node; black for none. */
+    glm::vec3 tint{0.0f};
+};
+
 /** Pixel-space triangle vertex for the 2D overlay (gizmos, HUD, text). */
 struct OverlayVertex
 {
@@ -401,6 +437,7 @@ struct FrameState
     float curveWidth = 2.0f, curveBoldWidth = 3.0f, curveHaloWidth = 4.0f, curveHaloBoldWidth = 5.0f;
     std::vector<LineVertex> tris3d;     // world-space triangle list, blended and biased toward the camera, no depth write
     std::vector<PointDraw> points;      // component dots, drawn after tris3d
+    std::vector<StrandDraw> strands;    // hair, drawn in the scene pass after the meshes
     std::vector<LineVertex> linesXray;  // world-space lines with no depth test, over every surface (x-ray joints)
     /** Debug drawing (debug/DebugDraw.h), shared between frames while it doesn't change. Triangles are blended and depth tested. */
     std::shared_ptr<const std::vector<LineBatch>> debugLines;

@@ -314,6 +314,16 @@ struct SubdivideMap
  */
 LILA_SCENE_API Mesh subdivide(const Mesh& mesh, const SubdivideOptions& opts = {}, SubdivideMap* map = nullptr);
 
+/**
+ * Adds the spacing layers a Fit Surface subdivision measures its island borders in: per uv island layer, a corner layer
+ * placing each island border loop's points at their distance along the loop on the surface. Built at the cage, before the
+ * modifiers that blend uvs (bevels, mirrors), they bunch where those modifiers bunch the uvs, whatever the cage's layout.
+ * A Fit Surface subdivision builds them itself when its input has none; every subdivision removes them.
+ */
+LILA_SCENE_API void addFitSpacing(Mesh& mesh);
+LILA_SCENE_API bool hasFitSpacing(const Mesh& mesh);
+LILA_SCENE_API void removeFitSpacing(Mesh& mesh);
+
 /** One uv island's Fit Surface fill: its interior groups' values as a fixed linear map of its border groups' values. */
 class LILA_SCENE_API FitFill
 {

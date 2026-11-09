@@ -324,6 +324,12 @@ TEST_CASE("bakeLint finds each problem and bake lists its warnings first")
         const auto found = issues(lintOnly(p, "uvOverlap"), "uvOverlap");
         REQUIRE(found.size() == 1);
         CHECK(found[0]["data"]["otherGroup"].get<std::string>() != found[0]["group"].get<std::string>());
+        // Each overlapping island pair: island on the mesh, island on the other, cells.
+        const json& pairs = found[0]["data"]["islands"];
+        REQUIRE(pairs.size() == 1);
+        CHECK(pairs[0][0] == 0);
+        CHECK(pairs[0][1] == 0);
+        CHECK(pairs[0][2] == found[0]["data"]["cells"]);
         const json r = ops::execute("bake", {{"project", p}, {"maps", {"height"}}});
         CHECK(std::ranges::any_of(r["warnings"], [](const json& w) { return w.get<std::string>().starts_with("lint uvOverlap"); }));
         CHECK(r["lint"]["warnings"].get<int>() >= 1);

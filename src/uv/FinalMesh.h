@@ -20,6 +20,8 @@ struct StackStep
 {
     std::string name;
     std::function<geo::Mesh(const geo::Mesh&)> apply;
+    /** A subdivision: runStack adds the Fit Surface spacing layers to the stack's input (see geo::addFitSpacing). */
+    bool subdivides = false;
 };
 using Stack = std::vector<StackStep>;
 
@@ -96,7 +98,7 @@ LILA_SCENE_API std::vector<Index> exportedFaces(const FinalMap& map, std::span<c
 /** True when the stack's output differs from the cage in topology or point positions, so uvs land on another surface. */
 LILA_SCENE_API bool changesSurface(const geo::Mesh& cage, const geo::Mesh& exported);
 
-/** Runs the stack on a copy of the mesh. */
+/** Runs the stack on a copy of the mesh, with Fit Surface spacing layers added at its start when a step subdivides. */
 LILA_SCENE_API geo::Mesh runStack(const geo::Mesh& mesh, const Stack& stack);
 
 /** Measures the map. Cage (with no warning) when the stack leaves the surface unchanged. */

@@ -211,7 +211,7 @@ void AutoBevelNode::compute(const EvalContext&)
             setOutput(kOutMesh, MeshPtr(std::move(shown)));
         }
         else if (!set->edges.empty())
-            setOutput(kOutMesh, MeshPtr(std::make_shared<geo::Mesh>(bevelChosen(*in, *this, set->edges))));
+            setOutput(kOutMesh, MeshPtr(std::make_shared<geo::Mesh>(bevelChosen(*modifiers::stackInput(*this, in), *this, set->edges))));
     }
     catch (const std::exception& e)
     {

@@ -314,6 +314,16 @@ struct PointsPush
 };
 static_assert(sizeof(PointsPush) == 144, "matches PointsPush in points.slang");
 
+struct StrandsPush
+{
+    glm::mat4 mvp{1.0f};
+    glm::vec4 eye{0.0f};
+    glm::vec4 params{1.0f, 1.0f, 1.0f, 1.0f}; // keep, width scale, exposure, pixels per unit at distance 1
+    glm::vec4 tint{0.0f};
+    glm::vec4 up{0.0f, 1.0f, 0.0f, 0.0f};
+};
+static_assert(sizeof(StrandsPush) == 128, "matches StrandsPush in strands.slang");
+
 struct PointsCullPush
 {
     glm::mat4 viewProj;
@@ -423,6 +433,14 @@ struct GpuPoints
     VkDeviceAddress address = 0; // for thinning a dense cloud (points_cull.slang)
     uint32_t count = 0;
     std::shared_ptr<const PointCloud> keep;
+    uint64_t lastUsed = 0;
+};
+
+struct GpuStrands
+{
+    AllocatedBuffer buffer;
+    uint32_t count = 0;
+    std::shared_ptr<const StrandCloud> keep;
     uint64_t lastUsed = 0;
 };
 
@@ -653,6 +671,9 @@ struct Renderer::Impl
     VkPipeline meshPipeline = VK_NULL_HANDLE, wirePipeline = VK_NULL_HANDLE, wireXrayPipeline = VK_NULL_HANDLE;
     std::unordered_map<uint64_t, GpuMesh> meshCache; // render thread only
     std::unordered_map<uint64_t, GpuPoints> pointCache; // render thread only
+    std::unordered_map<uint64_t, GpuStrands> strandCache; // render thread only
+    VkPipeline strandsPipeline = VK_NULL_HANDLE;
+    VkPipelineLayout strandsLayout = VK_NULL_HANDLE;
     VkPipelineLayout pointsLayout = VK_NULL_HANDLE, pointsCullLayout = VK_NULL_HANDLE;
     VkPipeline pointsNearestPipeline = VK_NULL_HANDLE, pointsKeepPipeline = VK_NULL_HANDLE;
     /** By s.points index: where that cloud's thinned points went this frame (PointsCull), or none when it draws whole. */
@@ -1688,13 +1709,22 @@ struct Renderer::Impl
         for (auto& [key, g] : pointCache)
             if (g.lastUsed + 8 < frameCounter)
                 stale.push_back(key);
-        if (stale.empty())
+        std::vector<uint64_t> staleStrands;
+        for (auto& [key, g] : strandCache)
+            if (g.lastUsed + 8 < frameCounter)
+                staleStrands.push_back(key);
+        if (stale.empty() && staleStrands.empty())
             return;
         vkDeviceWaitIdle(vk.device);
         for (uint64_t key : stale)
         {
             destroyBuffer(pointCache[key].buffer);
             pointCache.erase(key);
+        }
+        for (uint64_t key : staleStrands)
+        {
+            destroyBuffer(strandCache[key].buffer);
+            strandCache.erase(key);
         }
     }
 
@@ -1703,6 +1733,9 @@ struct Renderer::Impl
         for (auto& [key, g] : pointCache)
             destroyBuffer(g.buffer);
         pointCache.clear();
+        for (auto& [key, g] : strandCache)
+            destroyBuffer(g.buffer);
+        strandCache.clear();
         heightfields.destroy(vk);
         for (auto& [key, g] : meshCache)
         {
@@ -2581,6 +2614,15 @@ struct Renderer::Impl
                 g.count = uint32_t(p.cloud->points.size());
                 g.keep = p.cloud;
                 pointCache.emplace(p.cloud->key, std::move(g));
+            }
+        for (const StrandDraw& d : s.strands)
+            if (d.cloud && !d.cloud->segments.empty() && !strandCache.contains(d.cloud->key))
+            {
+                GpuStrands g;
+                g.buffer = deviceBuffer(cmd, f, d.cloud->segments.data(), d.cloud->segments.size() * sizeof(StrandSegment), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+                g.count = uint32_t(d.cloud->segments.size());
+                g.keep = d.cloud;
+                strandCache.emplace(d.cloud->key, std::move(g));
             }
         if (f.staging.size() != staged)
             memoryBarrier(cmd, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
@@ -3927,6 +3969,23 @@ struct Renderer::Impl
         linesLayout = layoutFor(sizeof(LinesPush), VK_SHADER_STAGE_VERTEX_BIT);
         pointsLayout = layoutFor(sizeof(PointsPush), VK_SHADER_STAGE_VERTEX_BIT);
         pointsCullLayout = layoutFor(sizeof(PointsCullPush), VK_SHADER_STAGE_COMPUTE_BIT);
+        strandsLayout = layoutFor(sizeof(StrandsPush), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+        if (VkShaderModule strands = module(loadSpirv("strands.spv")))
+        {
+            VkVertexInputBindingDescription sb{0, sizeof(StrandSegment), VK_VERTEX_INPUT_RATE_INSTANCE};
+            VkVertexInputAttributeDescription sa[5] = {{0, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(StrandSegment, a)},
+                                                       {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(StrandSegment, b)},
+                                                       {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(StrandSegment, t)},
+                                                       {3, 0, VK_FORMAT_R32_SFLOAT, offsetof(StrandSegment, rank)},
+                                                       {4, 0, VK_FORMAT_R32_UINT, offsetof(StrandSegment, color)}};
+            VkPipelineVertexInputStateCreateInfo svin{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+            svin.vertexBindingDescriptionCount = 1;
+            svin.pVertexBindingDescriptions = &sb;
+            svin.vertexAttributeDescriptionCount = 5;
+            svin.pVertexAttributeDescriptions = sa;
+            strandsPipeline = buildPipeline(strandsLayout, strands, "strandsVS", "strandsPS", sceneFormat, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, svin, true, false);
+            vkDestroyShaderModule(vk.device, strands, nullptr);
+        }
         overlayTrisLayout = layoutFor(sizeof(glm::vec2), VK_SHADER_STAGE_VERTEX_BIT, atlasSetLayout);
 
         VkShaderModule grid = module(loadSpirv("grid.spv"));
@@ -4226,13 +4285,13 @@ struct Renderer::Impl
                               &heightfields.wire, &heightfields.prepass, &heightfields.shadow,
                               &composeOverPipeline, &postPipeline, &externalPipeline,
                               &taaPipeline, &composePipeline, &composeSinglePipeline,
-                              &bloomDownPipeline, &bloomUpPipeline, &histogramPipeline, &averagePipeline, &shadowPipeline, &rtaoPipeline, &bevelPipeline, &rtShadowPipeline})
+                              &bloomDownPipeline, &bloomUpPipeline, &histogramPipeline, &averagePipeline, &shadowPipeline, &rtaoPipeline, &bevelPipeline, &rtShadowPipeline, &strandsPipeline})
             if (*p)
             {
                 vkDestroyPipeline(vk.device, *p, nullptr);
                 *p = VK_NULL_HANDLE;
             }
-        for (VkPipelineLayout* l : {&gridLayout, &linesLayout, &overlayTrisLayout, &meshLayout, &wireLayout, &contactLayout, &aoLayout, &aoApplyLayout, &pointsLayout, &pointsCullLayout,
+        for (VkPipelineLayout* l : {&gridLayout, &linesLayout, &overlayTrisLayout, &meshLayout, &wireLayout, &contactLayout, &aoLayout, &aoApplyLayout, &pointsLayout, &pointsCullLayout, &strandsLayout,
                                     &imagePlaneLayout, &postLayout, &externalLayout, &taaLayout, &composeLayout, &bloomLayout,
                                     &exposureLayout, &rtaoLayout, &bevelLayout, &rtShadowLayout})
             if (*l)
@@ -4760,6 +4819,7 @@ struct Renderer::Impl
         drawHeightfields(cmd, s, vpScene, (ao && !aoFast) || frameBevel || frameRtShadow ? v.aoSampleSet : whiteAoSet);
         drawMeshes(cmd, s, vpScene, (ao && !aoFast) || frameBevel || frameRtShadow ? v.aoSampleSet : whiteAoSet, v.extent.height,
                    sceneChunks ? &f : nullptr, &ri);
+        drawStrands(cmd, s, vpScene, v.extent.height);
         if (aoFast)
         {
             vkCmdEndRendering(cmd);
@@ -6130,6 +6190,37 @@ struct Renderer::Impl
         frameCullCells = cells;
     }
     VkDeviceSize frameCullCells = 0;
+
+    /** Hair strands as ribbons in the scene pass (strands.slang), lit by a key light over the camera. */
+    void drawStrands(VkCommandBuffer cmd, const FrameState& s, const glm::mat4& viewProj, uint32_t heightPx)
+    {
+        if (!strandsPipeline || s.strands.empty())
+            return;
+        LILA_ZONE();
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, strandsPipeline);
+        const bool ortho = s.proj[3][3] > 0.5;
+        const glm::mat4 view(s.view);
+        const glm::mat4 invView = glm::inverse(view);
+        const glm::vec3 camUp(invView[1]), camForward(-glm::vec3(invView[2]));
+        for (const StrandDraw& d : s.strands)
+        {
+            auto it = d.cloud ? strandCache.find(d.cloud->key) : strandCache.end();
+            if (it == strandCache.end() || !it->second.count)
+                continue;
+            it->second.lastUsed = frameCounter;
+            const glm::mat4 inv = glm::inverse(d.world);
+            StrandsPush p;
+            p.mvp = viewProj * d.world;
+            p.eye = ortho ? glm::vec4(glm::normalize(glm::vec3(inv * glm::vec4(camForward, 0.0f))), 1.0f) : glm::vec4(glm::vec3(inv * glm::vec4(glm::vec3(s.eye), 1.0f)), 0.0f);
+            p.params = glm::vec4(d.keep, d.widthScale, s.exposure, float(heightPx) * std::abs(float(s.proj[1][1])) * 0.5f);
+            p.tint = glm::vec4(d.tint, float(frameCounter % 4096));
+            p.up = glm::vec4(glm::normalize(glm::vec3(inv * glm::vec4(camUp, 0.0f))), 0.0f);
+            vkCmdPushConstants(cmd, strandsLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
+            VkDeviceSize offset = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &it->second.buffer.buffer, &offset);
+            vkCmdDraw(cmd, 6, it->second.count, 0, 0);
+        }
+    }
 
     void drawPoints(VkCommandBuffer cmd, Frame& f, const FrameState& s, const glm::mat4& viewProj, uint32_t heightPx)
     {

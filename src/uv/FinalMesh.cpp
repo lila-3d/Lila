@@ -763,8 +763,13 @@ bool changesSurface(const geo::Mesh& cage, const geo::Mesh& exported)
 geo::Mesh runStack(const geo::Mesh& mesh, const Stack& stack)
 {
     geo::Mesh cur = mesh;
+    const bool spacing = std::ranges::any_of(stack, &StackStep::subdivides);
+    if (spacing)
+        geo::addFitSpacing(cur);
     for (const StackStep& s : stack)
         cur = s.apply(cur);
+    if (spacing)
+        geo::removeFitSpacing(cur);
     return cur;
 }
 

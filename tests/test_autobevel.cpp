@@ -10,7 +10,9 @@
 #include "scene/Components.h"
 #include "scene/Graph.h"
 #include "scene/Modifiers.h"
+#include "scene/MeshNodes.h"
 #include "uv/FinalMesh.h"
+#include "uv/UvEdit.h"
 
 #include <bit>
 #include <filesystem>
@@ -309,7 +311,7 @@ TEST_CASE("subdivision fits island interiors to the surface and keeps island cor
     const geo::SubdivideOptions fit{.levels = 2, .uvs = geo::SubdivideUvs::FitSurface};
     // Interiors follow their island's border, so a solve against the export opens every sliver; blend's can't.
     uv::Stack stack;
-    stack.push_back({"subdivide", [&](const geo::Mesh& in) { return geo::subdivide(in, fit); }});
+    stack.push_back({"subdivide", [&](const geo::Mesh& in) { return geo::subdivide(in, fit); }, true});
     const uv::FinalRefineResult r = uv::refineFinal(m, {}, "uv0", stack);
     CHECK(r.method == uv::FinalMethod::Probed);
     CHECK(uvFaults(geo::subdivide(m, fit), islands).second == 0);
@@ -341,20 +343,27 @@ TEST_CASE("subdivision fits island interiors to the surface and keeps island cor
 TEST_CASE("blend subdivision uvs stay as they were")
 {
     std::vector<std::pair<glm::vec2, glm::vec2>> islands;
-    geo::Mesh m = islandBracket(islands);
-    geo::bevelEdges(m, allEdges(m), {.offset = 0.3, .segments = 2});
-    const geo::Mesh smooth = geo::subdivide(m, {.levels = 2, .uvs = geo::SubdivideUvs::Blend});
-    // FNV-1a of every corner's uv bits: the output of the blend rules before Fit Surface existed.
-    uint64_t h = 0xcbf29ce484222325ull;
-    const std::span<const glm::vec2> uv = smooth.cornerAttrs().get<glm::vec2>("uv0");
-    for (Index c = 0; c < smooth.cornerCapacity(); ++c)
-        for (float f : {uv[c].x, uv[c].y})
-            for (int k = 0; k < 4; ++k)
-            {
-                h ^= (std::bit_cast<uint32_t>(f) >> (8 * k)) & 0xffu;
-                h *= 0x100000001b3ull;
-            }
-    CHECK(h == 10769423284830584747ull);
+    // Also with Fit Surface's spacing layers riding through the bevel, as a stack that feeds a subdivision carries them.
+    for (bool spacing : {false, true})
+    {
+        geo::Mesh m = islandBracket(islands);
+        if (spacing)
+            geo::addFitSpacing(m);
+        geo::bevelEdges(m, allEdges(m), {.offset = 0.3, .segments = 2});
+        const geo::Mesh smooth = geo::subdivide(m, {.levels = 2, .uvs = geo::SubdivideUvs::Blend});
+        CHECK(!geo::hasFitSpacing(smooth));
+        // FNV-1a of every corner's uv bits: the output of the blend rules before Fit Surface existed.
+        uint64_t h = 0xcbf29ce484222325ull;
+        const std::span<const glm::vec2> uv = smooth.cornerAttrs().get<glm::vec2>("uv0");
+        for (Index c = 0; c < smooth.cornerCapacity(); ++c)
+            for (float f : {uv[c].x, uv[c].y})
+                for (int k = 0; k < 4; ++k)
+                {
+                    h ^= (std::bit_cast<uint32_t>(f) >> (8 * k)) & 0xffu;
+                    h *= 0x100000001b3ull;
+                }
+        CHECK(h == 10769423284830584747ull);
+    }
 }
 
 TEST_CASE("autoBevel modifier bevels folds and stays live")
@@ -445,6 +454,32 @@ TEST_CASE("Edit Edges shows the input, cancels, undoes and saves")
     run("undo");
     CHECK(run("bevelEdgeInfo", {{"args", {mod}}})["editing"] == true);
     run("bevelCancelEdges", {{"args", {mod}}});
+}
+
+TEST_CASE("a stack feeding a subdivision carries Fit Surface spacing from its cage, and never hands it on")
+{
+    run("newScene");
+    std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
+    std::string bevel = run("autoBevel", {{"args", {cube}}, {"segments", 2}})[0];
+    std::string sub = run("addModifier", {{"args", {cube}}, {"kind", "subdivision"}});
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    auto* mod = scene::modifiers::asModifier(g.find(bevel));
+    REQUIRE(mod);
+    // The bevel's output is the subdivision's input: bunched by the bevel like the uvs.
+    REQUIRE(mod->as<scene::MeshPtr>(mod->outAttr));
+    CHECK(geo::hasFitSpacing(*mod->as<scene::MeshPtr>(mod->outAttr)));
+    auto final = [&] { g.evaluate(); return g.find(cube)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh); };
+    CHECK(!geo::hasFitSpacing(*final()));
+    run("setAttr", {{"args", {sub + ".enabled", false}}});
+    CHECK(!geo::hasFitSpacing(*final()));
+    run("setAttr", {{"args", {sub + ".enabled", true}}});
+    run("setAttr", {{"args", {sub + ".uvs", 0}}});
+    CHECK(!geo::hasFitSpacing(*final()));
+    // The uv tools' stack sees the same: spacing added at its start, gone from its output.
+    const uv::Stack stack = uv::exportStack(*g.find(cube));
+    CHECK(std::ranges::any_of(stack, &uv::StackStep::subdivides));
+    CHECK(!geo::hasFitSpacing(uv::runStack(*scene::modifiers::cage(g, g.find(cube)->id()), stack)));
 }
 
 TEST_CASE("selectFoldEdges and measure")
