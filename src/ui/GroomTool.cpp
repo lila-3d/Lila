@@ -7,7 +7,9 @@
 #include "groom/Groom.h"
 #include "curve/CurveNodes.h"
 #include "groom/Attrs.h"
+#include "groom/GroomGraph.h"
 #include "groom/GroomNodes.h"
+#include "groom/LockOps.h"
 #include "groom/GroomPresets.h"
 #include "groom/Style.h"
 #include "ops/Command.h"
@@ -40,6 +42,7 @@
 #include <QSpinBox>
 #include <QHBoxLayout>
 #include <QInputDialog>
+#include <QLineEdit>
 #include <QLabel>
 #include <QPushButton>
 #include <QTimer>
@@ -354,8 +357,13 @@ public:
         mMirror->setFocusPolicy(Qt::NoFocus);
         setCheckDefault(mMirror, false);
         connect(mMirror, &QCheckBox::toggled, this, [](bool on) {
-            if (Node* guides = groomPaletteGuides(); guides && on != (curve::symmetryAxis(*guides) == 0))
-                runUi("setAttr", {{"args", {guides->path() + ".symmetry", on ? "x" : "off"}}});
+            Graph& g = Graph::current();
+            if (Node* guides = groomPaletteGuides(); guides && on != (curve::symmetryAxis(*guides) != 0))
+            {
+                // A groom's guides mirror as the groom does.
+                Node* gr = groom::groomOf(g, *guides);
+                runUi("setAttr", {{"args", {(gr ? gr->path() : guides->path()) + ".symmetry", on ? "x" : "off"}}});
+            }
         });
         options->addWidget(mMirror);
         mKeys = new QCheckBox("Show Keys", optionsBox);
@@ -922,7 +930,13 @@ public:
         : mGuides(guides), mIndex(index), mTwist(twist), mStart(h), mPress(press)
     {
         Graph& g = Graph::current();
-        mStartValue = g.value({guides, curve::CurveShape::kCreate, -1});
+        mStartValue = g.value({guides, curve::CurveShape::kLocal, -1});
+        if (Node* n = g.node(guides))
+            if (Node* gr = groom::groomOf(g, *n))
+            {
+                mHierarchyAt = {gr->id(), gr->type().attrIndex("hierarchy"), -1};
+                mHierarchyStart = g.value(mHierarchyAt);
+            }
         if (auto c = view.project(twist ? h.twistCentre : h.widthCentre))
             mCentre = *c;
         mValue = twist ? h.twist : h.width;
@@ -946,7 +960,8 @@ public:
         UndoStack& u = UndoStack::get();
         const bool was = u.enabled();
         u.setEnabled(false);
-        g.setValue({mGuides, curve::CurveShape::kCreate, -1}, curve::makeCurveData(std::move(s)));
+        if (Node* n = g.node(mGuides))
+            groom::storeGuides(g, *n, std::move(s));
         u.setEnabled(was);
         viewportTools::requestRedraw();
     }
@@ -969,7 +984,11 @@ public:
         UndoStack& u = UndoStack::get();
         const bool was = u.enabled();
         u.setEnabled(false);
-        Graph::current().setValue({mGuides, curve::CurveShape::kCreate, -1}, mStartValue);
+        Graph& g = Graph::current();
+        if (mHierarchyAt.node)
+            g.setValue(mHierarchyAt, mHierarchyStart);
+        else
+            g.setValue({mGuides, curve::CurveShape::kCreate, -1}, mStartValue);
         u.setEnabled(was);
     }
 
@@ -999,6 +1018,9 @@ private:
     LockHandles mStart;
     QPointF mPress, mCentre;
     scene::PlugValue mStartValue;
+    /** The groom whose hierarchy the drag shows its work in, and its value before. */
+    scene::PlugRef mHierarchyAt{scene::kNoNode, -1, -1};
+    scene::PlugValue mHierarchyStart;
     double mValue = 1.0;
 };
 
@@ -1063,7 +1085,67 @@ void registerLockHandles()
     });
 }
 
-/** The groom's style stack in the Attribute Editor: each modifier with on/off, up, down and remove, and an add menu. */
+/** "widthScale" as "Width Scale". */
+QString displayName(const std::string& id)
+{
+    QString out;
+    for (size_t i = 0; i < id.size(); ++i)
+    {
+        const QChar c(id[i]);
+        if (i == 0)
+            out += c.toUpper();
+        else if (c.isUpper())
+            out += QString(" ") + c;
+        else
+            out += c;
+    }
+    return out;
+}
+
+/** A lock style's params as fields; an edit sets that param in the groom's graph. */
+QWidget* styleFields(const std::string& groomPath, const std::string& node, groom::Style kind, const std::string& paramsJson, bool enabled)
+{
+    auto* w = new QWidget;
+    auto* form = new QFormLayout(w);
+    form->setContentsMargins(20, 0, 0, 6);
+    form->setSpacing(2);
+    form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    const json values = json::parse(paramsJson, nullptr, false);
+    auto set = [groomPath, node](const std::string& name, const json& value) {
+        runUi("groomStack", {{"args", {groomPath}}, {"edit", "set"}, {"node", node}, {"params", json{{name, value}}.dump()}});
+    };
+    for (const groom::LockStyleParam& p : groom::lockStyleParams(kind))
+    {
+        QWidget* field = nullptr;
+        if (p.kind == 's')
+        {
+            auto* edit = new QLineEdit(w);
+            edit->setText(QString::fromStdString(values.is_object() ? values.value(p.name, std::string()) : std::string()));
+            edit->setPlaceholderText("Default");
+            QObject::connect(edit, &QLineEdit::editingFinished, edit, [edit, set, name = p.name] { set(name, edit->text().toStdString()); });
+            field = edit;
+        }
+        else
+        {
+            const bool integer = p.kind == 'i';
+            QDoubleSpinBox* box = controls::valueField(p.min.value_or(-1e6), p.max.value_or(1e6), integer ? 0 : 3, {}, w);
+            const double value = values.is_object() && values.contains(p.name) && values[p.name].is_number() ? values[p.name].get<double>() : p.defaultValue;
+            box->setValue(value);
+            QObject::connect(box, &QDoubleSpinBox::editingFinished, box, [box, set, name = p.name, integer, value] {
+                if (box->value() == value)
+                    return;
+                set(name, integer ? json(int64_t(std::llround(box->value()))) : json(box->value()));
+            });
+            field = box;
+        }
+        field->setToolTip(QString::fromStdString(p.doc));
+        field->setEnabled(enabled);
+        form->addRow(displayName(p.name), field);
+    }
+    return w;
+}
+
+/** The groom's lock styles in the Attribute Editor: each with on/off, up, down, remove and its settings, and an add menu. */
 QWidget* stackPanel(NodeId id)
 {
     Graph& g = Graph::current();
@@ -1078,28 +1160,44 @@ QWidget* stackPanel(NodeId id)
     const std::string path = gr->path();
     const int locks = int(gr->as<int64_t>(gr->type().attrIndex("lockCount")));
     v->addWidget(new QLabel(QString("%1 locks").arg(locks)));
-    for (Node* n : groom::styleStack(g, *gr))
+    const std::string& graphText = gr->as<std::string>(gr->type().attrIndex("graph"));
+    const std::string graph = graphText.empty() ? groom::groomGraph::defaultGraph() : graphText;
+    std::vector<groom::groomGraph::StyleEntry> styles;
+    try
     {
+        styles = groom::groomGraph::styles(graph);
+    }
+    catch (const std::exception& e)
+    {
+        v->addWidget(new QLabel(QString::fromStdString(e.what())));
+    }
+    for (size_t at = 0; at < styles.size(); ++at)
+    {
+        const groom::groomGraph::StyleEntry& style = styles[at];
+        const std::string node = style.node;
         auto* row = new QHBoxLayout;
-        const std::string np = n->path();
-        auto* on = new QCheckBox(QString::fromStdString(n->name()));
-        on->setChecked(n->as<bool>(n->type().attrIndex("enabled")));
-        on->setToolTip(QString::fromStdString(n->type().doc));
-        QObject::connect(on, &QCheckBox::toggled, on, [path, np](bool) { runUi("groomStack", {{"args", {path}}, {"edit", "toggle"}, {"node", np}}); });
+        row->setSpacing(2);
+        auto* on = new QCheckBox(displayName(groom::styleName(style.kind)));
+        on->setChecked(style.enabled);
+        on->setToolTip(QString::fromStdString(node) + ": on or off.");
+        QObject::connect(on, &QCheckBox::toggled, on, [path, node](bool) { runUi("groomStack", {{"args", {path}}, {"edit", "toggle"}, {"node", node}}); });
         row->addWidget(on, 1);
-        auto tool = [&](const char* text, const char* tip, std::function<void()> fn) {
+        auto tool = [&](const char* iconName, const char* tip, bool enabled, std::function<void()> fn) {
             auto* b = new QToolButton;
-            b->setText(text);
+            b->setIcon(icon(iconName));
             b->setToolTip(tip);
+            b->setAutoRaise(true);
+            b->setEnabled(enabled);
             QObject::connect(b, &QToolButton::clicked, b, std::move(fn));
             row->addWidget(b);
         };
-        const auto stack = groom::styleStack(g, *gr);
-        const int at = int(std::ranges::find(stack, n) - stack.begin());
-        tool("\xe2\x96\xb2", "Earlier in the stack", [path, np, at] { runUi("groomStack", {{"args", {path}}, {"edit", "move"}, {"node", np}, {"to", std::max(0, at - 1)}}); });
-        tool("\xe2\x96\xbc", "Later in the stack", [path, np, at] { runUi("groomStack", {{"args", {path}}, {"edit", "move"}, {"node", np}, {"to", at + 1}}); });
-        tool("\xc3\x97", "Remove", [path, np] { runUi("groomStack", {{"args", {path}}, {"edit", "remove"}, {"node", np}}); });
+        const int i = int(at);
+        tool("chevron-up", "Move Up", at > 0, [path, node, i] { runUi("groomStack", {{"args", {path}}, {"edit", "move"}, {"node", node}, {"to", i - 1}}); });
+        tool("chevron-down", "Move Down", at + 1 < styles.size(),
+             [path, node, i] { runUi("groomStack", {{"args", {path}}, {"edit", "move"}, {"node", node}, {"to", i + 1}}); });
+        tool("trash", "Remove", true, [path, node] { runUi("groomStack", {{"args", {path}}, {"edit", "remove"}, {"node", node}}); });
         v->addLayout(row);
+        v->addWidget(styleFields(path, node, style.kind, groom::groomGraph::params(graph, node), style.enabled));
     }
     auto* add = new QComboBox;
     add->addItem("Add Style...");
@@ -1139,7 +1237,7 @@ QWidget* stackPanel(NodeId id)
     button("Draw", "Draw Hair tool: draw locks, braids, partings and presets on the scalp.", [] { viewportTools::activate("groom.drawHair"); });
     button("Settle", "Settle the guides under gravity onto the scalp and each other.", [path] { runUiWithOptions("groomSettle", argsCall({path})); });
     button("Shell", "One mesh over all the locks, ready for retopology.", [path] { runUiWithOptions("groomShell", argsCall({path})); });
-    button("Save Preset", "Save the lock settings and style stack, and optionally the guides, as a hairstyle preset.", [path] {
+    button("Save Preset", "Save the lock settings and styles, and optionally the guides, as a hairstyle preset.", [path] {
         bool ok = false;
         const QString name = QInputDialog::getText(QApplication::activeWindow(), "Save Hair Preset", "Name", QLineEdit::Normal, {}, &ok);
         if (!ok || name.trimmed().isEmpty())
@@ -1226,13 +1324,15 @@ void registerGroomUi()
         actions::add({.id = "groom.style." + n,
                       .label = label,
                       .category = "Groom",
-                      .doc = "Adds " + n + " to the selected groom's style stack.",
+                      .doc = "Adds " + n + " to the selected groom's lock styles.",
                       .python = ops::toPython("groomAddStyle", {{"style", n}}),
                       .command = "groomAddStyle",
                       .call = {{"style", n}}});
     }
     for (const char* t : {"groom", "curve", "mesh"})
         attributeEditor::addSection(t, "Groom", [](NodeId id) { return stackPanel(id); });
+    // The Groom section shows the graph's lock styles: rebuilt when the graph changes (an edit, undo, a script).
+    attributeEditor::filters().put("lila.groomGraph", {.typeName = "groom", .triggers = {"graph", "lockCount"}});
     registerLockHandles();
 }
 } // namespace lila::ui

@@ -5,7 +5,12 @@
 #include "curve/NodeHelpers.h"
 #include "curve/Pipe.h"
 #include "groom/Attrs.h"
+#include "groom/GroomEvaluator.h"
+#include "groom/GroomGraph.h"
 #include "groom/GroomLab.h"
+#include "groom/GroomLabBridge.h"
+#include "groom/GuideData.h"
+#include "scene/Anim.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Transform.h"
@@ -89,84 +94,151 @@ protected:
     }
 };
 
-/** Drops a curve that repeats an earlier one with the same id: the mirror copy of a lock drawn on the mirror plane. */
-Splines withoutTwins(const Splines& in)
+/** Guides at least this far apart are the same guide drawn on the mirror plane: no copy is made of it. */
+constexpr double kOnPlane = 1e-4;
+/** Set on the IDs of the guides the groom mirrors across its symmetry plane. */
+constexpr std::uint64_t kMirrorBit = std::uint64_t(1) << 62;
+
+float& component(groomlab::Vec3f& v, int axis)
 {
-    Splines out;
-    out.reserve(in.size());
-    for (const Spline& s : in)
-    {
-        const bool twin = s.attrs.contains(std::string(attr::kId)) && std::ranges::any_of(out, [&](const Spline& o) {
-            if (o.size() != s.size() || attr::get(o, attr::kId, -1.0) != attr::get(s, attr::kId, -2.0))
-                return false;
-            for (size_t i = 0; i < s.size(); ++i)
-                if (glm::distance(o.points[i], s.points[i]) > 1e-4)
-                    return false;
-            return true;
-        });
-        if (!twin)
-            out.push_back(s);
-    }
-    return out;
+    return axis == 0 ? v.x : axis == 1 ? v.y : v.z;
 }
 
-/** The groom node: resolves the stack's curves into locks and sweeps the lock mesh. */
+/**
+ * The groom: its guides (a GroomLab guide hierarchy, the `hierarchy` JSON) through its graph. Hands out the guides as
+ * lock splines (outGuides, what the guides curve shows and the lock tools edit), the locks the Locks node's guides make
+ * (outCurve resolved, outMesh swept) and the graph's strands (outStrands); each only when something reads it.
+ */
 class GroomNode final : public WarningNode
 {
 public:
-    void compute(const EvalContext&) override
+    void compute(const EvalContext& ctx) override
     {
         LILA_ZONE();
+        std::vector<std::string> warnings;
+        const LockOptions o = lockOptionsOf(*this);
         try
         {
-            const Surface* scalp = mScalp.get(*this);
-            Splines curves = withoutTwins(splinesOf(value(idx(*this, "inCurve"))));
-            attr::ensureIds(curves);
-            const LockOptions o = lockOptionsOf(*this);
-            std::vector<std::string> warnings;
-            Splines resolved = resolveLocks(curves, scalp, o, &warnings);
-            LockMesh lm = lockMesh(resolved, o);
-            setOutput(idx(*this, "lockCount"), int64_t(lm.locks));
-            setOutput(idx(*this, "outCurve"), makeCurveData(std::move(resolved)));
-            setOutput(idx(*this, "outMesh"), MeshPtr(std::make_shared<geo::Mesh>(std::move(lm.mesh))));
-            report(warnings);
-        }
-        catch (const std::exception& e)
-        {
-            log::warn("{}: {}", name(), e.what());
-            setOutput(idx(*this, "outMesh"), MeshPtr());
-        }
-    }
-
-private:
-    ScalpCache mScalp;
-};
-
-/** A style modifier: curves in, styled curves out; passes them through when disabled. */
-class StyleNode final : public Node
-{
-public:
-    void compute(const EvalContext&) override
-    {
-        LILA_ZONE();
-        Splines curves = splinesOf(value(idx(*this, "inCurve")));
-        try
-        {
-            if (b(*this, "enabled"))
+            const MeshPtr& m = as<MeshPtr>(idx(*this, "inMesh"));
+            const glm::dmat4& matrix = as<glm::dmat4>(idx(*this, "meshMatrix"));
+            if (m != mScalpFrom || matrix != mScalpMatrix)
             {
-                attr::ensureIds(curves);
-                applyStyle(curves, styleOptionsOf(*this), mScalp.get(*this));
+                mScalpFrom = m;
+                mScalpMatrix = matrix;
+                mGroomScalp = m && m->numFaces() > 0 ? groomLabBridge::scalpMesh(*m, matrix) : nullptr;
+            }
+            const std::string& text = s(*this, "hierarchy");
+            if (text != mHierarchyText || !mHierarchy)
+            {
+                mHierarchyText = text;
+                mHierarchy = std::make_shared<groomlab::GuideHierarchy>(text.empty() ? groomlab::GuideHierarchy()
+                                                                                     : groomlab::GuideHierarchy::fromJson(text));
+            }
+            groomlab::GuideHierarchy posed = *mHierarchy;
+            posed.evaluate(mGroomScalp.get());
+            setOutput(idx(*this, "outGuides"), makeCurveData(lockSplines(posed, o)));
+
+            Graph& g = Graph::current();
+            auto read = [&](const char* a) { return !g.destinations({id(), idx(*this, a), -1}).empty(); };
+            const bool locks = read("outMesh") || read("outCurve");
+            const bool strands = read("outStrands");
+            if (!locks && !strands)
+            {
+                report(warnings);
+                return;
+            }
+            if (!mEvaluator)
+                mEvaluator = std::make_unique<GroomEvaluator>();
+            GroomEvaluator& e = *mEvaluator;
+            e.setScaleWithScalp(false);
+            const std::string& graph = s(*this, "graph");
+            e.setGraphJson(graph.empty() ? groomGraph::defaultGraph() : graph);
+            e.setFramesPerSecond(anim::playback().fps);
+            e.setScalp(mGroomScalp);
+            e.setGuides(flatGuides(posed));
+            GroomEvaluator::Request request;
+            request.time = b(*this, "useSceneTime") ? ctx.time : f(*this, "time");
+            if (!strands)
+                request.stopAt = groomGraph::kLocks;
+            const GroomEvaluator::Result& result = e.evaluate(request);
+            for (const std::string& w : result.errors)
+                warnings.push_back(w);
+            if (strands)
+            {
+                if (result.strands != mStrandsFrom || !mStrands)
+                {
+                    mStrands = curve::makeCurveData(groomLabBridge::toSplines(*result.strands));
+                    mStrandsFrom = result.strands;
+                }
+                setOutput(idx(*this, "outStrands"), mStrands);
+                setOutput(idx(*this, "strandCount"), int64_t(result.strands ? result.strands->strandCount() : 0));
+            }
+            if (locks)
+            {
+                const groomlab::GuidesPtr made = groomlab::valueAs<groomlab::GuidesPtr>(e.evaluateNode(groomGraph::kLocks, 1.0f, request.time));
+                Splines curves;
+                if (made)
+                    for (const groomlab::Guide& guide : made->guides())
+                        curves.push_back(lockSplineOf(guide, o));
+                Splines resolved = resolveLocks(curves, mScalp.get(*this), o, &warnings);
+                LockMesh lm = lockMesh(resolved, o);
+                setOutput(idx(*this, "lockCount"), int64_t(lm.locks));
+                setOutput(idx(*this, "outCurve"), makeCurveData(std::move(resolved)));
+                setOutput(idx(*this, "outMesh"), MeshPtr(std::make_shared<geo::Mesh>(std::move(lm.mesh))));
             }
         }
         catch (const std::exception& e)
         {
-            log::warn("{}: {}", name(), e.what());
+            warnings.push_back(e.what());
+            setOutput(idx(*this, "outMesh"), MeshPtr());
         }
-        setOutput(idx(*this, "outCurve"), makeCurveData(std::move(curves)));
+        report(warnings);
     }
 
 private:
+    /** The hierarchy's guides as the graph's flat guides, with their mirror copies when the symmetry is on. */
+    groomlab::GuidesPtr flatGuides(const groomlab::GuideHierarchy& posed) const
+    {
+        auto flat = std::make_shared<groomlab::GuideSet>(posed.flatten());
+        const int axis = int(i(*this, "symmetry")) - 1;
+        if (axis >= 0 && axis < 3)
+        {
+            std::vector<groomlab::Guide> copies;
+            for (const groomlab::Guide& g : flat->guides())
+            {
+                groomlab::Guide c = g;
+                bool onPlane = true;
+                for (groomlab::Vec3f& p : c.points)
+                {
+                    onPlane = onPlane && std::abs(component(p, axis)) < kOnPlane;
+                    component(p, axis) = -component(p, axis);
+                }
+                if (onPlane)
+                    continue;
+                c.id = g.id | kMirrorBit;
+                component(c.frameUp, axis) = -component(c.frameUp, axis);
+                copies.push_back(std::move(c));
+            }
+            for (groomlab::Guide& c : copies)
+            {
+                const std::uint64_t id = c.id;
+                flat->add(id, c.points) = std::move(c);
+            }
+        }
+        if (mGroomScalp && !mGroomScalp->triangles().empty())
+            flat->rootOnMesh(*mGroomScalp);
+        return flat;
+    }
+
     ScalpCache mScalp;
+    MeshPtr mScalpFrom;
+    glm::dmat4 mScalpMatrix{0.0};
+    std::shared_ptr<const groomlab::ScalpMesh> mGroomScalp;
+    std::string mHierarchyText;
+    std::shared_ptr<const groomlab::GuideHierarchy> mHierarchy;
+    std::unique_ptr<GroomEvaluator> mEvaluator;
+    groomlab::StrandsPtr mStrandsFrom;
+    DataPtr mStrands;
 };
 
 /** The shell: resolved locks into one surface, re-meshing only what a change touched. */
@@ -194,98 +266,6 @@ private:
     ShellBuilder mBuilder;
 };
 
-std::vector<AttrDef> commonIns()
-{
-    return {
-        {.name = "inCurve", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = kIn | AttrHidden, .doc = "Curves in, world space."},
-        {.name = "inMesh", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrHidden, .doc = "The scalp."},
-        {.name = "meshMatrix", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = AttrInput | AttrHidden, .doc = "The scalp's world matrix."},
-    };
-}
-
-const char* kRampDoc = "Strength from root to tip: keys \"t:value\", t 0 at the root to 1 at the tip; empty uses the modifier's own.";
-
-std::vector<AttrDef> styleAttrs(Style k)
-{
-    const std::string c = "Style";
-    std::vector<AttrDef> a = commonIns();
-    a.push_back(bAttr("enabled", true, "Off passes the curves through unchanged.", c));
-    switch (k)
-    {
-    case Style::Split:
-        a.push_back(iAttr("count", 3, "Sub-locks per lock.", c, 1));
-        a.push_back(fAttr("spread", 1.0, "How far the sub-locks fan out, cm.", c, 0.0));
-        a.push_back(fAttr("widthScale", 0.55, "Sub-lock width as a fraction of its lock's.", c, 0.01));
-        break;
-    case Style::Clump:
-        a.push_back(fAttr("amount", 0.6, "How far curves pull toward their clump's middle, 0 to 1; painted clump adds to it.", c, 0.0, 1.0));
-        a.push_back(iAttr("count", 0, "Clumps; 0 groups by the clump attr (each split lock's sub-locks).", c, 0));
-        break;
-    case Style::Curl:
-        a.push_back(fAttr("amount", 1.0, "Strength, 0 to 1; painted curl adds to it.", c, 0.0));
-        a.push_back(fAttr("radius", 1.0, "Curl radius, cm.", c, 0.0));
-        a.push_back(fAttr("frequency", 0.25, "Turns per cm.", c, 0.0));
-        break;
-    case Style::Wave:
-        a.push_back(fAttr("amount", 1.0, "Wave height, cm; painted wave adds to it.", c));
-        a.push_back(fAttr("frequency", 0.15, "Waves per cm.", c, 0.0));
-        break;
-    case Style::Frizz:
-        a.push_back(fAttr("amount", 0.3, "Kink size, cm; painted frizz adds to it.", c));
-        a.push_back(fAttr("frequency", 1.5, "Kinks per cm.", c, 0.0));
-        break;
-    case Style::Noise:
-        a.push_back(fAttr("amount", 1.0, "Displacement, cm.", c));
-        a.push_back(fAttr("frequency", 0.08, "Features per cm: low bends whole locks together.", c, 0.0));
-        break;
-    case Style::Length:
-        a.push_back(fAttr("amount", 0.3, "Most a curve is shortened, as a fraction of its length.", c, 0.0, 0.95));
-        break;
-    case Style::Cut:
-        a.push_back(fAttr("length", 20.0, "Longest a curve may be, cm.", c, 0.0));
-        break;
-    case Style::Flyaways:
-        a.push_back(fAttr("amount", 0.5, "Strays per lock.", c, 0.0));
-        a.push_back(fAttr("spread", 2.0, "How far strays stray from their lock, cm.", c, 0.0));
-        a.push_back(fAttr("length", 0.6, "Stray length, fraction of its lock.", c, 0.0, 1.0));
-        break;
-    default: break;
-    }
-    if (k != Style::Cut && k != Style::Length)
-        a.push_back(sAttrDefault("ramp", "", kRampDoc, c));
-    if (k != Style::Cut && k != Style::Noise && k != Style::Length)
-        a.push_back(fAttr("randomness", 0.5, "Variation between curves, 0 to 1.", c, 0.0, 1.0));
-    if (k != Style::Cut)
-        a.push_back(iAttr("seed", 1, "Random seed.", c));
-    a.push_back(curveOut());
-    return a;
-}
-
-const char* styleDoc(Style k)
-{
-    switch (k)
-    {
-    case Style::Split: return "Splits each lock into sub-locks fanned out around it: chunks of chunks.";
-    case Style::Clump: return "Pulls curves toward the middle of their clump, so sub-locks and strands gather into locks.";
-    case Style::Curl: return "Winds curves into a helix: curls, ringlets and coils.";
-    case Style::Wave: return "Waves curves side to side in the lock's flat plane.";
-    case Style::Frizz: return "Fine random kinks along each curve, stronger toward the tips.";
-    case Style::Noise: return "Smooth noise in space, so neighbouring locks bend together.";
-    case Style::Length: return "Shortens curves at random for an uneven hem.";
-    case Style::Cut: return "Trims curves to a length.";
-    case Style::Flyaways: return "Adds stray strands off locks.";
-    default: return "";
-    }
-}
-
-double numberOr(const Node& n, const char* a, double def)
-{
-    const int k = idx(n, a);
-    if (k < 0)
-        return def;
-    const AttrDef& d = n.type().attrs[size_t(k)];
-    return d.type == PlugType::Int ? double(n.as<int64_t>(k)) : n.as<double>(k);
-}
 } // namespace
 
 std::string groomSurfaceOf(const Node& curve)
@@ -332,32 +312,6 @@ ShellOptions shellOptionsOf(const Node& n)
     return o;
 }
 
-bool isStyleNode(const Node& n)
-{
-    Style k;
-    const std::string& t = n.type().registered().name;
-    return t.size() > 5 && t.starts_with("groom") && parseStyle(std::string(1, char(std::tolower(t[5]))) + t.substr(6), &k);
-}
-
-StyleOptions styleOptionsOf(const Node& n)
-{
-    StyleOptions o;
-    const std::string& t = n.type().registered().name;
-    if (t.size() > 5)
-        parseStyle(std::string(1, char(std::tolower(t[5]))) + t.substr(6), &o.kind);
-    o.amount = numberOr(n, "amount", o.amount);
-    o.frequency = numberOr(n, "frequency", o.frequency);
-    o.radius = numberOr(n, "radius", o.radius);
-    o.count = int(numberOr(n, "count", o.count));
-    o.spread = numberOr(n, "spread", o.spread);
-    o.length = numberOr(n, "length", o.length);
-    o.widthScale = numberOr(n, "widthScale", o.widthScale);
-    o.randomness = numberOr(n, "randomness", o.randomness);
-    o.seed = uint32_t(numberOr(n, "seed", 1.0));
-    if (int k = idx(n, "ramp"); k >= 0)
-        o.ramp = curve::parseRamp(n.as<std::string>(k));
-    return o;
-}
 
 std::optional<std::pair<D3, D3>> mirrorPlane(const Node& curve)
 {
@@ -407,49 +361,19 @@ bool mirrorDabToSource(const Node& curve, const Splines& ownLocal, D3& center, D
 
 Node* groomOf(Graph& g, const Node& curve)
 {
-    PlugRef out{curve.id(), curve::CurveShape::kWorldSpace, -1};
-    for (int depth = 0; depth < 64; ++depth)
-    {
-        Node* next = nullptr;
-        for (const PlugRef& d : g.destinations(out))
-            if (Node* n = g.node(d.node))
-            {
-                if (n->type().isA("groom"))
-                    return n;
-                if (isStyleNode(*n) && d.attr == idx(*n, "inCurve"))
-                    next = n;
-            }
-        if (!next)
-            return nullptr;
-        out = {next->id(), idx(*next, "outCurve"), -1};
-    }
+    // The guides curve shows a groom's outGuides.
+    if (auto src = g.source({curve.id(), curve::CurveShape::kCreate, -1}))
+        if (Node* n = g.node(src->node); n && n->type().isA("groom") && src->attr == idx(*n, "outGuides"))
+            return n;
     return nullptr;
-}
-
-std::vector<Node*> styleStack(Graph& g, const Node& groom)
-{
-    std::vector<Node*> out;
-    PlugRef in{groom.id(), idx(groom, "inCurve"), -1};
-    for (int depth = 0; depth < 64; ++depth)
-    {
-        auto src = g.source(in);
-        Node* n = src ? g.node(src->node) : nullptr;
-        if (!n || !isStyleNode(*n))
-            break;
-        out.push_back(n);
-        in = {n->id(), idx(*n, "inCurve"), -1};
-    }
-    std::ranges::reverse(out);
-    return out;
 }
 
 Node* guidesOf(Graph& g, const Node& groom)
 {
-    std::vector<Node*> stack = styleStack(g, groom);
-    PlugRef in = stack.empty() ? PlugRef{groom.id(), idx(groom, "inCurve"), -1} : PlugRef{stack.front()->id(), idx(*stack.front(), "inCurve"), -1};
-    auto src = g.source(in);
-    Node* n = src ? g.node(src->node) : nullptr;
-    return n && n->type().isA("curve") ? n : nullptr;
+    for (const PlugRef& d : g.destinations({groom.id(), idx(groom, "outGuides"), -1}))
+        if (Node* n = g.node(d.node); n && n->type().isA("curve") && d.attr == curve::CurveShape::kCreate)
+            return n;
+    return nullptr;
 }
 
 Node* findGroom(Graph& g, const Node& part)
@@ -458,26 +382,6 @@ Node* findGroom(Graph& g, const Node& part)
         return const_cast<Node*>(&part);
     if (part.type().isA("curve"))
         return groomOf(g, part);
-    if (isStyleNode(part))
-    {
-        PlugRef out{part.id(), idx(part, "outCurve"), -1};
-        for (int depth = 0; depth < 64; ++depth)
-        {
-            Node* next = nullptr;
-            for (const PlugRef& d : g.destinations(out))
-                if (Node* n = g.node(d.node))
-                {
-                    if (n->type().isA("groom"))
-                        return n;
-                    if (isStyleNode(*n))
-                        next = n;
-                }
-            if (!next)
-                return nullptr;
-            out = {next->id(), idx(*next, "outCurve"), -1};
-        }
-        return nullptr;
-    }
     if (part.type().isA("mesh") || part.type().isA("groomShell"))
     {
         const NodeId start = part.id();
@@ -506,14 +410,23 @@ void registerTypes()
         return;
     registerHairCardsType();
     registerGroomLabType();
-    const std::string lock = "Lock", mesh = "Mesh", uv = "Atlas";
+    const std::string lock = "Lock", mesh = "Mesh", uv = "Atlas", graphCat = "Groom";
     NodeType t;
     t.name = "groom";
     t.icon = "feather";
-    t.doc = "Locks swept along the groom's curves: a profile with width, thickness and twist ramps from root to tip, lying flat "
-            "on the scalp near it, as one mesh with uvs along each lock.";
-    t.ownAttrs = commonIns();
+    t.timeDependent = true;
+    t.doc = "A groom: its guides through its graph into locks swept along them (a profile with width, thickness and twist "
+            "ramps from root to tip, lying flat on the scalp near it, one mesh with uvs along each lock) and strands.";
+    t.ownAttrs = {
+        {.name = "inMesh", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrHidden, .doc = "The scalp."},
+        {.name = "meshMatrix", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = AttrInput | AttrHidden, .doc = "The scalp's world matrix."},
+        {.name = "hierarchy", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrHidden, .doc = "The guides: a GroomLab guide hierarchy as JSON."},
+    };
     for (AttrDef d : std::vector<AttrDef>{
+             sAttrDefault("graph", "", "The groom graph as JSON; empty: guides into locks, strands interpolated from them.", graphCat),
+             eAttr("symmetry", {"off", "x", "y", "z"}, 1, "Mirrors the guides across the world plane facing this axis.", graphCat),
+             bAttr("useSceneTime", true, "The graph runs at the scene's time; off, at Time.", graphCat),
+             fAttr("time", 0.0, "Seconds the graph runs at while Use Scene Time is off.", graphCat),
              fAttr("width", 2.0, "Lock width, cm, times each lock's width and its points' radius.", lock, 0.0),
              fAttr("thickness", 0.35, "Thickness as a fraction of width; 1 is round.", lock, 0.02, 4.0),
              eAttr("profile", profileNames(), int64_t(LockProfile::Ribbon), "Cross-section of every lock without one of its own.", lock),
@@ -535,23 +448,15 @@ void registerTypes()
              iAttr("seed", 1, "Seed for picking atlas cells.", uv),
          })
         t.ownAttrs.push_back(std::move(d));
+    t.ownAttrs.push_back(dataOut("outGuides", "The guides as lock curves, world space: what the guides curve shows."));
     t.ownAttrs.push_back(meshOut());
     t.ownAttrs.push_back(dataOut("outCurve", "The resolved locks (curves with their cross-sections), world space."));
+    t.ownAttrs.push_back(dataOut("outStrands", "The graph's strands, world space, with a width per point."));
     t.ownAttrs.push_back({.name = "lockCount", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = AttrOutput, .doc = "Locks made."});
+    t.ownAttrs.push_back({.name = "strandCount", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = AttrOutput, .doc = "Strands grown."});
     t.ownAttrs.push_back(stringOut("warning", "Problems with the last build."));
     t.create = [] { return std::make_unique<GroomNode>(); };
     types::registerType(std::move(t));
-
-    for (int k = 0; k < int(Style::Count); ++k)
-    {
-        NodeType st;
-        st.name = styleNodeType(Style(k));
-        st.icon = "wave-sine";
-        st.doc = styleDoc(Style(k));
-        st.ownAttrs = styleAttrs(Style(k));
-        st.create = [] { return std::make_unique<StyleNode>(); };
-        types::registerType(std::move(st));
-    }
 
     NodeType sh;
     sh.name = "groomShell";

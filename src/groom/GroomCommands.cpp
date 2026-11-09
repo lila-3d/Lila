@@ -1,3 +1,4 @@
+#include "groom/GroomEdit.h"
 #include "groom/GroomNodes.h"
 
 #include "brush/Brush.h"
@@ -179,10 +180,7 @@ std::unique_ptr<groom::Surface> surfaceFor(Graph& g, Node& curve, const std::str
 
 void storeSplines(Graph& g, Node& n, Splines s)
 {
-    PlugRef create{n.id(), CurveShape::kCreate, -1};
-    if (g.source(create))
-        g.disconnect(create);
-    g.setValue(create, makeCurveData(std::move(s)));
+    groom::storeGuides(g, n, std::move(s));
 }
 
 } // namespace

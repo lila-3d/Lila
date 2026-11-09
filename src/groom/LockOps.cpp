@@ -213,6 +213,28 @@ public:
 };
 } // namespace lockOps
 
+std::vector<LockStyleParam> lockStyleParams(Style kind)
+{
+    std::vector<LockStyleParam> out;
+    for (const groomlab::ParamSpec& p : lockOps::LockStyleOp(kind).paramSpecs())
+    {
+        LockStyleParam q{p.name, p.description};
+        if (const double* d = std::get_if<double>(&p.defaultValue))
+            q.defaultValue = *d;
+        else if (const std::int64_t* i = std::get_if<std::int64_t>(&p.defaultValue))
+        {
+            q.kind = 'i';
+            q.defaultValue = double(*i);
+        }
+        else
+            q.kind = 's';
+        q.min = p.min;
+        q.max = p.max;
+        out.push_back(std::move(q));
+    }
+    return out;
+}
+
 std::string lockStyleType(Style kind)
 {
     std::string name = styleName(kind);

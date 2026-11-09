@@ -5,6 +5,9 @@
 #include "curve/NodeHelpers.h"
 #include "groom/Attrs.h"
 #include "groom/GroomEdit.h"
+#include "groom/GroomGraph.h"
+#include "groom/GroomLabBridge.h"
+#include "groom/GuideData.h"
 #include "groom/GroomPresets.h"
 #include "groom/Settle.h"
 #include "groom/Shapes.h"
@@ -59,42 +62,44 @@ Splines guideSplines(Graph& g, Node& guides)
 
 void storeGuides(Graph& g, Node& guides, Splines s)
 {
-    PlugRef create{guides.id(), CurveShape::kCreate, -1};
-    if (g.source(create))
-        g.disconnect(create);
-    g.setValue(create, makeCurveData(std::move(s)));
-}
-
-/** Wires a style node in at position (-1 the end) of the groom's stack. */
-void insertStyle(Graph& g, Node& groom, Node& style, int position)
-{
-    std::vector<Node*> stack = styleStack(g, groom);
-    const int at = position < 0 ? int(stack.size()) : std::clamp(position, 0, int(stack.size()));
-    // What feeds the slot, and what the slot feeds.
-    PlugRef feedIn = at == 0 ? PlugRef{guidesOf(g, groom)->id(), CurveShape::kWorldSpace, -1} : PlugRef{stack[size_t(at - 1)]->id(), idx(*stack[size_t(at - 1)], "outCurve"), -1};
-    PlugRef feedOut = at == int(stack.size()) ? PlugRef{groom.id(), idx(groom, "inCurve"), -1} : PlugRef{stack[size_t(at)]->id(), idx(*stack[size_t(at)], "inCurve"), -1};
-    g.disconnect(feedOut);
-    g.connect(feedIn, {style.id(), idx(style, "inCurve"), -1});
-    g.connect({style.id(), idx(style, "outCurve"), -1}, feedOut);
-    // The scalp the groom reads, for the modifiers that orient by it.
-    if (auto m = g.source({groom.id(), idx(groom, "inMesh"), -1}))
-        g.connect(*m, {style.id(), idx(style, "inMesh"), -1});
-    if (auto m = g.source({groom.id(), idx(groom, "meshMatrix"), -1}))
-        g.connect(*m, {style.id(), idx(style, "meshMatrix"), -1});
-}
-
-void removeFromStack(Graph& g, Node& groom, Node& style)
-{
-    auto in = g.source({style.id(), idx(style, "inCurve"), -1});
-    std::vector<PlugRef> outs = g.destinations({style.id(), idx(style, "outCurve"), -1});
-    for (const PlugRef& d : outs)
+    Node* groom = groomOf(g, guides);
+    if (!groom)
     {
-        g.disconnect(d);
-        if (in)
-            g.connect(*in, d);
+        PlugRef create{guides.id(), CurveShape::kCreate, -1};
+        if (g.source(create))
+            g.disconnect(create);
+        g.setValue(create, makeCurveData(std::move(s)));
+        return;
     }
-    (void)groom;
-    g.deleteNode(style.id());
+    // The guides curve shows the groom's hierarchy: the edit goes into it, compared with the guides as posed now.
+    const glm::dmat4 toWorld = guides.as<glm::dmat4>(Transform::kWorldMatrix);
+    if (toWorld != glm::dmat4(1.0))
+        for (Spline& sp : s)
+            for (D3& p : sp.points)
+                p = D3(toWorld * glm::dvec4(p, 1.0));
+    setGroomGuides(g, *groom, s);
+}
+
+void setGroomGuides(Graph& g, Node& groom, const Splines& world)
+{
+    g.evaluate();
+    const std::string& text = groom.as<std::string>(idx(groom, "hierarchy"));
+    groomlab::GuideHierarchy h = text.empty() ? groomlab::GuideHierarchy() : groomlab::GuideHierarchy::fromJson(text);
+    std::shared_ptr<const groomlab::ScalpMesh> scalp;
+    if (const MeshPtr& m = groom.as<MeshPtr>(idx(groom, "inMesh")); m && m->numFaces() > 0)
+        scalp = groomLabBridge::scalpMesh(*m, groom.as<glm::dmat4>(idx(groom, "meshMatrix")));
+    h.evaluate(scalp.get());
+    if (applyLockSplines(h, world, lockOptionsOf(groom)))
+    {
+        h.evaluate(scalp.get());
+        g.setValue({groom.id(), idx(groom, "hierarchy"), -1}, h.toJson());
+    }
+}
+
+std::string groomGraphText(const Node& groom)
+{
+    const std::string& text = groom.as<std::string>(idx(groom, "graph"));
+    return text.empty() ? groomGraph::defaultGraph() : text;
 }
 
 namespace
@@ -152,11 +157,11 @@ std::vector<FlagDef> lockFlags()
     return out;
 }
 
-json stackJson(Graph& g, Node& groom)
+json stackJson(Node& groom)
 {
     json out = json::array();
-    for (Node* n : styleStack(g, groom))
-        out.push_back({{"node", n->path()}, {"style", styleName(styleOptionsOf(*n).kind)}, {"enabled", n->as<bool>(idx(*n, "enabled"))}});
+    for (const groomGraph::StyleEntry& e : groomGraph::styles(groomGraphText(groom)))
+        out.push_back({{"node", e.node}, {"style", styleName(e.kind)}, {"enabled", e.enabled}});
     return out;
 }
 
@@ -277,13 +282,24 @@ void registerLockCommands()
             g.setValue({guides->id(), guides->type().attrIndex("groomSurface"), -1}, scalp->path());
             const std::string sym = a.get<std::string>("symmetry", "x");
             const int64_t axis = sym == "x" ? 1 : sym == "y" ? 2 : sym == "z" ? 3 : 0;
-            if (int at = guides->type().attrIndex("symmetry"); at >= 0)
-                g.setValue({guides->id(), at, -1}, axis);
             Node* groom = g.createNode(*types::find("groom"), base + "Groom", kNoNode, true);
             applyFlags(g, *groom, a, "createGroom");
-            g.connect({guides->id(), CurveShape::kWorldSpace, -1}, {groom->id(), idx(*groom, "inCurve"), -1});
+            g.setValue({groom->id(), idx(*groom, "symmetry"), -1}, axis);
             g.connect({scalp->id(), MeshNode::kOutMesh, -1}, {groom->id(), idx(*groom, "inMesh"), -1});
             g.connect({scalp->id(), Transform::kWorldMatrix, -1}, {groom->id(), idx(*groom, "meshMatrix"), -1});
+            // The curve's splines become the groom's guides; from then on it shows them.
+            g.evaluate();
+            Splines world = splinesOf(g.value({guides->id(), CurveShape::kWorldSpace, -1}));
+            setGroomGuides(g, *groom, world);
+            if (const int at = guides->type().attrIndex("symmetry"); at >= 0)
+                g.connect({groom->id(), idx(*groom, "symmetry"), -1}, {guides->id(), at, -1});
+            // Shown in world space, as the groom keeps them.
+            for (const char* t : {"translate", "rotate"})
+                if (const int at = guides->type().attrIndex(t); at >= 0)
+                    g.setValue({guides->id(), at, -1}, glm::dvec3(0.0));
+            if (const int at = guides->type().attrIndex("scale"); at >= 0)
+                g.setValue({guides->id(), at, -1}, glm::dvec3(1.0));
+            g.connect({groom->id(), idx(*groom, "outGuides"), -1}, {guides->id(), CurveShape::kCreate, -1});
             Node* locks = g.createNode(*types::find("mesh"), base + "Locks", kNoNode, true);
             g.connect({groom->id(), idx(*groom, "outMesh"), -1}, {locks->id(), MeshNode::kInMesh, -1});
             g.select({guides->id()});
@@ -298,8 +314,8 @@ void registerLockCommands()
                               "Sets the modifier's " + std::string(f) + " when it has one."});
     ops::registerCommand({
         .name = "groomAddStyle",
-        .doc = "Adds a style modifier to a groom's stack: split, clump, curl, wave, frizz, noise, length, cut or flyaways. Every one "
-               "works on locks and strands alike. Returns the new node.",
+        .doc = "Adds a lock style to a groom's graph, between its guides and its locks: split, clump, curl, wave, frizz, noise, "
+               "length, cut or flyaways. The strands follow the styled locks. Returns the new graph node's name.",
         .positionalDoc = "groom",
         .flags = styleFlags,
         .run = [](const Args& a) -> json {
@@ -309,53 +325,64 @@ void registerLockCommands()
             Style k;
             if (!parseStyle(a.get<std::string>("style"), &k))
                 throw CommandError("groomAddStyle: unknown style '" + a.get<std::string>("style") + "'");
-            Node* n = g.createNode(*types::find(styleNodeType(k)), {}, kNoNode, true);
-            for (const AttrDef& d : n->type().ownAttrs)
-                if ((d.flags & AttrInput) && !(d.flags & AttrHidden) && a.has(d.name))
-                    g.setValue({n->id(), n->type().attrIndex(d.name), -1}, fromJson(d, a.flags[d.name]));
-            insertStyle(g, groom, *n, a.get<int>("position", -1));
-            return n->path();
+            json params = json::object();
+            for (const char* f : {"amount", "frequency", "radius", "count", "spread", "length", "widthScale", "randomness", "seed", "ramp"})
+                if (a.has(f))
+                    params[f] = a.flags[f];
+            std::string graph = groomGraphText(groom);
+            std::string made;
+            try
+            {
+                made = groomGraph::addStyle(graph, k, a.get<int>("position", -1), params.dump());
+            }
+            catch (const std::exception& e)
+            {
+                throw CommandError(std::string("groomAddStyle: ") + e.what());
+            }
+            g.setValue({groom.id(), idx(groom, "graph"), -1}, graph);
+            return made;
         },
     });
 
     ops::registerCommand({
         .name = "groomStack",
-        .doc = "Lists a groom's style modifiers in order, or changes the stack: move one to a position, toggle it on or off, or "
-               "remove it. Returns the stack as [{node, style, enabled}, ...].",
+        .doc = "Lists a groom's lock styles in order, or changes them: move one to a position, toggle it on or off, remove it, or "
+               "set its params. Returns the styles as [{node, style, enabled}, ...].",
         .positionalDoc = "groom",
-        .flags = {{"edit", "e", T::String, "list", "What to do.", {"list", "move", "toggle", "remove"}},
-                  {"node", "", T::String, nullptr, "The modifier to move, toggle or remove."},
-                  {"to", "", T::Int, 0, "move: its new position, 0 first."}},
+        .flags = {{"edit", "e", T::String, "list", "What to do.", {"list", "move", "toggle", "remove", "set"}},
+                  {"node", "", T::String, nullptr, "The style to move, toggle, remove or set."},
+                  {"to", "", T::Int, 0, "move: its new position, 0 first."},
+                  {"params", "", T::String, nullptr, "set: params as a JSON object, e.g. {\"amount\": 0.5}."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             Node& groom = groomArg(g, a, "groomStack");
             const std::string edit = a.get<std::string>("edit", "list");
             if (edit != "list")
             {
-                Node* n = g.find(a.get<std::string>("node"));
-                std::vector<Node*> stack = styleStack(g, groom);
-                if (!n || std::ranges::find(stack, n) == stack.end())
-                    throw CommandError("groomStack: " + a.get<std::string>("node") + " is not in " + groom.path() + "'s stack");
-                if (edit == "toggle")
-                    g.setValue({n->id(), idx(*n, "enabled"), -1}, !n->as<bool>(idx(*n, "enabled")));
-                else if (edit == "remove")
-                    removeFromStack(g, groom, *n);
-                else
+                const std::string node = a.get<std::string>("node");
+                std::string graph = groomGraphText(groom);
+                const auto styles = groomGraph::styles(graph);
+                const auto it = std::ranges::find_if(styles, [&](const groomGraph::StyleEntry& e) { return e.node == node; });
+                if (it == styles.end())
+                    throw CommandError("groomStack: " + node + " is not one of " + groom.path() + "'s lock styles");
+                try
                 {
-                    // Out of the chain, then back in at the new slot.
-                    auto in = g.source({n->id(), idx(*n, "inCurve"), -1});
-                    std::vector<PlugRef> outs = g.destinations({n->id(), idx(*n, "outCurve"), -1});
-                    g.disconnect({n->id(), idx(*n, "inCurve"), -1});
-                    for (const PlugRef& d : outs)
-                    {
-                        g.disconnect(d);
-                        if (in)
-                            g.connect(*in, d);
-                    }
-                    insertStyle(g, groom, *n, a.get<int>("to", 0));
+                    if (edit == "toggle")
+                        groomGraph::setEnabled(graph, node, !it->enabled);
+                    else if (edit == "remove")
+                        groomGraph::removeStyle(graph, node);
+                    else if (edit == "set")
+                        groomGraph::setParams(graph, node, a.get<std::string>("params", "{}"));
+                    else
+                        groomGraph::moveStyle(graph, node, a.get<int>("to", 0));
                 }
+                catch (const std::exception& e)
+                {
+                    throw CommandError(std::string("groomStack: ") + e.what());
+                }
+                g.setValue({groom.id(), idx(groom, "graph"), -1}, graph);
             }
-            return stackJson(g, groom);
+            return stackJson(groom);
         },
     });
 

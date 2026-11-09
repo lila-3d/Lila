@@ -122,6 +122,8 @@ class CurveSculptTool final : public ViewportTool, public brush::DabSink
 {
 public:
     const char* name() const override { return "Sculpt Curves"; }
+    // The brush ring and its centre dot are the cursor.
+    std::optional<QCursor> cursor() const override { return QCursor(Qt::BlankCursor); }
     bool ownsBrushRadius() const override { return true; }
 
     void activate() override
@@ -431,7 +433,8 @@ private:
         UndoStack& u = UndoStack::get();
         const bool was = u.enabled();
         u.setEnabled(false);
-        g.setValue({mNode, curve::CurveShape::kCreate, -1}, curve::makeCurveData(mWork));
+        if (scene::Node* n = g.node(mNode))
+            groom::storeGuides(g, *n, mWork);
         u.setEnabled(was);
     }
 
@@ -443,7 +446,7 @@ private:
         UndoStack& u = UndoStack::get();
         const bool was = u.enabled();
         u.setEnabled(false);
-        scene::Graph::current().setValue({mNode, curve::CurveShape::kCreate, -1}, mLiveStart);
+        scene::Graph::current().setValue(mLiveAt, mLiveStart);
         u.setEnabled(was);
         mLiveStart = {};
     }
@@ -491,11 +494,13 @@ private:
             }
         }
         syncSurface(*n);
-        // Live only on guides that store their own splines, so putting the start value back restores them exactly.
-        mLive = groom::groomOf(g, *n) && !g.source({mNode, curve::CurveShape::kCreate, -1});
+        // Live on a groom's guides: the work goes into the groom's hierarchy, whose start value comes back after.
+        scene::Node* groomNode = groom::groomOf(g, *n);
+        mLive = groomNode != nullptr;
         if (mLive)
         {
-            mLiveStart = g.value({mNode, curve::CurveShape::kCreate, -1});
+            mLiveAt = {groomNode->id(), groomNode->type().attrIndex("hierarchy"), -1};
+            mLiveStart = g.value(mLiveAt);
             mLiveClock.invalidate();
         }
         mDabs = json::array();
@@ -567,6 +572,7 @@ private:
     curve::Splines mWork;
     json mDabs = json::array();
     bool mLive = false;
+    scene::PlugRef mLiveAt;
     scene::PlugValue mLiveStart;
     QElapsedTimer mLiveClock;
     QPointF mHover;
