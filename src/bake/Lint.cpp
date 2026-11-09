@@ -109,7 +109,7 @@ void hardEdges(const GroupInputs& gi, const LowInput& low, LintReport& r)
     }
     if (count)
         r.issues.push_back({"hardEdges", "warning", gi.name, s.name,
-                            std::to_string(count) + " hard edge(s) are not UV seams; the normal map can't hide their shading split. Split the UVs there, or soften them with Mesh > Soften Normals",
+                            std::to_string(count) + " hard edge(s) are not UV seams; the normal map can't hide their shading split. Split the UVs there, or soften them with Surface > Soften Normals",
                             {{"count", count}, {"positions", where}, {"edgePoints", edgePoints}}});
 }
 
