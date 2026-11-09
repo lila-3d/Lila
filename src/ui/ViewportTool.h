@@ -54,6 +54,11 @@ public:
     virtual std::optional<QCursor> cursor() const { return std::nullopt; }
     /** B + LMB/MMB drag sets this tool's brush radius rather than soft select's. */
     virtual bool ownsBrushRadius() const { return false; }
+    /**
+     * The marking menu a right-click with this tool active opens instead of the viewport's, for base "viewport",
+     * "viewportShift" or "viewportCtrl"; empty keeps the viewport's.
+     */
+    virtual std::string markingMenu(std::string_view base) const { (void)base; return {}; }
     /** False draws the selected mesh without its selection wire while this tool is active. */
     virtual bool showsSelection(scene::NodeId mesh) const { (void)mesh; return true; }
 };
