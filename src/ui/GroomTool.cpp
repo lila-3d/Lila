@@ -1373,5 +1373,18 @@ void registerGroomUi()
                   .doc = "Reads a GroomLab .groom file into a new groom, on the selected mesh or the file's own scalp.",
                   .python = "importGroom(\"hair.groom\", mesh=\"Head\")",
                   .keywords = {"groomlab", "groom", "hair", "import"}});
+    actions::add({.id = "groom.importYeti",
+                  .label = "Import Yeti...",
+                  .category = "Groom",
+                  .run =
+                      [] {
+                          const QString file = fileDialog::getOpenFileName(QApplication::activeWindow(), "Import Yeti", {}, "Maya ASCII (*.ma)");
+                          if (!file.isEmpty())
+                              actions::runWithOptions("importYeti", {{"args", {file.toStdString()}}});
+                      },
+                  .doc = "Reads the Yeti grooms of a Maya ASCII file into grooms, without Maya or Yeti. Import the .ma first so its scalp "
+                         "meshes are in the scene.",
+                  .python = "importYeti(\"scene.ma\")",
+                  .keywords = {"yeti", "peregrine", "maya", "groom", "hair", "fur", "import"}});
 }
 } // namespace lila::ui

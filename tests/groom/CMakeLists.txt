@@ -2,3 +2,4 @@ add_executable(lila_groom_tests main.cpp test_groom.cpp test_locks.cpp test_styl
 target_link_libraries(lila_groom_tests PRIVATE LilaScene doctest::doctest TBB::tbb nlohmann_json::nlohmann_json)
 target_include_directories(lila_groom_tests PRIVATE ${CMAKE_SOURCE_DIR}/tests)
 add_test(NAME lila_groom_tests COMMAND lila_groom_tests)
+target_compile_definitions(lila_groom_tests PRIVATE "GROOM_TEST_DATA=\"${CMAKE_CURRENT_SOURCE_DIR}/data\"")

@@ -94,3 +94,31 @@ TEST_CASE("exportGroom: Unreal Alembic over frames, USD curves, and a .groom fil
 
     CHECK_THROWS(ops::execute("exportGroom", {{"args", {groom}}, {"path", scratch("hair.obj").string()}}));
 }
+
+TEST_CASE("importYeti: a .ma's Yeti nodes become grooms, their grooms guides and their graphs Scatter, Clump, Noise and Width")
+{
+    scene::Graph& g = scene::Graph::current();
+    g.clear();
+    UndoStack::get().clear();
+    curvetest::run("polySphere", {{"name", "head"}, {"radius", 5.0}, {"subdivisionsAxis", 24}, {"subdivisionsHeight", 16}});
+    const json out = ops::execute("importYeti", {{"args", {std::string(GROOM_TEST_DATA) + "/yeti_scene.ma"}}});
+    REQUIRE(out.size() == 2);
+    const json* hair = nullptr;
+    for (const json& o : out)
+        if (o["yeti"] == "hairYetiShape")
+            hair = &o;
+    REQUIRE(hair);
+    CHECK((*hair)["guides"].get<size_t>() >= 40);
+    const std::string mapped = (*hair)["report"]["mapped"].dump();
+    CHECK(mapped.find("Clump") != std::string::npos);
+    CHECK(mapped.find("Width") != std::string::npos);
+    CHECK((*hair)["report"]["approximated"].dump().find("Noise") != std::string::npos);
+    CHECK_FALSE((*hair)["report"]["skipped"].empty());
+
+    scene::Node* gr = g.find((*hair)["groom"].get<std::string>());
+    REQUIRE(gr);
+    g.evaluate();
+    CHECK(std::get<std::string>(gr->value(gr->type().attrIndex("warning"))) == "");
+    CHECK(std::get<int64_t>(gr->value(gr->type().attrIndex("strandCount"))) > 100);
+    CHECK(std::get<std::string>(gr->value(gr->type().attrIndex("graph"))).find("\"Clump\"") != std::string::npos);
+}

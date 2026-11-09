@@ -199,7 +199,7 @@ void MainWindow::buildMenus()
     addSubmenu("Curves", "Sketch");
     menus::addActions("Curves/Sketch", {"curve.sketchTool", "", "curve.sketchCombine", "curve.sketchSolve", "curve.sketchClear"});
     addSubmenu("Curves", "Groom");
-    menus::addActions("Curves/Groom", {"groom.create", "groom.drawHair", "groom.brushes", "curve.sculptCurves", "groom.import", "groom.export"});
+    menus::addActions("Curves/Groom", {"groom.create", "groom.drawHair", "groom.brushes", "curve.sculptCurves", "groom.import", "groom.importYeti", "groom.export"});
     addSubmenu("Curves/Groom", "Style");
     menus::addActions("Curves/Groom/Style", {"groom.style.split", "groom.style.clump", "groom.style.curl", "groom.style.wave", "groom.style.frizz",
                                              "groom.style.noise", "groom.style.length", "groom.style.cut", "groom.style.flyaways"});

@@ -19,6 +19,8 @@ set(LILA_UNITY_SKIP
     src/ui/ArrayTool.cpp
     src/ui/BakerPanel.cpp
     src/groom/GroomIo.cpp
+    src/groom/YetiImport.cpp
+    src/groom/YetiImport.cpp
     src/ui/GraphEditor.cpp
     src/ui/BakerPanelRefresh.cpp
     src/ui/BakerPanelWidgets.cpp

@@ -6,6 +6,8 @@
 #include "geo/Mesh.h"
 #include "groom/GroomGraph.h"
 #include "groom/GroomNodes.h"
+#include "groom/YetiImport.h"
+#include "groom/YetiImport.h"
 #include "ops/Command.h"
 #include "scene/Anim.h"
 #include "scene/Graph.h"
@@ -270,6 +272,8 @@ json importFile(const Args& a)
 
 void registerIoCommands()
 {
+    yeti::registerCommands();
+    yeti::registerCommands();
     ops::registerCommand({
         .name = "exportGroom",
         .doc = "Writes a groom's strands to a file by its extension: .abc for Unreal (groom_* attributes, its primary guides to "
