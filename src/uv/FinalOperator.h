@@ -59,8 +59,8 @@ private:
 };
 
 /**
- * The LDLT of a gram matrix from a FinalOperator, real or (when the weights rotate) complex Hermitian, solving u and v
- * together: real systems solve each on its own, complex ones as u + iv.
+ * The LDLT of a gram matrix from a FinalOperator, solving u and v together. A complex Hermitian system (weights that
+ * rotate) is solved with the real part's factor, refined against the imaginary part.
  */
 class UvFactor
 {
@@ -71,8 +71,11 @@ public:
     bool solve(const Eigen::VectorXd& bu, const Eigen::VectorXd& bv, Eigen::VectorXd& su, Eigen::VectorXd& sv) const;
 
 private:
+    static constexpr int kRefineSteps = 12;
     bool mComplex = false, mOk = false;
+    SpMat mRe, mIm;
     Eigen::SimplicialLDLT<SpMat> mReal;
-    Eigen::SimplicialLDLT<CSpMat> mCx;
+    mutable bool mCxReady = false;
+    mutable Eigen::SimplicialLDLT<CSpMat> mCx;
 };
 } // namespace lila::uv::detail

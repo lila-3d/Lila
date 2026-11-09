@@ -1294,15 +1294,11 @@ bool detail::UvFactor::compute(const SpMat& re, const SpMat& im)
     LILA_ZONE();
 
     mComplex = im.nonZeros() > 0;
-    if (!mComplex)
-    {
-        mReal.compute(re);
-        mOk = mReal.info() == Eigen::Success;
-        return mOk;
-    }
-    const CSpMat k = re.cast<std::complex<double>>() + std::complex<double>(0.0, 1.0) * im.cast<std::complex<double>>();
-    mCx.compute(k);
-    mOk = mCx.info() == Eigen::Success;
+    mCxReady = false;
+    mRe = mComplex ? re : SpMat();
+    mIm = mComplex ? im : SpMat();
+    mReal.compute(re);
+    mOk = mReal.info() == Eigen::Success;
     return mOk;
 }
 
@@ -1310,19 +1306,38 @@ bool detail::UvFactor::solve(const Eigen::VectorXd& bu, const Eigen::VectorXd& b
 {
     if (!mOk)
         return false;
+    su = mReal.solve(bu);
+    sv = mReal.solve(bv);
     if (!mComplex)
-    {
-        su = mReal.solve(bu);
-        sv = mReal.solve(bv);
         return mReal.info() == Eigen::Success && su.allFinite() && sv.allFinite();
+    // Re u - Im v = bu, Re v + Im u = bv. The imaginary part is a few rotated corners, so refining against it with the real
+    // factor converges in a handful of steps; the complex factor is built only when it doesn't.
+    const double scale = std::max(bu.norm() + bv.norm(), 1e-300);
+    for (int it = 0; it < kRefineSteps; ++it)
+    {
+        const Eigen::VectorXd ru = bu - (mRe * su - mIm * sv), rv = bv - (mRe * sv + mIm * su);
+        if (!ru.allFinite() || !rv.allFinite())
+            break;
+        if (ru.norm() + rv.norm() <= 1e-12 * scale)
+            return true;
+        su += mReal.solve(ru);
+        sv += mReal.solve(rv);
     }
+    if (!mCxReady)
+    {
+        const CSpMat k = mRe.cast<std::complex<double>>() + std::complex<double>(0.0, 1.0) * mIm.cast<std::complex<double>>();
+        mCx.compute(k);
+        mCxReady = true;
+    }
+    if (mCx.info() != Eigen::Success)
+        return false;
     Eigen::VectorXcd b(bu.size());
     b.real() = bu;
     b.imag() = bv;
     const Eigen::VectorXcd z = mCx.solve(b);
     su = z.real();
     sv = z.imag();
-    return mCx.info() == Eigen::Success && su.allFinite() && sv.allFinite();
+    return su.allFinite() && sv.allFinite();
 }
 
 struct UninfluencedFill::Solver
