@@ -300,6 +300,30 @@ TEST_CASE("bakeLint finds each problem and bake lists its warnings first")
         CHECK(issues(lintOnly(p2, "hardEdges"), "hardEdges").empty());
     }
 
+    SUBCASE("hard edges a weighted normals modifier keeps")
+    {
+        newScene();
+        geo::Mesh roof = plane(2);
+        for (geo::Index i = 0; i < roof.pointCapacity(); ++i)
+        {
+            glm::dvec3 q = roof.position(i);
+            q.y = 50.0 - std::abs(q.x);
+            roof.setPosition(i, q);
+        }
+        geo::setHardEdgesByAngle(roof, 10.0);
+        geo::updateCornerNormals(roof);
+        const std::string p = smallProject(dir);
+        const std::string mesh = addMesh("roof", roof);
+        ops::execute("bakeGroup", {{"args", {"g"}}, {"lows", {mesh}}, {"self", true}});
+        // Off by default, the modifier smooths across the hard edges.
+        const std::string mod = ops::execute("addModifier", {{"args", {mesh}}, {"kind", "weightedNormals"}}).get<std::string>();
+        CHECK(issues(lintOnly(p, "hardEdges"), "hardEdges").empty());
+        ops::execute("setAttr", {{"args", {mod + ".keepHardEdges", true}}});
+        const auto found = issues(lintOnly(p, "hardEdges"), "hardEdges");
+        REQUIRE(found.size() == 1);
+        CHECK(found[0]["message"].get<std::string>().find("Keep Hard Edges") != std::string::npos);
+    }
+
     SUBCASE("missing and degenerate UVs")
     {
         newScene();

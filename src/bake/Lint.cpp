@@ -109,7 +109,7 @@ void hardEdges(const GroupInputs& gi, const LowInput& low, LintReport& r)
     }
     if (count)
         r.issues.push_back({"hardEdges", "warning", gi.name, s.name,
-                            std::to_string(count) + " hard edge(s) are not UV seams; the normal map can't hide their shading split (split the UVs there or soften them)",
+                            std::to_string(count) + " hard edge(s) are not UV seams; the normal map can't hide their shading split. Split the UVs there, or soften them with Mesh > Soften Normals",
                             {{"count", count}, {"positions", where}, {"edgePoints", edgePoints}}});
 }
 
@@ -819,6 +819,17 @@ std::vector<std::string> exportModifiers(scene::Graph& g, const scene::Node& n)
     return names;
 }
 
+/** The mesh's last export modifier that sets normals, when it is a Weighted Normals keeping the hard edges split: its name. */
+std::string hardEdgeKeeper(scene::Graph& g, const scene::Node& n)
+{
+    const std::vector<scene::NodeId> stack = scene::modifiers::stack(g, n.id());
+    for (auto it = stack.rbegin(); it != stack.rend(); ++it)
+        if (const scene::ModifierNode* m = scene::modifiers::asModifier(g.node(*it));
+            m && scene::modifiers::exportEnabled(*m) && m->type().isA("weightedNormalsModifier"))
+            return m->as<bool>(m->type().attrIndex("keepHardEdges")) ? m->name() : std::string();
+    return {};
+}
+
 /** Whether base, linted alone, raises an issue of the same check and kind (a triangle count or an island count) as i. */
 bool baseHasIssue(const LintIssue& i, const LowInput& base, const ProjectSettings& ps)
 {
@@ -849,6 +860,14 @@ void explainModifierIssues(scene::Graph& g, LintReport& r, const ProjectSettings
         scene::Node* n = g.find(i.mesh);
         if (!n || !n->type().isA("mesh"))
             continue;
+        if (i.check == "hardEdges")
+            if (const std::string keeper = hardEdgeKeeper(g, *n); !keeper.empty())
+            {
+                i.message = std::to_string(i.data["count"].get<size_t>()) + " hard edge(s) are not UV seams: " + keeper +
+                            " (Weighted Normals) keeps the mesh's hard edges split. Turn off its Keep Hard Edges, or split the UVs there";
+                i.data["keptBy"] = keeper;
+                continue;
+            }
         const std::vector<std::string> mods = exportModifiers(g, *n);
         const scene::MeshPtr cage = mods.empty() ? nullptr : scene::modifiers::cage(g, n->id());
         if (!cage || baseHasIssue(i, lowFromMesh(*cage, glm::dmat4(1.0), i.mesh), ps))

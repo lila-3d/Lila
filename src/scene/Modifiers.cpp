@@ -257,7 +257,7 @@ std::vector<ModifierType> modifierTypes()
          "bevelled hard-surface game meshes.",
          {param("mode", PlugType::Enum, int64_t(0), "What weighs a face: its area, its corner angle, or both."),
           param("dominance", PlugType::Float, 0.5, "Faces under this fraction of the heaviest face in a fan are left out; 0 keeps all.", 0.0, 1.0),
-          param("keepHardEdges", PlugType::Bool, true, "Keep normals split along hard edges instead of smoothing across them.")},
+          param("keepHardEdges", PlugType::Bool, false, "Keep normals split along the mesh's hard edges. Leave off on a mesh you bake a normal map onto.")},
          [](const geo::Mesh& in, const Node& n) {
              geo::Mesh m = in;
              geo::WeightedNormalOptions o;
