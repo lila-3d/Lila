@@ -1,4 +1,5 @@
 #include "layout/SoftNet.h"
+#include "layout/SoftNetBind.h"
 
 #include "core/Profile.h"
 #include "deform/SoftNet.h"
@@ -11,13 +12,19 @@
 #include "scene/Deformers.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
+#include "scene/Modifiers.h"
+#include "scene/Node.h"
 #include "scene/RigUtil.h"
 #include "scene/Transform.h"
-#include "scene/Node.h"
 
+#include <glm/gtc/matrix_transform.hpp>
+
+#include <algorithm>
 #include <cmath>
+#include <format>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 
 namespace lila::layout
@@ -28,42 +35,32 @@ using namespace lila::scene;
 using namespace lila::scene::rigutil;
 namespace sn = lila::deform::softnet;
 
-/** What a bind fixed: the point count, the knots, the mean edge length, the reach it picks, and every curve sample. */
-struct Bind
+/** A list of matrices handed between Soft Net nodes: knot frames, or the bound meshes' world matrices. */
+struct Matrices final : Data
 {
-    size_t points = 0;
-    size_t knots = 0;
-    double edge = 1.0;
-    double autoReach = 1.0;
-    std::vector<sn::Sample> samples;
+    std::vector<glm::dmat4> m;
+    const char* kind() const override { return "softNetMatrices"; }
+    json toJson() const override { return {{"count", m.size()}}; }
+    size_t bytes() const override { return m.size() * sizeof(glm::dmat4) + 32; }
 };
 
-json bindJson(const Bind& b)
+json pointJson(const sn::SurfacePoint& p) { return {p.points[0], p.points[1], p.points[2], p.bary.x, p.bary.y, p.bary.z}; }
+
+sn::SurfacePoint pointFrom(const json& j)
 {
-    json samples = json::array();
-    for (const sn::Sample& s : b.samples)
-        samples.push_back({s.points[0], s.points[1], s.points[2], s.bary.x, s.bary.y, s.bary.z, s.knot[0], s.knot[1], s.weight[0], s.weight[1]});
-    return {{"points", b.points}, {"knots", b.knots}, {"edge", b.edge}, {"autoReach", b.autoReach}, {"samples", samples}};
+    sn::SurfacePoint p;
+    if (j.is_array() && j.size() >= 6)
+    {
+        p.points = {j[0].get<uint32_t>(), j[1].get<uint32_t>(), j[2].get<uint32_t>()};
+        p.bary = {j[3].get<double>(), j[4].get<double>(), j[5].get<double>()};
+    }
+    return p;
 }
 
-Bind bindFrom(const std::string& text)
-{
-    Bind b;
-    const json j = json::parse(text, nullptr, false);
-    if (!j.is_object())
-        return b;
-    b.points = j.value("points", size_t(0));
-    b.knots = j.value("knots", size_t(0));
-    b.edge = j.value("edge", 1.0);
-    b.autoReach = j.value("autoReach", 1.0);
-    for (const json& s : j.value("samples", json::array()))
-        if (s.is_array() && s.size() == 10)
-            b.samples.push_back({.points = {s[0].get<uint32_t>(), s[1].get<uint32_t>(), s[2].get<uint32_t>()},
-                                 .bary = {s[3].get<double>(), s[4].get<double>(), s[5].get<double>()},
-                                 .knot = {s[6].get<int>(), s[7].get<int>()},
-                                 .weight = {s[8].get<double>(), s[9].get<double>()}});
-    return b;
-}
+json vecJson(const glm::dvec3& v) { return {v.x, v.y, v.z}; }
+glm::dvec3 vecFrom(const json& j) { return j.is_array() && j.size() == 3 ? glm::dvec3(j[0].get<double>(), j[1].get<double>(), j[2].get<double>()) : glm::dvec3(0.0); }
+
+std::vector<glm::dvec3> pointsOf(const geo::Mesh& m) { return {m.positions().begin(), m.positions().end()}; }
 
 bool nearIdentity(const glm::dmat4& m)
 {
@@ -74,6 +71,256 @@ bool nearIdentity(const glm::dmat4& m)
     return true;
 }
 
+std::map<int, glm::dmat4> elementMatrices(const Node& n, int attr)
+{
+    std::map<int, glm::dmat4> out;
+    for (const auto& [i, v] : n.elements(attr))
+        if (const auto* m = std::get_if<glm::dmat4>(&v))
+            out[i] = *m;
+    return out;
+}
+
+const Matrices* matricesOf(const Node& n, int attr)
+{
+    const auto* p = std::get_if<DataPtr>(&n.value(attr));
+    return p && *p ? dynamic_cast<const Matrices*>(p->get()) : nullptr;
+}
+} // namespace
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Bindings
+
+json NetBind::toJson() const
+{
+    json k = json::array();
+    for (const sn::KnotRig& r : knots)
+    {
+        json along = json::array(), dirs = json::array(), blend = json::array();
+        for (const sn::SurfacePoint& p : r.along)
+            along.push_back(pointJson(p));
+        for (const glm::dvec3& d : r.restDirections)
+            dirs.push_back(vecJson(d));
+        for (const auto& [j, w] : r.blend)
+            blend.push_back({j, w});
+        k.push_back({{"at", pointJson(r.at)},
+                     {"along", along},
+                     {"dirs", dirs},
+                     {"blend", blend},
+                     {"degree", r.degree},
+                     {"origin", vecJson(r.origin)},
+                     {"rest", {vecJson(r.rest[0]), vecJson(r.rest[1]), vecJson(r.rest[2])}}});
+    }
+    return {{"knots", k}};
+}
+
+NetBind NetBind::fromJson(const std::string& text)
+{
+    NetBind b;
+    const json j = json::parse(text, nullptr, false);
+    if (!j.is_object())
+        return b;
+    for (const json& k : j.value("knots", json::array()))
+    {
+        sn::KnotRig r;
+        r.at = pointFrom(k.value("at", json()));
+        for (const json& p : k.value("along", json::array()))
+            r.along.push_back(pointFrom(p));
+        for (const json& d : k.value("dirs", json::array()))
+            r.restDirections.push_back(vecFrom(d));
+        for (const json& w : k.value("blend", json::array()))
+            if (w.is_array() && w.size() == 2)
+                r.blend.emplace_back(w[0].get<int>(), w[1].get<double>());
+        r.degree = k.value("degree", 0);
+        r.origin = vecFrom(k.value("origin", json()));
+        const json rest = k.value("rest", json::array());
+        if (rest.size() == 3)
+            r.rest = glm::dmat3(vecFrom(rest[0]), vecFrom(rest[1]), vecFrom(rest[2]));
+        b.knots.push_back(std::move(r));
+    }
+    return b;
+}
+
+json MeshBind::toJson() const
+{
+    json s = json::array(), r = json::array(), t = json::array();
+    for (const sn::Sample& x : samples)
+    {
+        json p = pointJson(x.at);
+        p.push_back(x.run);
+        p.push_back(x.knot);
+        p.push_back(x.t);
+        s.push_back(p);
+    }
+    for (const sn::Run& x : runs)
+        r.push_back({x.knot[0], x.knot[1], x.tangent[0], x.tangent[1]});
+    for (size_t i = 0; i < tangentRest.size(); ++i)
+        t.push_back({tangentKnot[i], tangentRest[i].x, tangentRest[i].y, tangentRest[i].z});
+    return {{"points", points}, {"knots", knots}, {"edge", edge}, {"autoReach", autoReach}, {"samples", s}, {"runs", r}, {"tangents", t}};
+}
+
+MeshBind MeshBind::fromJson(const std::string& text)
+{
+    MeshBind b;
+    const json j = json::parse(text, nullptr, false);
+    if (!j.is_object())
+        return b;
+    b.points = j.value("points", size_t(0));
+    b.knots = j.value("knots", size_t(0));
+    b.edge = j.value("edge", 1.0);
+    b.autoReach = j.value("autoReach", 1.0);
+    for (const json& s : j.value("samples", json::array()))
+        if (s.is_array() && s.size() == 9)
+            b.samples.push_back({.at = pointFrom(s), .run = s[6].get<int>(), .knot = s[7].get<int>(), .t = s[8].get<double>()});
+    for (const json& r : j.value("runs", json::array()))
+        if (r.is_array() && r.size() == 4)
+            b.runs.push_back({.knot = {r[0].get<int>(), r[1].get<int>()}, .tangent = {r[2].get<int>(), r[3].get<int>()}});
+    for (const json& t : j.value("tangents", json::array()))
+        if (t.is_array() && t.size() == 4)
+        {
+            b.tangentKnot.push_back(t[0].get<int>());
+            b.tangentRest.push_back({t[1].get<double>(), t[2].get<double>(), t[3].get<double>()});
+        }
+    return b;
+}
+
+std::vector<glm::dvec3> dofMoves(const MeshBind& b, std::span<const glm::dmat4> frames, const std::map<int, glm::dmat4>& knots,
+                                 const std::map<int, glm::dmat4>& tangents, const glm::dmat4& toMesh)
+{
+    std::vector<glm::dvec3> moves(sn::dofCount(b.knots, b.tangentRest.size()), glm::dvec3(0.0));
+    auto frameOf = [&](size_t k) { return toMesh * (k < frames.size() ? frames[k] : glm::dmat4(1.0)); };
+    auto controlOf = [&](int k) {
+        const auto it = knots.find(k);
+        return it != knots.end() ? it->second : glm::dmat4(1.0);
+    };
+    for (size_t k = 0; k < b.knots; ++k)
+    {
+        const glm::dmat4 f = frameOf(k);
+        moves[k] = glm::dvec3((f * controlOf(int(k)))[3]) - glm::dvec3(f[3]);
+    }
+    for (size_t t = 0; t < b.tangentRest.size(); ++t)
+    {
+        const int k = b.tangentKnot[t];
+        if (k < 0 || size_t(k) >= b.knots)
+            continue;
+        const glm::dmat4 f = frameOf(size_t(k));
+        const auto it = tangents.find(int(t));
+        const glm::dvec3 offset = it != tangents.end() ? glm::dvec3(it->second[3]) : glm::dvec3(0.0);
+        const glm::dvec3 rest = b.tangentRest[t];
+        moves[b.knots + t] = glm::dvec3(f * controlOf(k) * glm::dvec4(rest + offset, 1.0)) - glm::dvec3(f * glm::dvec4(rest, 1.0));
+    }
+    return moves;
+}
+
+namespace
+{
+// ---------------------------------------------------------------------------------------------------------------------
+// Nodes
+
+class KnotsNode;
+std::mutex gHubsMutex;
+std::set<KnotsNode*> gHubs;
+
+/**
+ * The net's knots group (softNetKnots): reads the surface under the net and gives every knot its frame there, in the
+ * body's object space. It stands where the body mesh stands, its world matrix kept equal to the mesh's after every
+ * evaluation (syncSpaces), so the knots under it follow the mesh's transform without anything on the mesh feeding the net.
+ */
+class KnotsNode final : public Transform
+{
+public:
+    KnotsNode()
+    {
+        std::lock_guard lock(gHubsMutex);
+        gHubs.insert(this);
+    }
+    ~KnotsNode() override
+    {
+        std::lock_guard lock(gHubsMutex);
+        gHubs.erase(this);
+    }
+
+    void compute(const EvalContext& ctx) override
+    {
+        LILA_ZONE();
+        const NodeType& t = type();
+        {
+            std::lock_guard lock(mMutex);
+            if (mWorlds.empty())
+                mWorlds = {as<glm::dmat4>(t.attrIndex("meshWorld"))};
+            setOutput(kParentMatrix, mWorlds.front());
+            if (!mSpaces || mSpaces->m != mWorlds)
+            {
+                auto s = std::make_shared<Matrices>();
+                s->m = mWorlds;
+                mSpaces = s;
+            }
+        }
+        Transform::compute(ctx);
+        setOutput(t.attrIndex("spaces"), DataPtr(mSpaces));
+
+        const std::string& text = as<std::string>(t.attrIndex("binding"));
+        if (text != mText)
+        {
+            mText = text;
+            mBind = NetBind::fromJson(text);
+        }
+        const MeshPtr in = as<MeshPtr>(t.attrIndex("inMesh"));
+        std::vector<glm::dmat4> frames;
+        if (in)
+        {
+            const std::vector<glm::dvec3> pts = pointsOf(*in);
+            bool fits = true;
+            for (const sn::KnotRig& k : mBind.knots)
+                for (uint32_t p : k.at.points)
+                    fits = fits && p < pts.size();
+            if (fits)
+                frames = sn::knotFrames(mBind.knots, pts);
+        }
+        // The same data while the frames are unchanged, so the deformers reading them see no new input.
+        if (!mFrames || mFrames->m != frames)
+        {
+            auto f = std::make_shared<Matrices>();
+            f->m = std::move(frames);
+            mFrames = f;
+        }
+        setOutput(t.attrIndex("frames"), DataPtr(mFrames));
+    }
+
+    /** Sets the bound meshes' world matrices (the body's first); true when they changed. */
+    bool setWorlds(std::vector<glm::dmat4> worlds)
+    {
+        std::lock_guard lock(mMutex);
+        if (worlds == mWorlds)
+            return false;
+        mWorlds = std::move(worlds);
+        return true;
+    }
+
+private:
+    std::mutex mMutex;
+    std::vector<glm::dmat4> mWorlds;
+    std::shared_ptr<Matrices> mSpaces;
+    std::shared_ptr<Matrices> mFrames;
+    std::string mText;
+    NetBind mBind;
+};
+
+/** A knot control: its parentMatrix is the knots group's times the knot's frame, so translate, rotate and scale are in the frame. */
+class KnotNode final : public Locator
+{
+public:
+    void compute(const EvalContext& ctx) override
+    {
+        const NodeType& t = type();
+        const auto* p = std::get_if<DataPtr>(&value(t.attrIndex("frames")));
+        const auto* f = p && *p ? dynamic_cast<const Matrices*>(p->get()) : nullptr;
+        const int64_t i = as<int64_t>(t.attrIndex("index"));
+        if (f && i >= 0 && size_t(i) < f->m.size())
+            setOutput(kParentMatrix, as<glm::dmat4>(kParentMatrix) * f->m[size_t(i)]);
+        Transform::compute(ctx);
+    }
+};
+
 class SoftNetNode final : public DeformerNode
 {
 public:
@@ -81,60 +328,47 @@ public:
     {
         LILA_ZONE();
         const NodeType& t = type();
-        // Knots at rest leave the surface exactly as it came in.
-        std::map<int, glm::dmat4> controls;
-        for (const auto& [i, v] : elements(t.attrIndex("knotMatrix")))
-            if (const glm::dmat4 m = std::get<glm::dmat4>(v); !nearIdentity(m))
-                controls[i] = m;
-        if (controls.empty())
+        // Controls at rest leave the surface exactly as it came in.
+        std::map<int, glm::dmat4> knots, tangents;
+        for (const auto& [i, m] : elementMatrices(*this, t.attrIndex("knotMatrix")))
+            if (!nearIdentity(m))
+                knots[i] = m;
+        for (const auto& [i, m] : elementMatrices(*this, t.attrIndex("tangentMatrix")))
+            if (!nearIdentity(m))
+                tangents[i] = m;
+        if (knots.empty() && tangents.empty())
             return;
 
         std::lock_guard lock(mMutex);
         const std::string text = as<std::string>(t.attrIndex("binding"));
         const double reach = as<double>(t.attrIndex("reach")), stiffness = as<double>(t.attrIndex("stiffness"));
-        if (text != mText || reach != mReach || stiffness != mStiffness)
+        if (text != mText || reach != mReach || stiffness != mStiffness || mTable.points() != points.size())
         {
             mText = text;
             mReach = reach;
             mStiffness = stiffness;
-            mBind = bindFrom(text);
-            mSolver = sn::Solver();
+            mBind = MeshBind::fromJson(text);
+            mTable = {};
             if (mBind.points == points.size())
-                mSolver.prepare(in, mBind.samples, mBind.edge, reach > 0.0 ? reach : mBind.autoReach, stiffness);
+                mTable = sn::buildInfluence(in, mBind.samples, mBind.runs, mBind.knots, mBind.tangentRest.size(), mBind.edge,
+                                            reach > 0.0 ? reach : mBind.autoReach, stiffness);
         }
         if (mBind.points != points.size())
-            throw std::runtime_error("the mesh changed since the Soft Net was bound; make it again");
-        if (!mSolver.ready())
+            throw std::runtime_error("the mesh changed since the Soft Net was bound; run softNetRebind");
+        if (mTable.points() == 0)
             return;
-
-        std::map<int, glm::dmat4> frames;
-        for (const auto& [i, v] : elements(t.attrIndex("knotFrame")))
-            frames[i] = std::get<glm::dmat4>(v);
-        const glm::dmat4 toObject = glm::inverse(as<glm::dmat4>(t.attrIndex("meshMatrix")));
-        // Each knot's control moves, turns and scales in its frame on the surface; in object space that is F C F^-1.
-        std::vector<glm::dmat4> turn(mBind.knots, glm::dmat4(1.0));
-        for (const auto& [k, c] : controls)
-            if (k >= 0 && size_t(k) < turn.size())
-            {
-                const auto f = frames.find(k);
-                const glm::dmat4 frame = toObject * (f != frames.end() ? f->second : glm::dmat4(1.0));
-                turn[size_t(k)] = frame * c * glm::inverse(frame);
-            }
-        std::vector<glm::dvec3> deltas(mBind.samples.size());
-        for (size_t s = 0; s < mBind.samples.size(); ++s)
-        {
-            const sn::Sample& smp = mBind.samples[s];
-            const glm::dvec3 p = sn::at(smp, points);
-            glm::dvec3 q(0.0);
-            for (int e = 0; e < 2; ++e)
-                if (smp.knot[size_t(e)] >= 0 && size_t(smp.knot[size_t(e)]) < turn.size())
-                    q += smp.weight[size_t(e)] * glm::dvec3(turn[size_t(smp.knot[size_t(e)])] * glm::dvec4(p, 1.0));
-                else
-                    q += smp.weight[size_t(e)] * p;
-            deltas[s] = q - p;
-        }
-        const std::vector<glm::dvec3> moved = mSolver.solve(deltas);
-        for (size_t i = 0; i < points.size() && i < moved.size(); ++i)
+        const Matrices* frames = matricesOf(*this, t.attrIndex("frames"));
+        if (!frames || frames->m.size() < mBind.knots)
+            return;
+        // A mesh other than the body has the body's frames carried into its own object space.
+        glm::dmat4 toMesh(1.0);
+        const int64_t slot = as<int64_t>(t.attrIndex("meshIndex"));
+        if (const Matrices* spaces = matricesOf(*this, t.attrIndex("spaces")); slot > 0 && spaces && size_t(slot) < spaces->m.size())
+            toMesh = glm::inverse(spaces->m[size_t(slot)]) * spaces->m[0];
+        const std::vector<glm::dvec3> moves = dofMoves(mBind, frames->m, knots, tangents, toMesh);
+        std::vector<glm::dvec3> moved(points.size(), glm::dvec3(0.0));
+        mTable.apply(moves, moved);
+        for (size_t i = 0; i < points.size(); ++i)
             points[i] += moved[i];
     }
 
@@ -142,74 +376,94 @@ private:
     mutable std::mutex mMutex;
     mutable std::string mText;
     mutable double mReach = -1.0, mStiffness = -1.0;
-    mutable Bind mBind;
-    mutable sn::Solver mSolver;
+    mutable MeshBind mBind;
+    mutable sn::InfluenceTable mTable;
 };
 
-/** The binding of the layout's lines on mesh (the deformer's input as it is now): curve samples and knots by junction. */
-Bind bindLines(const Resolved& resolved, const geo::Mesh& mesh, double spacing, std::vector<uint32_t>& knotJunctions, std::vector<glm::dvec3>& knotPositions)
+/** Keeps every knots group's world matrix on its body mesh's, and the bound meshes' matrices current, after each evaluation. */
+void syncSpaces(Graph& g, bool after)
 {
-    LILA_ZONE();
-    Bind b;
-    b.points = mesh.pointCapacity();
-    const geo::MeshBvh bvh(mesh);
-    const geo::Triangulation& tris = bvh.triangles();
-    auto sampleAt = [&](const glm::dvec3& p, sn::Sample& out) {
-        geo::BvhClosest hit;
-        if (!bvh.closestPoint(p, hit) || hit.triangle == geo::kInvalid)
-            return false;
-        for (int k = 0; k < 3; ++k)
-            out.points[size_t(k)] = uint32_t(mesh.cornerPoint(tris.corners[size_t(hit.triangle) * 3 + size_t(k)]));
-        out.bary = hit.bary;
-        return true;
-    };
-    std::map<uint32_t, int> knotOf;
-    for (const ResolvedJunction& j : resolved.junctions())
+    if (!after)
+        return;
+    std::vector<KnotsNode*> hubs;
     {
-        knotOf[j.id] = int(knotJunctions.size());
-        knotJunctions.push_back(j.id);
-        knotPositions.push_back(j.position);
-        sn::Sample s{.knot = {knotOf[j.id], knotOf[j.id]}, .weight = {1.0, 0.0}};
-        if (sampleAt(j.position, s))
-            b.samples.push_back(s);
+        std::lock_guard lock(gHubsMutex);
+        hubs.assign(gHubs.begin(), gHubs.end());
     }
-    b.knots = knotJunctions.size();
-    const double step = spacing > 0.0 ? spacing : std::max(resolved.spacing() * 2.0, 1e-6);
-    for (const ResolvedRun& r : resolved.runs())
+    bool changed = false;
+    for (KnotsNode* h : hubs)
     {
-        const auto ka = knotOf.find(r.a), kb = knotOf.find(r.b);
-        if (ka == knotOf.end() || kb == knotOf.end() || r.path.points.size() < 2)
+        if (g.node(h->id()) != h)
             continue;
-        const double total = polylineLength(r.path.points);
-        const std::vector<glm::dvec3> along = resample(r.path.points, step);
-        double s = 0.0;
-        for (size_t i = 0; i < along.size(); ++i)
+        const std::vector<NodeId> meshes = netMeshes(g, h->id());
+        if (meshes.empty())
+            continue;
+        std::vector<glm::dmat4> worlds;
+        for (NodeId m : meshes)
+            worlds.push_back(std::get<glm::dmat4>(g.value({m, Transform::kWorldMatrix, -1})));
+        if (h->setWorlds(std::move(worlds)))
         {
-            if (i > 0)
-                s += glm::length(along[i] - along[i - 1]);
-            // The ends are the knots' own samples.
-            if (i == 0 || i + 1 == along.size())
-                continue;
-            const std::array<double, 2> w = sn::knotWeights(total > 0.0 ? s / total : 0.0);
-            sn::Sample smp{.knot = {ka->second, kb->second}, .weight = w};
-            if (sampleAt(along[i], smp))
-                b.samples.push_back(smp);
+            g.touch(h->id());
+            changed = true;
         }
     }
-    double sum = 0.0;
-    size_t count = 0;
-    for (geo::Index e = 0; e < mesh.edgeCapacity(); ++e)
-        if (mesh.edgeValid(e))
-        {
-            sum += glm::length(mesh.position(mesh.edgePoint(e, 1)) - mesh.position(mesh.edgePoint(e, 0)));
-            ++count;
-        }
-    b.edge = count ? sum / double(count) : 1.0;
-    const geo::Bounds box = mesh.bounds();
-    b.autoReach = std::max(glm::length(box.max - box.min) / 6.0, b.edge);
-    return b;
+    if (changed)
+        g.evaluate();
 }
 } // namespace
+
+std::vector<NodeId> netDeformers(Graph& g, NodeId knotsNode)
+{
+    std::vector<std::pair<int64_t, NodeId>> found;
+    const Node* hub = g.node(knotsNode);
+    if (!hub)
+        return {};
+    for (const PlugRef& d : g.destinations({knotsNode, hub->type().attrIndex("frames"), -1}))
+        if (const Node* n = g.node(d.node); n && n->type().name == kSoftNetType)
+            found.emplace_back(n->as<int64_t>(n->type().attrIndex("meshIndex")), d.node);
+    std::sort(found.begin(), found.end());
+    std::vector<NodeId> out;
+    for (const auto& [slot, id] : found)
+        if (std::find(out.begin(), out.end(), id) == out.end())
+            out.push_back(id);
+    return out;
+}
+
+std::vector<NodeId> netMeshes(Graph& g, NodeId knotsNode)
+{
+    std::vector<NodeId> out;
+    for (NodeId d : netDeformers(g, knotsNode))
+        if (const NodeId m = modifiers::meshOf(g, d); m != kNoNode)
+            out.push_back(m);
+    return out;
+}
+
+NodeId netOf(Graph& g, NodeId node)
+{
+    const Node* n = g.node(node);
+    if (!n)
+        return kNoNode;
+    if (n->type().name == kSoftNetKnotsType)
+        return node;
+    if (n->type().name == kSoftNetKnotType || n->type().name == kSoftNetTangentType)
+    {
+        for (NodeId p = g.parent(node); p != kNoNode; p = g.parent(p))
+            if (g.node(p)->type().name == kSoftNetKnotsType)
+                return p;
+        return kNoNode;
+    }
+    if (n->type().name == kSoftNetType)
+    {
+        if (const auto src = g.source({node, n->type().attrIndex("frames"), -1}))
+            return src->node;
+        return kNoNode;
+    }
+    if (n->type().isA("mesh"))
+        for (NodeId d : modifiers::stack(g, node))
+            if (g.node(d)->type().name == kSoftNetType)
+                return netOf(g, d);
+    return kNoNode;
+}
 
 void registerSoftNetTypes()
 {
@@ -219,108 +473,100 @@ void registerSoftNetTypes()
     const uint32_t hiddenArray = AttrInput | AttrHidden | AttrArray;
     deformers::registerDeformer(
         {kSoftNetType, "topology-ring",
-         "Soft Net: a Panel Layout's lines as curves that shape the surface after the skin. Each line sample holds to the mesh "
-         "as it is (never cut); move, turn or scale a knot control and the lines through it follow, the surface following "
-         "the lines and fading over the reach.",
+         "Soft Net: a Panel Layout's lines as Bezier curves that shape the surface after the skin. Each line sample holds to "
+         "the mesh as it is (never cut); move, turn or scale a knot, or pull one of its tangent handles, and the lines through "
+         "it follow, the surface following the lines and fading over the reach.",
          {{.name = "reach", .type = PlugType::Float, .defaultValue = 0.0, .flags = keyable,
            .doc = "How far from a line the surface follows it, cm; 0 is a sixth of the mesh's size.", .minValue = 0.0},
           {.name = "stiffness", .type = PlugType::Float, .defaultValue = 1.0, .flags = keyable,
            .doc = "How closely the surface meets the lines against keeping smooth.", .minValue = 0.0},
-          {.name = "knotFrame", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = hiddenArray,
-           .doc = "Each knot's frame on the surface under the net (its surface pin's world matrix)."},
+          {.name = "frames", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrHidden,
+           .doc = "The knots' frames on the surface under the net, in the body's object space, from the net's knots group."},
+          {.name = "spaces", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrHidden,
+           .doc = "The bound meshes' world matrices, body first, from the net's knots group."},
+          {.name = "meshIndex", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = AttrInput | AttrStorable | AttrHidden,
+           .doc = "This mesh's place in the net: 0 the body the knots ride, others the garments and props bound with it."},
           {.name = "knotMatrix", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = hiddenArray,
            .doc = "Each knot control's local matrix: its move, turn and scale in its frame."},
-          {.name = "meshMatrix", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = AttrInput | AttrStorable | AttrHidden,
-           .doc = "The mesh's world matrix at bind, which the knot frames are placed by."},
+          {.name = "tangentMatrix", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = hiddenArray,
+           .doc = "Each tangent handle's local matrix: how far it has moved from its rest place in its knot's space."},
           {.name = "binding", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrHidden,
-           .doc = "The bind: every line sample's triangle and weights, and its knots."}},
+           .doc = "The bind: every line sample's triangle and weights, its line and place along it, and the tangent handles' rests."}},
          [] { return std::make_unique<SoftNetNode>(); }});
+
+    NodeType hub;
+    hub.name = kSoftNetKnotsType;
+    hub.icon = "topology-ring";
+    hub.base = types::find("transform");
+    hub.dag = true;
+    hub.doc = "A Soft Net's knots: gives each knot its frame on the surface under the net and stands where the body mesh "
+              "stands, so the knots follow the mesh. showAllKnots shows the knots inside lines as well as junctions and ends.";
+    hub.ownAttrs = {
+        {.name = "inMesh", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrHidden,
+         .doc = "The body's surface under the net, which the knot frames ride."},
+        {.name = "binding", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrHidden,
+         .doc = "Each knot's place on the surface, the lines through it and the junctions it turns with."},
+        {.name = "meshWorld", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = AttrInput | AttrStorable | AttrHidden,
+         .doc = "The body's world matrix when bound; the live one replaces it at the first evaluation."},
+        {.name = "layout", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrHidden,
+         .doc = "The Panel Layout the net was made from, which softNetRebind reads again."},
+        {.name = "spacing", .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrInput | AttrStorable | AttrHidden,
+         .doc = "Distance between line samples, cm; 0 is twice the layout's."},
+        {.name = "maxDistance", .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrInput | AttrStorable | AttrHidden,
+         .doc = "How far a garment or prop may lie from a line and still be held by it, cm; 0 is half the reach."},
+        {.name = "showAllKnots", .type = PlugType::Bool, .defaultValue = false, .flags = AttrInput | AttrStorable | AttrChannelBox,
+         .doc = "Show every knot; off shows junctions (3 or more lines) and line ends only."},
+        {.name = "frames", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrOutput | AttrHidden,
+         .doc = "Each knot's frame on the surface, in the body's object space."},
+        {.name = "spaces", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrOutput | AttrHidden,
+         .doc = "The bound meshes' world matrices, body first."},
+    };
+    hub.create = [] { return std::make_unique<KnotsNode>(); };
+    types::registerType(std::move(hub));
+
+    NodeType knot;
+    knot.name = kSoftNetKnotType;
+    knot.icon = "circle-dot";
+    knot.base = types::find("locator");
+    knot.dag = true;
+    knot.doc = "A Soft Net knot control: translate, rotate and scale move the lines through it in its frame on the surface "
+               "(z the surface normal, x fitted to the lines).";
+    knot.ownAttrs = {
+        {.name = "frames", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrHidden, .doc = "The net's knot frames."},
+        {.name = "index", .type = PlugType::Int, .defaultValue = int64_t(-1), .flags = AttrInput | AttrStorable | AttrHidden,
+         .doc = "This knot's place in the net."},
+        {.name = "junction", .type = PlugType::Int, .defaultValue = int64_t(-1), .flags = AttrInput | AttrStorable | AttrHidden,
+         .doc = "The Panel Layout junction this knot sits on; rebinding keeps the knot while the junction lasts."},
+        {.name = "degree", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = AttrInput | AttrStorable | AttrHidden,
+         .doc = "Lines through the knot."},
+    };
+    knot.create = [] { return std::make_unique<KnotNode>(); };
+    types::registerType(std::move(knot));
+
+    NodeType tangent;
+    tangent.name = kSoftNetTangentType;
+    tangent.icon = "vector-bezier";
+    tangent.base = types::find("locator");
+    tangent.dag = true;
+    tangent.doc = "A Soft Net tangent handle: shapes the line leaving its knot, as a Bezier handle does. At rest it sits a third "
+                  "of the way along the line; translate moves it from there.";
+    tangent.ownAttrs = {
+        {.name = "run", .type = PlugType::Int, .defaultValue = int64_t(-1), .flags = AttrInput | AttrStorable | AttrHidden,
+         .doc = "The Panel Layout run whose end this handle shapes."},
+        {.name = "end", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = AttrInput | AttrStorable | AttrHidden,
+         .doc = "Which end of the run: 0 its start, 1 its end."},
+    };
+    tangent.create = [] { return std::make_unique<Locator>(); };
+    types::registerType(std::move(tangent));
+
+    Graph::addEvaluateHook(syncSpaces);
 }
 
 void registerSoftNetCommands()
 {
-    using T = ArgType;
-    ops::registerCommand({
-        .name = "softNet",
-        .doc = "Make a Soft Net on a mesh from its Panel Layout: the layout's lines become curves bound to the surface as it is "
-               "(no cuts), every junction a knot with a control riding the surface under the net. Added on top of the stack, so "
-               "it shapes the skinned mesh. Move, turn, scale or key the knot controls. Returns {softNet, knots, samples}.",
-        .positionalDoc = "mesh",
-        .flags = {{"layout", "ly", T::String, nullptr, "The Panel Layout whose lines make the net; default the mesh's topmost."},
-                  {"reach", "r", T::Float, 0.0, "How far from a line the surface follows it, cm; 0 is a sixth of the mesh's size.", {}, {}, 0.0},
-                  {"stiffness", "st", T::Float, 1.0, "How closely the surface meets the lines.", {}, {}, 0.0},
-                  {"spacing", "sp", T::Float, 0.0, "Distance between line samples, cm; 0 is twice the layout's.", {}, {}, 0.0},
-                  {"name", "n", T::String, nullptr, "Name for the deformer."}},
-        .run = [](const Args& a) -> json {
-            Graph& g = Graph::current();
-            if (a.objects().empty())
-                throw CommandError("softNet: give a mesh");
-            Node& mesh = nodeNamed(a.objects().front(), "softNet");
-            if (!mesh.type().isA("mesh"))
-                throw CommandError("softNet: " + mesh.path() + " is not a mesh");
-            Node* layoutNode = findLayoutNode(g, a.has("layout") ? nodeNamed(a.get<std::string>("layout"), "softNet").id() : mesh.id());
-            if (!layoutNode)
-                throw CommandError("softNet: " + mesh.path() + " has no Panel Layout; draw its lines with the Layout Pencil first");
-            const std::shared_ptr<const Resolved> resolved = resolvedLayout(g, layoutNode->id());
-            if (!resolved || resolved->runs().empty())
-                throw CommandError("softNet: the Panel Layout has no lines");
-
-            const std::string name = a.has("name") ? a.get<std::string>("name") : std::string("SoftNet");
-            const std::vector<NodeId> made = deformers::addDeformer(g, kSoftNetType, {mesh.id()}, name);
-            if (made.empty())
-                throw CommandError("softNet: could not add the deformer");
-            Node& d = *g.node(made.front());
-            g.evaluate();
-            const MeshPtr in = d.as<MeshPtr>(DeformerNode::kInMesh);
-            if (!in)
-                throw CommandError("softNet: " + mesh.path() + " has no mesh to bind");
-            std::vector<uint32_t> junctions;
-            std::vector<glm::dvec3> positions;
-            const Bind b = bindLines(*resolved, *in, a.get<double>("spacing", 0.0), junctions, positions);
-            if (b.samples.empty())
-                throw CommandError("softNet: no line sample lies on " + mesh.path());
-            g.setValue({d.id(), d.type().attrIndex("binding"), -1}, bindJson(b).dump());
-            g.setValue({d.id(), d.type().attrIndex("reach"), -1}, a.get<double>("reach", 0.0));
-            g.setValue({d.id(), d.type().attrIndex("stiffness"), -1}, a.get<double>("stiffness", 1.0));
-            // The mesh's matrix at bind, held rather than connected: the mesh's output depends on the net, so nothing on the
-            // mesh may feed the net or its knots' frames.
-            const glm::dmat4 toWorld = worldOf(mesh);
-            g.setValue({d.id(), d.type().attrIndex("meshMatrix"), -1}, toWorld);
-
-            // Each knot's frame rides the surface the net shapes, not its result, so a knot moves its lines once.
-            const std::optional<PlugRef> upstream = g.source({d.id(), DeformerNode::kInMesh, -1});
-            if (!upstream || upstream->node == mesh.id())
-                throw CommandError("softNet: " + mesh.path() + " has nothing under the net to ride; add it after a skin, a modifier or the Panel Layout");
-            json knots = json::array();
-            for (size_t k = 0; k < junctions.size(); ++k)
-            {
-                const glm::dvec3 at = glm::dvec3(toWorld * glm::dvec4(positions[k], 1.0));
-                const std::string base = d.name() + "_knot" + std::to_string(k + 1);
-                const json pins = ops::execute("pin", {{"args", {mesh.path()}},
-                                                       {"source", "surface"},
-                                                       {"surfaceMode", "nearest"},
-                                                       {"position", {at.x, at.y, at.z}},
-                                                       {"name", base + "_frame"}});
-                const json first = pins.is_array() && !pins.empty() ? pins[0] : pins;
-                Node* locator = first.is_string() ? g.find(first.get<std::string>()) : nullptr;
-                if (!locator)
-                    throw CommandError("softNet: could not make knot " + std::to_string(k + 1) + "'s frame");
-                const std::optional<PlugRef> pinPlug = g.source({locator->id(), Transform::kTranslate, -1});
-                Node* pin = pinPlug ? g.node(pinPlug->node) : nullptr;
-                if (!pin)
-                    throw CommandError("softNet: knot " + std::to_string(k + 1) + "'s frame has no surface pin");
-                const int pinMatrix = pin->type().attrIndex("meshMatrix");
-                g.disconnect({pin->id(), pinMatrix, -1});
-                g.setValue({pin->id(), pinMatrix, -1}, toWorld);
-                g.connect(*upstream, {pin->id(), pin->type().attrIndex("inMesh"), -1}, true);
-                Node* control = g.createNode(*types::find("transform"), base, locator->id());
-                g.connect({control->id(), Transform::kMatrix, -1}, {d.id(), d.type().attrIndex("knotMatrix"), -1, int(k)});
-                g.connect({pin->id(), pin->type().attrIndex("outMatrix"), -1}, {d.id(), d.type().attrIndex("knotFrame"), -1, int(k)});
-                knots.push_back(control->path());
-            }
-            return {{"softNet", d.path()}, {"knots", knots}, {"samples", b.samples.size()}};
-        },
-        .examples = {"softNet(\"Mochi\", reach=4.0)"},
-    });
+    registerSoftNetBindCommands();
+    registerSoftNetPoseCommands();
+    registerSoftNetLayoutsCommands();
+    registerSoftNetExportCommands();
 }
 } // namespace lila::layout
