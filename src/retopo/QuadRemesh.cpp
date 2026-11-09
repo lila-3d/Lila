@@ -2250,7 +2250,8 @@ void fitCount(const geo::Mesh& source, const QuadRemeshOptions& opts, QuadRemesh
         const auto started = std::chrono::steady_clock::now();
         QuadRemeshResult r = quadRemeshOnce(source, again);
         lastTook = secondsSince(started);
-        const bool take = r.ok() && r.defects <= result.defects && off(r) < off(result);
+        const auto nonQuads = [](const QuadRemeshResult& x) { return x.metrics.triangles + x.metrics.ngons; };
+        const bool take = r.ok() && r.defects <= result.defects && nonQuads(r) <= nonQuads(result) && off(r) < off(result);
         if (take)
             asked = again.targetFaces;
         keepOrMerge(result, std::move(r), take);
