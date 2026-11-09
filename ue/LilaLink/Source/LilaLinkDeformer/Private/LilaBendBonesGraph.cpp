@@ -1,5 +1,6 @@
 #include "LilaBendBonesData.h"
 #include "LilaBendBonesDataInterface.h"
+#include "LilaGraphPins.h"
 
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 
@@ -8,7 +9,6 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Components/SkinnedMeshComponent.h"
 #include "Misc/FileHelper.h"
-#include "IOptimusNodeAdderPinProvider.h"
 #include "OptimusComponentSource.h"
 #include "OptimusDeformer.h"
 #include "OptimusDataDomain.h"
@@ -36,49 +36,6 @@ WriteTangentX(Index, float4(TX.xyz + Turn.w * TT + cross(Turn.xyz, TT), TX.w));
 WriteTangentZ(Index, float4(TZ.xyz + Turn.w * ZT + cross(Turn.xyz, ZT), TZ.w));
 )");
 
-#if WITH_EDITOR
-UOptimusNodePin* PinNamed(UOptimusNode* Node, const TCHAR* Name)
-{
-	for (UOptimusNodePin* Pin : Node->GetPins())
-	{
-		if (Pin->GetName() == Name)
-		{
-			return Pin;
-		}
-	}
-	return nullptr;
-}
-
-/** Adds a pin to the kernel matching Source (its type and domain) and links them, the way dragging onto the kernel's + pin does. */
-bool AddKernelPin(UOptimusNodeGraph* Graph, UOptimusNode* Kernel, UOptimusNodePin* Source, const EOptimusNodePinDirection Direction, const FName Name, FString& OutError)
-{
-	IOptimusNodeAdderPinProvider* Adder = Cast<IOptimusNodeAdderPinProvider>(Kernel);
-	if (!Adder || !Source)
-	{
-		OutError = FString::Printf(TEXT("can't add the kernel pin %s"), *Name.ToString());
-		return false;
-	}
-	FString Reason;
-	const TArray<IOptimusNodeAdderPinProvider::FAdderPinAction> Actions = Adder->GetAvailableAdderPinActions(Source, Direction, &Reason);
-	if (Actions.IsEmpty())
-	{
-		OutError = FString::Printf(TEXT("the kernel takes no pin from %s: %s"), *Source->GetName(), *Reason);
-		return false;
-	}
-	const TArray<UOptimusNodePin*> Added = Adder->TryAddPinFromPin(Actions[0], Source, Name);
-	if (Added.IsEmpty())
-	{
-		OutError = FString::Printf(TEXT("the kernel didn't add %s"), *Name.ToString());
-		return false;
-	}
-	const bool bLinked = Direction == EOptimusNodePinDirection::Input ? Graph->AddLink(Source, Added[0]) : Graph->AddLink(Added[0], Source);
-	if (!bLinked)
-	{
-		OutError = FString::Printf(TEXT("couldn't link %s"), *Name.ToString());
-	}
-	return bLinked;
-}
-#endif
 } // namespace
 
 UObject* ULilaBendBonesLibrary::MakeBendBonesDeformer(const FString& AssetPath, FString& OutError)
@@ -115,13 +72,13 @@ UObject* ULilaBendBonesLibrary::MakeBendBonesDeformer(const FString& AssetPath, 
 								   Write != nullptr, Kernel != nullptr, *Graph->GetCollectionPath());
 		return nullptr;
 	}
-	const bool bPins = AddKernelPin(Graph, Kernel, PinNamed(Bend, TEXT("BentPosition")), EOptimusNodePinDirection::Input, "BentPosition", OutError) &&
-					   AddKernelPin(Graph, Kernel, PinNamed(Bend, TEXT("BentRotation")), EOptimusNodePinDirection::Input, "BentRotation", OutError) &&
-					   AddKernelPin(Graph, Kernel, PinNamed(Mesh, TEXT("TangentX")), EOptimusNodePinDirection::Input, "RestTangentX", OutError) &&
-					   AddKernelPin(Graph, Kernel, PinNamed(Mesh, TEXT("TangentZ")), EOptimusNodePinDirection::Input, "RestTangentZ", OutError) &&
-					   AddKernelPin(Graph, Kernel, PinNamed(Write, TEXT("Position")), EOptimusNodePinDirection::Output, "Position", OutError) &&
-					   AddKernelPin(Graph, Kernel, PinNamed(Write, TEXT("TangentX")), EOptimusNodePinDirection::Output, "TangentX", OutError) &&
-					   AddKernelPin(Graph, Kernel, PinNamed(Write, TEXT("TangentZ")), EOptimusNodePinDirection::Output, "TangentZ", OutError);
+	const bool bPins = LilaGraphPins::AddKernelPin(Graph, Kernel, LilaGraphPins::PinNamed(Bend, TEXT("BentPosition")), EOptimusNodePinDirection::Input, "BentPosition", OutError) &&
+					   LilaGraphPins::AddKernelPin(Graph, Kernel, LilaGraphPins::PinNamed(Bend, TEXT("BentRotation")), EOptimusNodePinDirection::Input, "BentRotation", OutError) &&
+					   LilaGraphPins::AddKernelPin(Graph, Kernel, LilaGraphPins::PinNamed(Mesh, TEXT("TangentX")), EOptimusNodePinDirection::Input, "RestTangentX", OutError) &&
+					   LilaGraphPins::AddKernelPin(Graph, Kernel, LilaGraphPins::PinNamed(Mesh, TEXT("TangentZ")), EOptimusNodePinDirection::Input, "RestTangentZ", OutError) &&
+					   LilaGraphPins::AddKernelPin(Graph, Kernel, LilaGraphPins::PinNamed(Write, TEXT("Position")), EOptimusNodePinDirection::Output, "Position", OutError) &&
+					   LilaGraphPins::AddKernelPin(Graph, Kernel, LilaGraphPins::PinNamed(Write, TEXT("TangentX")), EOptimusNodePinDirection::Output, "TangentX", OutError) &&
+					   LilaGraphPins::AddKernelPin(Graph, Kernel, LilaGraphPins::PinNamed(Write, TEXT("TangentZ")), EOptimusNodePinDirection::Output, "TangentZ", OutError);
 	if (!bPins)
 	{
 		return nullptr;

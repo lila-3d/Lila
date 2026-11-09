@@ -169,6 +169,8 @@ Node& layoutFor(Graph& g, Node& mesh, const Args& a, const char* cmd)
     Node* l = made.is_array() && !made.empty() ? g.find(made[0].get<std::string>()) : nullptr;
     if (!l)
         throw CommandError(std::string(cmd) + ": could not add a Panel Layout to " + mesh.path());
+    // Lines made for a Soft Net shape the surface through the net only: they cut no grooves.
+    ops::execute("panelLayoutLineSet", {{"args", {l->path()}}, {"set", "Major"}, {"output", "none"}});
     return *l;
 }
 

@@ -3,6 +3,7 @@
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "geo/Mesh.h"
+#include "math/Unreal.h"
 #include "ops/Command.h"
 #include "ops/CommandOptions.h"
 #include "scene/Anim.h"
@@ -84,8 +85,13 @@ void writeLocal(Graph& g, NodeId j, const glm::dmat4& local, std::optional<doubl
 /** The net's knots and handles as joints Unreal can carry, with each one's world matrix while the controls rest. */
 struct NetJoints
 {
+    /** The bones a bake skins to: frames, controls and handles. */
     std::vector<NodeId> joints;
     std::vector<glm::dmat4> restWorld;
+    /** Per knot index: its frame and control joints. */
+    std::vector<std::pair<NodeId, NodeId>> knots;
+    /** Per tangent handle node: its joint and its rest joint (under the frame, where the handle sits at rest). */
+    std::map<NodeId, std::pair<NodeId, NodeId>> handles;
 };
 
 /**
@@ -136,7 +142,8 @@ NetJoints makeJoints(Graph& g, NodeId hub, NodeId skin, const std::vector<double
     {
         Frame,
         Control,
-        Handle
+        Handle,
+        HandleRest
     };
     struct Made
     {
@@ -167,12 +174,20 @@ NetJoints makeJoints(Graph& g, NodeId hub, NodeId skin, const std::vector<double
         out.restWorld.push_back(rest);
         made.push_back({control->id(), knots[k], Kind::Control});
         out.restWorld.push_back(rest);
+        out.knots.resize(std::max(out.knots.size(), k + 1), {kNoNode, kNoNode});
+        out.knots[k] = {frame->id(), control->id()};
         for (NodeId t : std::vector<NodeId>(g.children(knots[k])))
             if (const Node* tn = g.node(t); tn && tn->type().name == kSoftNetTangentType)
             {
                 replace(tn->name() + "_jnt");
-                made.push_back({g.createNode(jointType, tn->name() + "_jnt", control->id())->id(), t, Kind::Handle});
+                replace(tn->name() + "_rest");
+                const NodeId handle = g.createNode(jointType, tn->name() + "_jnt", control->id())->id();
+                const NodeId restJoint = g.createNode(jointType, tn->name() + "_rest", frame->id())->id();
+                made.push_back({handle, t, Kind::Handle});
                 out.restWorld.push_back(rest * tn->as<glm::dmat4>(Transform::kOffsetParentMatrix));
+                made.push_back({restJoint, t, Kind::HandleRest});
+                out.restWorld.push_back(rest * tn->as<glm::dmat4>(Transform::kOffsetParentMatrix));
+                out.handles[t] = {handle, restJoint};
             }
     }
 
@@ -195,6 +210,7 @@ NetJoints makeJoints(Graph& g, NodeId hub, NodeId skin, const std::vector<double
             }
             case Kind::Control: local[i].push_back(src.as<glm::dmat4>(Transform::kMatrix)); break;
             case Kind::Handle: local[i].push_back(src.as<glm::dmat4>(Transform::kOffsetParentMatrix) * src.as<glm::dmat4>(Transform::kMatrix)); break;
+            case Kind::HandleRest: local[i].push_back(src.as<glm::dmat4>(Transform::kOffsetParentMatrix)); break;
             }
         }
     }
@@ -213,8 +229,15 @@ NetJoints makeJoints(Graph& g, NodeId hub, NodeId skin, const std::vector<double
             if (!animated)
                 break;
         }
-        out.joints.push_back(made[i].joint);
+        if (made[i].kind != Kind::HandleRest)
+            out.joints.push_back(made[i].joint);
     }
+    // restWorld lines up with joints: drop the rest joints' entries.
+    std::vector<glm::dmat4> rests;
+    for (size_t i = 0; i < made.size(); ++i)
+        if (made[i].kind != Kind::HandleRest)
+            rests.push_back(out.restWorld[i]);
+    out.restWorld = std::move(rests);
     return out;
 }
 
@@ -441,6 +464,70 @@ json bake(Graph& g, NodeId mesh, const Args& a)
             {"disabled", fit.value("disabled", json::array())},
             {"unrealCheck", {{"worst", c.report.worst}, {"frames", c.report.frames}, {"mismatches", mismatches}, {"error", c.error}}}};
 }
+json toUnrealJson(const glm::dvec3& v)
+{
+    const math::Vector u = math::toUnreal(math::Vector(v.x, v.y, v.z));
+    return {u.x, u.y, u.z};
+}
+
+std::string bareName(const std::string& path) { return path.substr(path.find_last_of("|:") + 1); }
+
+/**
+ * The net live in Unreal: per knot its frame and control bones, per tangent handle its bone and rest bone (moves are
+ * bone minus rest in component space), and per point its place at bind (Unreal space) and its influence entries
+ * [dof, weight]. LilaLink binds every LOD of the skeletal mesh to them under the Lila Soft Net Deformer Graph.
+ */
+json unrealPayload(Graph& g, NodeId mesh, const NetJoints& joints, const std::string& skeletalMesh, const std::string& deformerPath)
+{
+    LILA_ZONE();
+    const NodeId d = deformerOn(g, mesh);
+    const NodeId skin = skin::find(g, mesh);
+    g.evaluate();
+    const Node& dn = *g.node(d);
+    const MeshBind b = MeshBind::fromJson(dn.as<std::string>(dn.type().attrIndex("binding")));
+    const MeshPtr in = dn.as<MeshPtr>(DeformerNode::kInMesh);
+    const MeshPtr rest = skin != kNoNode ? skin::inputMesh(g, skin) : in;
+    if (!in || !rest || b.points != in->pointCapacity())
+        throw CommandError("unrealSoftNet: the mesh changed since the net was bound; run softNetRebind");
+    const double reach = dn.as<double>(dn.type().attrIndex("reach"));
+    const deform::softnet::InfluenceTable table =
+        deform::softnet::buildInfluence(*in, b.samples, b.runs, b.knots, b.tangentRest.size(), b.edge, reach > 0.0 ? reach : b.autoReach,
+                                        dn.as<double>(dn.type().attrIndex("stiffness")));
+    json knots = json::array(), tangents = json::array();
+    for (const auto& [frame, control] : joints.knots)
+        knots.push_back({{"frame", frame != kNoNode ? bareName(g.node(frame)->name()) : ""}, {"control", control != kNoNode ? bareName(g.node(control)->name()) : ""}});
+    for (size_t t = 0; t < b.tangentRest.size(); ++t)
+    {
+        const auto src = g.source({d, dn.type().attrIndex("tangentMatrix"), -1, int(t)});
+        const auto it = src ? joints.handles.find(src->node) : joints.handles.end();
+        if (it == joints.handles.end())
+            throw CommandError("unrealSoftNet: tangent handle " + std::to_string(t) + " has no control; run softNetRebind");
+        tangents.push_back({{"bone", bareName(g.node(it->second.first)->name())}, {"rest", bareName(g.node(it->second.second)->name())}});
+    }
+    const glm::dmat4 toWorld = skin != kNoNode ? g.node(skin)->as<glm::dmat4>(SkinClusterNode::kGeomMatrix) : worldOf(*g.node(mesh));
+    json points = json::array();
+    const std::span<const glm::dvec3> pos = rest->positions();
+    for (size_t i = 0; i < table.points() && i < pos.size(); ++i)
+    {
+        json e = json::array();
+        for (uint32_t k = table.offsets[i]; k < table.offsets[i + 1]; ++k)
+            e.push_back({table.entries[k].dof, table.entries[k].weight});
+        points.push_back({{"p", toUnrealJson(glm::dvec3(toWorld * glm::dvec4(pos[i], 1.0)))}, {"i", e}});
+    }
+    return {{"skeletalMesh", skeletalMesh}, {"deformer", deformerPath}, {"knots", knots}, {"tangents", tangents}, {"dofs", table.dofs}, {"points", points}};
+}
+
+std::string mappedSkeletalMesh(Graph& g, NodeId mesh)
+{
+    if (!ops::find("unrealMappings"))
+        return {};
+    for (const json& m : ops::execute("unrealMappings", json::object()))
+        if (Node* mapped = g.find(m.value("node", "")); mapped && m.value("kind", "") == "skeletal")
+            for (NodeId n = mesh; n != kNoNode; n = g.parent(n))
+                if (n == mapped->id())
+                    return m.value("contentPath", "");
+    return {};
+}
 } // namespace
 
 void registerSoftNetExportCommands()
@@ -509,6 +596,64 @@ void registerSoftNetExportCommands()
             return ops::execute(a.get<std::string>("cacheFormat", "alembic") == "vat" ? "exportVertexAnimation" : "exportAlembic", call);
         },
         .examples = {"softNetUnreal(\"Mochi\")", "softNetUnreal(\"Mochi\", route=\"cache\", cacheFormat=\"alembic\")"},
+    });
+    std::vector<FlagDef> liveFlags = rangeFlags;
+    liveFlags.insert(liveFlags.end(), {
+        {"skeletalMesh", "sm", T::String, nullptr, "The skeletal mesh asset. Default: the mesh's mapping."},
+        {"deformer", "df", T::String, "/Game/Lila/DG_LilaSoftNet", "The Deformer Graph asset to use, made when missing."},
+        {"dryRun", "dry", T::Bool, false, "Make the joints and return what would be sent, without connecting to Unreal."},
+    });
+    ops::registerCommand({
+        .name = "unrealSoftNet",
+        .doc = "Run a skinned mesh's Soft Net live in Unreal: its knots and tangent handles become joints keyed over the range "
+               "(export the skeleton with them, deformOnly off), and LilaLink binds every LOD of the skeletal mesh to the net's "
+               "precomputed influence (each vertex takes the entries of the point at its place) under the Lila Soft Net "
+               "Deformer Graph: linear skinning, then the net's offset from the knot bones. Returns {skeletalMesh, deformer, "
+               "joints, unreal}.",
+        .positionalDoc = "mesh (or its net)",
+        .flags = liveFlags,
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            const NodeId mesh = meshArg(g, a, "unrealSoftNet");
+            const NodeId skin = skin::find(g, mesh);
+            if (skin == kNoNode)
+                throw CommandError("unrealSoftNet: " + g.node(mesh)->path() + " has no skin; the live net runs over a skinned mesh");
+            std::string sm = a.get<std::string>("skeletalMesh", "");
+            if (sm.empty())
+                sm = mappedSkeletalMesh(g, mesh);
+            if (sm.empty() && !a.get<bool>("dryRun"))
+                throw CommandError("unrealSoftNet: give skeletalMesh, or map the mesh's character with unrealMap kind=skeletal");
+            const NetJoints joints = makeJoints(g, netOf(g, mesh), skin, rangeOf(a).times);
+            const json payload = unrealPayload(g, mesh, joints, sm, a.get<std::string>("deformer", "/Game/Lila/DG_LilaSoftNet"));
+            json names = json::array();
+            for (NodeId j : joints.joints)
+                names.push_back(g.node(j)->path());
+            if (a.get<bool>("dryRun"))
+                return {{"skeletalMesh", sm}, {"deformer", payload["deformer"]}, {"joints", names}, {"payload", payload}};
+            const std::string code = "import importlib, lila_link_soft_net\nimportlib.reload(lila_link_soft_net)\nlila_link_soft_net.setup_and_print(" +
+                                     json(payload.dump()).dump() + ")\n";
+            const json r = ops::execute("unrealCall", {{"args", {"runPython"}}, {"params", {{"code", code}}}, {"timeoutMs", 300000}});
+            if (!r.value("ok", false))
+                throw CommandError("unrealSoftNet: " + r.value("error", std::string("Unreal didn't answer")));
+            json result;
+            std::string text;
+            for (const json& line : r.value("result", json::object()).value("log", json::array()))
+            {
+                const std::string l = line.value("text", "");
+                if (l.rfind("LILA_RESULT:", 0) == 0)
+                    result = json::parse(l.substr(12), nullptr, false);
+                else
+                    text += l + "\n";
+            }
+            if (!result.is_object())
+                throw CommandError("unrealSoftNet: Unreal didn't bind the mesh" + (text.empty() ? std::string() : ":\n" + text));
+            if (const json errors = result.value("errors", json::array()); !errors.empty())
+                throw CommandError("unrealSoftNet: " + errors[0].get<std::string>());
+            for (const json& w : result.value("warnings", json::array()))
+                log::write(LogLevel::Warning, "unrealSoftNet: " + w.get<std::string>());
+            return {{"skeletalMesh", sm}, {"deformer", payload["deformer"]}, {"joints", names}, {"unreal", result}};
+        },
+        .examples = {"unrealSoftNet(\"Mochi\", skeletalMesh=\"/Game/Mochi/Mochi\")"},
     });
     ops::options::setOverride("softNetUnreal", {.editors = {{"route", "segmented"}, {"cacheFormat", "segmented"}}});
 }

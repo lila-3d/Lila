@@ -324,6 +324,8 @@ public:
 class SoftNetNode final : public DeformerNode
 {
 public:
+    bool followsJoints() const override { return false; }
+
     void deform(const geo::Mesh& in, std::vector<glm::dvec3>& points) const override
     {
         LILA_ZONE();
