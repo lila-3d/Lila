@@ -724,6 +724,44 @@ TEST_CASE("uvUnwrapExported applies the modifiers and leaves no collapsed uvs")
     CHECK(scene::modifiers::stack(g, g.find(plate)->id()).size() == 2);
 }
 
+TEST_CASE("uvLiveRelax repairs the export after its uv symmetry pass")
+{
+    // A thin symmetric plate unwrapped symmetrically: the relax leaves the rim strips collapsed on the export, and the
+    // symmetry pass that mirrors the relax rewrites islands across the plane, so the repair has to come after it.
+    run("newScene");
+    std::string plate = run("polyCube", {{"width", 10.0}, {"height", 0.4}, {"depth", 6.0}, {"subdivisionsX", 2}, {"subdivisionsZ", 2}})[0];
+    run("select", {{"args", {plate}}});
+    run("setSymmetry", {{"args", {plate}}, {"axis", "x"}});
+    run("uvUnwrapSymmetric");
+    run("autoBevel", {{"args", {plate}}, {"segments", 3}, {"offset", 0.2}});
+    const json added = run("addModifier", {{"args", {plate}}, {"kind", "subdivision"}});
+    const std::string subdiv = added.is_array() ? added[0].get<std::string>() : added.get<std::string>();
+    run("setAttr", {{"args", {subdiv + ".levels", 2}}});
+    run("setAttr", {{"args", {subdiv + ".uvs", 1}}});
+    run("select", {{"args", {plate}}});
+    run("uvLiveRelax", {{"iterations", 200}});
+
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    const geo::Mesh& m = *g.find(plate)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+    // Per island, no triangle under 2% of the uv area the island's density gives it.
+    uv::ChartOptions co;
+    co.source = uv::IslandSource::Uvs;
+    size_t collapsed = 0;
+    for (const uv::Chart& ch : uv::buildCharts(m, {}, co))
+    {
+        const double density = std::abs(ch.areaUv()) / std::max(ch.area3d(), 1e-300);
+        for (const auto& t : ch.tris)
+        {
+            const glm::dvec3 a = ch.pos[t[0]], b = ch.pos[t[1]], c = ch.pos[t[2]];
+            const double a3 = 0.5 * glm::length(glm::cross(b - a, c - a));
+            const glm::dvec2 u = ch.uv[t[1]] - ch.uv[t[0]], v = ch.uv[t[2]] - ch.uv[t[0]];
+            collapsed += a3 > 1e-9 && 0.5 * std::abs(u.x * v.y - u.y * v.x) < 0.02 * a3 * density;
+        }
+    }
+    CHECK(collapsed == 0);
+}
+
 TEST_CASE("camera projection maps what a camera sees to 0-1, image up as V")
 {
     run("newScene");
