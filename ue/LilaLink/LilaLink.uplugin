@@ -20,6 +20,11 @@
 			"LoadingPhase": "Default"
 		},
 		{
+			"Name": "LilaLinkAnimGraph",
+			"Type": "UncookedOnly",
+			"LoadingPhase": "Default"
+		},
+		{
 			"Name": "LilaLink",
 			"Type": "Editor",
 			"LoadingPhase": "PostEngineInit",

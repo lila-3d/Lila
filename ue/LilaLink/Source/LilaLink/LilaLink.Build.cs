@@ -55,6 +55,7 @@ public class LilaLink : ModuleRules
 			"RenderCore",
 			"RHI",
 			"LilaLinkRuntime",
+			"LilaLinkAnimGraph",
 			"AnimGraph",
 			"BlueprintGraph",
 			"ControlRig",
