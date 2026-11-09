@@ -39,6 +39,7 @@ lila_module(lila_scene Scene
     AutoPose.cpp AutoPose.h
     FullBodyIk.cpp FullBodyIk.h
     Strings.cpp Strings.h
+    BendBonesDeformer.cpp BendBonesDeformer.h
     Fracture.cpp Fracture.h
     DominantInfluence.cpp
     Ghosts.cpp
