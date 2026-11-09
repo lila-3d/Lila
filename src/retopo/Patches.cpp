@@ -1695,7 +1695,10 @@ Extracted buildPatchMesh(const Layout& lay, const std::vector<uint8_t>& blocked,
             const Side& shorter = a < b ? shape.sides[k] : shape.sides[k + 2];
             const bool borderSliver = std::min(a, b) < 1.0 && std::all_of(shorter.arcs.begin(), shorter.arcs.end(), [&](const auto& sa) { return arcs[sa.first].border; });
             const double held = borderSliver || std::min(a, b) < 0.3 ? 0.0 : 2.0;
-            if (std::abs(a - b) > std::max({1.5, held, 0.5 * std::max(a, b)}))
+            // A short strip (a finger side tapering to its tip) is held too: a pattern puts its poles side by side there.
+            const double c = latticeLength(shape.sides[k + 1]), d = latticeLength(shape.sides[(k + 3) % 4]);
+            const bool strip = std::min(c, d) >= 2.0 * std::max(a, b) && std::max(c, d) <= 20.0 && std::abs(a - b) <= 3.0;
+            if (!strip && std::abs(a - b) > std::max({1.5, held, 0.5 * std::max(a, b)}))
             {
                 unequal[p] = 1;
                 // Far wider at one end (a foot top running on into a shin strip): no pattern fills that, so the layout cuts it.
