@@ -48,6 +48,7 @@ private:
         std::vector<Index> imCols;         // those it reads through weights that rotate
         Eigen::MatrixXd d;                 // interior group x cols: real parts
         Eigen::MatrixXd di;                // interior group x imCols: imaginary parts
+        Eigen::MatrixXd off;               // interior group x 2: the fill of the border's offsets
         std::vector<Index> start, corners; // interior group -> local corners
     };
     FinalWeight weight(Index k) const { return mConjugate ? std::conj(mIsl.weights[k]) : mIsl.weights[k]; }

@@ -548,6 +548,39 @@ TEST_CASE("final mesh: a live relax on the export keeps cage uvs it barely reads
     }
 }
 
+TEST_CASE("final mesh: a live relax on the export lowers the export's distortion, fills and rotated corners included")
+{
+    // The live solver reads each fill as a dense block over the chart vertices its border reads, both ways; a wrong
+    // block or transpose would leave the export as distorted as it started.
+    geo::Mesh m = plate(0.4, 2);
+    const uv::Stack stack = bevelSubdivStack(0.13, 3, 2);
+    uv::FinalMap map = uv::buildFinalMap(m, "uv0", stack);
+    REQUIRE(map.active());
+    REQUIRE(!map.fills.empty());
+    REQUIRE(std::ranges::any_of(map.weights, [](const uv::FinalWeight& w) { return std::abs(w.imag()) > 1e-6; }));
+    auto distortion = [&](const geo::Mesh& mesh) {
+        const std::vector<uv::Chart> charts = islandsOf(mesh);
+        const std::vector<uv::FinalIsland> isl = uv::finalIslands(map, mesh, charts, "uv0");
+        double a = 0.0, w = 0.0;
+        for (size_t i = 0; i < charts.size(); ++i)
+            if (!isl[i].tris.empty())
+            {
+                a += isl[i].area3d() * uv::finalStats(isl[i], charts[i]).angle;
+                w += isl[i].area3d();
+            }
+        return a / w;
+    };
+    const double before = distortion(m);
+    std::vector<uv::LiveIsland> islands = uv::liveIslands(m, {}, "uv0");
+    uv::attachFinal(islands, m, "uv0", stack);
+    for (uv::LiveIsland& is : islands)
+        is.solve(100);
+    uv::writeLiveIslands(m, islands, "uv0", false);
+    const double after = distortion(m);
+    INFO("angle distortion " << before << " -> " << after);
+    CHECK(after < 0.8 * before);
+}
+
 TEST_CASE("final mesh: solve time on a big export" * doctest::skip())
 {
     geo::CubeOptions co;

@@ -1115,11 +1115,34 @@ detail::FinalOperator::FinalOperator(const FinalIsland& isl, size_t vertexCount,
         f.fill->solve(std::span<const double>(rows.data(), size_t(rows.size())), std::span<double>(d.data(), size_t(d.size())), size_t(m + q));
         b.d = d.leftCols(m);
         b.di = d.rightCols(q);
+        Eigen::MatrixXd ob(nb, 2);
+        for (Eigen::Index k = 0; k < nb; ++k)
+        {
+            ob(k, 0) = isl.offset[f.border[size_t(k)]].x;
+            ob(k, 1) = isl.offset[f.border[size_t(k)]].y;
+        }
+        b.off.resize(ni, 2);
+        f.fill->solve(std::span<const double>(ob.data(), size_t(ob.size())), std::span<double>(b.off.data(), size_t(b.off.size())), 2);
         b.start = f.interiorStart;
         b.corners = f.interiorCorners;
         mBlocks.push_back(std::move(b));
     }
 }
+
+namespace
+{
+/** The u and v of the given chart vertices. */
+void gatherColumns(std::span<const glm::dvec2> x, std::span<const Index> cols, Eigen::VectorXd& u, Eigen::VectorXd& v)
+{
+    u.resize(Eigen::Index(cols.size()));
+    v.resize(Eigen::Index(cols.size()));
+    for (size_t j = 0; j < cols.size(); ++j)
+    {
+        u[Eigen::Index(j)] = x[cols[j]].x;
+        v[Eigen::Index(j)] = x[cols[j]].y;
+    }
+}
+} // namespace
 
 void detail::FinalOperator::apply(std::span<const glm::dvec2> x, std::span<glm::dvec2> y, glm::dvec2 offsetScale) const
 {
@@ -1130,8 +1153,22 @@ void detail::FinalOperator::apply(std::span<const glm::dvec2> x, std::span<glm::
             s += weigh(weight(k), x[mIsl.cols[k]]);
         y[c] = s;
     }
-    // A solve reads far less memory than the dense blocks.
-    applyFills(mIsl.fills, y);
+    Eigen::VectorXd xu, xv, iu, iv, fu, fv;
+    for (const Block& b : mBlocks)
+    {
+        gatherColumns(x, b.cols, xu, xv);
+        gatherColumns(x, b.imCols, iu, iv);
+        fu = b.d * xu + b.off.col(0) * offsetScale.x;
+        fv = b.d * xv + b.off.col(1) * offsetScale.y;
+        if (b.di.cols() > 0)
+        {
+            fu.noalias() -= b.di * iv;
+            fv.noalias() += b.di * iu;
+        }
+        for (size_t g = 0; g + 1 < b.start.size(); ++g)
+            for (Index k = b.start[g]; k < b.start[g + 1]; ++k)
+                y[b.corners[k]] = glm::dvec2(fu[Eigen::Index(g)], fv[Eigen::Index(g)]);
+    }
 }
 
 void detail::FinalOperator::applyTransposed(std::span<const glm::dvec2> g, std::span<glm::dvec2> out) const
@@ -1140,24 +1177,28 @@ void detail::FinalOperator::applyTransposed(std::span<const glm::dvec2> g, std::
     for (size_t c = 0; c < mCorners; ++c)
         for (Index k = mIsl.rowStart[c]; k < mIsl.rowStart[c + 1]; ++k)
             out[mIsl.cols[k]] += weigh(std::conj(weight(k)), g[c]);
-    std::vector<double> gi, gb;
-    for (const FinalFill& f : mIsl.fills)
+    Eigen::VectorXd gu, gv, ru, rv;
+    for (const Block& b : mBlocks)
     {
-        const size_t nb = f.border.size(), ni = f.interiorStart.size() - 1;
-        gi.assign(2 * ni, 0.0);
-        gb.resize(2 * nb);
-        for (size_t q = 0; q < ni; ++q)
-            for (Index k = f.interiorStart[q]; k < f.interiorStart[q + 1]; ++k)
+        const auto ni = Eigen::Index(b.start.size() - 1);
+        gu.setZero(ni);
+        gv.setZero(ni);
+        for (Eigen::Index q = 0; q < ni; ++q)
+            for (Index k = b.start[size_t(q)]; k < b.start[size_t(q) + 1]; ++k)
             {
-                gi[q] += g[f.interiorCorners[k]].x;
-                gi[ni + q] += g[f.interiorCorners[k]].y;
+                gu[q] += g[b.corners[k]].x;
+                gv[q] += g[b.corners[k]].y;
             }
-        f.fill->solveTransposed(gi, gb, 2);
-        for (size_t k = 0; k < nb; ++k)
+        ru.noalias() = b.d.transpose() * gu;
+        rv.noalias() = b.d.transpose() * gv;
+        for (size_t j = 0; j < b.cols.size(); ++j)
+            out[b.cols[j]] += glm::dvec2(ru[Eigen::Index(j)], rv[Eigen::Index(j)]);
+        if (b.di.cols() > 0)
         {
-            const Index c = f.border[k];
-            for (Index e = mIsl.rowStart[c]; e < mIsl.rowStart[c + 1]; ++e)
-                out[mIsl.cols[e]] += weigh(std::conj(weight(e)), glm::dvec2(gb[k], gb[nb + k]));
+            ru.noalias() = b.di.transpose() * gv;
+            rv.noalias() = b.di.transpose() * gu;
+            for (size_t j = 0; j < b.imCols.size(); ++j)
+                out[b.imCols[j]] += glm::dvec2(ru[Eigen::Index(j)], -rv[Eigen::Index(j)]);
         }
     }
 }

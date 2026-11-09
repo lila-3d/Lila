@@ -73,6 +73,7 @@ struct LiveIsland::Factor
     // Exported-mesh mode: the exported corners' stiffness matrix, and the system's factor (complex when weights rotate).
     SpMat s;
     detail::UvFactor uv;
+    Eigen::VectorXd so, sov; // s times the exported offsets, u and v
 };
 
 std::string_view liveBrushName(LiveBrush b)
@@ -314,6 +315,17 @@ void LiveIsland::factorFinal()
     }
     f->s.resize(Eigen::Index(C), Eigen::Index(C));
     f->s.setFromTriplets(trips.begin(), trips.end());
+    {
+        const std::vector<glm::dvec2> o = finalUvs(std::vector<glm::dvec2>(mX.size(), glm::dvec2(0.0)), true);
+        Eigen::VectorXd ou(static_cast<Eigen::Index>(C)), ov(static_cast<Eigen::Index>(C));
+        for (size_t c = 0; c < C; ++c)
+        {
+            ou[Eigen::Index(c)] = o[c].x;
+            ov[Eigen::Index(c)] = o[c].y;
+        }
+        f->so = f->s * ou;
+        f->sov = f->s * ov;
+    }
     const auto [k, ki] = mFinalOp->gram(f->s);
     double trace = 0.0;
     for (Index v = 0; v < V; ++v)
@@ -404,7 +416,7 @@ double LiveIsland::finalStep(std::vector<double>& bu, std::vector<double>& bv) c
         triEnergy[i] = k * (d0 * d0 + d1 * d1 + d2 * d2 + d3 * d3 + e);
     });
     const auto nC = Eigen::Index(C);
-    Eigen::VectorXd eu = Eigen::VectorXd::Zero(nC), ev = Eigen::VectorXd::Zero(nC), ou(nC), ov(nC);
+    Eigen::VectorXd eu = Eigen::VectorXd::Zero(nC), ev = Eigen::VectorXd::Zero(nC);
     double energy = 0.0;
     for (size_t i = 0; i < T; ++i)
     {
@@ -416,13 +428,7 @@ double LiveIsland::finalStep(std::vector<double>& bu, std::vector<double>& bv) c
         }
         energy += triEnergy[i];
     }
-    const std::vector<glm::dvec2> o = finalUvs(std::vector<glm::dvec2>(mX.size(), glm::dvec2(0.0)), true);
-    for (size_t c = 0; c < C; ++c)
-    {
-        ou[Eigen::Index(c)] = o[c].x;
-        ov[Eigen::Index(c)] = o[c].y;
-    }
-    const Eigen::VectorXd gu = eu - f.s * ou, gv = ev - f.s * ov;
+    const Eigen::VectorXd gu = eu - f.so, gv = ev - f.sov;
     std::vector<glm::dvec2> g(C), r(mX.size());
     for (size_t c = 0; c < C; ++c)
         g[c] = glm::dvec2(gu[Eigen::Index(c)], gv[Eigen::Index(c)]);
