@@ -98,7 +98,7 @@ void MainWindow::buildMenus()
     menus::addActions("File", {"file.closeFolder", "", "file.welcome", "", "file.exit"});
 
     menu("Edit", "Edit", Area::MenuBar, {}, "duplicate");
-    menus::addActions("Edit", {"#History", "edit.undo", "edit.redo", "edit.repeatLast", "adjustLastOp.show", "edit.flushUndo", "edit.flushRedo", "edit.flushAll", "#Selection",
+    menus::addActions("Edit", {"#History", "edit.undo", "edit.redo", "edit.repeatLast", "tool.repeatLast", "adjustLastOp.show", "edit.flushUndo", "edit.flushRedo", "edit.flushAll", "#Selection",
                         "edit.selectAll", "edit.deselect", "edit.invertSelection", "edit.delete"});
     addSubmenu("Edit", "Quick Select Sets", [](QMenu* m) { sets::attachQuickSelectMenu(m); });
     menus::addActions("Edit", {"#Hierarchy", "edit.duplicate", "edit.duplicateWithTransform", "edit.instance", "edit.instanceReference", "edit.array", "edit.bakeArray",
@@ -199,7 +199,7 @@ void MainWindow::buildMenus()
     addSubmenu("Curves", "Sketch");
     menus::addActions("Curves/Sketch", {"curve.sketchTool", "", "curve.sketchCombine", "curve.sketchSolve", "curve.sketchClear"});
     addSubmenu("Curves", "Groom");
-    menus::addActions("Curves/Groom", {"groom.create", "groom.drawHair", "curve.sculptCurves"});
+    menus::addActions("Curves/Groom", {"groom.create", "groom.drawHair", "groom.brushes", "curve.sculptCurves"});
     addSubmenu("Curves/Groom", "Style");
     menus::addActions("Curves/Groom/Style", {"groom.style.split", "groom.style.clump", "groom.style.curl", "groom.style.wave", "groom.style.frizz",
                                              "groom.style.noise", "groom.style.length", "groom.style.cut", "groom.style.flyaways"});
