@@ -292,11 +292,16 @@ void uvOverlap(const BakeInputs& in, const ProjectSettings& ps, LintReport& r)
     }
     // Per pair of lows: overlapping cells and island pairs.
     std::map<std::pair<uint64_t, uint64_t>, std::pair<size_t, size_t>> perLows;
+    std::map<std::pair<uint64_t, uint64_t>, json> islandPairs;
     for (const auto& [pair, cells] : conflicts)
     {
-        auto& v = perLows[{(pair.first - 1) >> 32, (pair.second - 1) >> 32}];
+        const std::pair<uint64_t, uint64_t> lowPair{(pair.first - 1) >> 32, (pair.second - 1) >> 32};
+        auto& v = perLows[lowPair];
         v.first += cells;
         ++v.second;
+        json& ip = islandPairs[lowPair];
+        if (ip.size() < 64)
+            ip.push_back({(pair.first - 1) & 0xffffffffu, (pair.second - 1) & 0xffffffffu, cells});
     }
     for (const auto& [pair, v] : perLows)
     {
@@ -316,7 +321,7 @@ void uvOverlap(const BakeInputs& in, const ProjectSettings& ps, LintReport& r)
         else
             msg = "UVs overlap " + nb + " (" + buf + " of the tile) in the texture they share";
         r.issues.push_back({"uvOverlap", "warning", ga.name, na, msg,
-                            {{"cells", v.first}, {"islandPairs", v.second}, {"other", nb}, {"otherGroup", gb.name}, {"resolution", R}}});
+                            {{"cells", v.first}, {"islandPairs", v.second}, {"islands", islandPairs[pair]}, {"other", nb}, {"otherGroup", gb.name}, {"resolution", R}}});
     }
 }
 
