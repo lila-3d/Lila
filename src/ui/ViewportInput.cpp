@@ -573,6 +573,11 @@ void ViewportWidget::wheelEvent(QWheelEvent* e)
         submit();
         return;
     }
+    if (Gizmo* gz = currentGizmo(); gz && gz->dragging() && e->angleDelta().y() != 0 && gz->wheel(e->angleDelta().y() > 0 ? 1 : -1))
+    {
+        submit();
+        return;
+    }
     if (mLookThrough != scene::kNoNode)
     {
         if (!beginCameraEdit())

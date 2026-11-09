@@ -518,6 +518,13 @@ json poseJoint(Graph& g, NodeId joint, strings::Mode mode, const PoseInput& in)
             out["followed"].push_back(m);
     }
     out["error"] = res.error;
+    if (r.mode == strings::Mode::Ik)
+    {
+        json chain = json::array();
+        for (int b : strings::limbOf(k.problem, bone, k.hips, -1, r.chainLength, &k.rules))
+            chain.push_back(g.node(k.joints[size_t(b)])->path());
+        out["chain"] = chain;
+    }
     if (res.anchor >= 0)
         out["anchor"] = g.node(k.joints[size_t(res.anchor)])->path();
     json held = json::array();
@@ -1899,7 +1906,7 @@ void registerStrings(ext::Context& ctx)
             {"anchors", "an", T::List, nullptr, "More joints that hold still for this pose, besides pins and locks."},
             {"holds", "h", T::Bool, true, "False ignores pins and locks."},
             {"contacts", "ct", T::Bool, nullptr, "The character's contacts (feet, from its rig template) hold too; default the Contacts setting."},
-            {"chainLength", "cl", T::Int, 0, "ik: how many bones above the joint bend; 0 to the next branch."},
+            {"chainLength", "cl", T::Int, 0, "ik: how many bones bend, the joint first, through branches; 0 its limb."},
             {"stretch", "st", T::Float, 1.0, "Above 1 lets bones lengthen up to this multiple when turning can't reach."},
             {"autoPose", "ap", T::Bool, false, "fullBody moves: the auto-poser places the unpinned body (UE5 Manny joint names)."},
             {"range", "r", T::List, nullptr, "[start, end] seconds: pose every keyed frame in it (or every frame with dense), keying each."},

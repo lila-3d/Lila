@@ -791,3 +791,30 @@ TEST_CASE("lineOfAction on a bend-bones arm: the bone CV lands on the stroke bet
     CHECK(pos(cv).y > 150.0);
     CHECK(pos("lowerarm_l").y > 150.0);
 }
+
+TEST_CASE("spinner IK drag: the wheel sets how many bones bend, shown in the readout")
+{
+    loadPuppeteer();
+    stringsBiped();
+    ModeScope scope("puppeteer.strings.ik");
+    ui::actions::run("puppeteer.spinner.move");
+    run("select", {{"args", {"hand_l"}}});
+    const glm::dvec3 spine = pos("spine_02");
+    std::unique_ptr<ui::Gizmo> gz = ui::gizmos::create("puppeteer.spinner");
+    REQUIRE(gz);
+    gz->setView(view());
+    gz->hover(kCenter);
+    REQUIRE(gz->press(kCenter, Qt::LeftButton, Qt::NoModifier));
+    gz->setView(view());
+    gz->drag(kCenter + QPointF(0.0, 20.0), Qt::NoModifier);
+    CHECK(gz->readout().contains("chain 3"));
+    CHECK(gz->wheel(1));
+    CHECK(gz->readout().contains("chain 4"));
+    CHECK(glm::length(pos("spine_02") - spine) > 1e-3); // four bones reach into the spine
+    CHECK(gz->wheel(-2));
+    CHECK(gz->readout().contains("chain 2"));
+    gz->release();
+    CHECK(near(pos("spine_02"), spine, 1e-6));
+    CHECK(run("stringsPose", {{"args", {"hand_l"}}, {"mode", "ik"}, {"by", v3(0, 5, 0)}, {"chainLength", 3}})["chain"].size() == 3);
+    ui::actions::run("puppeteer.spinner.rotate");
+}

@@ -107,8 +107,8 @@ LILA_SCENE_API bool isUnder(const fbik::Problem& p, int bone, int ancestor);
 /**
  * The bones that bend to bring bone to a target, bone first: the bones above it in its declared chain when rules has
  * one, else bone and its parents up to, not including, the first that branches into two or more limbs (twist and
- * corrective helpers don't count), the hips, or stop. Bones the problem does not solve are left out. At most length
- * bones when length > 0.
+ * corrective helpers don't count), the hips, or stop. Bones the problem does not solve are left out. With length > 0,
+ * that many bones up from bone whatever the rules and branches say, still stopping at the hips or stop.
  */
 LILA_SCENE_API std::vector<int> limbOf(const fbik::Problem& p, int bone, int hips, int stop = -1, int length = 0, const Rules* rules = nullptr);
 

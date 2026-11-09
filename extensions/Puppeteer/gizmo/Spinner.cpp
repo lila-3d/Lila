@@ -483,6 +483,7 @@ public:
 
         drawRelations(p);
         drawTrail(p, t);
+        drawChain(p);
         const QPointF c = center();
         const Handle hot = mDrag ? mDrag->handle : mHover;
         p.disc(c, float(u(kPlate)), gray(0.14f, 0.92f), 72);
@@ -725,6 +726,17 @@ public:
         mDrag.reset();
     }
 
+    /** IK drags: the wheel lengthens or shortens the chain that bends, shown live. */
+    bool wheel(int steps) override
+    {
+        if (!mDrag || mDrag->kind != Kind::Transform || stringsMode() != strings::Mode::Ik || !posesStrings(mDrag->target))
+            return false;
+        const int from = mDrag->chainLength > 0 ? mDrag->chainLength : std::max(1, mDrag->autoChain);
+        mDrag->chainLength = std::max(1, from + steps);
+        apply(false);
+        return true;
+    }
+
     bool dragging() const override { return mDrag.has_value(); }
     bool hovering() const override { return mHover != Handle::None; }
 
@@ -785,6 +797,9 @@ private:
         int trailFrame = -1;
         bool strung = false; // a breakdown through stringsBreakdown
         glm::dvec3 trailBy{0.0};
+        /** IK: bones the wheel set to bend (0 the rules' limb), the limb the last preview bent, and its joints. */
+        int chainLength = 0, autoChain = 0;
+        std::vector<std::string> chain;
         QString readout;
         bool warned = false;
     };
@@ -991,6 +1006,20 @@ private:
         for (double tm : mTrail.times)
             mTrail.keyed.push_back(std::any_of(keys.begin(), keys.end(), [&](double k) { return std::abs(k - tm) < 1e-6; }));
         mTrail.version = g.version();
+    }
+
+    /** While an IK drag runs: the bones that bend, so the wheel's chain length shows. */
+    void drawChain(OverlayPainter& p) const
+    {
+        if (!mDrag || mDrag->chain.size() < 2)
+            return;
+        Graph& g = Graph::current();
+        std::vector<QPointF> pts;
+        for (const std::string& name : mDrag->chain)
+            if (Node* n = g.find(name))
+                if (const auto s = mView.project(glm::dvec3(worldOf(g, n->id())[3])))
+                    pts.push_back(*s);
+        p.polyline(pts, 3.0f, kYellow);
     }
 
     /** The trail frame under px, or -1. */
@@ -1566,6 +1595,8 @@ private:
         call["mode"] = strings::modeName(stringsMode());
         call["stretch"] = stringsStretch();
         mDrag->readout += QString("  %1").arg(labels[int(stringsMode())]);
+        if (stringsMode() == strings::Mode::Ik && mDrag->chainLength > 0)
+            call["chainLength"] = mDrag->chainLength;
         return {"stringsPose", call};
     }
 
@@ -1683,6 +1714,15 @@ private:
         {
             d.warned = true;
             log::write(LogLevel::Warning, "Spinner: " + error);
+        }
+        if (result.is_array() && result.size() == 1)
+            result = result[0];
+        if (result.is_object() && result.contains("chain"))
+        {
+            d.chain = result["chain"].get<std::vector<std::string>>();
+            if (d.chainLength == 0)
+                d.autoChain = int(d.chain.size());
+            d.readout += QString("  chain %1").arg(d.chain.size());
         }
         if (result.is_object())
         {

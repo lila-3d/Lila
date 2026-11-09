@@ -191,6 +191,13 @@ bool isUnder(const fbik::Problem& p, int bone, int ancestor)
 std::vector<int> limbOf(const fbik::Problem& p, int bone, int hips, int stop, int length, const Rules* rules)
 {
     std::vector<int> out;
+    if (length > 0)
+    {
+        for (int b = bone; b >= 0 && b != hips && b != stop && int(out.size()) < length; b = p.bones[size_t(b)].parent)
+            if (p.bones[size_t(b)].solve)
+                out.push_back(b);
+        return out;
+    }
     if (rules)
         for (const std::vector<int>& chain : rules->chains)
             if (const auto at = std::find(chain.begin(), chain.end(), bone); at != chain.end())
