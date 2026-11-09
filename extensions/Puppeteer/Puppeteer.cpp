@@ -16,6 +16,7 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
     puppeteer::registerControllerDrawing(ctx);
     puppeteer::registerSpinner(ctx);
     puppeteer::registerStringsUi(ctx);
+    puppeteer::registerLineOfActionTool(ctx);
     puppeteer::registerModes(ctx);
     puppeteer::registerAnimProxy(ctx);
 

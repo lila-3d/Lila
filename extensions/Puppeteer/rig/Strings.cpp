@@ -1807,6 +1807,7 @@ void registerActions(ext::Context& ctx)
                        {"SW", {{"label", "Attach to Last"}, {"action", "puppeteer.strings.attach"}}},
                        {"overflow", json::array({{{"label", "Contacts Hold"}, {"action", "puppeteer.strings.contacts"}},
                                                  {{"label", "Zero Pose"}, {"action", "puppeteer.strings.zero"}},
+                                                 {{"label", "Line of Action"}, {"action", "puppeteer.strings.lineOfAction"}},
                                                  {{"label", "Overshoot"}, {"action", "puppeteer.strings.overshoot"}},
                                                  {{"label", "Smooth Poses Over Range"}, {"action", "puppeteer.strings.smooth"}},
                                                  {{"label", "Fill Inbetweens"}, {"action", "puppeteer.strings.fill"}},

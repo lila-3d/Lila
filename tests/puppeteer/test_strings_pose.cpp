@@ -724,6 +724,53 @@ TEST_CASE("lineOfAction across a range: travel slides the body along a path stro
     CHECK(late > early + 1.0);
 }
 
+#include "ui/ViewportTool.h"
+#include <QMouseEvent>
+
+TEST_CASE("Line of Action tool: a drawn stroke bends the body, the curve stays while the selection holds and dragging it re-poses")
+{
+    loadPuppeteer();
+    stringsBiped();
+    run("puppeteerPin", {{"args", {"foot_l", "foot_r"}}, {"pin", true}});
+    run("select", {{"args", {"hips"}}});
+    ui::ViewInfo v = view();
+    v.eye = {0.0, 120.0, 400.0};
+    v.view = glm::lookAt(v.eye, glm::dvec3(0.0, 120.0, 0.0), glm::dvec3(0, 1, 0));
+    ui::actions::run("puppeteer.strings.lineOfAction");
+    ui::ViewportTool* tool = ui::viewportTools::active();
+    REQUIRE(tool);
+    auto mouse = [&](QEvent::Type type, QPointF at) {
+        QMouseEvent e(type, at, at, Qt::LeftButton, type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton, Qt::NoModifier);
+        if (type == QEvent::MouseButtonPress)
+            return tool->mousePress(&e, v);
+        if (type == QEvent::MouseMove)
+            return tool->mouseMove(&e, v);
+        return tool->mouseRelease(&e, v);
+    };
+    // From the hips up, curving to screen right: the spine leans along it.
+    const auto hipsPx = v.project(pos("hips")), headPx = v.project(pos("head"));
+    REQUIRE((hipsPx && headPx));
+    const double h = headPx->y() - hipsPx->y();
+    CHECK(mouse(QEvent::MouseButtonPress, *hipsPx));
+    for (int i = 1; i <= 20; ++i)
+    {
+        const double t = i / 20.0;
+        mouse(QEvent::MouseMove, *hipsPx + QPointF(60.0 * t * t, h * t));
+    }
+    mouse(QEvent::MouseButtonRelease, *hipsPx + QPointF(60.0, h));
+    const glm::dvec3 bent = pos("head");
+    CHECK(bent.x > 5.0);
+    CHECK(near(pos("foot_l"), glm::dvec3(10, 8, 0), 1e-3));
+
+    // Drag the curve's end further right: the body follows.
+    const QPointF end = *hipsPx + QPointF(60.0, h);
+    REQUIRE(mouse(QEvent::MouseButtonPress, end));
+    mouse(QEvent::MouseMove, end + QPointF(30.0, 0.0));
+    mouse(QEvent::MouseButtonRelease, end + QPointF(30.0, 0.0));
+    CHECK(pos("head").x > bent.x + 2.0);
+    ui::viewportTools::set(nullptr);
+}
+
 TEST_CASE("lineOfAction on a bend-bones arm: the bone CV lands on the stroke between the joints")
 {
     loadPuppeteer();
