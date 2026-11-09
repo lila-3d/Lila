@@ -273,6 +273,8 @@ class BakePaintTool final : public ViewportTool, public uvTools::UvTool, public 
 {
 public:
     const char* name() const override { return "bakePaint"; }
+    // The brush ring and its centre dot are the cursor.
+    std::optional<QCursor> cursor() const override { return QCursor(Qt::BlankCursor); }
 
     void activate() override
     {

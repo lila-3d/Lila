@@ -138,6 +138,8 @@ enum class StrokeMode : uint8_t
     Freehand,
     /** Dabs from the press to the release in a straight line. */
     Line,
+    /** Draw freely; on release the path is smoothed into a clean curve and the dabs go along it. */
+    Curve,
 };
 
 struct LILA_SCENE_API BrushSettings

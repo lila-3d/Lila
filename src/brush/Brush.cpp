@@ -180,7 +180,7 @@ json BrushSettings::toJson() const
             {"followStroke", followStroke},
             {"roundness", roundness},
             {"alpha", alphaPath},
-            {"strokeMode", mode == StrokeMode::Line ? "line" : "freehand"},
+            {"strokeMode", mode == StrokeMode::Line ? "line" : mode == StrokeMode::Curve ? "curve" : "freehand"},
             {"lazyRadius", lazyRadius},
             {"smoothing", smoothing},
             {"mirror", mirror},
@@ -228,9 +228,9 @@ BrushSettings BrushSettings::fromJson(const json& j, const BrushSettings& defaul
         s.alphaPath = alpha;
         s.alpha.reset();
     }
-    std::string mode = s.mode == StrokeMode::Line ? "line" : "freehand";
+    std::string mode = s.mode == StrokeMode::Line ? "line" : s.mode == StrokeMode::Curve ? "curve" : "freehand";
     read(j, "strokeMode", mode);
-    s.mode = mode == "line" ? StrokeMode::Line : StrokeMode::Freehand;
+    s.mode = mode == "line" ? StrokeMode::Line : mode == "curve" ? StrokeMode::Curve : StrokeMode::Freehand;
     read(j, "lazyRadius", s.lazyRadius);
     read(j, "smoothing", s.smoothing);
     read(j, "mirror", s.mirror);
