@@ -14,6 +14,7 @@
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
+#include "scene/Poses.h"
 #include "scene/Relocate.h"
 #include "scene/Rig.h"
 #include "scene/RigUtil.h"
@@ -600,6 +601,114 @@ void registerWeightHost()
                                      .influences = chainInfluences,
                                      .seed = bindWeights});
 }
+/** Adds a bone CV on joint's bone of a bendBones deformer, at a fraction along it, where the bone is now. */
+NodeId addCv(Graph& g, Node& d, NodeId joint, double at)
+{
+    Bound b = boundOf(json::parse(d.as<std::string>(d.type().attrIndex("binding")), nullptr, false));
+    for (const auto& [i, v] : d.elements(d.type().attrIndex("restMatrix")))
+        b.rest.push_back(std::get<glm::dmat4>(v));
+    // The joint's place in the bind: its index, and the next joint of its chain.
+    std::vector<NodeId> joints;
+    for (const PlugRef& e : g.elements({d.id(), d.type().attrIndex("matrix"), -1}))
+        if (const auto src = g.source(e))
+            joints.push_back(src->node);
+    const auto it = std::find(joints.begin(), joints.end(), joint);
+    if (it == joints.end())
+        throw CommandError("bendBoneCV: " + g.node(joint)->path() + " is not in the deformer's chains");
+    const int index = int(it - joints.begin());
+    int start = 0;
+    bool last = false;
+    for (int n : b.sizes)
+    {
+        if (index < start + n)
+        {
+            last = index == start + n - 1;
+            break;
+        }
+        start += n;
+    }
+    if (last)
+        throw CommandError("bendBoneCV: " + g.node(joint)->path() + " ends its chain, so it has no bone after it");
+    g.evaluate();
+    const glm::dvec3 restPoint = glm::mix(glm::dvec3(b.rest[size_t(index)][3]), glm::dvec3(b.rest[size_t(index) + 1][3]), at);
+    const glm::dvec3 nowPoint = glm::mix(glm::dvec3(worldOf(*g.node(joint))[3]), glm::dvec3(worldOf(*g.node(joints[size_t(index) + 1]))[3]), at);
+    Node* cv = g.createNode(*types::find(kCvType), g.node(joint)->name() + "_cv");
+    g.setParent(cv->id(), joint, false);
+    const glm::dmat4 parentInv = glm::inverse(worldOf(*g.node(joint)));
+    g.setValue({cv->id(), Transform::kTranslate, -1}, glm::dvec3(parentInv * glm::dvec4(nowPoint, 1.0)));
+    b.cvBone.push_back(index);
+    b.cvRest.push_back(glm::dvec3(glm::inverse(b.rest[size_t(index)]) * glm::dvec4(restPoint, 1.0)));
+    const int cvMatrix = d.type().attrIndex("cvMatrix");
+    g.connect({cv->id(), Transform::kWorldMatrix, -1}, {d.id(), cvMatrix, -1, int(b.cvBone.size() - 1)});
+    g.setValue({d.id(), d.type().attrIndex("binding"), -1}, boundJson(b).dump());
+    return cv->id();
+}
+
+/** The bendBones deformer whose chains include the joint, or null. */
+Node* deformerOf(Graph& g, NodeId joint)
+{
+    for (NodeId id : g.nodes())
+        if (Node* n = g.node(id); n && n->type().name == kType)
+            for (const PlugRef& e : g.elements({id, n->type().attrIndex("matrix"), -1}))
+                if (const auto src = g.source(e); src && src->node == joint)
+                    return n;
+    return nullptr;
+}
+
+/** The joint on the other side (arm_l to arm_r), or kNoNode for a centre joint. */
+NodeId mirrorJoint(Graph& g, NodeId joint)
+{
+    const std::string name = g.node(joint)->name(), other = poses::mirrorNodeName(name);
+    if (other == name)
+        return kNoNode;
+    // Same skeleton: search from the top joint down.
+    NodeId top = joint;
+    while (g.parent(top) != kNoNode && rig::isJoint(*g.node(g.parent(top))))
+        top = g.parent(top);
+    for (NodeId id : g.descendants(top))
+        if (g.node(id)->name() == other && rig::isJoint(*g.node(id)))
+            return id;
+    return kNoNode;
+}
+
+/** A bone CV's partner on the mirrored bone: the CV at the same place in order along it. */
+NodeId partnerCv(Graph& g, NodeId cv)
+{
+    const NodeId joint = g.parent(cv), other = joint != kNoNode ? mirrorJoint(g, joint) : kNoNode;
+    if (other == kNoNode)
+        return kNoNode;
+    auto cvsUnder = [&](NodeId j) {
+        std::vector<std::pair<double, NodeId>> out;
+        for (NodeId c : g.children(j))
+            if (g.node(c)->type().name == kCvType)
+                out.push_back({glm::length(g.node(c)->as<glm::dvec3>(Transform::kTranslate)), c});
+        std::sort(out.begin(), out.end());
+        return out;
+    };
+    const auto mine = cvsUnder(joint), theirs = cvsUnder(other);
+    for (size_t i = 0; i < mine.size() && i < theirs.size(); ++i)
+        if (mine[i].second == cv)
+            return theirs[i].second;
+    return kNoNode;
+}
+
+/** Moves cv's partner to cv's position mirrored across the character's centre (its top joint's YZ plane). */
+NodeId mirrorCv(Graph& g, NodeId cv)
+{
+    const NodeId partner = partnerCv(g, cv);
+    if (partner == kNoNode)
+        return kNoNode;
+    g.evaluate();
+    NodeId top = g.parent(cv);
+    while (g.parent(top) != kNoNode && rig::isJoint(*g.node(g.parent(top))))
+        top = g.parent(top);
+    const glm::dmat4 centre = worldOf(*g.node(top));
+    glm::dvec3 local = glm::dvec3(glm::inverse(centre) * worldOf(*g.node(cv))[3]);
+    local.x = -local.x;
+    const glm::dvec3 world = glm::dvec3(centre * glm::dvec4(local, 1.0));
+    g.setValue({partner, Transform::kTranslate, -1}, glm::dvec3(glm::inverse(worldOf(*g.node(g.parent(partner)))) * glm::dvec4(world, 1.0)));
+    return partner;
+}
 } // namespace
 
 void registerTypes()
@@ -720,6 +829,7 @@ void registerCommands()
         .flags = {
             {"joint", "j", T::String, nullptr, "The bone's first joint (it runs to the next joint of its chain)."},
             {"at", "at", T::Float, 0.5, "How far along the bone, 0 to 1.", {}, {}, 0.0, 1.0},
+            {"mirror", "mi", T::Bool, true, "Also add one on the mirrored joint's bone (arm_l and arm_r), placed mirrored."},
         },
         .run = [](const Args& a) -> json {
             Graph& g = graph();
@@ -730,45 +840,37 @@ void registerCommands()
             if (!a.has("joint"))
                 throw CommandError("bendBoneCV: give the bone's first joint");
             const NodeId joint = jointArg(g, a.flags["joint"], "bendBoneCV");
-            Bound b = boundOf(json::parse(d->as<std::string>(d->type().attrIndex("binding")), nullptr, false));
-            for (const auto& [i, v] : d->elements(d->type().attrIndex("restMatrix")))
-                b.rest.push_back(std::get<glm::dmat4>(v));
-            // The joint's place in the bind: its index, and the next joint of its chain.
-            std::vector<NodeId> joints;
-            for (const PlugRef& e : g.elements({d->id(), d->type().attrIndex("matrix"), -1}))
-                if (const auto src = g.source(e))
-                    joints.push_back(src->node);
-            const auto it = std::find(joints.begin(), joints.end(), joint);
-            if (it == joints.end())
-                throw CommandError("bendBoneCV: " + g.node(joint)->path() + " is not in the deformer's chains");
-            const int index = int(it - joints.begin());
-            int start = 0;
-            bool last = false;
-            for (int n : b.sizes)
-            {
-                if (index < start + n)
-                {
-                    last = index == start + n - 1;
-                    break;
-                }
-                start += n;
-            }
-            if (last)
-                throw CommandError("bendBoneCV: " + g.node(joint)->path() + " ends its chain, so it has no bone after it");
-            g.evaluate();
             const double at = std::clamp(a.get<double>("at", 0.5), 0.0, 1.0);
-            const glm::dvec3 restPoint = glm::mix(glm::dvec3(b.rest[size_t(index)][3]), glm::dvec3(b.rest[size_t(index) + 1][3]), at);
-            const glm::dvec3 nowPoint = glm::mix(glm::dvec3(worldOf(*g.node(joint))[3]), glm::dvec3(worldOf(*g.node(joints[size_t(index) + 1]))[3]), at);
-            Node* cv = g.createNode(*types::find(kCvType), g.node(joint)->name() + "_cv");
-            g.setParent(cv->id(), joint, false);
-            const glm::dmat4 parentInv = glm::inverse(worldOf(*g.node(joint)));
-            g.setValue({cv->id(), Transform::kTranslate, -1}, glm::dvec3(parentInv * glm::dvec4(nowPoint, 1.0)));
-            b.cvBone.push_back(index);
-            b.cvRest.push_back(glm::dvec3(glm::inverse(b.rest[size_t(index)]) * glm::dvec4(restPoint, 1.0)));
-            const int cvMatrix = d->type().attrIndex("cvMatrix");
-            g.connect({cv->id(), Transform::kWorldMatrix, -1}, {d->id(), cvMatrix, -1, int(b.cvBone.size() - 1)});
-            g.setValue({d->id(), d->type().attrIndex("binding"), -1}, boundJson(b).dump());
-            return cv->path();
+            const NodeId cv = addCv(g, *d, joint, at);
+            if (a.get<bool>("mirror", true))
+                if (const NodeId other = mirrorJoint(g, joint); other != kNoNode)
+                    if (Node* od = deformerOf(g, other))
+                    {
+                        addCv(g, *od, other, at);
+                        mirrorCv(g, cv);
+                    }
+            return g.node(cv)->path();
+        },
+    });
+    ops::registerCommand({
+        .name = "mirrorBendBoneCVs",
+        .doc = "Copy bone CVs to the other side: each CV's partner (on the mirrored joint's bone, same order along it) moves to "
+               "its position mirrored across the character's centre. Returns the CVs moved.",
+        .positionalDoc = "cvs",
+        .flags = {},
+        .run = [](const Args& a) -> json {
+            Graph& g = graph();
+            std::vector<NodeId> cvs;
+            for (const std::string& name : a.objects())
+                if (Node* n = g.find(name); n && n->type().name == kCvType)
+                    cvs.push_back(n->id());
+            if (cvs.empty())
+                throw CommandError("mirrorBendBoneCVs: give bone CVs");
+            json out = json::array();
+            for (NodeId cv : cvs)
+                if (const NodeId moved = mirrorCv(g, cv); moved != kNoNode)
+                    out.push_back(g.node(moved)->path());
+            return out;
         },
     });
     ops::registerCommand({

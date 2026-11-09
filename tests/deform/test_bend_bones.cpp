@@ -315,3 +315,32 @@ TEST_CASE("bendBones chain weights paint like skin weights: one influence per ch
     for (size_t i = 0; i < rest.size(); ++i)
         CHECK(std::abs(outMesh(mesh)->positions()[i].z - rest[i].z) < 1e-6);
 }
+
+TEST_CASE("bendBoneCV mirrors onto the other side's bone, and mirrorBendBoneCVs copies a move across")
+{
+    using namespace deformtest;
+    run("newScene");
+    run("autoKeyframe", {{"state", false}});
+    run("joint", {{"position", v3(0, 100, 0)}, {"name", "pelvis"}});
+    run("joint", {{"position", v3(10, 90, 0)}, {"name", "thigh_l"}});
+    run("joint", {{"position", v3(10, 45, 0)}, {"name", "calf_l"}});
+    run("select", {{"args", {"pelvis"}}});
+    run("joint", {{"position", v3(-10, 90, 0)}, {"name", "thigh_r"}});
+    run("joint", {{"position", v3(-10, 45, 0)}, {"name", "calf_r"}});
+    const std::string l = run("polyCylinder", {{"name", "LegL"}, {"radius", 5}, {"height", 45}, {"subdivisionsHeight", 8}})[0];
+    run("move", {{"args", {l}}, {"to", v3(10, 67.5, 0)}});
+    const std::string r = run("polyCylinder", {{"name", "LegR"}, {"radius", 5}, {"height", 45}, {"subdivisionsHeight", 8}})[0];
+    run("move", {{"args", {r}}, {"to", v3(-10, 67.5, 0)}});
+    const std::string dl = run("bendBones", {{"args", {l}}, {"chains", nlohmann::json::array({nlohmann::json::array({"thigh_l", "calf_l"})})}}).get<std::string>();
+    run("bendBones", {{"args", {r}}, {"chains", nlohmann::json::array({nlohmann::json::array({"thigh_r", "calf_r"})})}});
+    const std::string cv = run("bendBoneCV", {{"args", {dl}}, {"joint", "thigh_l"}, {"at", 0.5}}).get<std::string>();
+    REQUIRE(run("ls", {{"type", "bendBoneCV"}}).size() == 2);
+    run("move", {{"args", {cv}}, {"by", v3(4, 0, 2)}});
+    const auto moved = run("mirrorBendBoneCVs", {{"args", {cv}}});
+    REQUIRE(moved.size() == 1);
+    const auto pl = run("xform", {{"args", {cv}}, {"query", true}, {"worldSpace", true}, {"translation", true}});
+    const auto pr = run("xform", {{"args", {moved[0]}}, {"query", true}, {"worldSpace", true}, {"translation", true}});
+    CHECK(pr[0].get<double>() == doctest::Approx(-pl[0].get<double>()).epsilon(1e-6));
+    CHECK(pr[1].get<double>() == doctest::Approx(pl[1].get<double>()).epsilon(1e-6));
+    CHECK(pr[2].get<double>() == doctest::Approx(pl[2].get<double>()).epsilon(1e-6));
+}
