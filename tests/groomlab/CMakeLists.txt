@@ -112,8 +112,5 @@ set_source_files_properties(example_node_src/example_op.cpp PROPERTIES INCLUDE_D
 target_compile_options(lila_groomlab_tests PRIVATE /wd4456 /wd4457 /wd4267 /wd4005 /wd4189)
 set_target_properties(lila_groomlab_tests PROPERTIES LILA_NO_UNITY ON CXX_STANDARD 17)
 add_test(NAME lila_groomlab_tests COMMAND lila_groomlab_tests --gtest_filter=-Budget.*:Performance.*)
-add_test(NAME lila_groomlab_timing COMMAND lila_groomlab_tests --gtest_filter=Budget.*:Performance.*-Budget.InterpolateHalfMillion)
-# Upstream's 90 ms budget for half a million strands, set on their machine; about 100-110 ms here.
-add_test(NAME lila_groomlab_interpolate_budget COMMAND lila_groomlab_tests --gtest_filter=Budget.InterpolateHalfMillion)
-set_tests_properties(lila_groomlab_timing lila_groomlab_interpolate_budget PROPERTIES RUN_SERIAL TRUE)
-set_tests_properties(lila_groomlab_interpolate_budget PROPERTIES LABELS known_failing)
+add_test(NAME lila_groomlab_timing COMMAND lila_groomlab_tests --gtest_filter=Budget.*:Performance.*)
+set_tests_properties(lila_groomlab_timing PROPERTIES RUN_SERIAL TRUE)
