@@ -416,6 +416,66 @@ TEST_CASE("final mesh: refine reports the slivers the written uvs leave, and rep
     CHECK(islandsOf(m)[1 - lid].uv == other);
 }
 
+TEST_CASE("final mesh: islands whose export reads a neighbour that moved solve again")
+{
+    // A sheet in two islands split down x = 0 with a hair's gap between them; the stack bends it and welds the seam, so
+    // the seam's exported uvs read both islands. The columns beside the seam are squeezed and everything but the seam is
+    // pinned: each island opens its column by pushing the weld, solved first against the other where it started.
+    geo::Mesh m = geo::makePlane({.width = 8.0, .depth = 4.0, .subdivX = 8, .subdivZ = 4});
+    std::span<glm::vec2> uv = m.cornerAttrs().getOrAdd<glm::vec2>("uv0");
+    std::span<bool> pin = m.cornerAttrs().getOrAdd<bool>("uvPin");
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+    {
+        if (!m.faceValid(f))
+            continue;
+        const double side = m.faceCentroid(f).x;
+        m.forEachFaceCorner(f, [&](Index c) {
+            const glm::dvec3 p = m.position(m.cornerPoint(c));
+            const double x = std::abs(std::abs(p.x) - 1.0) < 1e-9 ? 0.01 * p.x : p.x;
+            pin[c] = std::abs(p.x) > 1e-9;
+            uv[c] = glm::vec2(float(x / 10.0 + 0.5 + (side > 0.0 ? 0.002 : 0.0)), float(p.z / 10.0 + 0.5));
+        });
+    }
+    REQUIRE(islandsOf(m).size() == 2);
+    uv::Stack stack;
+    stack.push_back({"bend", [](const geo::Mesh& in) {
+                         geo::Mesh out = in;
+                         for (Index p = 0; p < out.pointCapacity(); ++p)
+                             if (out.pointValid(p))
+                                 out.setPosition(p, out.position(p) + glm::dvec3(0.0, 0.02 * out.position(p).z * out.position(p).z, 0.0));
+                         return out;
+                     }});
+    stack.push_back({"weldSeam", [](const geo::Mesh& in) {
+                         geo::Mesh out = in;
+                         for (size_t l = 0; l < out.cornerAttrs().layerCount(); ++l)
+                         {
+                             geo::Attribute& a = out.cornerAttrs().layer(l);
+                             if (a.type() != geo::AttrType::Float2)
+                                 continue;
+                             const std::span<glm::vec2> v = a.values<glm::vec2>();
+                             for (Index p = 0; p < out.pointCapacity(); ++p)
+                             {
+                                 if (!out.pointValid(p) || std::abs(out.position(p).x) > 1e-9)
+                                     continue;
+                                 glm::dvec2 sum(0.0);
+                                 double n = 0.0;
+                                 out.forEachPointCorner(p, [&](Index c) {
+                                     sum += glm::dvec2(v[c]);
+                                     n += 1.0;
+                                 });
+                                 out.forEachPointCorner(p, [&](Index c) { v[c] = glm::vec2(sum / n); });
+                             }
+                         }
+                         return out;
+                     }});
+    const size_t before = exportState(m, stack).collapsed;
+    REQUIRE(before > 0);
+    const uv::FinalRefineResult r = uv::refineFinal(m, {}, "uv0", stack);
+    MESSAGE("collapsed " << before << " -> " << r.collapsedAfter);
+    CHECK(r.collapsedAfter == exportState(m, stack).collapsed);
+    CHECK(r.collapsedAfter == 0);
+}
+
 TEST_CASE("final mesh: islands stay where they were")
 {
     geo::Mesh m = plate();
