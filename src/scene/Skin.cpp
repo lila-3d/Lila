@@ -817,22 +817,47 @@ void setLayers(Graph& g, NodeId skin, std::shared_ptr<const SkinLayers> l)
     g.setValue({skin, SkinClusterNode::kWeightLayers, -1}, DataPtr(std::move(l)));
 }
 
-void compositePoint(const SkinLayers& l, int upTo, size_t p, WeightTable& out, int maxInf)
+namespace
+{
+/** One layer's point standing in for what the layer stores, while a stroke paints it. */
+struct PointOverride
+{
+    int layer = -1;
+    const std::vector<WeightTable::Entry>* entries = nullptr;
+    const std::vector<uint32_t>* automatic = nullptr;
+    float mask = 0.0f;
+};
+
+void compositeAt(const SkinLayers& l, int upTo, size_t p, WeightTable& out, int maxInf, const PointOverride& ov)
 {
     if (l.layers.empty() || p >= out.points.size())
         return;
-    const WeightTable& base = l.layers[0].weights;
-    std::vector<WeightTable::Entry> acc = p < base.points.size() ? base.points[p] : std::vector<WeightTable::Entry>{};
-    std::vector<uint32_t> autos = p < base.automatic.size() ? base.automatic[p] : std::vector<uint32_t>{};
+    static const std::vector<WeightTable::Entry> kNoEntries;
+    static const std::vector<uint32_t> kNoIds;
+    auto entriesOf = [&](int k) -> const std::vector<WeightTable::Entry>& {
+        if (k == ov.layer)
+            return *ov.entries;
+        const WeightTable& t = l.layers[size_t(k)].weights;
+        return p < t.points.size() ? t.points[p] : kNoEntries;
+    };
+    auto autosOf = [&](int k) -> const std::vector<uint32_t>& {
+        if (k == ov.layer)
+            return ov.automatic ? *ov.automatic : kNoIds;
+        const WeightTable& t = l.layers[size_t(k)].weights;
+        return p < t.automatic.size() ? t.automatic[p] : kNoIds;
+    };
+    std::vector<WeightTable::Entry> acc = entriesOf(0);
+    std::vector<uint32_t> autos = autosOf(0);
     bool blended = false;
     for (int k = 1; k < std::min(upTo, int(l.layers.size())); ++k)
     {
         const SkinLayer& layer = l.layers[size_t(k)];
-        const float a = layer.enabled ? layer.opacity * (p < layer.mask.size() ? layer.mask[p] : 0.0f) : 0.0f;
-        if (a <= 0.0f || p >= layer.weights.points.size())
+        const float mask = k == ov.layer ? ov.mask : p < layer.mask.size() ? layer.mask[p] : 0.0f;
+        const float a = layer.enabled ? layer.opacity * mask : 0.0f;
+        if (a <= 0.0f)
             continue;
-        const auto& top = layer.weights.points[p];
-        const auto& topAuto = p < layer.weights.automatic.size() ? layer.weights.automatic[p] : std::vector<uint32_t>{};
+        const auto& top = entriesOf(k);
+        const auto& topAuto = autosOf(k);
         if (a >= 1.0f)
         {
             acc = top;
@@ -859,6 +884,9 @@ void compositePoint(const SkinLayers& l, int upTo, size_t p, WeightTable& out, i
     if (blended)
         out.prune(p, maxInf, 0.0f, {});
 }
+} // namespace
+
+void compositePoint(const SkinLayers& l, int upTo, size_t p, WeightTable& out, int maxInf) { compositeAt(l, upTo, p, out, maxInf, {}); }
 
 WeightTable composite(const SkinLayers& l, size_t pointCount, int maxInf)
 {
@@ -924,34 +952,14 @@ void WeightEdit::compositeInto(size_t p, WeightTable& out) const
         copyFlags(out);
         return;
     }
-    // Only point p of the active layer matters here; the others are composited from the stored layers.
-    const auto active = size_t(std::clamp(mLayers->active, 0, int(mLayers->layers.size()) - 1));
-    SkinLayers one;
-    one.layers.reserve(mLayers->layers.size());
-    for (size_t k = 0; k < mLayers->layers.size(); ++k)
-    {
-        const SkinLayer& src = mLayers->layers[k];
-        SkinLayer l{.name = {}, .enabled = src.enabled, .opacity = src.opacity, .weights = {}, .mask = {}};
-        l.weights.points.resize(p + 1);
-        l.mask.assign(p + 1, 0.0f);
-        if (k == active)
-        {
-            l.weights.points[p] = mTable.points[p];
-            copyFlags(l.weights);
-            l.mask[p] = std::max(p < src.mask.size() ? src.mask[p] : 0.0f, changed(p) ? 1.0f : 0.0f);
-        }
-        else
-        {
-            if (p < src.weights.points.size())
-                l.weights.points[p] = src.weights.points[p];
-            if (p < src.weights.automatic.size())
-                for (uint32_t i : src.weights.automatic[p])
-                    l.weights.markAutomatic(p, i);
-            l.mask[p] = p < src.mask.size() ? src.mask[p] : 0.0f;
-        }
-        one.layers.push_back(std::move(l));
-    }
-    compositePoint(one, int(one.layers.size()), p, out, mMaxInf);
+    // The active layer's point comes from the edit; every other point and layer is read where it is stored.
+    const auto active = std::clamp(mLayers->active, 0, int(mLayers->layers.size()) - 1);
+    const auto& stored = mLayers->layers[size_t(active)].mask;
+    PointOverride ov{.layer = active,
+                     .entries = &mTable.points[p],
+                     .automatic = p < mTable.automatic.size() ? &mTable.automatic[p] : nullptr,
+                     .mask = std::max(p < stored.size() ? stored[p] : 0.0f, changed(p) ? 1.0f : 0.0f)};
+    compositeAt(*mLayers, int(mLayers->layers.size()), p, out, mMaxInf, ov);
 }
 
 void WeightEdit::commit()
