@@ -6,6 +6,7 @@
 #include "geo/Mesh.h"
 #include "groom/Attrs.h"
 #include "groom/Groom.h"
+#include "geo/ColorSets.h"
 #include "groom/GroomEvaluator.h"
 #include "groom/Locks.h"
 #include "groom/GuideData.h"
@@ -72,6 +73,48 @@ std::shared_ptr<const groomlab::ScalpMesh> scalpMesh(const geo::Mesh& mesh, cons
             triangles.push_back({remap[v[0]], remap[v[i]], remap[v[i + 1]]});
     }
     return std::make_shared<groomlab::ScalpMesh>(worldPoints(mesh, matrix), std::move(triangles));
+}
+
+groomlab::ScalpMaps colorSetMaps(const geo::Mesh& mesh)
+{
+    groomlab::ScalpMaps out;
+    for (const std::string& set : geo::colors::sets(mesh))
+    {
+        const std::string name = groomlab::sanitizeMapName(set);
+        if (name.empty())
+            continue;
+        const std::vector<glm::vec4> colors = geo::colors::pointColors(mesh, set);
+        bool gray = true;
+        for (geo::Index p = 0; p < mesh.pointCapacity() && gray; ++p)
+            if (mesh.pointValid(p))
+            {
+                const glm::vec4& c = colors[p];
+                gray = std::abs(c.r - c.g) < 1e-4f && std::abs(c.r - c.b) < 1e-4f;
+            }
+        groomlab::ScalpMapEntry e;
+        e.kind = "vertices";
+        e.channels = gray ? 1 : 4;
+        for (geo::Index p = 0; p < mesh.pointCapacity(); ++p)
+            if (mesh.pointValid(p))
+            {
+                const glm::vec4& c = colors[p];
+                if (gray)
+                    e.values.push_back(std::clamp(c.r, 0.0f, 1.0f));
+                else
+                    for (int k = 0; k < 4; ++k)
+                        e.values.push_back(std::clamp(c[k], 0.0f, 1.0f));
+            }
+        out.maps[name] = std::move(e);
+    }
+    return out;
+}
+
+groomlab::ScalpMaps withColorSetMaps(const std::string& storedJson, const groomlab::ScalpMaps& colorMaps)
+{
+    groomlab::ScalpMaps out = groomlab::ScalpMaps::fromJson(storedJson);
+    for (const auto& [name, entry] : colorMaps.maps)
+        out.maps.try_emplace(name, entry);
+    return out;
 }
 
 std::shared_ptr<const groomlab::GuideSet> guideSet(const Splines& guides, const groomlab::ScalpMesh& scalp)
@@ -274,6 +317,8 @@ public:
                 mScalpMatrix = matrix;
                 mScalp = m && m->numFaces() > 0 ? groomLabBridge::scalpMesh(*m, matrix) : nullptr;
                 mSurface.reset();
+                mColorMaps = m ? groomLabBridge::colorSetMaps(*m) : groomlab::ScalpMaps{};
+                ++mColorMapsVersion;
             }
             const std::string& text = s(*this, "hierarchy");
             if (text != mHierarchyText || !mHierarchy)
@@ -302,7 +347,7 @@ public:
             setGraph(e);
             e.setPartsJson(s(*this, "parts"));
             e.setFlowJson(s(*this, "flow"));
-            e.setScalpMapsJson(s(*this, "scalpMaps"));
+            setScalpMaps(e, warnings);
             e.setSculptsJson(s(*this, "sculpts"));
             e.setCorrectivesJson(s(*this, "correctives"));
             e.setFramesPerSecond(anim::playback().fps);
@@ -537,6 +582,30 @@ private:
         }
     }
 
+    /** The stored maps, with the scalp's color sets as maps of their own (painted with Lila's vertex paint). */
+    void setScalpMaps(GroomEvaluator& e, std::vector<std::string>& warnings)
+    {
+        const std::string& maps = s(*this, "scalpMaps");
+        if (mColorMaps.maps.empty())
+        {
+            e.setScalpMapsJson(maps);
+            mMapsVersion = 0;
+            return;
+        }
+        if (maps == mMapsText && mMapsVersion == mColorMapsVersion)
+            return;
+        try
+        {
+            e.setScalpMaps(groomLabBridge::withColorSetMaps(maps, mColorMaps));
+        }
+        catch (const std::exception& ex)
+        {
+            warnings.push_back(std::string("scalp maps: ") + ex.what());
+        }
+        mMapsText = maps;
+        mMapsVersion = mColorMapsVersion;
+    }
+
     void setGraph(GroomEvaluator& e) const
     {
         const std::string& graph = s(*this, "graph");
@@ -629,6 +698,9 @@ private:
     groomlab::GuidesPtr mGuides;
     /** Keeps the graph's results between evaluations, so an edit re-runs only the nodes it reaches. */
     std::unique_ptr<GroomEvaluator> mEvaluator;
+    groomlab::ScalpMaps mColorMaps;
+    uint64_t mColorMapsVersion = 0, mMapsVersion = 0;
+    std::string mMapsText;
     groomlab::StrandsPtr mStrandsFrom;
     DataPtr mStrands;
     std::shared_ptr<const groomlab::CardMesh> mCardsFrom;

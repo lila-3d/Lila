@@ -1,6 +1,10 @@
 #include <doctest/doctest.h>
 
+#include "GroomTestUtil.h"
+#include "curve/CurveNodes.h"
+#include "curve/NodeHelpers.h"
 #include "curve/TestUtil.h"
+#include "geo/ColorSets.h"
 #include "groom/GroomBrush.h"
 #include "ops/Undo.h"
 #include "scene/Graph.h"
@@ -162,4 +166,56 @@ TEST_CASE("groom brush: the catalog lists GroomLab's tools with icons, without t
         CHECK_FALSE(e->label.empty());
     }
     CHECK(groom::groomBrushCategories().size() == 5);
+}
+
+namespace
+{
+/** A head whose color set "density" is `top` above the equator and 1 below. */
+scene::Node* headWithDensity(float top)
+{
+    geo::Mesh mesh = groomtest::sphereMesh(10.0);
+    std::span<glm::vec4> v = geo::colors::add(mesh, "density");
+    for (geo::Index f = 0; f < mesh.faceCapacity(); ++f)
+        if (mesh.faceValid(f))
+            mesh.forEachFaceCorner(f, [&](geo::Index c) {
+                const float x = mesh.position(mesh.cornerPoint(c)).y > 0.0 ? top : 1.0f;
+                v[c] = glm::vec4(x, x, x, 1.0f);
+            });
+    scene::Graph& g = scene::Graph::current();
+    scene::Node* n = g.createNode(*scene::types::find("mesh"), "Head", scene::kNoNode, false);
+    g.setValue({n->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(std::move(mesh))));
+    return n;
+}
+
+size_t strandsOn(scene::Node* head)
+{
+    scene::Graph& g = scene::Graph::current();
+    scene::Node* gr = g.createNode(*scene::types::find("groom"), "Hair");
+    const auto at = [&](const char* a) { return gr->type().attrIndex(a); };
+    g.connect({head->id(), scene::MeshNode::kOutMesh, -1}, {gr->id(), at("inMesh"), -1});
+    g.connect({head->id(), scene::Transform::kWorldMatrix, -1}, {gr->id(), at("meshMatrix"), -1});
+    g.setValue({gr->id(), at("scaleWithScalp"), -1}, false);
+    g.setValue({gr->id(), at("graph"), -1}, std::string(R"j({"version": 1, "output": "out", "nodes": [
+        {"name": "scalp", "type": "Scalp"},
+        {"name": "scatter", "type": "Scatter", "params": {"density": 4.0}, "paramInputs": ["density"]},
+        {"name": "density", "type": "Map", "params": {"name": "density"}},
+        {"name": "out", "type": "Output"}],
+      "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+        {"from": "density", "to": "scatter", "input": "density"}, {"from": "scatter", "to": "out", "input": "strands"}]})j"));
+    scene::Node* view = curve::helpers::createCurve(g, {}, "StrandsView");
+    g.connect({gr->id(), at("outStrands"), -1}, {view->id(), curve::CurveShape::kCreate, -1});
+    g.evaluate();
+    return curve::splinesOf(gr->value(at("outStrands"))).size();
+}
+} // namespace
+
+TEST_CASE("groom strands: the scalp's color sets are maps the graph reads, painted with vertex paint")
+{
+    scene::Graph& g = scene::Graph::current();
+    g.clear();
+    const size_t full = strandsOn(headWithDensity(1.0f));
+    CHECK(full > 500);
+    g.clear();
+    const size_t half = strandsOn(headWithDensity(0.0f));
+    CHECK(double(half) == doctest::Approx(full * 0.5).epsilon(0.15));
 }

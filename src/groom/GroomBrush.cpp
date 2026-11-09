@@ -61,6 +61,17 @@ const char* attrOf(StrokeField field)
     return nullptr;
 }
 
+/** Map values equal as stored: maps keep 1/1000. */
+bool sameValues(const std::vector<float>& a, const std::vector<float>& b)
+{
+    if (a.size() != b.size())
+        return false;
+    for (size_t i = 0; i < a.size(); ++i)
+        if (std::abs(a[i] - b[i]) > 2e-3f)
+            return false;
+    return true;
+}
+
 /** Sets an attribute with undo off: a stroke's live state, put back before it lands. */
 void setQuietly(Graph& g, const scene::PlugRef& p, scene::PlugValue v)
 {
@@ -112,6 +123,8 @@ public:
             mScalpFrom = raw;
             mScalpMatrix = at;
             mScalp = raw && raw->numFaces() > 0 ? groomLabBridge::scalpMesh(*raw, at) : nullptr;
+            mColorMaps = raw ? groomLabBridge::colorSetMaps(*raw) : groomlab::ScalpMaps{};
+            mMapsText = "";
             e.setScalp(mScalp);
         }
         if (!mScalp)
@@ -129,7 +142,21 @@ public:
         e.setHierarchyJson(hierarchy.empty() ? groomlab::GuideHierarchy().toJson() : hierarchy);
         e.setPartsJson(text(*n, "parts"));
         e.setFlowJson(text(*n, "flow"));
-        e.setScalpMapsJson(text(*n, "scalpMaps"));
+        const std::string maps = text(*n, "scalpMaps");
+        if (mColorMaps.maps.empty())
+            e.setScalpMapsJson(maps);
+        else if (maps != mMapsText)
+        {
+            try
+            {
+                e.setScalpMaps(groomLabBridge::withColorSetMaps(maps, mColorMaps));
+            }
+            catch (const std::exception& ex)
+            {
+                mWarnings.push_back(std::string("scalp maps: ") + ex.what());
+            }
+            mMapsText = maps;
+        }
         e.setSculptsJson(text(*n, "sculpts"));
         e.setCorrectivesJson(text(*n, "correctives"));
         mSymmetry = int(std::get<int64_t>(n->value(n->type().attrIndex("symmetry")))) - 1;
@@ -142,9 +169,9 @@ public:
     std::string storedText(StrokeField field) override
     {
         // The node's own text for the guides, so a stroke's before is exactly what it held, empty included.
-        if (field == StrokeField::Guides)
+        if (field == StrokeField::Guides || field == StrokeField::ScalpMaps)
             if (Node* n = Graph::current().node(mNode))
-                return text(*n, "hierarchy");
+                return text(*n, field == StrokeField::Guides ? "hierarchy" : "scalpMaps");
         return GroomStrokeHost::storedText(field);
     }
 
@@ -188,6 +215,8 @@ public:
                 continue;
             t.before = storedText(StrokeField(i));
             t.hasBefore = true;
+            if (StrokeField(i) == StrokeField::ScalpMaps)
+                t.after = withoutColorSetMaps(t.before, t.after);
             if (t.after != t.before)
                 g.setValue({mNode, n->type().attrIndex(attr), -1}, t.after);
         }
@@ -206,6 +235,37 @@ private:
     {
         const int a = n.type().attrIndex(attr);
         return a < 0 ? std::string() : std::get<std::string>(n.value(a));
+    }
+
+    /**
+     * The maps a stroke stores, less the scalp's color set maps it was handed: those stay on the mesh, painted with
+     * vertex paint. A stroke on one of them is dropped with a warning.
+     */
+    std::string withoutColorSetMaps(const std::string& before, const std::string& after)
+    {
+        if (mColorMaps.maps.empty())
+            return after;
+        try
+        {
+            const groomlab::ScalpMaps stored = groomlab::ScalpMaps::fromJson(before);
+            groomlab::ScalpMaps out = groomlab::ScalpMaps::fromJson(after);
+            for (const auto& [name, entry] : mColorMaps.maps)
+            {
+                if (stored.maps.count(name))
+                    continue;
+                const auto it = out.maps.find(name);
+                if (it == out.maps.end())
+                    continue;
+                if (!sameValues(it->second.values, entry.values))
+                    mWarnings.push_back("map " + name + " is the scalp's color set: paint it with Vertex Paint");
+                out.maps.erase(it);
+            }
+            return out.maps.empty() && before.empty() ? std::string() : out.toJson();
+        }
+        catch (const std::exception&)
+        {
+            return after;
+        }
     }
 
     /** Writes a stroke's work in progress to the node, keeping what it held to put back. */
@@ -237,6 +297,8 @@ private:
     glm::dmat4 mScalpMatrix{0.0};
     groomlab::MeshPtr mScalp;
     int mSymmetry = -1;
+    groomlab::ScalpMaps mColorMaps;
+    std::string mMapsText;
     std::map<StrokeField, std::string> mStart;
     std::vector<std::string> mWarnings;
 };
