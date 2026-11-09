@@ -313,6 +313,42 @@ json bakeCards(const Args& a)
     return {{"prefix", at.prefix}, {"maps", files}};
 }
 
+json addMap(const Args& a)
+{
+    Graph& g = Graph::current();
+    Node& gr = groomArg(g, a, "groomAddMap");
+    const std::string name = groomlab::sanitizeMapName(a.get<std::string>("name", "mask"));
+    const std::string kind = a.get<std::string>("kind", "vertices");
+    groomlab::ScalpMaps maps;
+    try
+    {
+        maps = groomlab::ScalpMaps::fromJson(text(gr, "scalpMaps"));
+    }
+    catch (const std::exception& e)
+    {
+        throw CommandError(std::string("groomAddMap: ") + e.what());
+    }
+    if (maps.maps.count(name))
+        throw CommandError("groomAddMap: " + gr.name() + " already has a map named " + name);
+    groomlab::ScalpMapEntry e;
+    e.kind = kind;
+    e.channels = a.get<bool>("color", false) ? 4 : 1;
+    if (kind == "texture")
+    {
+        e.texture = a.get<std::string>("file", "");
+        if (e.texture.empty())
+            throw CommandError("groomAddMap: a texture map needs a file (a PNG painting writes)");
+    }
+    else
+    {
+        const GroomExportFrame frame = groomExportFrame(g, gr.id(), g.time());
+        e.values.assign(frame.scalp ? frame.scalp->points().size() * size_t(e.channels) : 0, float(a.get<double>("value", 0.0)));
+    }
+    maps.maps[name] = e;
+    g.setValue({gr.id(), gr.type().attrIndex("scalpMaps"), -1}, maps.toJson());
+    return {{"name", name}, {"kind", kind}};
+}
+
 json importFile(const Args& a)
 {
     Graph& g = Graph::current();
@@ -405,6 +441,19 @@ void registerIoCommands()
                   {"strands", "", T::Bool, true, "Also a curve showing the strands."},
                   {"name", "n", T::String, nullptr, "Base name of the new nodes; the file's name when left out."}},
         .run = importFile,
+    });
+    ops::registerCommand({
+        .name = "groomAddMap",
+        .doc = "Adds a map to paint on the groom's scalp for Map nodes and map params to read: kind vertices (a value per scalp "
+               "vertex) or texture (an image at the scalp's uv0, written to file as a PNG when painted). Paint it with Groom Brushes' "
+               "Paint, Paint On Scalp or Texture. The head's color sets are maps already. Returns {name, kind}.",
+        .positionalDoc = "groom",
+        .flags = {{"name", "n", T::String, "mask", "The map's name."},
+                  {"kind", "k", T::String, "vertices", "Where it lives.", {"vertices", "texture"}},
+                  {"file", "f", T::String, nullptr, "texture: the image file it paints into."},
+                  {"color", "", T::Bool, false, "A color map (RGBA) instead of gray."},
+                  {"value", "v", T::Float, 0.0, "vertices: the value it starts at.", {}, {}, 0.0, 1.0}},
+        .run = addMap,
     });
     ops::registerCommand({
         .name = "groomCards",

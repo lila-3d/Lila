@@ -11,9 +11,12 @@
 #include <groomlab/length_key_tool.h>
 #include <groomlab/parts.h>
 #include <groomlab/stroke.h>
+#include <groomlab/scalp_paint.h>
+#include <groomlab/texture.h>
 #include <groomlab/view_projection.h>
 
 #include <algorithm>
+#include <filesystem>
 #include <map>
 
 namespace lila::groom
@@ -221,12 +224,50 @@ public:
                 g.setValue({mNode, n->type().attrIndex(attr), -1}, t.after);
         }
         u.closeChunk();
+        if (!edit.textureMap.empty())
+            if (const auto paint = mTexturePaints.find(edit.textureMap); paint != mTexturePaints.end())
+            {
+                const std::string& file = mTextureFiles[edit.textureMap];
+                if (file.empty())
+                    mWarnings.push_back("texture map " + edit.textureMap + " has no file to save to");
+                else
+                    paint->second->save(file);
+            }
         applyStrokeEdit(edit, evaluator(), true);
         evaluator().setPreviewHierarchy(nullptr);
         evaluator().setPreviewOverlays(nullptr, nullptr);
     }
 
     void warn(const std::string& message) override { mWarnings.push_back(message); }
+
+    /**
+     * A texture map's paint: the map's image file read onto the scalp's uv0, or a blank one at `resolution` for a map
+     * with no file yet. Kept between strokes; each stroke that paints it writes the file (PNG).
+     */
+    std::shared_ptr<groomlab::TexturePaint> texturePaint(const std::string& name, int channels, int resolution) override
+    {
+        if (const auto it = mTexturePaints.find(name); it != mTexturePaints.end())
+            return it->second;
+        const groomlab::ScalpMaps& maps = evaluator().scalpMaps();
+        const auto entry = maps.maps.find(name);
+        if (entry == maps.maps.end() || entry->second.kind != "texture")
+            throw std::runtime_error("this groom has no texture map named " + name);
+        const groomlab::MeshPtr scalp = paintScalp();
+        if (!scalp || !scalp->hasUVs())
+            throw std::runtime_error("the scalp has no uv0 to paint texture map " + name + " through");
+        std::shared_ptr<groomlab::TexturePaint> paint;
+        const std::string& file = entry->second.texture;
+        if (!file.empty() && std::filesystem::exists(file))
+            if (const groomlab::TexturePtr image = groomlab::loadTexture(file))
+                paint = std::make_shared<groomlab::TexturePaint>(*scalp, *image, channels);
+        if (!paint)
+            paint = std::make_shared<groomlab::TexturePaint>(*scalp, resolution, resolution, 0.0f);
+        mTexturePaints[name] = paint;
+        mTextureFiles[name] = file;
+        return paint;
+    }
+
+    void dropTexturePaint() override { mTexturePaints.clear(); }
 
     std::vector<std::string> takeWarnings() { return std::exchange(mWarnings, {}); }
 
@@ -300,6 +341,8 @@ private:
     groomlab::ScalpMaps mColorMaps;
     std::string mMapsText;
     std::map<StrokeField, std::string> mStart;
+    std::map<std::string, std::shared_ptr<groomlab::TexturePaint>> mTexturePaints;
+    std::map<std::string, std::string> mTextureFiles;
     std::vector<std::string> mWarnings;
 };
 } // namespace
@@ -418,6 +461,8 @@ struct GroomBrush::Impl
             t.brush.attribute = s.attribute;
             t.brush.value = float(s.value);
             t.paintKind = s.paintKind;
+            if (s.paintKind == "texture")
+                t.paintTexture = s.attribute;
         }
         t.smoothStrength = float(s.smoothStrength);
         t.partName = s.partName;

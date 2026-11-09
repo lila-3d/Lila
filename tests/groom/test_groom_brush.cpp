@@ -13,6 +13,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include <filesystem>
+#include "ops/Command.h"
+
 using namespace lila;
 
 namespace
@@ -218,4 +221,46 @@ TEST_CASE("groom strands: the scalp's color sets are maps the graph reads, paint
     g.clear();
     const size_t half = strandsOn(headWithDensity(0.0f));
     CHECK(double(half) == doctest::Approx(full * 0.5).epsilon(0.15));
+}
+
+TEST_CASE("groom brush: Paint on a texture map paints the scalp's uv0 image and writes it; on a vertex map stores the values")
+{
+    scene::Node* gr = groomOnHead();
+    const auto file = std::filesystem::temp_directory_path() / "lila_groom_paint" / "crown.png";
+    std::filesystem::create_directories(file.parent_path());
+    std::filesystem::remove(file);
+    ops::execute("groomAddMap", {{"args", {gr->path()}}, {"name", "crown"}, {"kind", "texture"}, {"file", file.generic_string()}});
+    ops::execute("groomAddMap", {{"args", {gr->path()}}, {"name", "dens"}});
+
+    groom::GroomBrush brush;
+    brush.setGroom(gr->id());
+    groom::GroomBrushSettings s;
+    s.mode = "paint";
+    s.paintKind = "texture";
+    s.attribute = "crown";
+    s.value = 1.0;
+    s.strength = 1.0;
+    s.radius = 120.0;
+    brush.setSettings(s);
+    stroke(brush, {{300.0, 300.0}, {310.0, 300.0}, {320.0, 300.0}});
+    CHECK(brush.takeWarnings().empty());
+    REQUIRE(std::filesystem::exists(file));
+    CHECK(std::filesystem::file_size(file) > 100);
+
+    s.paintKind = "vertices";
+    s.attribute = "dens";
+    brush.setSettings(s);
+    stroke(brush, {{300.0, 300.0}, {310.0, 300.0}});
+    const nlohmann::json maps = nlohmann::json::parse(std::get<std::string>(gr->value(gr->type().attrIndex("scalpMaps"))));
+    REQUIRE(maps.contains("dens"));
+    double sum = 0.0;
+    for (const auto& v : maps["dens"]["values"])
+        sum += v.get<double>();
+    CHECK(sum > 1.0);
+    CHECK(UndoStack::get().undo());
+    const nlohmann::json before = nlohmann::json::parse(std::get<std::string>(gr->value(gr->type().attrIndex("scalpMaps"))));
+    double after = 0.0;
+    for (const auto& v : before["dens"]["values"])
+        after += v.get<double>();
+    CHECK(after == doctest::Approx(0.0));
 }

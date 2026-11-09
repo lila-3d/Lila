@@ -65,15 +65,27 @@ std::shared_ptr<const groomlab::ScalpMesh> scalpMesh(const geo::Mesh& mesh, cons
         if (mesh.pointValid(p))
             remap[p] = next++;
     std::vector<groomlab::ScalpMesh::Triangle> triangles;
+    // uv0 per triangle corner: texture maps paint and read through it.
+    const std::span<const glm::vec2> uv = mesh.cornerAttrs().get<glm::vec2>("uv0");
+    std::vector<groomlab::ScalpMesh::UV> uvs;
     for (geo::Index f = 0; f < mesh.faceCapacity(); ++f)
     {
         if (!mesh.faceValid(f))
             continue;
         const std::vector<geo::Index> v = mesh.facePoints(f);
+        const std::vector<geo::Index> c = uv.empty() ? std::vector<geo::Index>() : mesh.faceCorners(f);
         for (size_t i = 1; i + 1 < v.size(); ++i)
+        {
             triangles.push_back({remap[v[0]], remap[v[i]], remap[v[i + 1]]});
+            if (!c.empty())
+                for (geo::Index k : {c[0], c[i], c[i + 1]})
+                    uvs.push_back({uv[k].x, uv[k].y});
+        }
     }
-    return std::make_shared<groomlab::ScalpMesh>(worldPoints(mesh, matrix), std::move(triangles));
+    auto out = std::make_shared<groomlab::ScalpMesh>(worldPoints(mesh, matrix), std::move(triangles));
+    if (!uvs.empty())
+        out->setCornerUVs(std::move(uvs));
+    return out;
 }
 
 groomlab::ScalpMaps colorSetMaps(const geo::Mesh& mesh)

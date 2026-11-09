@@ -554,7 +554,8 @@ public:
         mFalloff = number("falloff", "Falloff", 0.0, 1.0, 2, {}, "0 full strength to the edge, 1 fading from the centre", [](Set& s, double x) { s.falloff = x; });
         mSmooth = number("smoothStrength", "Smoothing", 0.0, 4.0, 2, {}, "how much Shift+drag smooths a map per dab", [](Set& s, double x) { s.smoothStrength = x; });
         mTube = segmented("tubeChannel", "Paint", {{"Width", "width"}, {"Flatness", "flatness"}, {"Twist", "twist"}}, [](Set& s, const std::string& c) { s.tubeChannel = c; });
-        mPaintOn = segmented("map", "Paint On", {{"Guides", "guides"}, {"Scalp", "vertices"}}, [](Set& s, const std::string& c) { s.paintKind = c; });
+        mPaintOn = segmented("map", "Paint On", {{"Guides", "guides"}, {"Scalp", "vertices"}, {"Texture", "texture"}},
+                             [](Set& s, const std::string& c) { s.paintKind = c; });
         mAttribute = new QComboBox(fields);
         mAttribute->setEditable(true);
         mAttribute->addItems({"clump", "density", "length", "width", "curl", "frizz"});
@@ -701,7 +702,7 @@ public:
         }
         {
             const QSignalBlocker block(mPaintOn);
-            mPaintOn->setCurrent(s.paintKind == "vertices" ? 1 : 0);
+            mPaintOn->setCurrent(s.paintKind == "vertices" ? 1 : s.paintKind == "texture" ? 2 : 0);
         }
         {
             const QSignalBlocker block(mAttribute);
