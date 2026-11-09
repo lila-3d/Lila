@@ -676,3 +676,21 @@ TEST_CASE("final mesh: a bevel gives one wedge's corners at a point the same uvs
     }
     CHECK(cracks == 0);
 }
+
+TEST_CASE("final mesh: cage uvs the export barely reads stay with their neighbours")
+{
+    // The lid's corner points far from any rim are barely read by the export; free, the solve swings them out as levers
+    // (the island's box grows by a quarter) and they land on whatever is packed beside it.
+    geo::Mesh m = lidPlate(0.4, 3);
+    const std::vector<uv::Chart> before = islandsOf(m);
+    const uv::FinalRefineResult r = uv::refineFinal(m, {}, "uv0", bevelSubdivStack(0.13, 3, 2));
+    const std::vector<uv::Chart> after = islandsOf(m);
+    REQUIRE(before.size() == after.size());
+    CHECK(r.collapsedAfter == 0);
+    for (size_t i = 0; i < before.size(); ++i)
+    {
+        const glm::dvec2 sb = before[i].uvMax() - before[i].uvMin(), sa = after[i].uvMax() - after[i].uvMin();
+        INFO("island " << i << ", grows " << std::max(sa.x / sb.x, sa.y / sb.y));
+        CHECK(std::max(sa.x / sb.x, sa.y / sb.y) < 1.1);
+    }
+}
