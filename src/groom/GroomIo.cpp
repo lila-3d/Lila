@@ -230,6 +230,13 @@ json importFile(const Args& a)
         if (!scalp || !scalp->type().isA("mesh"))
             throw CommandError("importGroom: no mesh " + a.get<std::string>("mesh"));
     }
+    else
+        for (NodeId id : g.selection())
+            if (Node* n = g.node(id); n && n->type().isA("mesh"))
+            {
+                scalp = n;
+                break;
+            }
     const std::string base = a.get<std::string>("name", exportName(path));
     if (!scalp)
     {
@@ -281,9 +288,9 @@ void registerIoCommands()
     ops::registerCommand({
         .name = "importGroom",
         .doc = "Reads a GroomLab .groom file into a new groom: its guides, graph, parts, flow, maps and sculpts, on the mesh given or "
-               "on the file's own scalp as a new mesh. Returns {groom, guides, locks, strands, scalp}.",
+               "selected, else on the file's own scalp as a new mesh. Returns {groom, guides, locks, strands, scalp}.",
         .positionalDoc = "file",
-        .flags = {{"mesh", "m", T::String, nullptr, "The scalp mesh to grow on; the file's scalp when left out."},
+        .flags = {{"mesh", "m", T::String, nullptr, "The scalp mesh to grow on; the selected mesh, else the file's scalp, when left out."},
                   {"strands", "", T::Bool, true, "Also a curve showing the strands."},
                   {"name", "n", T::String, nullptr, "Base name of the new nodes; the file's name when left out."}},
         .run = importFile,
