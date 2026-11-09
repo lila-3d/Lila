@@ -815,6 +815,10 @@ constexpr double kRespaced = 0.6;
 constexpr double kRespaceTaper = 1.0;
 /** A border point where the proxy folds back sharper than this (radians) is a closed slit's tip, which respacing keeps. */
 constexpr double kClosedTip = 0.5;
+/** Where the proxy turns more than this (radians) inside a window, the point taking that turn on the surface lands on it. */
+constexpr double kWindowTurn = 1.0;
+
+double angleSum(const Mesh& m, const Islands& is, Index g);
 
 /**
  * Where an island's border bunches up in uv (a bevel's corner points all carry the one cage uv of the corner they
@@ -831,17 +835,19 @@ std::vector<BorderBlend> respaceBorder(const Mesh& m, const Islands& is, Index i
     std::unordered_map<Index, Index> next;
     std::unordered_map<Index, double> spacingFrom;
     std::vector<Index> fc;
-    double a3 = 0.0, auv = 0.0;
+    double a3 = 0.0, auv = 0.0, apx = 0.0;
     for (Index f : is.faces[island])
     {
         fc = m.faceCorners(f);
         const glm::dvec3 p0 = m.position(m.cornerPoint(fc[0]));
-        const glm::dvec2 u0 = set[fc[0]];
+        const glm::dvec2 u0 = set[fc[0]], q0 = proxy[fc[0]];
         for (size_t k = 1; k + 1 < fc.size(); ++k)
         {
             a3 += 0.5 * glm::length(glm::cross(m.position(m.cornerPoint(fc[k])) - p0, m.position(m.cornerPoint(fc[k + 1])) - p0));
             const glm::dvec2 u1 = glm::dvec2(set[fc[k]]) - u0, u2 = glm::dvec2(set[fc[k + 1]]) - u0;
             auv += 0.5 * (u1.x * u2.y - u1.y * u2.x);
+            const glm::dvec2 q1 = glm::dvec2(proxy[fc[k]]) - q0, q2 = glm::dvec2(proxy[fc[k + 1]]) - q0;
+            apx += q1.x * q2.y - q1.y * q2.x;
         }
         for (Index c : fc)
         {
@@ -957,6 +963,66 @@ std::vector<BorderBlend> respaceBorder(const Mesh& m, const Islands& is, Index i
         }
         std::sort(windows.begin(), windows.end());
         std::vector<double> share, targets, param;
+        const double orient = apx < 0.0 ? -1.0 : 1.0;
+        // The uv polyline turns where the cage's border turns, and so does the proxy. Where the window's own border takes
+        // that turn at one point on the surface (a bevel's corner patch can move it along the border), that point lands on
+        // the polyline's turn and the others spread on either side of it.
+        auto alignWindowTurns = [&](size_t a, size_t b) {
+            std::vector<double> arc(b - a + 2, 0.0);
+            double reach = 0.0;
+            for (size_t j = a; j <= b; ++j)
+            {
+                arc[j + 1 - a] = arc[j - a] + param[j - a];
+                reach += u[at(j)];
+            }
+            reach *= 0.5 / double(b - a + 1);
+            std::vector<std::pair<size_t, double>> anchors{{a, 0.0}};
+            for (size_t j = a + 1; j <= b; ++j)
+            {
+                const glm::dvec2 pj = proxyAt(at(j));
+                size_t lo = j, hi = j;
+                while (lo > a && glm::length(proxyAt(at(lo)) - pj) <= reach)
+                    --lo;
+                while (hi <= b && glm::length(proxyAt(at(hi)) - pj) <= reach)
+                    ++hi;
+                const glm::dvec2 din = pj - proxyAt(at(lo)), dout = proxyAt(at(hi)) - pj;
+                if (glm::length(din) <= reach || glm::length(dout) <= reach)
+                    continue;
+                const double turn = orient * std::atan2(din.x * dout.y - din.y * dout.x, glm::dot(din, dout));
+                const size_t bunchEnd = hi - 1;
+                if (std::abs(turn) < kWindowTurn)
+                {
+                    j = std::max(j, bunchEnd);
+                    continue;
+                }
+                // The bunch's point where its turn on the surface, summed along the border, reaches half the proxy's.
+                size_t best = 0;
+                double sum = 0.0;
+                for (size_t v = std::max(anchors.back().first, lo) + 1; v < hi && v <= b && !best; ++v)
+                {
+                    const double t = std::numbers::pi - angleSum(m, is, loop[at(v)]);
+                    sum += t;
+                    if (t * turn > 0.0 && sum * turn >= 0.5 * turn * turn)
+                        best = v;
+                }
+                if (best && arc[j - a] > anchors.back().second)
+                    anchors.push_back({best, arc[j - a]});
+                j = std::max(j, bunchEnd);
+            }
+            if (anchors.size() == 1)
+                return;
+            anchors.push_back({b + 1, targets[b + 1 - a]});
+            std::vector<double> moved = targets;
+            for (size_t k = 0; k + 1 < anchors.size(); ++k)
+            {
+                const auto [i0, s0] = anchors[k];
+                const auto [i1, s1] = anchors[k + 1];
+                const double t0 = targets[i0 - a], t1 = targets[i1 - a];
+                for (size_t v = i0; v <= i1; ++v)
+                    moved[v - a] = t1 > t0 ? s0 + (targets[v - a] - t0) * (s1 - s0) / (t1 - t0) : s0;
+            }
+            targets = std::move(moved);
+        };
         for (size_t w = 0; w < windows.size(); ++w)
         {
             // Offsets shifted by n, so margins can run back past the start edge (the window before is the last one).
@@ -1001,6 +1067,7 @@ std::vector<BorderBlend> respaceBorder(const Mesh& m, const Islands& is, Index i
                 targets[v - a] = targets[v - 1 - a] + (1.0 - s) * param[v - 1 - a] + s * p * l[at(v - 1)];
             }
             targets[b + 1 - a] = U;
+            alignWindowTurns(a, b);
             double segStart = 0.0;
             size_t seg = a;
             for (size_t v = a + 1; v <= b; ++v)
