@@ -2839,9 +2839,10 @@ Extracted buildPatchMesh(const Layout& lay, const std::vector<uint8_t>& blocked,
  * Slivers: patches thinner than half a row along most of their length, between two lines that run side by side, or a
  * line beside a wall (a crease, the border). Of each pair of lines the one whose length is mostly in slivers is left out
  * (marked in `dropped`), so the lines it stopped run on and the other carries the row; beside a wall the line goes.
- * Returns how many lines it left out.
+ * `partnerOf` keeps, per line left out, the line it ran beside, across rounds. Returns how many lines it left out.
  */
-size_t dropSlivers(const Layout& lay, const Traces& tr, const std::vector<Piece>& pieces, const std::vector<Index>& patchOf, Index np, std::vector<uint8_t>& dropped)
+size_t dropSlivers(const Layout& lay, const Traces& tr, const std::vector<Piece>& pieces, const std::vector<Index>& patchOf, Index np, std::vector<uint8_t>& dropped,
+                   std::vector<Index>& partnerOf)
 {
     constexpr double kThin = 0.4;
     const Index wallLine = Index(tr.end.size()); // every wall counts as one line, which can't be left out
@@ -2903,6 +2904,43 @@ size_t dropSlivers(const Layout& lay, const Traces& tr, const std::vector<Piece>
         return bool(dropped[lines[(i + 1) % n]] || dropped[lines[(i + n - 1) % n]]);
     };
     std::sort(pairs.begin(), pairs.end(), [&](const auto& x, const auto& y) { return inSlivers[x.first] + inSlivers[x.second] > inSlivers[y.first] + inSlivers[y.second]; });
+    partnerOf.resize(tr.end.size(), kInvalid);
+    // Both lines' poles have given up a line already. A valence 3 pole takes its earlier line back where the line that
+    // ran beside that one can go instead, which frees it to give up this one: four poles round a square, whose edges are
+    // each traced from both ends, need every pole to give up one, which the greedy order alone can miss.
+    auto swapFor = [&](Index a, Index b) {
+        for (Index line : {a, b})
+        {
+            const Index src = tr.sourceOf[line];
+            if (src == kInvalid || linesOf[src].size() != 3)
+                continue;
+            for (Index x : linesOf[src])
+            {
+                const Index y = x != line && dropped[x] ? partnerOf[x] : kInvalid;
+                if (y == kInvalid || y >= wallLine || dropped[y] || tr.sourceOf[y] == kInvalid || tr.sourceOf[y] == src || linesOf[tr.sourceOf[y]].size() != 3)
+                    continue;
+                dropped[x] = 0;
+                if (!blockedDrop(y))
+                {
+                    dropped[y] = 1;
+                    if (!blockedDrop(line))
+                    {
+                        dropped[line] = 1;
+                        partnerOf[y] = x;
+                        partnerOf[x] = kInvalid;
+                        partnerOf[line] = line == a ? b : a;
+                        if (std::getenv("LILA_PATCH_LIST"))
+                            std::fprintf(stderr, "sliver swap: line %d back, %d and %d left out, pole at %.2f %.2f %.2f, lengths %.2f %.2f %.2f %.2f\n", int(x), int(y), int(line),
+                                         lay.s.pos[src].x, lay.s.pos[src].y, lay.s.pos[src].z, length[a], length[b], length[x], length[y]);
+                        return true;
+                    }
+                    dropped[y] = 0;
+                }
+                dropped[x] = 1;
+            }
+        }
+        return false;
+    };
     size_t count = 0;
     for (auto [a, b] : pairs)
     {
@@ -2912,6 +2950,11 @@ size_t dropSlivers(const Layout& lay, const Traces& tr, const std::vector<Piece>
             return t == wallLine || tr.sourceOf[t] == kInvalid || blockedDrop(t) ? -1.0 : inSlivers[t] / std::max(length[t], 1e-9);
         };
         Index drop = weight(a) >= weight(b) ? a : b;
+        if (weight(drop) < 0.0 && a != wallLine && b != wallLine && swapFor(a, b))
+        {
+            ++count;
+            continue;
+        }
         if (weight(drop) < 0.0)
         {
             if (std::getenv("LILA_PATCH_LIST"))
@@ -2929,6 +2972,7 @@ size_t dropSlivers(const Layout& lay, const Traces& tr, const std::vector<Piece>
             continue;
         }
         dropped[drop] = 1;
+        partnerOf[drop] = drop == a ? b : a;
         ++count;
     }
     return count;
@@ -3145,6 +3189,7 @@ Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, cons
     Extracted ex;
     std::string why;
     std::vector<uint8_t> dropped; // per tracer: a line left out, running alongside another too close for a row between
+    std::vector<Index> partnerOf; // per tracer left out: the line it ran beside
     int dropRounds = 0;
     std::vector<Index> wedges;
     // Wedges the mesh build finds get a line across, and the layout is traced and built again, twice at most.
@@ -3225,7 +3270,7 @@ Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, cons
             st.patches = int(np);
             if (extras.empty() && dropRounds < 6)
             {
-                const size_t more = dropSlivers(lay, tr, pieces, patchOf, np, dropped);
+                const size_t more = dropSlivers(lay, tr, pieces, patchOf, np, dropped, partnerOf);
                 if (debug)
                     std::fprintf(stderr, "patch slivers round %d: %zu lines dropped\n", dropRounds, more);
                 if (more > 0)
