@@ -26,8 +26,8 @@ using scene::MeshPtr;
 using scene::Node;
 using scene::components::Ids;
 
-/** Solve iterations for islands a relax leaves with slivers on the export; uvOptimize's exported-mesh solve gets as many. */
-constexpr int kRepairIterations = 200;
+/** Solve iterations for islands a relax leaves with slivers on the export: twice a plain solve's, as those are slow to open. */
+constexpr int kRepairIterations = 60;
 
 std::string setArg(const Args& a)
 {
@@ -152,7 +152,7 @@ RelaxStats relaxIslands(geo::Mesh& m, std::span<const Index> faces, std::string_
 
 /**
  * The relax reads a fit's respacing as it was; where the new uvs respace the border into slivers, those islands solve
- * again on the export, with as many iterations as an optimize's solve gets.
+ * again on the export.
  */
 void repairRelaxed(geo::Mesh& m, std::span<const Index> faces, std::string_view set, bool usePins, const Stack& stack)
 {
