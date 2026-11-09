@@ -968,6 +968,7 @@ std::vector<FinalIsland> finalIslands(const FinalMap& map, const geo::Mesh& cage
             cornerIsland[c] = ci;
         }
         isl.pos.push_back(ex.position(ex.cornerPoint(c)));
+        isl.corner.push_back(c);
         glm::dvec2 off(0.0);
         row.clear();
         for (Index k = map.rowStart[c]; k < map.rowStart[c + 1]; ++k)
@@ -1364,9 +1365,10 @@ ChartStats finalStats(const FinalIsland& isl, const Chart& chart)
     return s;
 }
 
-size_t collapsedTriangles(const FinalIsland& isl, const Chart& chart)
+namespace
 {
-    const std::vector<glm::dvec2> y = isl.uvs(chart);
+size_t collapsedOf(const FinalIsland& isl, std::span<const glm::dvec2> y)
+{
     double a3 = 0.0, au = 0.0;
     std::vector<double> tri3(isl.tris.size()), triUv(isl.tris.size());
     for (size_t i = 0; i < isl.tris.size(); ++i)
@@ -1385,6 +1387,20 @@ size_t collapsedTriangles(const FinalIsland& isl, const Chart& chart)
         if (tri3[i] > 1e-12 * a3 && triUv[i] < tri3[i] * density * kCollapsedFraction)
             ++n;
     return n;
+}
+} // namespace
+
+size_t collapsedTriangles(const FinalIsland& isl, const Chart& chart)
+{
+    return collapsedOf(isl, isl.uvs(chart));
+}
+
+size_t collapsedTriangles(const FinalIsland& isl, std::span<const glm::vec2> exportedUv)
+{
+    std::vector<glm::dvec2> y(isl.corner.size());
+    for (size_t k = 0; k < y.size(); ++k)
+        y[k] = isl.corner[k] < exportedUv.size() ? glm::dvec2(exportedUv[isl.corner[k]]) : glm::dvec2(0.0);
+    return collapsedOf(isl, y);
 }
 
 void setDensityArea(Chart& chart, const FinalIsland& isl)
@@ -1573,7 +1589,7 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
         return n;
     };
     // Triangles under kCollapsedFraction of the uv area the island's density gives them, as bake lint counts them, with a
-    // margin: the export the written uvs give can differ a little (a fit respaces borders from the new uvs).
+    // margin: the export the written uvs give can differ a little (a fit's rebuilt island corners follow the new uvs).
     auto collapsed = [&](const std::vector<glm::dvec2>& y) {
         double a3 = 0.0, au = 0.0;
         for (size_t i = 0; i < T; ++i)
@@ -1748,15 +1764,10 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
 namespace
 {
 /**
- * Extra rounds that re-solve islands the written layout still collapses (a fit's respacing follows the new uvs). Measured
- * on real exports they rarely open more and cost a map build each, so the written result is only checked.
- */
-constexpr int kRepairRounds = 0;
-
-/**
  * Solves the islands, all of them or only those whose export collapses now, against the export as the cage's current
  * uvs give it, and writes them back. Each island keeps its solve only when it collapses no more than before; a move back
- * into its tile that would cost it slivers is dropped on its own.
+ * into its tile that would cost it slivers is dropped on its own. The written uvs' export is then measured with one run of
+ * the stack, and islands that came out with more slivers than they started with go back.
  */
 FinalRefineResult refineRounds(geo::Mesh& cage, std::span<const Index> faces, std::string_view uvSet, const Stack& stack,
                                const FinalSolveOptions& opts, bool repairOnly)
@@ -1779,94 +1790,83 @@ FinalRefineResult refineRounds(geo::Mesh& cage, std::span<const Index> faces, st
             }
         return w > 0.0 ? d / w : 0.0;
     };
-    // Per island, its uvs and collapsed count before its last solve; an island its solve made worse goes back and stays.
-    std::vector<std::vector<glm::dvec2>> prevUv;
-    std::vector<size_t> prevCount;
-    std::vector<uint8_t> solved, frozen;
-    bool measureOnly = false;
-    for (int round = 0;; ++round)
+    const FinalMap map = buildFinalMap(cage, uvSet, stack);
+    out.method = map.method;
+    out.warning = map.warning;
+    if (!map.active())
+        return out;
+    std::vector<Chart> charts = buildCharts(cage, live, co);
+    const std::vector<FinalIsland> islands = finalIslands(map, cage, charts, uvSet);
+    const size_t n = charts.size();
+    std::vector<size_t> now(n, 0);
+    tbb::parallel_for(size_t(0), n, size_t(1), [&](size_t i) {
+        if (!islands[i].tris.empty())
+            now[i] = collapsedTriangles(islands[i], charts[i]);
+    });
+    out.collapsedBefore = std::accumulate(now.begin(), now.end(), size_t(0));
+    out.distortionBefore = distortion(islands, charts);
+    out.islands = size_t(std::ranges::count_if(islands, [](const FinalIsland& isl) { return !isl.tris.empty(); }));
+    std::vector<uint8_t> pick(n, 0);
+    for (size_t i = 0; i < n; ++i)
+        pick[i] = !islands[i].tris.empty() && (!repairOnly || now[i] > 0);
+    if (std::ranges::none_of(pick, [](uint8_t p) { return p != 0; }))
     {
-        const FinalMap map = buildFinalMap(cage, uvSet, stack);
-        if (round == 0)
+        out.collapsedAfter = out.collapsedBefore;
+        out.distortionAfter = out.distortionBefore;
+        return out;
+    }
+    std::vector<std::vector<glm::dvec2>> prevUv(n);
+    std::vector<uint8_t> ok(n, 1);
+    tbb::parallel_for(size_t(0), n, size_t(1), [&](size_t i) {
+        if (!pick[i])
+            return;
+        prevUv[i] = charts[i].uv;
+        Chart trial = charts[i];
+        const glm::ivec2 tile(glm::floor(trial.uvCentroid()));
+        ok[i] = solveFinal(trial, islands[i], opts).ok;
+        if (!ok[i])
+            return;
+        // Moving the island alone shifts it against the uvs its neighbours lend its export: that move goes, not the solve.
+        if (!opts.usePins || std::ranges::none_of(trial.pinned, [](uint8_t p) { return p != 0; }))
         {
-            out.method = map.method;
-            out.warning = map.warning;
+            Chart moved = trial;
+            keepInTile(moved, tile);
+            if (collapsedTriangles(islands[i], moved) <= collapsedTriangles(islands[i], trial))
+                trial = std::move(moved);
         }
-        if (!map.active())
-            return out;
-        std::vector<Chart> charts = buildCharts(cage, live, co);
-        const std::vector<FinalIsland> islands = finalIslands(map, cage, charts, uvSet);
-        const size_t n = charts.size();
-        std::vector<size_t> now(n, 0);
+        if (collapsedTriangles(islands[i], trial) <= now[i])
+            charts[i] = std::move(trial);
+    });
+    out.failed = size_t(std::ranges::count(ok, uint8_t(0)));
+    writeCharts(cage, charts, uvSet);
+    // Measured on the export itself, so the count is what bake lint finds; the map's prediction stands in if the stack's
+    // output no longer matches it.
+    auto measure = [&](std::vector<size_t>& count) {
+        const geo::Mesh ex = runStack(cage, stack);
+        const std::span<const glm::vec2> uv = ex.cornerAttrs().get<glm::vec2>(uvSet);
+        const bool same = !uv.empty() && ex.cornerCapacity() == map.exported->cornerCapacity() && ex.faceCapacity() == map.exported->faceCapacity();
         tbb::parallel_for(size_t(0), n, size_t(1), [&](size_t i) {
             if (!islands[i].tris.empty())
-                now[i] = collapsedTriangles(islands[i], charts[i]);
+                count[i] = same ? collapsedTriangles(islands[i], uv) : collapsedTriangles(islands[i], charts[i]);
         });
-        if (round == 0)
+    };
+    std::vector<size_t> after(n, 0);
+    measure(after);
+    bool restored = false;
+    for (size_t i = 0; i < n; ++i)
+        if (pick[i] && after[i] > now[i])
         {
-            out.collapsedBefore = std::accumulate(now.begin(), now.end(), size_t(0));
-            out.distortionBefore = distortion(islands, charts);
-            out.islands = size_t(std::ranges::count_if(islands, [](const FinalIsland& isl) { return !isl.tris.empty(); }));
-            prevUv.resize(n);
-            prevCount.assign(n, 0);
-            solved.assign(n, 0);
-            frozen.assign(n, 0);
+            charts[i].uv = prevUv[i];
+            restored = true;
         }
-        bool restored = false;
-        for (size_t i = 0; i < n; ++i)
-            if (solved[i] && now[i] >= prevCount[i] && now[i] > 0)
-            {
-                frozen[i] = 1;
-                if (now[i] > prevCount[i])
-                {
-                    charts[i].uv = prevUv[i];
-                    restored = true;
-                }
-            }
-        const bool solveAll = round == 0 && !repairOnly;
-        std::vector<uint8_t> pick(n, 0);
-        for (size_t i = 0; i < n; ++i)
-            pick[i] = !islands[i].tris.empty() && (solveAll || (!frozen[i] && now[i] > 0));
-        if (measureOnly || round > kRepairRounds || std::ranges::none_of(pick, [](uint8_t p) { return p != 0; }))
-        {
-            if (restored)
-            {
-                writeCharts(cage, charts, uvSet);
-                measureOnly = true;
-                continue;
-            }
-            out.collapsedAfter = std::accumulate(now.begin(), now.end(), size_t(0));
-            out.distortionAfter = distortion(islands, charts);
-            return out;
-        }
-        std::vector<uint8_t> ok(n, 1);
-        std::fill(solved.begin(), solved.end(), uint8_t(0));
-        tbb::parallel_for(size_t(0), n, size_t(1), [&](size_t i) {
-            if (!pick[i])
-                return;
-            prevUv[i] = charts[i].uv;
-            prevCount[i] = now[i];
-            solved[i] = 1;
-            Chart trial = charts[i];
-            const glm::ivec2 tile(glm::floor(trial.uvCentroid()));
-            ok[i] = solveFinal(trial, islands[i], opts).ok;
-            if (!ok[i])
-                return;
-            // Moving the island alone shifts it against the uvs its neighbours lend its export: that move goes, not the solve.
-            if (!opts.usePins || std::ranges::none_of(trial.pinned, [](uint8_t p) { return p != 0; }))
-            {
-                Chart moved = trial;
-                keepInTile(moved, tile);
-                if (collapsedTriangles(islands[i], moved) <= collapsedTriangles(islands[i], trial))
-                    trial = std::move(moved);
-            }
-            if (collapsedTriangles(islands[i], trial) <= now[i])
-                charts[i] = std::move(trial);
-        });
-        if (round == 0)
-            out.failed = size_t(std::ranges::count(ok, uint8_t(0)));
+    if (restored)
+    {
         writeCharts(cage, charts, uvSet);
+        measure(after);
     }
+    out.collapsedAfter = std::accumulate(after.begin(), after.end(), size_t(0));
+    out.distortionAfter = distortion(islands, charts);
+    return out;
 }
 } // namespace
 

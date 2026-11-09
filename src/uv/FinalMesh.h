@@ -101,6 +101,7 @@ LILA_SCENE_API std::vector<glm::dvec2> exportedUvs(const FinalMap& map, const ge
 struct LILA_SCENE_API FinalIsland
 {
     std::vector<glm::dvec3> pos;    // per local corner
+    std::vector<Index> corner;      // per local corner: the exported corner it stands for
     std::vector<glm::dvec2> offset; // per local corner: the part of its uv from cage wedges outside the chart
     std::vector<Index> rowStart;    // per local corner, into cols and weights; one extra at the end
     std::vector<Index> cols;        // chart vertices
@@ -157,6 +158,8 @@ LILA_SCENE_API ChartStats finalStats(const FinalIsland& island, const Chart& cha
  * counts them (uvMissing).
  */
 LILA_SCENE_API size_t collapsedTriangles(const FinalIsland& island, const Chart& chart);
+/** The same count for exported uvs measured on the exported mesh (per exported corner, capacity). */
+LILA_SCENE_API size_t collapsedTriangles(const FinalIsland& island, std::span<const glm::vec2> exportedUv);
 inline constexpr double kCollapsedFraction = 0.02;
 
 /** Sets chart.densityArea so areaUv() / densityArea() is the exported island's texel density. */
@@ -192,8 +195,8 @@ struct FinalRefineResult
 
 /**
  * Re-solves the uv islands of the faces (all when empty) against the exported mesh and writes them back, then measures the
- * export the written uvs give (a Fit Surface subdivision respaces borders from the new uvs) and puts back any island that
- * came out with more collapsed triangles than it started with.
+ * export the written uvs give with one run of the stack and puts back any island that came out with more collapsed
+ * triangles than it started with.
  * Does nothing when the stack leaves the surface alone.
  */
 LILA_SCENE_API FinalRefineResult refineFinal(geo::Mesh& cage, std::span<const Index> faces, std::string_view uvSet, const Stack& stack,
