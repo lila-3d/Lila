@@ -1268,6 +1268,9 @@ TEST_CASE("stringsRuleWeb and unrealStringsRig: the rule web by bone name, writt
     CHECK(web["contacts"] == json({"foot_l", "foot_r"}));
     CHECK(web["chains"].back() == json({"upperarm_l", "lowerarm_l", "hand_l"}));
     CHECK(web["bones"].size() == 17);
+    // Unreal solves the same problem: the bones in Strings' order (parents first) and its length scale.
+    CHECK(web["bones"][0]["name"] == "hips");
+    CHECK(web["lengthScale"].get<double>() > 1.0);
     for (const json& b : web["bones"])
         if (b["name"] == "lowerarm_l")
             CHECK(b["parent"] == "upperarm_l");

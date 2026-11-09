@@ -1,27 +1,37 @@
 #include "RigUnit_LilaStrings.h"
 
+#include "LilaStringsSolver.h"
+
+#include "ControlRig.h"
 #include "Dom/JsonObject.h"
+#include "Engine/SkeletalMesh.h"
 #include "Misc/ScopeLock.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "Rigs/RigHierarchy.h"
+#include "Rigs/RigHierarchyController.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "Units/Execution/RigUnit_BeginExecution.h"
 #include "Units/RigUnitContext.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(RigUnit_LilaStrings)
 
 namespace
 {
-/** The rule web by bone name. Names are FNames throughout, so they compare as Unreal compares bone names. */
+using namespace LilaStrings;
+
+/** The rule web by bone name, as Lila's stringsRuleWeb writes it: the bones as Strings solves them, parents first. */
 struct FRuleWeb
 {
 	FString Source;
 	FName Hips;
-	TMap<FName, FName> Parent;
-	TMap<FName, int32> ChildCount;
+	TArray<FName> Bones;
+	TArray<FName> Parents;
+	TArray<bool> Solve;
+	TArray<double> Stiffness;
 	TArray<FName> Contacts;
 	TArray<TArray<FName>> Chains;
-	TMap<FName, double> Stiffness;
+	double LengthScale = 0.0;
 	FString Error;
 };
 
@@ -48,20 +58,27 @@ TSharedPtr<FRuleWeb> Parse(const FString& Text)
 		return Web;
 	}
 	Web->Hips = FName(*Root->GetStringField(TEXT("hips")));
+	const TSharedPtr<FJsonObject>* Stiff = nullptr;
+	Root->TryGetObjectField(TEXT("stiffness"), Stiff);
 	const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
 	if (Root->TryGetArrayField(TEXT("bones"), Values))
 	{
 		for (const TSharedPtr<FJsonValue>& B : *Values)
 		{
 			const TSharedPtr<FJsonObject> Obj = B->AsObject();
-			const FName Name(*Obj->GetStringField(TEXT("name")));
+			const FString Name = Obj->GetStringField(TEXT("name"));
 			const FString ParentName = Obj->GetStringField(TEXT("parent"));
-			const FName ParentBone = ParentName.IsEmpty() ? NAME_None : FName(*ParentName);
-			Web->Parent.Add(Name, ParentBone);
-			if (!ParentBone.IsNone())
+			bool bSolve = true;
+			Obj->TryGetBoolField(TEXT("solve"), bSolve);
+			double Stiffness = 0.0;
+			if (Stiff)
 			{
-				Web->ChildCount.FindOrAdd(ParentBone)++;
+				(*Stiff)->TryGetNumberField(Name, Stiffness);
 			}
+			Web->Bones.Add(FName(*Name));
+			Web->Parents.Add(ParentName.IsEmpty() ? NAME_None : FName(*ParentName));
+			Web->Solve.Add(bSolve);
+			Web->Stiffness.Add(Stiffness);
 		}
 	}
 	if (Root->TryGetArrayField(TEXT("contacts"), Values))
@@ -75,14 +92,7 @@ TSharedPtr<FRuleWeb> Parse(const FString& Text)
 			Web->Chains.Add(ReadNames(C->AsArray()));
 		}
 	}
-	const TSharedPtr<FJsonObject>* Stiff = nullptr;
-	if (Root->TryGetObjectField(TEXT("stiffness"), Stiff))
-	{
-		for (const auto& [Name, Value] : (*Stiff)->Values)
-		{
-			Web->Stiffness.Add(FName(*Name), Value->AsNumber());
-		}
-	}
+	Root->TryGetNumberField(TEXT("lengthScale"), Web->LengthScale);
 	return Web;
 }
 
@@ -104,146 +114,72 @@ TSharedPtr<FRuleWeb> Cached(const FString& Text)
 
 FRigElementKey BoneKey(const FName Name) { return FRigElementKey(Name, ERigElementType::Bone); }
 
-bool IsUnder(const FRuleWeb& W, FName Bone, const FName Ancestor)
+/** The skeleton as the web's problem, from the hierarchy's current pose; false with Missing set when a bone isn't there. */
+bool ProblemOf(URigHierarchy* H, const FRuleWeb& W, FProblem& Out, FRules& Rules, FName& Missing)
 {
-	for (int32 Guard = 0; !Bone.IsNone() && Guard < 512; ++Guard)
-	{
-		if (Bone == Ancestor)
-		{
-			return true;
-		}
-		const FName* P = W.Parent.Find(Bone);
-		Bone = P ? *P : NAME_None;
-	}
-	return false;
-}
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaStrings::ProblemOf);
 
-/**
- * The bones that bend to bring Bone to a target, top first and Bone last: from its declared limb, else up to (not
- * including) a bone that branches or the hips. With Length > 0, that many bones above Bone instead.
- */
-TArray<FName> LimbOf(const FRuleWeb& W, const FName Bone, const int32 Length = 0)
-{
-	TArray<FName> Out{Bone};
-	if (Length <= 0)
+	TMap<FName, int32> Index;
+	FVector Lo(TNumericLimits<double>::Max()), Hi(-TNumericLimits<double>::Max());
+	for (int32 I = 0; I < W.Bones.Num(); ++I)
 	{
-		for (const TArray<FName>& Chain : W.Chains)
+		const FRigElementKey Key = BoneKey(W.Bones[I]);
+		if (!H->Contains(Key))
 		{
-			const int32 At = Chain.IndexOfByKey(Bone);
-			if (At > 0)
+			Missing = W.Bones[I];
+			return false;
+		}
+		const FTransform Local = H->GetLocalTransform(Key);
+		const FTransform Global = H->GetGlobalTransform(Key);
+		FBone& B = Out.Bones.AddDefaulted_GetRef();
+		const int32* Parent = W.Parents[I].IsNone() ? nullptr : Index.Find(W.Parents[I]);
+		B.Parent = Parent ? *Parent : INDEX_NONE;
+		if (B.Parent == INDEX_NONE)
+		{
+			// Global is Local then the parent's global, so the parent outside the solve is Local^-1 then Global.
+			B.ParentWorld = Local.ToMatrixWithScale().Inverse() * Global.ToMatrixWithScale();
+		}
+		B.Before = FTranslationMatrix(Local.GetTranslation());
+		B.After = FScaleMatrix(Local.GetScale3D());
+		B.Rotation = B.Reference = Local.GetRotation().GetNormalized();
+		B.bSolve = W.Solve[I];
+		B.Stiffness = W.Stiffness[I];
+		Index.Add(W.Bones[I], I);
+		Lo = Lo.ComponentMin(Global.GetLocation());
+		Hi = Hi.ComponentMax(Global.GetLocation());
+	}
+	Out.LengthScale = W.LengthScale > 0.0 ? W.LengthScale : FMath::Max((Hi - Lo).Size() * 0.2, 1.0);
+	for (const TArray<FName>& Names : W.Chains)
+	{
+		TArray<int32> Chain;
+		for (const FName& N : Names)
+		{
+			if (const int32* I = Index.Find(N))
 			{
-				return TArray<FName>(Chain.GetData(), At + 1);
+				Chain.Add(*I);
 			}
 		}
-	}
-	FName Cur = Bone;
-	for (int32 Guard = 0; Guard < 64; ++Guard)
-	{
-		const FName* P = W.Parent.Find(Cur);
-		if (!P || P->IsNone() || *P == W.Hips)
+		if (Chain.Num() >= 2)
 		{
-			break;
+			Rules.Chains.Add(MoveTemp(Chain));
 		}
-		if (Length > 0 ? Out.Num() > Length : W.ChildCount.FindRef(*P) > 1)
-		{
-			break;
-		}
-		Out.Insert(*P, 0);
-		Cur = *P;
 	}
-	return Out;
+	return true;
 }
 
-/**
- * Bends a limb (top first, end last) so its end reaches Target: FABRIK on the joint positions, the top fixed, then each
- * bone turned to point at its child's new place. Returns how far the end stays from Target.
- */
-double SolveLimb(URigHierarchy* H, const TArray<FName>& Limb, const FVector& Target)
+/** Writes the pose into the hierarchy, parents first, as each bone's local transform. */
+void ApplyPose(URigHierarchy* H, const FRuleWeb& W, const FProblem& P, const FPose& S)
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(LilaStrings::SolveLimb);
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaStrings::ApplyPose);
 
-	const int32 N = Limb.Num();
-	if (N < 2)
+	for (int32 I = 0; I < P.Bones.Num(); ++I)
 	{
-		return (H->GetGlobalTransform(BoneKey(Limb[0])).GetLocation() - Target).Size();
+		const FBone& B = P.Bones[I];
+		const FVector Lengthen = (S.Stretch[I] - 1.0) * B.Before.GetOrigin();
+		const FMatrix Local = Mul(Mul(Mul(FTranslationMatrix(S.Offset[I] + Lengthen), B.Before), FQuatRotationMatrix(S.Rotation[I])), B.After);
+		H->SetLocalTransform(BoneKey(W.Bones[I]), FTransform(Local), false, true);
 	}
-	TArray<FVector> P;
-	TArray<double> Len;
-	for (const FName& B : Limb)
-	{
-		P.Add(H->GetGlobalTransform(BoneKey(B)).GetLocation());
-	}
-	for (int32 I = 0; I + 1 < N; ++I)
-	{
-		Len.Add((P[I + 1] - P[I]).Size());
-	}
-	const FVector Root = P[0];
-	for (int32 Iteration = 0; Iteration < 16; ++Iteration)
-	{
-		P[N - 1] = Target;
-		for (int32 I = N - 2; I >= 0; --I)
-		{
-			P[I] = P[I + 1] + (P[I] - P[I + 1]).GetSafeNormal() * Len[I];
-		}
-		P[0] = Root;
-		for (int32 I = 0; I + 1 < N; ++I)
-		{
-			P[I + 1] = P[I] + (P[I + 1] - P[I]).GetSafeNormal() * Len[I];
-		}
-		if ((P[N - 1] - Target).SizeSquared() < 1e-6)
-		{
-			break;
-		}
-	}
-	// Turn each bone so its child lands where FABRIK put it; turning a bone carries everything below.
-	for (int32 I = 0; I + 1 < N; ++I)
-	{
-		const FTransform T = H->GetGlobalTransform(BoneKey(Limb[I]));
-		const FVector Child = H->GetGlobalTransform(BoneKey(Limb[I + 1])).GetLocation();
-		const FVector From = (Child - T.GetLocation()).GetSafeNormal();
-		const FVector To = (P[I + 1] - T.GetLocation()).GetSafeNormal();
-		if (From.IsNearlyZero() || To.IsNearlyZero())
-		{
-			continue;
-		}
-		FTransform Turned = T;
-		Turned.SetRotation(FQuat::FindBetweenNormals(From, To) * T.GetRotation());
-		H->SetGlobalTransform(BoneKey(Limb[I]), Turned, false, true);
-	}
-	return (H->GetGlobalTransform(BoneKey(Limb.Last())).GetLocation() - Target).Size();
 }
-
-/** Each contact (but the posed bone and what hangs from it) where it was, its limb bending to reach. */
-struct FHolds
-{
-	TArray<TPair<FName, FTransform>> Saved;
-
-	void Capture(URigHierarchy* H, const FRuleWeb& W, const FName Posed)
-	{
-		for (const FName& C : W.Contacts)
-		{
-			if (C != Posed && !IsUnder(W, C, Posed) && H->Contains(BoneKey(C)))
-			{
-				Saved.Emplace(C, H->GetGlobalTransform(BoneKey(C)));
-			}
-		}
-	}
-
-	double Restore(URigHierarchy* H, const FRuleWeb& W) const
-	{
-		TRACE_CPUPROFILER_EVENT_SCOPE(LilaStrings::RestoreHolds);
-
-		double Worst = 0.0;
-		for (const TPair<FName, FTransform>& S : Saved)
-		{
-			Worst = FMath::Max(Worst, SolveLimb(H, LimbOf(W, S.Key), S.Value.GetLocation()));
-			FTransform T = H->GetGlobalTransform(BoneKey(S.Key));
-			T.SetRotation(S.Value.GetRotation());
-			H->SetGlobalTransform(BoneKey(S.Key), T, false, true);
-		}
-		return Worst;
-	}
-};
 
 /** Every bone of the web as it is, to blend toward by Alpha after the solve. */
 struct FPoseBlend
@@ -252,12 +188,9 @@ struct FPoseBlend
 
 	void Capture(URigHierarchy* H, const FRuleWeb& W)
 	{
-		for (const auto& [Bone, Parent] : W.Parent)
+		for (const FName& Bone : W.Bones)
 		{
-			if (H->Contains(BoneKey(Bone)))
-			{
-				Before.Emplace(Bone, H->GetLocalTransform(BoneKey(Bone)));
-			}
+			Before.Emplace(Bone, H->GetLocalTransform(BoneKey(Bone)));
 		}
 	}
 
@@ -276,46 +209,98 @@ struct FPoseBlend
 	}
 };
 
-/** What every unit starts from: the web, the hierarchy, the posed bone and where it goes. Null with an error logged when unusable. */
-struct FSetup
-{
-	TSharedPtr<FRuleWeb> Web;
-	URigHierarchy* H = nullptr;
-	FTransform Goal;
-	FTransform Now;
-};
-
-/** The unit's inputs Prepare reads: Execute is static, its members passed in as parameters. */
-struct FInputs
+/** What a unit asks for, whichever mode. */
+struct FAsk
 {
 	const FString& RuleWeb;
 	FName Bone;
 	FName Control;
 	const FTransform& Target;
-	float Alpha;
+	bool bHoldContacts = true;
+	float Alpha = 1.0f;
+	bool bRotate = true;
+	int32 ChainLength = 0;
 };
 
-bool Prepare(const FInputs& U, const FControlRigExecuteContext& ExecuteContext, URigHierarchy* H, FSetup& Out)
+/** Poses Ask.Bone in Mode as Lila's stringsPose does, from the hierarchy's pose. False (with a warning) when it can't. */
+bool Run(URigHierarchy* H, const EMode Mode, const FAsk& Ask, float& OutError, const TFunctionRef<void(const FString&)> Warn)
 {
-	if (!H || U.Alpha <= 0.0f)
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaStrings::Run);
+
+	if (!H || Ask.Alpha <= 0.0f)
 	{
 		return false;
 	}
-	Out.H = H;
-	Out.Web = Cached(U.RuleWeb);
-	if (!Out.Web->Error.IsEmpty())
+	const TSharedPtr<FRuleWeb> Web = Cached(Ask.RuleWeb);
+	const FRuleWeb& W = *Web;
+	if (!W.Error.IsEmpty())
 	{
-		UE_CONTROLRIG_RIGUNIT_REPORT_WARNING(TEXT("%s"), *Out.Web->Error);
+		Warn(W.Error);
 		return false;
 	}
-	if (!H->Contains(BoneKey(U.Bone)))
+	FProblem P;
+	FRules Rules;
+	FName Missing;
+	if (!ProblemOf(H, W, P, Rules, Missing))
 	{
-		UE_CONTROLRIG_RIGUNIT_REPORT_WARNING(TEXT("No bone named %s"), *U.Bone.ToString());
+		Warn(FString::Printf(TEXT("No bone named %s, which the rule web poses"), *Missing.ToString()));
 		return false;
 	}
-	const FRigElementKey ControlKey(U.Control, ERigElementType::Control);
-	Out.Goal = !U.Control.IsNone() && H->Contains(ControlKey) ? H->GetGlobalTransform(ControlKey) : U.Target;
-	Out.Now = H->GetGlobalTransform(BoneKey(U.Bone));
+	const int32 Grabbed = W.Bones.IndexOfByKey(Ask.Bone);
+	if (Grabbed == INDEX_NONE)
+	{
+		Warn(FString::Printf(TEXT("%s isn't a bone the rule web poses"), *Ask.Bone.ToString()));
+		return false;
+	}
+	const FRigElementKey ControlKey(Ask.Control, ERigElementType::Control);
+	const FTransform Goal = !Ask.Control.IsNone() && H->Contains(ControlKey) ? H->GetGlobalTransform(ControlKey) : Ask.Target;
+	const FTransform Now = H->GetGlobalTransform(BoneKey(Ask.Bone));
+
+	FRequest R;
+	R.Mode = Mode;
+	R.Grabbed = Grabbed;
+	R.Hips = W.Bones.IndexOfByKey(W.Hips);
+	R.ChainLength = Ask.ChainLength;
+	R.Rules = &Rules;
+	if (const FVector Move = Goal.GetLocation() - Now.GetLocation(); !Move.IsNearlyZero(1e-6))
+	{
+		R.Move = Move;
+	}
+	// Forward and Backward always take the target's rotation; IK and Full Body when asked to.
+	const FQuat Turn = (Goal.GetRotation() * Now.GetRotation().Inverse()).GetNormalized();
+	if ((Ask.bRotate || Mode == EMode::Forward || Mode == EMode::Backward) && !Turn.Equals(FQuat::Identity, 1e-9))
+	{
+		R.Turn = Turn;
+	}
+	if (Ask.bHoldContacts)
+	{
+		const TArray<FMatrix> Start = Worlds(P, StartPose(P));
+		for (const FName& C : W.Contacts)
+		{
+			const int32 Bone = W.Bones.IndexOfByKey(C);
+			if (Bone != INDEX_NONE && Bone != Grabbed && !R.Holds.ContainsByPredicate([&](const FHold& Hold) { return Hold.Bone == Bone; }))
+			{
+				R.Holds.Add({Bone, Start[Bone], true});
+			}
+		}
+	}
+	// Full Body turning with nothing held is a plain turn: no solve has anything to keep.
+	if (Mode == EMode::FullBody && !R.Move && R.Holds.IsEmpty())
+	{
+		R.Mode = EMode::Forward;
+	}
+	FPoseBlend Blend;
+	Blend.Capture(H, W);
+	FResult Res = SolveRequest(P, R);
+	if (!Res.bHandled)
+	{
+		// A bone above the hips has no body to swing or limb to bend: it turns and moves the plain way.
+		R.Mode = EMode::Forward;
+		Res = SolveRequest(P, R);
+	}
+	ApplyPose(H, W, P, Res.Pose);
+	Blend.Apply(H, Ask.Alpha);
+	OutError = float(Res.Error);
 	return true;
 }
 } // namespace
@@ -324,148 +309,87 @@ FRigUnit_LilaStringsForward_Execute()
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(RigUnit_LilaStringsForward::Execute);
 
-	FSetup S;
-	if (!Prepare(FInputs{RuleWeb, Bone, Control, Target, Alpha}, ExecuteContext, ExecuteContext.Hierarchy, S))
-	{
-		return;
-	}
-	FPoseBlend Blend;
-	Blend.Capture(S.H, *S.Web);
-	FTransform T = S.Now;
-	T.SetRotation(S.Goal.GetRotation());
-	S.H->SetGlobalTransform(BoneKey(Bone), T, false, true);
-	Blend.Apply(S.H, Alpha);
-	Error = 0.0f;
+	Run(ExecuteContext.Hierarchy, EMode::Forward, {RuleWeb, Bone, Control, Target, bHoldContacts, Alpha, true, 0}, Error,
+		[&](const FString& Message) { UE_CONTROLRIG_RIGUNIT_REPORT_WARNING(TEXT("%s"), *Message); });
 }
 
 FRigUnit_LilaStringsBackward_Execute()
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(RigUnit_LilaStringsBackward::Execute);
 
-	FSetup S;
-	if (!Prepare(FInputs{RuleWeb, Bone, Control, Target, Alpha}, ExecuteContext, ExecuteContext.Hierarchy, S))
-	{
-		return;
-	}
-	const FRuleWeb& W = *S.Web;
-	if (W.Hips.IsNone() || !S.H->Contains(BoneKey(W.Hips)))
-	{
-		UE_CONTROLRIG_RIGUNIT_REPORT_WARNING(TEXT("The rule web names no hips to swing"));
-		return;
-	}
-	FPoseBlend Blend;
-	Blend.Capture(S.H, W);
-	FHolds Holds;
-	if (bHoldContacts)
-	{
-		Holds.Capture(S.H, W, Bone);
-	}
-	// The whole body turns rigidly about the posed bone, so it keeps its place and takes the new rotation.
-	const FQuat Delta = S.Goal.GetRotation() * S.Now.GetRotation().Inverse();
-	const FVector Pivot = S.Now.GetLocation();
-	FTransform Hips = S.H->GetGlobalTransform(BoneKey(W.Hips));
-	Hips.SetLocation(Pivot + Delta.RotateVector(Hips.GetLocation() - Pivot));
-	Hips.SetRotation(Delta * Hips.GetRotation());
-	S.H->SetGlobalTransform(BoneKey(W.Hips), Hips, false, true);
-	Error = float(Holds.Restore(S.H, W));
-	Blend.Apply(S.H, Alpha);
+	Run(ExecuteContext.Hierarchy, EMode::Backward, {RuleWeb, Bone, Control, Target, bHoldContacts, Alpha, true, 0}, Error,
+		[&](const FString& Message) { UE_CONTROLRIG_RIGUNIT_REPORT_WARNING(TEXT("%s"), *Message); });
 }
 
 FRigUnit_LilaStringsIK_Execute()
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(RigUnit_LilaStringsIK::Execute);
 
-	FSetup S;
-	if (!Prepare(FInputs{RuleWeb, Bone, Control, Target, Alpha}, ExecuteContext, ExecuteContext.Hierarchy, S))
-	{
-		return;
-	}
-	const FRuleWeb& W = *S.Web;
-	FPoseBlend Blend;
-	Blend.Capture(S.H, W);
-	FHolds Holds;
-	if (bHoldContacts)
-	{
-		Holds.Capture(S.H, W, Bone);
-	}
-	if (Bone == W.Hips)
-	{
-		// The hips carry the body: it moves and the contacts reach back.
-		FTransform T = S.Now;
-		T.SetLocation(S.Goal.GetLocation());
-		if (bRotate)
-		{
-			T.SetRotation(S.Goal.GetRotation());
-		}
-		S.H->SetGlobalTransform(BoneKey(Bone), T, false, true);
-	}
-	else
-	{
-		SolveLimb(S.H, LimbOf(W, Bone, ChainLength), S.Goal.GetLocation());
-		if (bRotate)
-		{
-			FTransform T = S.H->GetGlobalTransform(BoneKey(Bone));
-			T.SetRotation(S.Goal.GetRotation());
-			S.H->SetGlobalTransform(BoneKey(Bone), T, false, true);
-		}
-	}
-	Error = float(Holds.Restore(S.H, W));
-	Blend.Apply(S.H, Alpha);
+	Run(ExecuteContext.Hierarchy, EMode::Ik, {RuleWeb, Bone, Control, Target, bHoldContacts, Alpha, bRotate, ChainLength}, Error,
+		[&](const FString& Message) { UE_CONTROLRIG_RIGUNIT_REPORT_WARNING(TEXT("%s"), *Message); });
 }
 
 FRigUnit_LilaStringsFullBody_Execute()
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(RigUnit_LilaStringsFullBody::Execute);
 
-	FSetup S;
-	if (!Prepare(FInputs{RuleWeb, Bone, Control, Target, Alpha}, ExecuteContext, ExecuteContext.Hierarchy, S))
+	Run(ExecuteContext.Hierarchy, EMode::FullBody, {RuleWeb, Bone, Control, Target, bHoldContacts, Alpha, bRotate, 0}, Error,
+		[&](const FString& Message) { UE_CONTROLRIG_RIGUNIT_REPORT_WARNING(TEXT("%s"), *Message); });
+}
+
+TMap<FName, FTransform> ULilaStringsLibrary::SolveOnMesh(USkeletalMesh* Mesh, const FString& RuleWeb, const FString& Mode, const FName Bone, const FTransform& Target,
+														 const bool bRotate, const bool bHoldContacts, const int32 ChainLength, float& Error)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaStringsLibrary::SolveOnMesh);
+
+	TMap<FName, FTransform> Out;
+	Error = -1.0f;
+	if (!Mesh)
 	{
-		return;
+		return Out;
 	}
-	const FRuleWeb& W = *S.Web;
-	FPoseBlend Blend;
-	Blend.Capture(S.H, W);
-	FHolds Holds;
-	if (bHoldContacts)
+	const TMap<FString, EMode> Modes = {{TEXT("forward"), EMode::Forward}, {TEXT("backward"), EMode::Backward}, {TEXT("ik"), EMode::Ik}, {TEXT("fullBody"), EMode::FullBody}};
+	const EMode* Found = Modes.Find(Mode);
+	if (!Found)
 	{
-		Holds.Capture(S.H, W, Bone);
+		UE_LOG(LogTemp, Warning, TEXT("Lila Strings: no mode %s (forward, backward, ik, fullBody)"), *Mode);
+		return Out;
 	}
-	const TArray<FName> Limb = LimbOf(W, Bone);
-	if (!W.Hips.IsNone() && S.H->Contains(BoneKey(W.Hips)) && Bone != W.Hips && !IsUnder(W, W.Hips, Bone))
+	URigHierarchy* H = NewObject<URigHierarchy>(GetTransientPackage());
+	H->GetController(true)->ImportBones(Mesh->GetRefSkeleton(), NAME_None, true, true, false, false);
+	if (Run(H, *Found, {RuleWeb, Bone, NAME_None, Target, bHoldContacts, 1.0f, bRotate, ChainLength}, Error,
+			[](const FString& Message) { UE_LOG(LogTemp, Warning, TEXT("Lila Strings: %s"), *Message); }))
 	{
-		// What the limb can't reach, the body brings: the hips move by the shortfall, less as they stiffen.
-		double Reach = 0.0;
-		for (int32 I = 0; I + 1 < Limb.Num(); ++I)
-		{
-			Reach += (S.H->GetGlobalTransform(BoneKey(Limb[I + 1])).GetLocation() - S.H->GetGlobalTransform(BoneKey(Limb[I])).GetLocation()).Size();
-		}
-		const FVector Top = S.H->GetGlobalTransform(BoneKey(Limb[0])).GetLocation();
-		const FVector ToGoal = S.Goal.GetLocation() - Top;
-		const double Short = ToGoal.Size() - Reach * 0.98;
-		if (Short > 0.0)
-		{
-			const double Give = 1.0 - FMath::Clamp(W.Stiffness.FindRef(W.Hips), 0.0, 1.0);
-			FTransform Hips = S.H->GetGlobalTransform(BoneKey(W.Hips));
-			Hips.AddToTranslation(ToGoal.GetSafeNormal() * Short * Give);
-			S.H->SetGlobalTransform(BoneKey(W.Hips), Hips, false, true);
-		}
+		H->ForEach<FRigBoneElement>([&](FRigBoneElement* E) {
+			Out.Add(E->GetFName(), H->GetGlobalTransform(E->GetKey()));
+			return true;
+		});
 	}
-	else if (Bone == W.Hips)
+	return Out;
+}
+
+TMap<FName, FTransform> ULilaStringsLibrary::DragRig(UClass* RigClass, const FName Control, const FTransform& Target)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaStringsLibrary::DragRig);
+
+	TMap<FName, FTransform> Out;
+	if (!RigClass || !RigClass->IsChildOf(UControlRig::StaticClass()))
 	{
-		FTransform T = S.Now;
-		T.SetLocation(S.Goal.GetLocation());
-		S.H->SetGlobalTransform(BoneKey(Bone), T, false, true);
+		return Out;
 	}
-	if (Bone != W.Hips)
+	UControlRig* Rig = NewObject<UControlRig>(GetTransientPackage(), RigClass);
+	Rig->Initialize(true);
+	Rig->Execute(FRigUnit_BeginExecution::EventName);
+	URigHierarchy* H = Rig->GetHierarchy();
+	if (!H)
 	{
-		SolveLimb(S.H, Limb, S.Goal.GetLocation());
+		return Out;
 	}
-	if (bRotate)
-	{
-		FTransform T = S.H->GetGlobalTransform(BoneKey(Bone));
-		T.SetRotation(S.Goal.GetRotation());
-		S.H->SetGlobalTransform(BoneKey(Bone), T, false, true);
-	}
-	Error = float(Holds.Restore(S.H, W));
-	Blend.Apply(S.H, Alpha);
+	H->SetGlobalTransform(FRigElementKey(Control, ERigElementType::Control), Target, false, true);
+	Rig->Execute(FRigUnit_BeginExecution::EventName);
+	H->ForEach<FRigBoneElement>([&](FRigBoneElement* E) {
+		Out.Add(E->GetFName(), H->GetGlobalTransform(E->GetKey()));
+		return true;
+	});
+	return Out;
 }

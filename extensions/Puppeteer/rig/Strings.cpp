@@ -736,19 +736,20 @@ json ruleWeb(Graph& g, NodeId character)
     if (!root)
         throw CommandError("stringsRuleWeb: " + g.node(character)->path() + " has no skeleton");
     const CharacterRules r = rulesOf(g, character);
-    const std::vector<NodeId> joints = fullBodyJoints(g, root);
-    const strings::Skeleton k = strings::snapshot(g, root);
-    json bones = json::array();
-    for (NodeId j : joints)
+    // The bones exactly as Strings solves them, parents first, so Unreal builds the same problem.
+    const strings::Skeleton k = strings::snapshot(g, root, stiffnessOf(g, character, fullBodyJoints(g, root)));
+    json bones = json::array(), stiffness = json::object();
+    for (size_t i = 0; i < k.joints.size(); ++i)
     {
-        const NodeId parent = g.parent(j);
-        bones.push_back({{"name", bareJoint(g.node(j)->name())},
-                         {"parent", parent && std::find(joints.begin(), joints.end(), parent) != joints.end() ? bareJoint(g.node(parent)->name()) : ""}});
+        const fbik::Bone& b = k.problem.bones[i];
+        const std::string name = bareJoint(g.node(k.joints[i])->name());
+        json bone = {{"name", name}, {"parent", b.parent >= 0 ? bareJoint(g.node(k.joints[size_t(b.parent)])->name()) : ""}};
+        if (!b.solve)
+            bone["solve"] = false;
+        bones.push_back(std::move(bone));
+        if (b.stiffness != 0.0)
+            stiffness[name] = b.stiffness;
     }
-    json stiffness = json::object();
-    for (const auto& [j, v] : stiffnessOf(g, character, joints))
-        if (v != 0.0)
-            stiffness[bareJoint(g.node(j)->name())] = v;
     return {{"version", 1},
             {"character", g.node(character)->name()},
             {"root", bareJoint(g.node(root)->name())},
@@ -757,7 +758,8 @@ json ruleWeb(Graph& g, NodeId character)
             {"contacts", r.contacts},
             {"chains", r.chains},
             {"lines", r.lines},
-            {"stiffness", stiffness}};
+            {"stiffness", stiffness},
+            {"lengthScale", k.problem.lengthScale}};
 }
 
 json stringsRuleWeb(const Args& a)
