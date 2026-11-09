@@ -9,6 +9,7 @@
 #include <lila/Panels.h>
 #include <lila/UI.h>
 #include <lila/Undo.h>
+#include <lila/ViewportTool.h>
 
 #include <QHBoxLayout>
 #include <QLabel>
