@@ -2,6 +2,7 @@
 // see src/groom/groomlab/LICENSE and NOTICE).
 #include "groom/GroomEvaluator.h"
 
+#include <groomlab/card_files.h>
 #include <groomlab/export_view.h>
 #include <groomlab/frame_time.h>
 #include <groomlab/guide_hierarchy.h>
@@ -117,6 +118,69 @@ const Operator* activeNode(const GraphDocument& doc, const char* type, std::stri
     });
     return found;
 }
+/**
+ * The guides an Interpolate feeding `shown` takes, when a GuideCache or Simulate node on its guides input moved them this
+ * frame: what the viewport draws as the moving guides. Every value read is the evaluation's own (cached).
+ */
+GuidesPtr movingGuidesOf(Graph& graph, NodeId shown, const EvalContext& ctx)
+{
+    auto isMotion = [&](NodeId id) {
+        const std::string type = graph.node(id).typeName();
+        return (type == "GuideCache" || type == "Simulate") && !graph.bypassed(id);
+    };
+    auto guidesSlot = [&](NodeId id) -> std::ptrdiff_t {
+        const std::vector<PortSpec> specs = graph.inputSpecs(id);
+        for (std::size_t slot = 0; slot < specs.size(); ++slot)
+            if (specs[slot].name == "guides")
+                return static_cast<std::ptrdiff_t>(slot);
+        return -1;
+    };
+    std::vector<NodeId> stack{shown}, seen;
+    while (!stack.empty())
+    {
+        const NodeId id = stack.back();
+        stack.pop_back();
+        if (std::find(seen.begin(), seen.end(), id) != seen.end())
+            continue;
+        seen.push_back(id);
+        if (graph.node(id).typeName() == "Interpolate" && !graph.bypassed(id))
+        {
+            const std::ptrdiff_t slot = guidesSlot(id);
+            NodeId source = 0;
+            std::size_t output = 0;
+            if (slot >= 0 && graph.inputSource(id, static_cast<std::size_t>(slot), &source, &output))
+            {
+                // Up the guides' chain to the nearest node that moves them.
+                NodeId at = source;
+                for (int steps = 0; at && steps < 64 && !isMotion(at); ++steps)
+                {
+                    const std::ptrdiff_t up = guidesSlot(at);
+                    NodeId next = 0;
+                    at = up >= 0 && graph.inputSource(at, static_cast<std::size_t>(up), &next) ? next : 0;
+                }
+                if (at)
+                {
+                    const GuidesPtr moved = valueAs<GuidesPtr>(graph.evaluateOutput(source, output, ctx));
+                    NodeId fed = 0;
+                    std::size_t fedOutput = 0;
+                    const std::ptrdiff_t in = guidesSlot(at);
+                    const GuidesPtr before = in >= 0 && graph.inputSource(at, static_cast<std::size_t>(in), &fed, &fedOutput)
+                                                 ? valueAs<GuidesPtr>(graph.evaluateOutput(fed, fedOutput, ctx))
+                                                 : nullptr;
+                    if (moved && !moved->empty() && moved != before)
+                        return moved;
+                }
+            }
+        }
+        for (std::size_t slot = 0; slot < graph.inputSpecs(id).size(); ++slot)
+        {
+            NodeId source = 0;
+            if (graph.inputSource(id, slot, &source))
+                stack.push_back(source);
+        }
+    }
+    return nullptr;
+}
 } // namespace groomEvaluator
 
 using namespace groomEvaluator;
@@ -185,13 +249,28 @@ void GroomEvaluator::setGraphJson(const std::string& graphJson)
 
 void GroomEvaluator::installGraph(std::unique_ptr<GraphDocument> parsed)
 {
+    // Each document is a clone of the one parse; nodes whose type, params, inputs and data are the same keep their results.
+    auto adopt = [&](std::unique_ptr<GraphDocument>& old) {
+        auto doc = std::make_unique<GraphDocument>(parsed->clone());
+        doc->graph.setCacheIntermediates(mCacheIntermediates);
+        if (old)
+            doc->graph.adoptCache(old->graph);
+        old = std::move(doc);
+    };
     std::unique_ptr<RestPose> rest = mRestPose ? std::make_unique<RestPose>(parsed->clone(), mRestPose.get()) : nullptr;
-    auto doc = std::make_unique<GraphDocument>(parsed->clone());
-    doc->graph.setCacheIntermediates(mCacheIntermediates);
-    // Nodes whose type, params, inputs and data are the same keep their results.
-    if (mDoc)
-        doc->graph.adoptCache(mDoc->graph);
-    mDoc = std::move(doc);
+    adopt(mDoc);
+    ++mDocGeneration;
+    ++mGraphGeneration;
+    if (mSculptDoc)
+        adopt(mSculptDoc);
+    ++mStrokeDocGeneration;
+    mWarmEvaluations = mWarmIncrementals = mReleasedEvaluations = mReleasedIncrementals = 0;
+    if (mCardDoc)
+        adopt(mCardDoc);
+    if (mFullDoc)
+        adopt(mFullDoc);
+    for (auto& [density, doc] : mMeshDocs)
+        adopt(doc);
     mRestPose = std::move(rest);
     mParsed = std::move(parsed);
 }
@@ -200,6 +279,16 @@ void GroomEvaluator::dropGraph(const std::string& graphJson, const std::string& 
 {
     mParsed.reset();
     mDoc.reset();
+    ++mDocGeneration;
+    ++mGraphGeneration;
+    mSculptDoc.reset();
+    ++mStrokeDocGeneration;
+    mWarmEvaluations = mWarmIncrementals = mReleasedEvaluations = mReleasedIncrementals = 0;
+    mShown[0] = mShown[1] = Shown{};
+    mCardDoc.reset();
+    mFullDoc.reset();
+    mMeshDocs.clear();
+    mMeshMemos.clear();
     mRestPose.reset();
     mData.graphJson = graphJson;
     mGraphSet = true;
@@ -481,6 +570,7 @@ void GroomEvaluator::setSculptsJson(const std::string& json)
             externals[name] = {std::make_shared<const SculptEdits>(edits), hash};
     }
     mSculptExternals = std::move(externals);
+    ++mSculptsVersion;
 }
 
 void GroomEvaluator::setCorrectiveWeights(std::map<int, float> weights)
@@ -777,10 +867,11 @@ void GroomEvaluator::bindScalp(std::vector<std::string>& errors)
     MeshPtr levelled;
     const int levels = scalpLevelsOn(raw, &levelled);
     const std::uint64_t levelsKey = levelled && levelled != raw ? levelled->piecesHash() : 0;
-    const std::uint64_t key = hashCombine(hashCombine(raw ? raw->contentHash() : 0, mScalpMapsHash), levelsKey);
+    const std::uint64_t previewKey = mPreviewMapValues ? mPreviewMapVersion : 0;
+    const std::uint64_t key = hashCombine(hashCombine(hashCombine(raw ? raw->contentHash() : 0, mScalpMapsHash), previewKey), levelsKey);
     if (key != mMappedKey || !mCageScalp)
     {
-        const std::uint64_t mapsKey = hashCombine(mScalpMapsHash, levelsKey);
+        const std::uint64_t mapsKey = hashCombine(hashCombine(mScalpMapsHash, previewKey), levelsKey);
         if (raw && mCageScalp && mMappedFrom && mCageScalp != mMappedFrom && mapsKey == mMappedMapsKey && raw->samePointsLayout(*mMappedFrom))
         {
             // The same maps on the scalp's next frame: the color sets stay, the points move (the same mesh a fresh laying gives).
@@ -789,7 +880,7 @@ void GroomEvaluator::bindScalp(std::vector<std::string>& errors)
         else
         {
             mMapErrors.clear();
-            mCageScalp = withVertexMaps(levelled, mScalpMaps, std::string(), nullptr, &mMapErrors);
+            mCageScalp = withVertexMaps(levelled, mScalpMaps, mPreviewMapName, mPreviewMapValues.get(), &mMapErrors, mPreviewMapChannels);
         }
         mMappedKey = key;
         mMappedMapsKey = mapsKey;
@@ -906,8 +997,11 @@ const PathResolver* GroomEvaluator::paths() const
 void GroomEvaluator::setCacheIntermediates(bool enabled)
 {
     mCacheIntermediates = enabled;
-    if (mDoc)
-        mDoc->graph.setCacheIntermediates(enabled);
+    for (auto* doc : {&mDoc, &mSculptDoc, &mCardDoc, &mFullDoc})
+        if (*doc)
+            (*doc)->graph.setCacheIntermediates(enabled);
+    for (auto& [density, doc] : mMeshDocs)
+        doc->graph.setCacheIntermediates(enabled);
     if (mRestPose)
         mRestPose->setCacheIntermediates(enabled);
 }
@@ -1290,7 +1384,10 @@ void GroomEvaluator::fillExternals(ExternalInputs& externals) const
         if (node->shown)
             externals.set(simulationExternal(name), node->shown, node->shownHash);
     for (const auto& [name, edits] : mSculptExternals)
-        externals.set(sculptExternal(name), edits.first, edits.second);
+        if (!mPreviewSculpt || name != mPreviewSculptNode)
+            externals.set(sculptExternal(name), edits.first, edits.second);
+    if (mPreviewSculpt)
+        externals.set(sculptExternal(mPreviewSculptNode), mPreviewSculpt, mPreviewSculptHash);
     if (mFollowing)
         setGroomExternals(externals, mFollowRest, mFollowGuides, mFollowActive, mFollowParts, mFollowFlow);
     else
@@ -1355,8 +1452,15 @@ const GroomEvaluator::Result& GroomEvaluator::evaluate(const Request& request)
     }
 
     const HierarchyPtr previousActive = mActiveHierarchy;
+    const PartsPtr previousParts = mParts;
+    const FlowPtr previousFlow = mFlow;
     prepareTime(request.time, errors, messages);
+    messages.insert(messages.begin(), mDetachedMessages.begin(), mDetachedMessages.end());
+    mDetachedMessages.clear();
     stepSimulations(request, errors);
+    // A live brush stroke edits the preview in place: every evaluation is a change.
+    bool hierarchyChanged = mActiveHierarchy.get() != previousActive.get() || mPreviewHierarchy != nullptr;
+    const HierarchyPtr previousShown = mResult.hierarchy;
     for (const std::string* e : {&mCorrectiveError, &mPartError, &mFlowError})
         if (!e->empty())
             errors.push_back(*e);
@@ -1365,31 +1469,66 @@ const GroomEvaluator::Result& GroomEvaluator::evaluate(const Request& request)
     fillExternals(externals);
     EvalContext ctx = context(externals);
     ctx.previewDensity = request.density;
+    // While a stroke is live, fewer strands keep the viewport responsive, on a document of their own (the view's cache
+    // stays for the release).
+    if (hasPreview())
+        ctx.previewDensity *= request.sculptDensity;
+    if (mLiveStroke)
+        mStrokeDensityUsed = true;
+    const bool sculpting = hasPreview() && ctx.previewDensity != request.density && mDoc;
+    if (sculpting && !mSculptDoc)
+        mSculptDoc = newDocument();
+    mViewSculpt = sculpting;
+    GraphDocument* const viewed = sculpting ? mSculptDoc.get() : mDoc.get();
     ctx.maxPoints = request.pointBudget;
     ctx.time = request.time;
     ctx.viewport = request.viewport;
+    ctx.liveDrag = mLiveDrag;
     ctx.buildCards = request.buildCards;
+    mLastViewContext = ctx;
+    mLastViewContext.previewDensity = request.density;
+    mLastViewContext.externals = nullptr;
+    mLastViewContext.paths = nullptr;
 
     Result& out = mResult;
-    out.density = std::clamp(request.density, 0.0f, 1.0f);
+    out.density = std::clamp(ctx.previewDensity, 0.0f, 1.0f);
     const StrandsPtr previousStrands = out.strands;
+    const std::uint64_t previousSerial = out.strandsSerial;
+    const std::shared_ptr<const CardMesh> previousCards = out.cards;
+    const std::uint64_t previousStrandMeshes = out.versions.strandMeshes;
     const std::string previousView = out.viewedNode;
-    const HierarchyPtr previousShown = out.hierarchy;
+    const bool previousRoots = out.viewedRoots;
+    const std::shared_ptr<const std::vector<Vec3f>> previousCenters = out.clumpCenters;
+    const FollowCarryPtr previousFollow = out.follow;
     out.strands.reset();
-    if (mDoc)
+    out.follow.reset();
+    NodeId stopAt = 0;
+    if (viewed && !request.stopAt.empty())
+        if (const auto it = viewed->nodesByName.find(request.stopAt); it != viewed->nodesByName.end())
+            stopAt = it->second;
+    auto failed = [&](const char* what) {
+        mShown[0] = mShown[1] = Shown{};
+        out.strandsSerial = out.changesBase = 0;
+        out.strandsChanges.reset();
+        mFailure = std::current_exception();
+        errors.push_back(what);
+        messages.push_back({what, true});
+    };
+    if (stopAt)
     {
+        // The host runs this node and what follows: what feeds it, and the strands as they were.
         try
         {
-            NodeId shown = mDoc->output;
-            out.viewedNode.clear();
-            const auto it = mDoc->nodesByName.find(request.viewNode);
-            if (!request.viewNode.empty() && it != mDoc->nodesByName.end() && mDoc->graph.outputType(it->second) == PortType::Strands)
+            const std::size_t slots = viewed->graph.inputSpecs(stopAt).size();
+            for (std::size_t slot = 0; slot < slots; ++slot)
             {
-                shown = it->second;
-                out.viewedNode = request.viewNode;
+                NodeId source = 0;
+                std::size_t output = 0;
+                if (viewed->graph.inputSource(stopAt, slot, &source, &output))
+                    viewed->graph.evaluateOutput(source, output, ctx);
             }
-            const StrandsPtr strands = pinToRest(mDoc->graph.evaluateStrands(shown, ctx), out.viewedNode, ctx);
-            out.strands = carry(strands, 0);
+            out.strands = previousStrands;
+            out.follow = previousFollow;
         }
         catch (const std::exception& e)
         {
@@ -1397,11 +1536,110 @@ const GroomEvaluator::Result& GroomEvaluator::evaluate(const Request& request)
             errors.push_back(e.what());
             messages.push_back({e.what(), true});
         }
+    }
+    else if (viewed)
+    {
+        try
+        {
+            NodeId shown = viewed->output;
+            out.viewedNode.clear();
+            out.viewedRoots = false;
+            NodeId centersOf = 0;
+            const auto it = viewed->nodesByName.find(request.viewNode);
+            if (!request.viewNode.empty() && it != viewed->nodesByName.end() && viewed->graph.outputType(it->second) == PortType::Strands)
+            {
+                shown = it->second;
+                out.viewedNode = request.viewNode;
+                out.viewedRoots = viewed->graph.node(shown).typeName() == "Scatter";
+                if (viewed->graph.node(shown).typeName() == op::kClump)
+                    centersOf = shown;
+            }
+            const StrandsPtr evaluated = viewed->graph.evaluateStrands(shown, ctx);
+            out.movingGuides = groomEvaluator::movingGuidesOf(viewed->graph, shown, ctx);
+            if (centersOf)
+            {
+                const std::shared_ptr<const std::vector<Vec3f>> dots = clumpCenterDots(*viewed, centersOf, ctx);
+                if (!previousCenters || *previousCenters != *dots)
+                    out.clumpCenters = dots;
+            }
+            else
+            {
+                out.clumpCenters.reset();
+            }
+            const StrandsPtr strands = pinToRest(evaluated, out.viewedNode, ctx);
+            if (mFollowing && request.hostCarries && strands && carriesPointsAndInstances(*strands))
+            {
+                out.strands = strands;
+                const bool same = previousFollow && previousFollow->rest() == strands && previousFollow->from() == mFollowRest &&
+                                  previousFollow->to() == mScalp;
+                out.follow = same ? previousFollow : std::make_shared<const FollowCarry>(strands, mFollowRest, mScalp);
+            }
+            else
+            {
+                out.strands = carry(strands, 0);
+            }
+            // Which strands these are, and how they differ from the ones this document gave last: the graph's changes of
+            // the node shown, when the view hands its strands on as evaluated (not carried, nor pinned to rest).
+            Shown& was = mShown[sculpting ? 1 : 0];
+            const std::uint64_t graphSerial = viewed->graph.resultSerial(shown);
+            const bool asEvaluated = out.strands == evaluated && !mFollowing && graphSerial != 0;
+            if (asEvaluated && was.serial != 0 && was.node == shown && was.graphSerial == graphSerial && was.strands.lock() == out.strands)
+            {
+                out.strandsSerial = was.serial;
+                out.changesBase = was.serial;
+                out.strandsChanges = viewed->graph.changesSince(shown, graphSerial);
+            }
+            else
+            {
+                out.strandsSerial = ++mStrandsSerial;
+                out.changesBase = was.serial;
+                out.strandsChanges =
+                    asEvaluated && was.serial != 0 && was.node == shown ? viewed->graph.changesSince(shown, was.graphSerial) : nullptr;
+                was.serial = asEvaluated ? out.strandsSerial : 0;
+                was.node = shown;
+                was.graphSerial = graphSerial;
+                was.strands = out.strands;
+            }
+            if (request.wantCards)
+            {
+                // Mid-stroke too while a rebuild is quick enough to follow the brush; slower ones catch up at the end.
+                if (!hasPreview() || mLastCardBuildMs <= kLiveCardBuildBudgetMs)
+                    buildCards(ctx, request.cardDensity, messages);
+            }
+            else
+            {
+                mCardDoc.reset();
+                out.cardStrands.reset();
+                out.cards.reset();
+                out.cardNodes.clear();
+            }
+            if (request.wantStrandMeshes)
+            {
+                if (!hasPreview() || mLastStrandMeshMs <= kLiveCardBuildBudgetMs)
+                {
+                    const auto started = std::chrono::steady_clock::now();
+                    std::vector<StrandMeshSource> meshes = evaluateStrandMeshes(request.time);
+                    mLastStrandMeshMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+                    if (!sameStrandMeshes(meshes, out.strandMeshes))
+                    {
+                        out.strandMeshes = std::move(meshes);
+                        ++out.versions.strandMeshes;
+                    }
+                }
+            }
+            else if (!out.strandMeshes.empty())
+            {
+                out.strandMeshes.clear();
+                ++out.versions.strandMeshes;
+            }
+        }
+        catch (const std::exception& e)
+        {
+            failed(e.what());
+        }
         catch (...)
         {
-            mFailure = std::current_exception();
-            errors.push_back("evaluation failed");
-            messages.push_back({"evaluation failed", true});
+            failed("evaluation failed");
         }
     }
     if (!mGraphError.empty())
@@ -1411,16 +1649,49 @@ const GroomEvaluator::Result& GroomEvaluator::evaluate(const Request& request)
     if (!mSculptError.empty())
         errors.push_back(mSculptError);
 
-    // A preview is edited in place: every evaluation is a change.
-    const bool hierarchyChanged = mActiveHierarchy.get() != previousActive.get() || mPreviewHierarchy != nullptr ||
-                                  mActiveHierarchy != previousShown;
-    const bool strandsChanged = out.strands.get() != previousStrands.get() || out.viewedNode != previousView;
+    // A Sculpt node brushes shape: its output is the guides shown (a live stroke's working guides).
+    HierarchyPtr shownHierarchy = mActiveHierarchy;
+    if (!mSculptTarget.empty())
+    {
+        mSculptShownVersion = mSculptsVersion;
+        if (mPreviewSculptShown && mPreviewSculptNode == mSculptTarget)
+        {
+            shownHierarchy = mPreviewSculptShown;
+            hierarchyChanged = true;
+        }
+        else if (viewed)
+        {
+            const GuidesPtr output = sculptOutput(*viewed, ctx);
+            if (!output)
+            {
+                mSculptShown.reset();
+                mSculptShownFrom.reset();
+            }
+            else if (output != mSculptShownFrom || mScalp != mSculptShownOn || !mSculptShown)
+            {
+                mSculptShown = groomlab::sculptHierarchy(*output, mSculptTarget, mFollowing ? nullptr : mScalp.get());
+                mSculptShownFrom = output;
+                mSculptShownOn = mScalp;
+            }
+            if (mSculptShown)
+                shownHierarchy = mSculptShown;
+        }
+    }
+    if (shownHierarchy != previousShown)
+        hierarchyChanged = true;
+
+    // What changed, for drawing: the same cached results (a static groom at another frame) leave the versions alone.
+    auto carriedTo = [](const FollowCarryPtr& f) { return f ? f->to().get() : nullptr; };
+    const bool strandsChanged = out.strands.get() != previousStrands.get() || carriedTo(out.follow) != carriedTo(previousFollow) ||
+                                out.viewedNode != previousView || out.viewedRoots != previousRoots || out.clumpCenters != previousCenters;
+    const bool cardsChanged = out.cards.get() != previousCards.get();
+    const bool overlaysChanged = mParts.get() != previousParts.get() || mFlow.get() != previousFlow.get();
     if (strandsChanged)
         ++out.versions.strands;
     if (hierarchyChanged)
         ++out.versions.hierarchy;
-    if (strandsChanged || hierarchyChanged || out.parts != mParts || out.flow != mFlow)
-        ++out.versions.evaluation;
+    if (cardsChanged)
+        ++out.versions.cards;
     if ((strandsChanged || hierarchyChanged) && !request.wantBounds)
         mBoundsStale = true;
     if ((strandsChanged || hierarchyChanged || mBoundsStale) && request.wantBounds)
@@ -1434,10 +1705,15 @@ const GroomEvaluator::Result& GroomEvaluator::evaluate(const Request& request)
         };
         if (out.strands)
         {
-            const StrandSet::Extent e = out.strands->extent();
+            // Only some strands changed since the view's last: their blocks measured again. Handed on at rest: each
+            // strand's box at rest, where carrying puts it.
+            const bool some = out.strandsChanges && !out.strandsChanges->all && previousStrands && out.changesBase == previousSerial;
+            const StrandSet::Extent e = out.follow ? carriedBounds(*out.strands, followBoxes(out.strands), *out.follow->to())
+                                        : some     ? out.strands->extentAfter(*previousStrands, out.strandsChanges->strands)
+                                                   : out.strands->extent();
             if (!e.finite)
             {
-                const std::string what = nonFiniteMessage(mDoc.get());
+                const std::string what = nonFiniteMessage(sculpting ? mSculptDoc.get() : mDoc.get());
                 errors.push_back(what);
                 messages.push_back({what, true});
             }
@@ -1447,18 +1723,22 @@ const GroomEvaluator::Result& GroomEvaluator::evaluate(const Request& request)
                 expand(e.hi);
             }
         }
-        if (mActiveHierarchy)
-            for (const HierarchyGuide& g : mActiveHierarchy->guides())
-                for (const Vec3f& p : g.points)
-                    expand(p);
+        for (const HierarchyPtr& h : {mActiveHierarchy, shownHierarchy != mActiveHierarchy ? shownHierarchy : nullptr})
+            if (h)
+                for (const HierarchyGuide& g : h->guides())
+                    for (const Vec3f& p : g.points)
+                        expand(p);
         out.bounds.valid = lo.x <= hi.x;
         out.bounds.lo = out.bounds.valid ? lo : Vec3f();
         out.bounds.hi = out.bounds.valid ? hi : Vec3f();
     }
+    const bool strandMeshesChanged = out.versions.strandMeshes != previousStrandMeshes;
+    if (strandsChanged || hierarchyChanged || cardsChanged || overlaysChanged || strandMeshesChanged)
+        ++out.versions.evaluation;
 
     out.scalp = mScalp;
     out.cageScalp = mCageScalp;
-    out.hierarchy = mActiveHierarchy;
+    out.hierarchy = shownHierarchy;
     out.authoredHierarchy = mHierarchy;
     out.parts = mParts;
     out.flow = mFlow;
@@ -1496,7 +1776,7 @@ Value GroomEvaluator::evaluateNode(const std::string& name, float density, doubl
     ctx.buildCards = buildCards;
     Value value = scratch.graph.evaluate(id, ctx);
     if (const StrandsPtr strands = valueAs<StrandsPtr>(value))
-        return Value(carry(strands, 1));
+        return Value(carry(strands, 3));
     return value;
 }
 
@@ -1632,13 +1912,38 @@ std::string GroomEvaluator::hairLookJson() const
 GroomEvaluator::Stats GroomEvaluator::stats() const
 {
     Stats out;
-    const StrandsPtr& strands = mResult.strands;
+    const Result& v = mResult;
+    const StrandsPtr& strands = v.strands;
+    out.view = v.viewedNode;
     out.strands = strands ? strands->strandCount() : 0;
     out.points = strands ? strands->pointCount() : 0;
     out.guides = mActiveHierarchy ? mActiveHierarchy->guides().size() : 0;
+    out.cards = v.cards ? v.cards->cards.size() : 0;
+    out.cardStrands = v.cardStrands ? v.cardStrands->strandCount() : 0;
+    out.cardTriangles = v.cards ? v.cards->triangleCount() : 0;
+    out.cardTextures = v.cards ? v.cards->textureCount() : 0;
+    {
+        // A Cards node is stale when its cards no longer match what the bake was made from (one the bake never saw too);
+        // maps set by hand carry no stamp and are never stale.
+        const auto coverage = mCardMaps.find("Coverage");
+        const bool baked = coverage != mCardMaps.end() && !coverage->second.empty();
+        const auto stampIt = mCardMaps.find("Strands");
+        const std::string stamp = stampIt != mCardMaps.end() ? stampIt->second : std::string();
+        const auto bakedHashes = parseCardsBakeStamp(stamp);
+        if (v.cards)
+            for (const CardNodeSummary& n : v.cardNodes)
+            {
+                const auto it = bakedHashes.find(n.node);
+                const bool stale = baked && !stamp.empty() && (it == bakedHashes.end() || it->second != std::to_string(n.bakeHash));
+                out.cardsStale = out.cardsStale || stale;
+                out.cardFeathers += n.feathers;
+                out.cardNodes[n.node] = {n.cards, n.triangles, n.textures, n.feathers, stale};
+            }
+        out.cardsBaked = baked;
+    }
     if (mDoc)
     {
-        const GraphDocument& doc = *mDoc;
+        const GraphDocument& doc = *viewDoc();
         out.cacheBytes = doc.graph.cachedBytes();
         out.cacheEvictions = doc.graph.cacheEvictions();
         activeNode(doc, "HairColor", &out.hairColor);
@@ -1666,6 +1971,8 @@ GroomEvaluator::Stats GroomEvaluator::stats() const
     }
     out.scalpHistoryFrames = scalpHistoryFrames(mResult.viewedNode);
     out.restEvaluations = restEvaluations();
+    out.strokeDocument = mSculptDoc != nullptr;
+    out.simulations = simulationStatus();
     return out;
 }
 
@@ -1674,7 +1981,7 @@ std::vector<std::pair<std::string, double>> GroomEvaluator::nodeTimes() const
     std::vector<std::pair<std::string, double>> out;
     if (!mDoc)
         return out;
-    const auto& times = mDoc->graph.lastEvaluationTimes();
+    const auto& times = viewDoc()->graph.lastEvaluationTimes();
     for (const auto& [name, id] : mDoc->nodesByName)
         if (const auto it = times.find(id); it != times.end())
             out.emplace_back(name, it->second);
@@ -1686,7 +1993,7 @@ std::vector<std::pair<std::string, std::string>> GroomEvaluator::nodeNotes() con
     std::vector<std::pair<std::string, std::string>> out;
     if (!mDoc)
         return out;
-    const auto& notes = mDoc->graph.lastNotes();
+    const auto& notes = viewDoc()->graph.lastNotes();
     for (const auto& [name, id] : mDoc->nodesByName)
         if (const auto it = notes.find(id); it != notes.end())
             out.emplace_back(name, it->second);
@@ -1695,12 +2002,15 @@ std::vector<std::pair<std::string, std::string>> GroomEvaluator::nodeNotes() con
 
 std::size_t GroomEvaluator::evaluationCount() const
 {
-    return mDoc ? mDoc->graph.evaluationCount() : 0;
+    // The view's and a live stroke's (both show the graph's result); not the stroke document's warm evaluations.
+    return (mDoc ? mDoc->graph.evaluationCount() : 0) + (mSculptDoc ? mSculptDoc->graph.evaluationCount() - mWarmEvaluations : 0) +
+           mReleasedEvaluations;
 }
 
 std::size_t GroomEvaluator::incrementalCount() const
 {
-    return mDoc ? mDoc->graph.incrementalCount() : 0;
+    return (mDoc ? mDoc->graph.incrementalCount() : 0) + (mSculptDoc ? mSculptDoc->graph.incrementalCount() - mWarmIncrementals : 0) +
+           mReleasedIncrementals;
 }
 
 std::size_t GroomEvaluator::restEvaluations() const

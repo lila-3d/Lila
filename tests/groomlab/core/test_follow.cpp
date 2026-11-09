@@ -322,6 +322,51 @@ TEST(FollowScalp, MotionKeysShareTheRestEvaluation) {
     EXPECT_EQ(keys.evaluationCount(), runs) << "the graph ran once, on the rest pose";
 }
 
+TEST(FollowScalp, AHostCarryingTheStrandsGetsThemAtRestAndTheSameBounds) {
+    // GroomEvaluator::Request::hostCarries (Maya's viewport carrying on the GPU): the strands at rest with what
+    // carries them; placed() the strands the session carries itself, the bounds holding theirs, and the
+    // strands' version moving with the scalp as theirs does.
+    GroomData data = followData(kLookGraph);
+    data.followScalp = true;
+    GroomEvaluator carried(data), handed(data);
+    GroomEvaluator::Request request;
+    GroomEvaluator::Request hosted = request;
+    hosted.hostCarries = true;
+    std::uint64_t version = 0, versionCarried = 0;
+    StrandsPtr rest;
+    for (const int frame : {2, 3, 3}) {
+        SCOPED_TRACE("frame " + std::to_string(frame));
+        carried.updateScalpPoints(deformedPoints(*data.scalp, frame));
+        handed.updateScalpPoints(deformedPoints(*data.scalp, frame));
+        const GroomEvaluator::Result& a = carried.evaluate(request);
+        const GroomEvaluator::Result& b = handed.evaluate(hosted);
+        EXPECT_FALSE(a.follow);
+        ASSERT_TRUE(b.follow);
+        EXPECT_EQ(b.follow->to(), handed.last().scalp);
+        if (rest) {
+            EXPECT_EQ(b.strands, rest);  // the one rest evaluation
+        }
+        rest = b.strands;
+        EXPECT_EQ(b.placed()->contentHash(), a.strands->contentHash());
+        EXPECT_EQ(b.placed(), b.placed());  // carried once
+        // The bounds hold the carried strands' (each strand's box at rest carried), hardly more.
+        EXPECT_TRUE(b.bounds.valid);
+        const float diagonal = (a.bounds.hi - a.bounds.lo).length();
+        for (int c = 0; c < 3; ++c) {
+            EXPECT_LE((&b.bounds.lo.x)[c], (&a.bounds.lo.x)[c]);
+            EXPECT_GE((&b.bounds.hi.x)[c], (&a.bounds.hi.x)[c]);
+            EXPECT_LT((&a.bounds.lo.x)[c] - (&b.bounds.lo.x)[c], 0.05f * diagonal);
+            EXPECT_LT((&b.bounds.hi.x)[c] - (&a.bounds.hi.x)[c], 0.05f * diagonal);
+        }
+        // The strands' version moves as the session carrying them itself moves it (with the scalp).
+        EXPECT_EQ(b.versions.strands != version, a.versions.strands != versionCarried);
+        version = b.versions.strands;
+        versionCarried = a.versions.strands;
+    }
+    // At rest nothing is handed on (nothing to carry).
+    handed.updateScalpPoints(data.scalp->points());
+    EXPECT_FALSE(handed.evaluate(hosted).follow);
+}
 
 
 TEST(FollowScalp, PosesInWorldSpaceKeepTheirPlace) {

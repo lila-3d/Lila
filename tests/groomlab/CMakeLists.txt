@@ -3,6 +3,7 @@
 find_package(GTest CONFIG REQUIRED)
 find_package(Alembic CONFIG REQUIRED)
 add_executable(lila_groomlab_tests
+    core/test_async_evaluation.cpp
     core/test_attributes.cpp
     core/test_brush.cpp
     core/test_brush_alpha.cpp
@@ -24,6 +25,7 @@ add_executable(lila_groomlab_tests
     core/test_determinism.cpp
     core/test_display.cpp
     core/test_distance_field.cpp
+    core/test_evaluator_extras.cpp
     core/test_example_node.cpp
     core/test_expression.cpp
     core/test_feather_cards.cpp
@@ -63,12 +65,12 @@ add_executable(lila_groomlab_tests
     core/test_reference_edit.cpp
     core/test_reference_guides.cpp
     core/test_regions.cpp
-    core/test_renderman_look.cpp
     core/test_render_overrides.cpp
+    core/test_renderman_look.cpp
     core/test_robustness.cpp
     core/test_scale_export.cpp
-    core/test_scale_with_scalp.cpp
     core/test_scale_invariance.cpp
+    core/test_scale_with_scalp.cpp
     core/test_scales.cpp
     core/test_scalp_paint.cpp
     core/test_scalp_pieces.cpp

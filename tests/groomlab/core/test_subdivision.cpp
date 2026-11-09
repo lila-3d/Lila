@@ -458,6 +458,32 @@ TEST(Subdivision, MatchRenderAndTheNote) {
     EXPECT_EQ(session.scalp().get(), session.cageScalp().get());
 }
 
+TEST(Subdivision, VertexMapsOnTheRefinedScalp) {
+    const auto head = quadSphere(10, 12);
+    GroomData data;
+    data.graphJson = graphWith("2");
+    data.scalp = head;
+    GroomEvaluator session(data);
+    ScalpMaps maps;
+    ScalpMapEntry entry;
+    entry.kind = "vertices";
+    for (std::size_t v = 0; v < head->pointCount(); ++v) entry.values.push_back(head->points()[v].y > 0.0f ? 1.0f : 0.0f);
+    maps.maps["crown"] = entry;
+    session.setScalpMaps(maps);
+    const MeshPtr scalp = session.scalp();
+    ASSERT_EQ(scalp->subdivisionLevel(), 2);
+    const auto* colors = scalp->cornerColors("crown");
+    ASSERT_TRUE(colors);
+    for (std::size_t c = 0; c < colors->size(); ++c) {
+        const std::int32_t v = scalp->triangles()[c / 3][c % 3];
+        if (static_cast<std::size_t>(v) < head->pointCount()) EXPECT_EQ((*colors)[c][0], entry.values[v]);
+    }
+    // Shown per refined vertex; painted per cage vertex.
+    const ScalpMapView view = session.scalpMapView("crown", "rgb");
+    ASSERT_EQ(view.kind, "vertices");
+    EXPECT_EQ(view.values->size(), scalp->pointCount());
+    EXPECT_EQ(session.cageScalp()->pointCount(), head->pointCount());
+}
 
 TEST(Subdivision, ColliderMeshNodeRefines) {
     const char* graph = R"({
