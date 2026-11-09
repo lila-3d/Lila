@@ -833,3 +833,27 @@ TEST_CASE("stringsZero relativeTo: the spine zeroes and the head keeps its place
     const json rot = run("getAttr", {{"args", {"spine_02.rotate"}}});
     CHECK(std::abs(rot[2].get<double>()) < 1e-3);
 }
+
+TEST_CASE("stringsBreakdown parts and favour: an arm held at its own weight, extremities lagging the body")
+{
+    loadPuppeteer();
+    stringsBiped();
+    run("playbackOptions", {{"fps", 30.0}});
+    const json all = {"hips", "spine_01", "spine_02", "neck", "head", "upperarm_l", "lowerarm_l", "hand_l"};
+    run("currentTime", {{"args", {sec(0)}}});
+    run("setKeyframe", {{"args", all}});
+    run("currentTime", {{"args", {sec(10)}}});
+    for (const char* j : {"spine_01", "upperarm_l", "lowerarm_l"})
+        run("rotate", {{"args", {j}}, {"to", v3(0, 0, 30)}});
+    run("setKeyframe", {{"args", all}});
+    run("currentTime", {{"args", {sec(0)}}});
+    const json armBefore = run("getAttr", {{"args", {"upperarm_l.rotate"}}});
+    run("stringsBreakdown", {{"args", {"hips"}}, {"weight", 1.0}, {"parts", {{"upperarm_l", 0.0}}}});
+    CHECK(run("getAttr", {{"args", {"upperarm_l.rotate"}}})[2].get<double>() == doctest::Approx(armBefore[2].get<double>()).epsilon(1e-6));
+    CHECK(run("getAttr", {{"args", {"spine_01.rotate"}}})[2].get<double>() == doctest::Approx(30.0).epsilon(1e-3));
+    run("undo");
+    run("stringsBreakdown", {{"args", {"hips"}}, {"weight", 1.0}, {"favour", 1.0}});
+    const double spine = run("getAttr", {{"args", {"spine_01.rotate"}}})[2].get<double>();
+    const double fore = run("getAttr", {{"args", {"lowerarm_l.rotate"}}})[2].get<double>();
+    CHECK(fore < spine - 1.0);
+}

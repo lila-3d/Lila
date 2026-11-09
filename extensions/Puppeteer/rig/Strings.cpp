@@ -1300,16 +1300,18 @@ std::vector<NodeId> worldParts(Graph& g, NodeId character, const Args& a)
  * limbs bending to put them there.
  */
 void inbetween(Graph& g, NodeId character, const std::vector<NodeId>& joints, const std::vector<NodeId>& parts, const Keyframe& from,
-               const Keyframe& to, double f)
+               const Keyframe& to, double f, const std::function<double(NodeId, double)>& weightOf = {})
 {
+    auto at = [&](NodeId j) { return weightOf ? weightOf(j, f) : f; };
     for (size_t i = 0; i < joints.size(); ++i)
     {
+        const double fi = at(joints[i]);
         glm::dquat b = to.rotation[i];
         if (glm::dot(from.rotation[i], b) < 0.0)
             b = -b;
-        g.setValue({joints[i], Transform::kRotate, -1}, rotateFor(g, joints[i], glm::dmat3(glm::mat3_cast(glm::normalize(glm::slerp(from.rotation[i], b, f))))));
+        g.setValue({joints[i], Transform::kRotate, -1}, rotateFor(g, joints[i], glm::dmat3(glm::mat3_cast(glm::normalize(glm::slerp(from.rotation[i], b, fi))))));
         if (glm::length(to.translate[i] - from.translate[i]) > 1e-9)
-            g.setValue({joints[i], Transform::kTranslate, -1}, glm::mix(from.translate[i], to.translate[i], f));
+            g.setValue({joints[i], Transform::kTranslate, -1}, glm::mix(from.translate[i], to.translate[i], fi));
     }
     if (parts.empty())
         return;
@@ -1319,7 +1321,7 @@ void inbetween(Graph& g, NodeId character, const std::vector<NodeId>& joints, co
     std::vector<strings::Hold> holds;
     for (size_t i = 0; i < parts.size(); ++i)
         if (const int b = k.boneOf(parts[i]); b >= 0)
-            holds.push_back({.bone = b, .world = blendWorld(from.parts[i], to.parts[i], f)});
+            holds.push_back({.bone = b, .world = blendWorld(from.parts[i], to.parts[i], at(parts[i]))});
     strings::Pose pose = strings::startPose(k.problem);
     strings::holdLimbs(k.problem, pose, holds, k.hips, 1.0, {}, &k.rules);
     strings::apply(g, k, pose);
@@ -1351,10 +1353,6 @@ NodeId onlyCharacter(Graph& g, const std::vector<NodeId>& joints, const char* co
     return c;
 }
 
-/**
- * Breakdown in space: weight -1 is the previous key's pose, 0 now, 1 the next key's, past either overshoots. Rotations
- * blend in their parents' space (arcs), the feet in world, so planted feet stay planted between two planted keys.
- */
 /** The distance from p to the nearest point of a polyline. */
 double distanceToPath(const std::vector<glm::dvec3>& path, const glm::dvec3& p)
 {
@@ -1602,6 +1600,45 @@ json lineOfAction(const Args& a)
     return out;
 }
 
+/**
+ * Per-joint breakdown weights: favour lags the extremities behind the body (above 0) or leads with them (below 0), by
+ * each joint's depth below the hips; parts names joints whose weight, and their children's, is set outright.
+ */
+std::function<double(NodeId, double)> breakdownWeights(Graph& g, NodeId character, const Args& a)
+{
+    const double favour = std::clamp(a.get<double>("favour", 0.0), -1.0, 1.0);
+    std::vector<std::pair<NodeId, double>> parts;
+    if (a.has("parts"))
+        for (const auto& [name, v] : a.flags["parts"].items())
+            parts.push_back({jointNamed(g, name, "stringsBreakdown").id(), v.get<double>()});
+    if (favour == 0.0 && parts.empty())
+        return {};
+    const NodeId root = characterRoot(g, character);
+    std::map<NodeId, int> depth;
+    int deepest = 1;
+    for (NodeId j : fullBodyJoints(g, root))
+    {
+        int d = 0;
+        for (NodeId p = j; p && p != root; p = g.parent(p))
+            ++d;
+        depth[j] = d;
+        deepest = std::max(deepest, d);
+    }
+    // Deeper parts listed later win, so a hand's override beats its arm's.
+    std::sort(parts.begin(), parts.end(), [&](const auto& x, const auto& y) { return depth[x.first] < depth[y.first]; });
+    return [&g, favour, parts, depth, deepest](NodeId j, double f) {
+        for (auto it = parts.rbegin(); it != parts.rend(); ++it)
+            if (j == it->first || isUnder(g, j, it->first))
+                return it->second;
+        const auto d = depth.find(j);
+        return f * std::clamp(1.0 - favour * (d == depth.end() ? 0.0 : double(d->second) / double(deepest)), 0.0, 2.0);
+    };
+}
+
+/**
+ * Breakdown in space: weight -1 is the previous key's pose, 0 now, 1 the next key's, past either overshoots. Rotations
+ * blend in their parents' space (arcs), the feet in world, so planted feet stay planted between two planted keys.
+ */
 json stringsBreakdown(const Args& a)
 {
     Graph& g = graph();
@@ -1617,7 +1654,7 @@ json stringsBreakdown(const Args& a)
     g.evaluate();
     const Keyframe now = keyframeNow(g, joints, parts);
     const Keyframe target = keyframeAt(g, joints, parts, *other);
-    inbetween(g, character, joints, parts, now, target, std::abs(w));
+    inbetween(g, character, joints, parts, now, target, std::abs(w), breakdownWeights(g, character, a));
     return {{"from", g.time()}, {"toward", *other}, {"joints", joints.size()}};
 }
 
@@ -2057,6 +2094,8 @@ void registerStrings(ext::Context& ctx)
         .positionalDoc = "joints or a character (default the selection)",
         .flags = {
             {"weight", "w", T::Float, 0.0, "-1 the previous key's pose, 0 now, 1 the next key's."},
+            {"favour", "fv", T::Float, 0.0, "Above 0 the hands, feet and head lag behind the body; below 0 they lead.", {}, {}, -1.0, 1.0},
+            {"parts", "pt", T::Any, nullptr, "{joint: weight}: those joints and their children take that weight instead."},
             {"all", "al", T::Bool, true, "The whole character; False only the given joints."},
             nodeFlag({"world", "wo", T::List, nullptr, "Joints that blend in world space; default the character's contacts."}, "joint"),
         },
