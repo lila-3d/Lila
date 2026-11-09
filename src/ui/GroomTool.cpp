@@ -347,6 +347,8 @@ public:
                 setCurveSculptSettleGrab(on);
         });
         v->addWidget(mSculpt);
+        mGroom = makeGroomBrushPage(this);
+        v->addWidget(mGroom);
 
         auto* optionsBox = new QWidget(this);
         auto* options = new QVBoxLayout(optionsBox);
@@ -385,7 +387,12 @@ public:
         reset->setToolTip("Reset Settings: put the current mode's or brush's settings back to their defaults.");
         controls::setRole(reset, "push");
         connect(reset, &QToolButton::clicked, this, [this] {
-            if (!mDrawPage)
+            if (mPage == GroomPalettePage::Groom && groomBrushToolActive())
+            {
+                resetGroomBrushSettings();
+                return;
+            }
+            if (mPage != GroomPalettePage::Draw)
             {
                 resetCurveSculptSettings();
                 return;
@@ -408,16 +415,18 @@ public:
 
     ~GroomPalette() override { Graph::current().removeListener(mGraphListener); }
 
-    void setPage(bool draw)
+    void setPage(GroomPalettePage page)
     {
-        mDrawPage = draw;
+        mPage = page;
         sync();
     }
 
     void sync()
     {
-        mDraw->setVisible(mDrawPage);
-        mSculpt->setVisible(!mDrawPage);
+        mDraw->setVisible(mPage == GroomPalettePage::Draw);
+        mSculpt->setVisible(mPage == GroomPalettePage::Sculpt);
+        mGroom->setVisible(mPage == GroomPalettePage::Groom);
+        syncGroomBrushPage(mGroom);
         const DrawHairSettings& s = drawHairSettings();
         for (size_t i = 0; i < mModes.size(); ++i)
             mModes[i]->setChecked(HairMode(i) == s.mode);
@@ -447,7 +456,7 @@ public:
         const int brush = curveSculptBrush();
         for (size_t i = 0; i < mBrushes.size(); ++i)
             mBrushes[i]->setChecked(int(i) == brush);
-        mSettleGrab->setVisible(!mDrawPage);
+        mSettleGrab->setVisible(mPage != GroomPalettePage::Draw && !groomBrushToolActive());
         mSettleGrab->setChecked(curveSculptSettleGrab());
         mSettleGrab->setEnabled(brush == int(groom::Brush::Grab));
         const Node* guides = groomPaletteGuides();
@@ -458,8 +467,8 @@ public:
     }
 
 private:
-    bool mDrawPage = true;
-    QWidget *mDraw = nullptr, *mSculpt = nullptr;
+    GroomPalettePage mPage = GroomPalettePage::Draw;
+    QWidget *mDraw = nullptr, *mSculpt = nullptr, *mGroom = nullptr;
     std::array<QToolButton*, kModeButtons.size()> mModes{};
     std::array<QToolButton*, kBrushButtons.size()> mBrushes{};
     QDoubleSpinBox *mWidth = nullptr, *mThickness = nullptr, *mLift = nullptr, *mSize = nullptr, *mPeriod = nullptr, *mPartRadius = nullptr, *mLength = nullptr;
@@ -509,7 +518,7 @@ public:
         }
         mGroom = gr ? gr->id() : scene::kNoNode;
         mControls.activate();
-        showGroomPalette(true);
+        showGroomPalette(GroomPalettePage::Draw);
         if (!gr)
             log::warn("Draw Hair: select a groom, or the mesh hair grows from");
     }
@@ -1253,11 +1262,11 @@ QWidget* stackPanel(NodeId id)
 }
 } // namespace
 
-void showGroomPalette(bool drawHair)
+void showGroomPalette(GroomPalettePage page)
 {
     panels::show(kGroomPaletteId);
     if (gGroomPalette)
-        gGroomPalette->setPage(drawHair);
+        gGroomPalette->setPage(page);
     panels::placeToolPalette(groomPaletteDock());
 }
 
@@ -1336,5 +1345,6 @@ void registerGroomUi()
     // The Groom section shows the graph's lock styles: rebuilt when the graph changes (an edit, undo, a script).
     attributeEditor::filters().put("lila.groomGraph", {.typeName = "groom", .triggers = {"graph", "lockCount"}});
     registerLockHandles();
+    registerGroomBrushTool();
 }
 } // namespace lila::ui

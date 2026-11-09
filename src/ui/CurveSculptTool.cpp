@@ -135,6 +135,9 @@ public:
             {
                 if (n->type().isA("curve") && mNode == scene::kNoNode)
                     mNode = id;
+                else if (n->type().isA("groom") && mNode == scene::kNoNode)
+                    if (scene::Node* guides = groom::guidesOf(g, *n))
+                        mNode = guides->id();
                 else if (n->type().isA("mesh") && mesh.empty())
                     mesh = n->path();
             }
@@ -152,7 +155,9 @@ public:
         const scene::NodeId* target = &mNode;
         const bool* stroking = &mStroking;
         viewportHooks::setHideHook("lila.curveSculpt", [target, stroking](scene::NodeId id) { return *stroking && id == *target; });
-        showGroomPalette(false);
+        // On a groom's guides the lock brushes sit with the groom brushes.
+        scene::Node* curve = g.node(mNode);
+        showGroomPalette(curve && groom::groomOf(g, *curve) ? GroomPalettePage::Groom : GroomPalettePage::Sculpt);
     }
 
     void deactivate() override
@@ -701,7 +706,18 @@ void registerCurveSculptTool()
     actions::add({.id = "curve.sculptCurves",
                   .label = "Sculpt Curves",
                   .category = "Curves",
-                  .run = [] { viewportTools::activate("curve.sculptCurves"); },
+                  .run =
+                      [] {
+                          // A groom is brushed with the groom brushes.
+                          scene::Graph& g = scene::Graph::current();
+                          for (scene::NodeId id : g.selection())
+                              if (scene::Node* n = g.node(id); n && n->type().isA("groom"))
+                              {
+                                  viewportTools::activate("groom.brushes");
+                                  return;
+                              }
+                          viewportTools::activate("curve.sculptCurves");
+                      },
                   .doc = "Combs, smooths, grows, puffs, adds, deletes, thins, cuts, pinches and slides the selected curve's many curves (hair) "
                          "with brushes; roots stay on its groom surface. Select a mesh too to make it the surface.",
                   .python = "lila.ui.run_action(\"curve.sculptCurves\")"});

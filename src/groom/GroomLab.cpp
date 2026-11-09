@@ -300,6 +300,11 @@ public:
                 mEvaluator = std::make_unique<GroomEvaluator>();
             GroomEvaluator& e = *mEvaluator;
             setGraph(e);
+            e.setPartsJson(s(*this, "parts"));
+            e.setFlowJson(s(*this, "flow"));
+            e.setScalpMapsJson(s(*this, "scalpMaps"));
+            e.setSculptsJson(s(*this, "sculpts"));
+            e.setCorrectivesJson(s(*this, "correctives"));
             e.setFramesPerSecond(anim::playback().fps);
             const bool scale = b(*this, "scaleWithScalp");
             e.setScaleWithScalp(scale);

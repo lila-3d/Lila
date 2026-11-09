@@ -275,6 +275,11 @@ void registerTypes()
         {.name = "meshMatrix", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = AttrInput | AttrHidden, .doc = "The scalp's world matrix."},
         {.name = "inCurve", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = kIn | AttrHidden, .doc = "More guides: curves, world space, rooted on the scalp at their first point."},
         {.name = "hierarchy", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrHidden, .doc = "The guides: a GroomLab guide hierarchy as JSON."},
+        {.name = "parts", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrHidden, .doc = "Parts drawn on the scalp: a GroomLab part set as JSON."},
+        {.name = "flow", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrHidden, .doc = "Flow arrows and sinks on the scalp: a GroomLab flow set as JSON."},
+        {.name = "scalpMaps", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrHidden, .doc = "Maps painted on the scalp's vertices: GroomLab scalp maps as JSON."},
+        {.name = "sculpts", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrHidden, .doc = "Sculpt nodes' stored edits: a GroomLab sculpt set as JSON."},
+        {.name = "correctives", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrHidden, .doc = "Shot sculpts: GroomLab correctives as JSON."},
     };
     for (AttrDef d : std::vector<AttrDef>{
              sAttrDefault("graph", "", "The groom graph as JSON; empty: guides into locks, strands interpolated from them.", graphCat),
