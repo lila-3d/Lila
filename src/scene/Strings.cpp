@@ -569,6 +569,11 @@ Result conform(const fbik::Problem& p, const std::vector<int>& path, const std::
                                    .rotation = h.rotation ? std::optional(glm::normalize(glm::quat_cast(orthonormal(glm::dmat3(h.world))))) : std::nullopt});
     if (hips >= 0)
         q.bones[size_t(hips)].translate = true;
+    // With its first joint fixed, the path bends alone: nothing above or beside it turns to help.
+    else if (!path.empty())
+        for (size_t b = 0; b < q.bones.size(); ++b)
+            if (!isUnder(p, int(b), path.front()))
+                q.bones[b].solve = false;
     if (maxStretch > 1.0)
         for (fbik::Bone& b : q.bones)
             b.maxStretch = maxStretch;

@@ -726,6 +726,7 @@ TEST_CASE("lineOfAction across a range: travel slides the body along a path stro
 
 #include "ui/ViewportTool.h"
 #include <QMouseEvent>
+#include <QWheelEvent>
 
 TEST_CASE("Line of Action tool: a drawn stroke bends the body, the curve stays while the selection holds and dragging it re-poses")
 {
@@ -885,4 +886,45 @@ TEST_CASE("stringsPose across a range onto a layer: the base keeps its keys, the
         run("currentTime", {{"args", {sec(f)}}});
         CHECK(near(pos("hips"), hips[f], 1e-3));
     }
+}
+
+TEST_CASE("Line of Action tool: Shift + drag picks a path between two joints, Ctrl + wheel turns the plane")
+{
+    loadPuppeteer();
+    stringsBiped();
+    run("select", {{"args", {"hips"}}});
+    ui::ViewInfo v = view();
+    v.eye = {0.0, 120.0, 400.0};
+    v.view = glm::lookAt(v.eye, glm::dvec3(0.0, 120.0, 0.0), glm::dvec3(0, 1, 0));
+    ui::actions::run("puppeteer.strings.lineOfAction");
+    ui::ViewportTool* tool = ui::viewportTools::active();
+    REQUIRE(tool);
+    auto mouse = [&](QEvent::Type type, QPointF at, Qt::KeyboardModifiers mods = Qt::NoModifier) {
+        QMouseEvent e(type, at, at, Qt::LeftButton, type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton, mods);
+        if (type == QEvent::MouseButtonPress)
+            return tool->mousePress(&e, v);
+        if (type == QEvent::MouseMove)
+            return tool->mouseMove(&e, v);
+        return tool->mouseRelease(&e, v);
+    };
+    const QPointF hand = *v.project(pos("hand_l")), shoulder = *v.project(pos("upperarm_l"));
+    // Picked from the hand up to the shoulder: the path still runs top first.
+    mouse(QEvent::MouseButtonPress, hand, Qt::ShiftModifier);
+    mouse(QEvent::MouseMove, (hand + shoulder) / 2.0, Qt::ShiftModifier);
+    mouse(QEvent::MouseButtonRelease, shoulder, Qt::ShiftModifier);
+    const glm::dvec3 spine = pos("spine_02");
+    // A stroke from the shoulder bowing down: the arm bends to it, the spine stays.
+    mouse(QEvent::MouseButtonPress, shoulder);
+    for (int i = 1; i <= 20; ++i)
+    {
+        const double t = i / 20.0;
+        mouse(QEvent::MouseMove, shoulder + QPointF((hand.x() - shoulder.x()) * t, 60.0 * std::sin(glm::pi<double>() * t)));
+    }
+    mouse(QEvent::MouseButtonRelease, hand);
+    CHECK(pos("lowerarm_l").y < 135.0);
+    CHECK(near(pos("spine_02"), spine, 1e-6));
+
+    QWheelEvent w(QPointF(400, 300), QPointF(400, 300), QPoint(), QPoint(0, 120), Qt::NoButton, Qt::ControlModifier, Qt::NoScrollPhase, false);
+    CHECK(tool->wheel(&w, v));
+    ui::viewportTools::set(nullptr);
 }

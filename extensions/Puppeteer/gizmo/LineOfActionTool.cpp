@@ -1,6 +1,7 @@
 // Line of Action tool: draw a stroke over a character and the body path nearest it bends to the stroke's shape. The stroke
 // stays as an editable action curve while the selection holds; dragging it re-poses the path. With a range Shift + dragged
-// on the time slider the stroke poses every key in it, and Travel slides the body along the stroke over the range.
+// on the time slider the stroke poses every key in it, and Travel slides the body along the stroke over the range. Shift +
+// drag from one joint to another picks that path for the next stroke; Ctrl + wheel turns the plane strokes are drawn on.
 
 #include "Puppeteer.h"
 #include "rig/Rig.h"
@@ -9,8 +10,11 @@
 #include <lila/UI.h>
 #include <lila/ViewportTool.h>
 
+#include <glm/gtc/matrix_transform.hpp>
+
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QWheelEvent>
 
 #include <algorithm>
 #include <cmath>
@@ -54,7 +58,11 @@ public:
     const char* name() const override { return "Line of Action"; }
     std::optional<QCursor> cursor() const override { return QCursor(Qt::CrossCursor); }
 
-    void activate() override { log::write(LogLevel::Info, "Line of Action: draw along the body or a limb; drag the curve to adjust, L: line, T: travel"); }
+    void activate() override
+    {
+        log::write(LogLevel::Info, "Line of Action: draw along the body or a limb; drag the curve to adjust, Shift+drag: pick a path, L: line, "
+                                   "T: travel, Ctrl+wheel: turn the plane");
+    }
     void deactivate() override { viewportTools::requestRedraw(); }
 
     bool mousePress(QMouseEvent* e, const ViewInfo& view) override
@@ -63,7 +71,8 @@ public:
             return false;
         dropCurveIfStale();
         mGrab = -1;
-        if (!mCurve.empty() && view.camera == mCamera)
+        mPicking = e->modifiers() & Qt::ShiftModifier;
+        if (!mPicking && !mCurve.empty() && view.camera == mCamera)
             mGrab = nearestCurvePoint(e->position(), view);
         if (mGrab < 0)
         {
@@ -83,7 +92,7 @@ public:
         const QPointF at = e->position();
         if (mGrab >= 0)
             nudge(at, view);
-        else if (std::hypot(at.x() - mScreen.back().x(), at.y() - mScreen.back().y()) >= 3.0)
+        else if (!mScreen.empty() && std::hypot(at.x() - mScreen.back().x(), at.y() - mScreen.back().y()) >= 3.0)
             mScreen.push_back(at);
         mLast = at;
         viewportTools::requestRedraw();
@@ -95,11 +104,23 @@ public:
         if (e->button() != Qt::LeftButton || !mDragging)
             return false;
         mDragging = false;
-        if (mGrab >= 0)
+        if (mPicking)
+            pickPath(e->position(), view);
+        else if (mGrab >= 0)
             pose();
         else if (mScreen.size() >= 3)
             fromStroke(view);
+        mPicking = false;
         mScreen.clear();
+        viewportTools::requestRedraw();
+        return true;
+    }
+
+    bool wheel(QWheelEvent* e, const ViewInfo&) override
+    {
+        if (!(e->modifiers() & Qt::ControlModifier) || e->angleDelta().y() == 0)
+            return false;
+        mPlaneTurn = std::fmod(mPlaneTurn + (e->angleDelta().y() > 0 ? 15.0 : -15.0) + 360.0, 360.0);
         viewportTools::requestRedraw();
         return true;
     }
@@ -138,7 +159,7 @@ public:
     {
         dropCurveIfStale();
         if (mDragging && mGrab < 0 && mScreen.size() >= 2)
-            p.polyline(mScreen, 2.0f, kStroke);
+            p.polyline(mScreen, 2.0f, mPicking ? kGrab : kStroke);
         if (!mCurve.empty())
         {
             std::vector<QPointF> pts;
@@ -151,10 +172,11 @@ public:
         }
         const auto& sel = anim::timeSelection();
         ToolStatus s{.tool = "Line of Action",
-                     .mode = QString::fromStdString(mLine.empty() ? std::string("auto") : mLine),
+                     .mode = QString::fromStdString(!mPath.empty() ? mPath[0] + " to " + mPath[1] : mLine.empty() ? std::string("auto") : mLine),
+                     .fields = {{"plane", QString("%1").arg(mPlaneTurn, 0, 'f', 0) + QChar(0x00B0)}},
                      .flags = {{"travel", mTravel}},
                      .prompt = mCurve.empty() ? "draw along the body or a limb" : "drag the curve to adjust, or draw again",
-                     .keys = {{"L", "line"}, {"T", "travel"}, {"Esc", "exit"}}};
+                     .keys = {{"Shift+drag", "pick path"}, {"L", "line"}, {"T", "travel"}, {"Ctrl+wheel", "plane"}, {"Esc", "exit"}}};
         if (sel.active)
             s.fields.push_back({"range", QString("%1-%2").arg(anim::frameOf(sel.start), 0, 'f', 0).arg(anim::frameOf(sel.end), 0, 'f', 0)});
         drawToolStatus(p, view, s);
@@ -236,10 +258,55 @@ private:
             names.push_back(n);
         const auto it = std::find(names.begin(), names.end(), mLine);
         mLine = it == names.end() || it + 1 == names.end() ? names.front() : *(it + 1);
+        mPath.clear();
         viewportTools::requestRedraw();
     }
 
-    /** The stroke onto the plane facing the view through the chosen line's top joint, then the pose. */
+    /** The character's joint drawn nearest px, within 30 px; empty when none is. */
+    std::string jointAt(NodeId character, QPointF px, const ViewInfo& view) const
+    {
+        Graph& g = Graph::current();
+        std::string best;
+        double bestD = 30.0;
+        for (NodeId j : fullBodyJoints(g, characterRoot(g, character)))
+            if (const auto s = view.project(glm::dvec3(worldOf(g, j)[3])))
+                if (const double d = std::hypot(s->x() - px.x(), s->y() - px.y()); d < bestD)
+                {
+                    bestD = d;
+                    best = g.node(j)->name();
+                }
+        return best;
+    }
+
+    /** A Shift + drag from one joint to another along the body: that path takes the next strokes, top joint first. */
+    void pickPath(QPointF end, const ViewInfo& view)
+    {
+        Graph& g = Graph::current();
+        const NodeId c = character();
+        if (c == kNoNode || mScreen.empty())
+            return;
+        std::string a = jointAt(c, mScreen.front(), view), b = jointAt(c, end, view);
+        Node* na = a.empty() ? nullptr : g.find(a);
+        Node* nb = b.empty() ? nullptr : g.find(b);
+        if (!na || !nb || na == nb)
+            return log::write(LogLevel::Warning, "Line of Action: Shift+drag from one joint to another along the body to pick a path");
+        if (isUnder(g, na->id(), nb->id()))
+            std::swap(a, b);
+        else if (!isUnder(g, nb->id(), na->id()))
+            return log::write(LogLevel::Warning, "Line of Action: " + a + " and " + b + " aren't on one path down the body; pick a joint and one below it");
+        mPath = {a, b};
+        mLine.clear();
+        mCurve.clear();
+    }
+
+    /** The plane strokes are drawn on: facing the view, turned about the world's up by the plane setting. */
+    glm::dvec3 planeNormal(const ViewInfo& view, const glm::dvec3& origin) const
+    {
+        const glm::dvec3 n = view.viewDir(origin);
+        return glm::dvec3(glm::rotate(glm::dmat4(1.0), glm::radians(mPlaneTurn), glm::dvec3(0.0, 1.0, 0.0)) * glm::dvec4(n, 0.0));
+    }
+
+    /** The stroke onto the action plane through the chosen line's top joint, then the pose. */
     void fromStroke(const ViewInfo& view)
     {
         Graph& g = Graph::current();
@@ -249,7 +316,7 @@ private:
         std::string line = mLine;
         glm::dvec3 origin(0.0);
         double best = 1e300;
-        const json all = lines(c);
+        const json all = mPath.empty() ? lines(c) : json{{"", mPath}};
         for (const auto& [n, ends] : all.items())
         {
             Node* top = g.find(ends[0].get<std::string>());
@@ -262,22 +329,23 @@ private:
             double sum = 0.0;
             for (const QPointF& s : mScreen)
                 sum += distanceToSegment(s, *a, *b);
-            if ((mLine.empty() && sum < best) || n == mLine)
+            if ((mLine.empty() && sum < best) || n == mLine || !mPath.empty())
             {
                 best = mLine.empty() ? sum : -1.0;
                 line = n;
                 origin = glm::dvec3(worldOf(g, top->id())[3]);
             }
         }
-        if (line.empty())
+        if (line.empty() && mPath.empty())
             return log::write(LogLevel::Warning, "Line of Action: the character has no lines of action in view");
-        const glm::dvec3 normal = view.viewDir(origin);
+        const glm::dvec3 normal = planeNormal(view, origin);
         mCurve.clear();
         for (const QPointF& s : mScreen)
             if (const auto w = onPlane(view, s, origin, normal))
                 mCurve.push_back(*w);
         mCharacter = c;
         mDrawnLine = line;
+        mDrawnPath = mPath;
         pose();
         mSelection = g.selection();
     }
@@ -290,7 +358,11 @@ private:
         json stroke = json::array();
         for (const glm::dvec3& p : mCurve)
             stroke.push_back({p.x, p.y, p.z});
-        json call = {{"args", {g.node(mCharacter)->path()}}, {"line", mDrawnLine}, {"stroke", stroke}, {"travel", mTravel}};
+        json call = {{"args", {g.node(mCharacter)->path()}}, {"stroke", stroke}, {"travel", mTravel}};
+        if (!mDrawnPath.empty())
+            call["joints"] = mDrawnPath;
+        else
+            call["line"] = mDrawnLine;
         if (const auto& sel = anim::timeSelection(); sel.active)
         {
             call["range"] = {sel.start, sel.end};
@@ -305,6 +377,9 @@ private:
     std::vector<glm::dvec3> mCurve;
     std::vector<NodeId> mSelection;
     std::string mCamera, mLine, mDrawnLine;
+    std::vector<std::string> mPath, mDrawnPath; // a picked [top, end] in place of a named line
+    double mPlaneTurn = 0.0;                     // degrees the action plane turns about the world's up
+    bool mPicking = false;
     NodeId mCharacter = kNoNode;
     QPointF mLast;
     int mGrab = -1;

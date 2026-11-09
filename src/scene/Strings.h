@@ -165,7 +165,7 @@ LILA_SCENE_API double strokeLength(const std::vector<glm::dvec3>& stroke);
 
 /**
  * Poses the path's bones (top first) onto targets with full-body IK, each bone resisting by its stiffness, the holds kept
- * and the hips free to move when hips >= 0. Bones off the path move only as far as the targets and holds need.
+ * and the hips free to move when hips >= 0; with hips < 0 only the path and what hangs below it turn.
  */
 LILA_SCENE_API Result conform(const fbik::Problem& p, const std::vector<int>& path, const std::vector<glm::dvec3>& targets, const std::vector<Hold>& holds,
                               int hips, double maxStretch = 1.0);
