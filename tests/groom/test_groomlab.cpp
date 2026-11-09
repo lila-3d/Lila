@@ -4,6 +4,8 @@
 #include "curve/CurveNodes.h"
 #include "curve/NodeHelpers.h"
 #include "curve/TestUtil.h"
+#include "gn/Exec.h"
+#include "gn/NodeLib.h"
 #include "groom/GroomLab.h"
 #include "ops/Undo.h"
 #include "scene/Anim.h"
@@ -82,6 +84,69 @@ TEST_CASE("growStrands: a groom graph scatters strands over a Lila scalp and int
     CHECK(again.strands[sparse / 2].points.back() == grown.strands[sparse / 2].points.back());
 
     CHECK_THROWS(groom::growStrands(scalp, {}, "{not json"));
+}
+
+TEST_CASE("Hair geometry nodes: one per GroomLab operator, the same strands as the groom graph")
+{
+    gn::registerNodeLibrary();
+    for (const char* type : {"groomScatter", "groomInterpolate", "groomClump", "groomCurl", "groomNoise", "groomWidth"})
+        CHECK_MESSAGE(gn::findDecl(type), type);
+    // Nodes that read the host's inputs or keep frames of their own stay groom graph nodes.
+    for (const char* type : {"groomScalp", "groomGuides", "groomSimulate", "groomJiggle", "groomOutput"})
+        CHECK_MESSAGE(!gn::findDecl(type), type);
+    size_t hair = 0;
+    for (const gn::NodeDecl* d : gn::allDecls())
+        hair += d->category == "Hair";
+    MESSAGE(hair, " Hair nodes");
+    CHECK(hair > 40);
+    const gn::NodeDecl* clump = gn::findDecl("groomClump");
+    REQUIRE(clump);
+    CHECK(clump->category == "Hair");
+    CHECK(clump->sockets.inputIndex("strands") >= 0);
+    CHECK(clump->sockets.inputIndex("strength") >= 0);
+
+    // Scatter, Noise and Clump as geometry nodes on a sphere, and as a groom graph: the same strands, point for point.
+    const double radius = 10.0;
+    const geo::Mesh scalp = groomtest::sphereMesh(radius);
+    using N = gn::GNode;
+    using L = gn::GLink;
+    gn::Group grp = gn::Group::makeDefault("Hair");
+    grp.links.clear();
+    grp.nodes.push_back(N{"Scatter", "groomScatter", {}, {{"density", 2.0}}});
+    grp.nodes.push_back(N{"Noise", "groomNoise", {}, {{"amplitude", 0.5}}});
+    grp.nodes.push_back(N{"Clump", "groomClump", {}, {{"strength", 0.6}}});
+    grp.links = {L{"GroupInput", "geometry", "Scatter", "scalp"}, L{"Scatter", "out", "Noise", "strands"},
+                 L{"Noise", "out", "Clump", "strands"}, L{"GroupInput", "geometry", "Noise", "scalp"},
+                 L{"GroupInput", "geometry", "Clump", "scalp"}, L{"Clump", "out", "GroupOutput", "geometry"}};
+    gn::ExecEnv env;
+    env.input = gn::meshGeometry(scalp);
+    const gn::GeometryPtr made = gn::execute(*gn::compile(grp), env);
+    REQUIRE(made->curves);
+    const std::string graph = R"({"version": 1, "nodes": [
+      {"name": "scalp", "type": "Scalp"},
+      {"name": "scatter", "type": "Scatter", "params": {"density": 2.0}},
+      {"name": "noise", "type": "Noise", "params": {"amplitude": 0.5}},
+      {"name": "clump", "type": "Clump", "params": {"strength": 0.6}}],
+     "connections": [
+      {"from": "scalp", "to": "scatter", "input": "scalp"},
+      {"from": "scatter", "to": "noise", "input": "strands"},
+      {"from": "noise", "to": "clump", "input": "strands"}],
+     "output": "clump"})";
+    const curve::Splines grown = groom::growStrands(scalp, {}, graph).strands;
+    REQUIRE(grown.size() > 100);
+    const gn::CurveSet& curves = *made->curves;
+    REQUIRE(curves.numCurves() == grown.size());
+    size_t differ = 0;
+    for (size_t c = 0; c < grown.size(); ++c)
+    {
+        const auto points = curves.curvePoints(c);
+        if (points.size() != grown[c].points.size() || !std::equal(points.begin(), points.end(), grown[c].points.begin()))
+            ++differ;
+    }
+    CHECK(differ == 0);
+    // The roots ride along as curve attributes, so the next node finds them on the scalp.
+    CHECK(curves.curveAttrs.get<int32_t>("groomRootFace").size() == grown.size());
+    CHECK(curves.pointAttrs.get<float>("width").size() == curves.numPoints());
 }
 
 TEST_CASE("groomStrands node: grows on the connected scalp, follows its transform and the guides curve")

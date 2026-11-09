@@ -7,6 +7,8 @@
 #include "groom/Attrs.h"
 #include "groom/Groom.h"
 #include "groom/GroomEvaluator.h"
+#include "groom/GroomGnNodes.h"
+#include "groom/GroomLabBridge.h"
 #include "scene/Anim.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
@@ -45,7 +47,7 @@ std::vector<groomlab::Vec3f> worldPoints(const geo::Mesh& mesh, const glm::dmat4
 }
 
 /** The scalp's faces fanned into triangles over its live points, renumbered densely and moved by `matrix`. */
-std::shared_ptr<const groomlab::ScalpMesh> scalpMesh(const geo::Mesh& mesh, const glm::dmat4& matrix = glm::dmat4(1.0))
+std::shared_ptr<const groomlab::ScalpMesh> scalpMesh(const geo::Mesh& mesh, const glm::dmat4& matrix)
 {
     std::vector<int32_t> remap(mesh.pointCapacity(), -1);
     int32_t next = 0;
@@ -510,5 +512,6 @@ void registerGroomLabType()
     t.create = [] { return std::make_unique<GroomStrandsNode>(); };
     types::registerType(std::move(t));
     Graph::addEvaluateHook(sampleHistories);
+    registerGroomGnNodes();
 }
 } // namespace lila::groom
