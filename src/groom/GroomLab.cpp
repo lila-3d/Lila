@@ -8,6 +8,7 @@
 #include "groom/Groom.h"
 #include "groom/GroomEvaluator.h"
 #include "groom/GroomGnNodes.h"
+#include "groom/LockOps.h"
 #include "groom/GroomLabBridge.h"
 #include "scene/Anim.h"
 #include "scene/Graph.h"
@@ -512,6 +513,7 @@ void registerGroomLabType()
     t.create = [] { return std::make_unique<GroomStrandsNode>(); };
     types::registerType(std::move(t));
     Graph::addEvaluateHook(sampleHistories);
+    registerLockOps();
     registerGroomGnNodes();
 }
 } // namespace lila::groom
