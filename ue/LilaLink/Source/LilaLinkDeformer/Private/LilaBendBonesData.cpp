@@ -163,6 +163,8 @@ FString ULilaBendBonesLibrary::BindBendBones(USkeletalMesh* Mesh, const FString&
 	TArray<FCurve> Rest;
 	double RestError = 0.0;
 	const TArray<TSharedPtr<FJsonValue>>& Chains = P->GetArrayField(TEXT("chains"));
+	const TArray<TSharedPtr<FJsonValue>>* CvLists = nullptr;
+	P->TryGetArrayField(TEXT("cvs"), CvLists);
 	const TArray<TSharedPtr<FJsonValue>>* RestJoints = nullptr;
 	P->TryGetArrayField(TEXT("restJoints"), RestJoints);
 	for (int32 C = 0; C < Chains.Num(); ++C)
@@ -190,6 +192,36 @@ FString ULilaBendBonesLibrary::BindBendBones(USkeletalMesh* Mesh, const FString&
 		{
 			return Fail(FString::Printf(TEXT("chain %d has fewer than two bones"), C));
 		}
+		// Bone CVs: kept in their joint's reference pose space, posed from the bone Lila's CV exported as.
+		TArray<TPair<int32, FVector>> RestCvs;
+		if (CvLists && CvLists->IsValidIndex(C))
+		{
+			for (const TSharedPtr<FJsonValue>& V : (*CvLists)[C]->AsArray())
+			{
+				const TSharedPtr<FJsonObject> Cv = V->AsObject();
+				const int32 Bone = int32(Cv->GetNumberField(TEXT("bone")));
+				if (Bone < 0 || Bone + 1 >= Out.Bones.Num())
+				{
+					continue;
+				}
+				const FVector RestPos = ReadVector(Cv->GetArrayField(TEXT("rest")));
+				FLilaBendBonesCv& Made = Out.Cvs.AddDefaulted_GetRef();
+				Made.Bone = Bone;
+				Made.RestLocal = RefGlobal[Ref.FindRawBoneIndex(Out.Bones[Bone])].InverseTransformPosition(RestPos);
+				const FName Driver(*Cv->GetStringField(TEXT("name")));
+				if (Ref.FindRawBoneIndex(Driver) != INDEX_NONE)
+				{
+					Made.Driver = Driver;
+				}
+				else
+				{
+					Warnings.Add(MakeShared<FJsonValueString>(FString::Printf(
+						TEXT("bone CV %s isn't in the skeleton, so it rides %s as at rest: export with deformOnly off so it goes too"), *Driver.ToString(), *Out.Bones[Bone].ToString())));
+				}
+				RestCvs.Emplace(Bone, RestPos);
+			}
+		}
+		PlaceCvs(Chain, RestCvs);
 		// Lila's own rest normals when it sent them (the twist depends on which one each joint has), else chosen here.
 		const TArray<TSharedPtr<FJsonValue>>* Normals = nullptr;
 		if (P->TryGetArrayField(TEXT("restNormals"), Normals) && Normals->IsValidIndex(C) && (*Normals)[C]->AsArray().Num() == Chain.Position.Num())

@@ -376,7 +376,13 @@ TEST_CASE("unrealBendBones: chains by bone name, rest joints and every point's c
     for (const json& n : p["restNormals"][0])
         CHECK(std::hypot(n[0].get<double>(), n[1].get<double>(), n[2].get<double>()) == doctest::Approx(1.0));
     CHECK(p["warnings"].empty());
-    run("bendBoneCV", {{"args", {d}}, {"joint", "hip"}, {"mirror", false}});
-    CHECK(run("unrealBendBones", {{"args", {d}}, {"skeletalMesh", "/Game/Leg/SK_Leg"}, {"dryRun", true}})["payload"]["warnings"].size() == 1);
+    // A bone CV goes as its bone, its rest place halfway down the hip's bone in Unreal space, and the node Unreal reads it from.
+    const std::string cv = run("bendBoneCV", {{"args", {d}}, {"joint", "hip"}, {"mirror", false}}).get<std::string>();
+    const json withCv = run("unrealBendBones", {{"args", {d}}, {"skeletalMesh", "/Game/Leg/SK_Leg"}, {"dryRun", true}})["payload"];
+    CHECK(withCv["warnings"].empty());
+    REQUIRE(withCv["cvs"][0].size() == 1);
+    CHECK(withCv["cvs"][0][0]["bone"] == 0);
+    CHECK(withCv["cvs"][0][0]["name"] == cv);
+    CHECK(withCv["cvs"][0][0]["rest"][2].get<double>() == doctest::Approx(22.5));
     CHECK_THROWS(run("unrealBendBones", {{"args", {mesh}}, {"dryRun", true}}));
 }

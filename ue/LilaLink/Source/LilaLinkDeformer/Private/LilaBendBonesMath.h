@@ -9,11 +9,12 @@
  */
 namespace LilaBendBones
 {
-/** A chain's joints in order, component space. */
+/** A chain's joints in order, component space, and each bone's CVs (the curve passes through them after its joint). */
 struct FChain
 {
 	TArray<FVector> Position;
 	TArray<FQuat> Rotation;
+	TArray<TArray<FVector>> Cvs;
 };
 
 /** The chain as a sampled curve: points, frames (X tangent, Y normal, Z binormal) and arc length per sample. */
@@ -38,8 +39,11 @@ struct FPlace
 	FQuat Frame = FQuat::Identity;
 };
 
-/** The curve through the chain (centripetal Catmull-Rom, SamplesPerSpan per bone), frames carried without twisting, then each joint's twist relative to RestNormals (joint space) ramped between. Empty RestNormals: no twist correction. */
+/** The curve through the chain and its bone CVs (centripetal Catmull-Rom, SamplesPerSpan per span), frames carried without twisting, then each joint's twist relative to RestNormals (joint space) ramped between. Empty RestNormals: no twist correction. */
 FCurve Build(const FChain& Chain, const TArray<FVector>& RestNormals, int32 SamplesPerSpan);
+
+/** Puts each (bone, position) CV on its bone of Chain, in order of how far along the bone it sits. */
+void PlaceCvs(FChain& Chain, const TArray<TPair<int32, FVector>>& Cvs);
 
 /** Each joint's normal at rest, in its own space. */
 TArray<FVector> RestNormals(const FChain& Chain, const FCurve& Rest);

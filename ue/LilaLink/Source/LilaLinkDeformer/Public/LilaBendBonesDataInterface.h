@@ -74,6 +74,8 @@ private:
 	TSharedPtr<FLilaBendBonesGpuBinding, ESPMode::ThreadSafe> Binding;
 	/** Each chain's bone indices in the mesh, resolved for this mesh and revision. */
 	TArray<TArray<int32>> BoneIndices;
+	/** Each chain's CVs' driver bone indices (INDEX_NONE: the CV rides its joint). */
+	TArray<TArray<int32>> CvDrivers;
 	TWeakObjectPtr<const ULilaBendBonesData> ResolvedFor;
 	int32 ResolvedRevision = -1;
 };

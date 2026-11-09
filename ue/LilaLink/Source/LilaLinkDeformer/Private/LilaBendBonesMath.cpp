@@ -94,7 +94,18 @@ FCurve Build(const FChain& Chain, const TArray<FVector>& Normals, const int32 Sa
 	{
 		return C;
 	}
-	const TArray<FVector>& Control = Chain.Position;
+	// The control points: each joint, then its bone's CVs.
+	TArray<FVector> Control;
+	TArray<int32> JointControl;
+	for (int32 J = 0; J < Joints; ++J)
+	{
+		JointControl.Add(Control.Num());
+		Control.Add(Chain.Position[J]);
+		if (J + 1 < Joints && Chain.Cvs.IsValidIndex(J))
+		{
+			Control.Append(Chain.Cvs[J]);
+		}
+	}
 	auto At = [&](int32 I) {
 		if (I < 0)
 		{
@@ -114,9 +125,9 @@ FCurve Build(const FChain& Chain, const TArray<FVector>& Normals, const int32 Sa
 		}
 	}
 	C.Point.Add(Control.Last());
-	for (int32 J = 0; J < Joints; ++J)
+	for (const int32 Jc : JointControl)
 	{
-		C.Knot.Add(J * SamplesPerSpan);
+		C.Knot.Add(Jc * SamplesPerSpan);
 	}
 
 	const int32 N = C.Point.Num();
@@ -206,6 +217,23 @@ FCurve Build(const FChain& Chain, const TArray<FVector>& Normals, const int32 Sa
 		C.Frame[I] = FrameOf(Tangent[I], NN);
 	}
 	return C;
+}
+
+void PlaceCvs(FChain& Chain, const TArray<TPair<int32, FVector>>& Cvs)
+{
+	Chain.Cvs.SetNum(Chain.Position.Num());
+	for (const TPair<int32, FVector>& Cv : Cvs)
+	{
+		if (Cv.Key >= 0 && Cv.Key + 1 < Chain.Position.Num())
+		{
+			Chain.Cvs[Cv.Key].Add(Cv.Value);
+		}
+	}
+	for (int32 Bone = 0; Bone + 1 < Chain.Position.Num(); ++Bone)
+	{
+		const FVector A = Chain.Position[Bone], D = Chain.Position[Bone + 1] - A;
+		Chain.Cvs[Bone].Sort([&](const FVector& X, const FVector& Y) { return FVector::DotProduct(X - A, D) < FVector::DotProduct(Y - A, D); });
+	}
 }
 
 TArray<FVector> RestNormals(const FChain& Chain, const FCurve& Rest)

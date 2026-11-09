@@ -355,6 +355,7 @@ FComputeDataProviderRenderProxy* ULilaBendBonesDataProvider::GetRenderProxy()
 		ResolvedFor = Data;
 		ResolvedRevision = Data->Revision;
 		BoneIndices.Reset();
+		CvDrivers.Reset();
 		const FReferenceSkeleton& Ref = Pose->GetSkinnedAsset() ? Pose->GetSkinnedAsset()->GetRefSkeleton() : Mesh->GetRefSkeleton();
 		for (const FLilaBendBonesChain& Chain : Data->Chains)
 		{
@@ -362,6 +363,11 @@ FComputeDataProviderRenderProxy* ULilaBendBonesDataProvider::GetRenderProxy()
 			for (const FName& Bone : Chain.Bones)
 			{
 				Out.Add(Ref.FindBoneIndex(Bone));
+			}
+			TArray<int32>& Drivers = CvDrivers.AddDefaulted_GetRef();
+			for (const FLilaBendBonesCv& Cv : Chain.Cvs)
+			{
+				Drivers.Add(Cv.Driver.IsNone() ? INDEX_NONE : Ref.FindBoneIndex(Cv.Driver));
 			}
 		}
 		Binding = MakeShared<FLilaBendBonesGpuBinding, ESPMode::ThreadSafe>();
@@ -390,6 +396,22 @@ FComputeDataProviderRenderProxy* ULilaBendBonesDataProvider::GetRenderProxy()
 			Chain.Position.Add(Space[Bone].GetLocation());
 			Chain.Rotation.Add(Space[Bone].GetRotation());
 		}
+		TArray<TPair<int32, FVector>> Cvs;
+		const TArray<FLilaBendBonesCv>& ChainCvs = Data->Chains[C].Cvs;
+		for (int32 V = 0; V < ChainCvs.Num(); ++V)
+		{
+			const int32 Driver = CvDrivers[C].IsValidIndex(V) ? CvDrivers[C][V] : INDEX_NONE;
+			const int32 Joint = BoneIndices[C].IsValidIndex(ChainCvs[V].Bone) ? BoneIndices[C][ChainCvs[V].Bone] : INDEX_NONE;
+			if (Space.IsValidIndex(Driver))
+			{
+				Cvs.Emplace(ChainCvs[V].Bone, Space[Driver].GetLocation());
+			}
+			else if (Space.IsValidIndex(Joint))
+			{
+				Cvs.Emplace(ChainCvs[V].Bone, Space[Joint].TransformPosition(ChainCvs[V].RestLocal));
+			}
+		}
+		LilaBendBones::PlaceCvs(Chain, Cvs);
 		const LilaBendBones::FCurve Curve = LilaBendBones::Build(Chain, Data->Chains[C].RestNormals, Data->SamplesPerSpan);
 		Proxy->ChainInfo.Add(FUintVector4(uint32(Proxy->CurvePoint.Num()), uint32(Curve.Point.Num()), uint32(Proxy->Knot.Num()), 0));
 		for (int32 I = 0; I < Curve.Point.Num(); ++I)

@@ -9,6 +9,25 @@
 class USkeletalMesh;
 class USkinnedMeshComponent;
 
+/** A bone CV: an extra point its bone's curve passes through. */
+USTRUCT()
+struct FLilaBendBonesCv
+{
+	GENERATED_BODY()
+
+	/** The bone it shapes: its index in the chain (the bone from that joint to the next). */
+	UPROPERTY(VisibleAnywhere, Category = "Bend Bones")
+	int32 Bone = 0;
+
+	/** Its rest place in that joint's reference pose space. */
+	UPROPERTY()
+	FVector RestLocal = FVector::ZeroVector;
+
+	/** The skeleton bone it is read from when posed (the CV exported from Lila); None rides its joint at rest. */
+	UPROPERTY(VisibleAnywhere, Category = "Bend Bones")
+	FName Driver;
+};
+
 /** One bend bones chain: its bones top to end, and what the deformer needs of its rest. */
 USTRUCT()
 struct FLilaBendBonesChain
@@ -25,6 +44,9 @@ struct FLilaBendBonesChain
 	/** Arc length along the rest curve at each bone. */
 	UPROPERTY()
 	TArray<double> RestKnotLength;
+
+	UPROPERTY(VisibleAnywhere, Category = "Bend Bones")
+	TArray<FLilaBendBonesCv> Cvs;
 };
 
 /** One LOD's binding: each of its vertices' places on the chains. */
@@ -86,7 +108,7 @@ class LILALINKDEFORMER_API ULilaBendBonesLibrary : public UBlueprintFunctionLibr
 public:
 	/**
 	 * Binds every LOD of the mesh to bend bones chains from Lila: Json is unrealBendBones' payload (chains of bone names,
-	 * volume, evenBend, samplesPerSpan, blend, each point's position and chain weights, the rest joints). Vertices take
+	 * volume, evenBend, samplesPerSpan, blend, each point's position and chain weights, the rest joints, the bone CVs). Vertices take
 	 * the chain weights of the Lila point at their position (LODs 1 and up, whose vertices Lila may not have, the nearest
 	 * point's); places are found on curves through the reference pose. Returns a JSON report: vertices, matched,
 	 * unmatched (LOD 0), lods ([{vertices, matched}] per LOD), restError (cm between Lila's rest joints and the reference

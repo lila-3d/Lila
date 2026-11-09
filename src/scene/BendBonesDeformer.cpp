@@ -426,15 +426,16 @@ json toUnrealJson(const glm::dvec3& v)
 
 /**
  * Bend bones live in Unreal: the chains by bone name, the options, and each point where it sits at bind (Unreal space)
- * with its chains' weights, painted ones included. LilaLink binds every LOD of the skeletal mesh to them and gives it
- * the Lila Bend Bones Deformer Graph.
+ * with its chains' weights, painted ones included, and the bone CVs: per chain, each CV's bone (its index in the chain),
+ * its rest place (Unreal space) and its node's name, the bone Unreal reads it from when posed. LilaLink binds every LOD
+ * of the skeletal mesh to them and gives it the Lila Bend Bones Deformer Graph.
  */
 json unrealPayload(Graph& g, Node& d, const std::string& mesh, const std::string& deformerPath)
 {
     const auto& node = static_cast<const BendBonesNode&>(d);
     g.evaluate();
     const Bound bound = node.boundWithRest();
-    const auto [chainJoints, cvNodes] = inputsOf(g, d);
+    const std::vector<NodeId> chainJoints = inputsOf(g, d).first;
     if (bound.sizes.empty() || chainJoints.size() != bound.rest.size())
         throw CommandError("unrealBendBones: " + d.path() + " has no bind");
     const MeshPtr in = d.as<MeshPtr>(DeformerNode::kInMesh);
@@ -457,6 +458,23 @@ json unrealPayload(Graph& g, Node& d, const std::string& mesh, const std::string
         restJoints.push_back(rest);
         restNormals.push_back(normals);
     }
+    json cvs = json::array();
+    for (size_t c = 0; c < bound.sizes.size(); ++c)
+        cvs.push_back(json::array());
+    const std::vector<glm::dvec3> cvRest = restCvs(bound);
+    for (const PlugRef& e : g.elements({d.id(), d.type().attrIndex("cvMatrix"), -1}))
+    {
+        const auto src = g.source(e);
+        const size_t i = size_t(e.element);
+        if (!src || i >= bound.cvBone.size() || i >= cvRest.size())
+            continue;
+        for (size_t c = 0, first = 0; c < bound.sizes.size(); first += size_t(bound.sizes[c]), ++c)
+            if (const int bone = bound.cvBone[i] - int(first); bone >= 0 && bone + 1 < bound.sizes[c])
+            {
+                cvs[c].push_back({{"bone", bone}, {"rest", toUnrealJson(cvRest[i])}, {"name", bareName(g.node(src->node)->name())}});
+                break;
+            }
+    }
     json points = json::array();
     const std::span<const glm::dvec3> pos = in->positions();
     for (size_t i = 0; i + 1 < binding.offsets.size() && i < pos.size(); ++i)
@@ -468,13 +486,12 @@ json unrealPayload(Graph& g, Node& d, const std::string& mesh, const std::string
     }
     const bb::Options o = node.options();
     json warnings = json::array();
-    if (!cvNodes.empty())
-        warnings.push_back(std::to_string(cvNodes.size()) + " bone CVs don't reach Unreal live; the curves there run through the joints alone (Bake Bend Bones carries them)");
     return {{"skeletalMesh", mesh},
             {"deformer", deformerPath},
             {"chains", chains},
             {"restJoints", restJoints},
             {"restNormals", restNormals},
+            {"cvs", cvs},
             {"volume", o.volume},
             {"evenBend", o.evenBend},
             {"samplesPerSpan", 16},
