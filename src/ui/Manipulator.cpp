@@ -1092,6 +1092,8 @@ std::optional<glm::dvec3> Manipulator::snapTarget(QPointF px, unsigned snaps) co
                                    d.components ? scene::components::selected(id, scene::components::mode()) : scene::components::Ids{});
             continue;
         }
+        if (geometrySnap::addPointObject(nearest, g, id, snaps))
+            continue;
         if (!n->type().isA("mesh") || !scene::effectivelyVisible(g, id) || !isolate::shows(scene::isolation::active(), id))
             continue;
         scene::MeshPtr mesh = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);

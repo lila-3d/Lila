@@ -260,7 +260,7 @@ void registerActions()
                   .doc = "Release half of the soft select key: a tap without a drag bridges two or more selected edges in edge mode, "
                          "otherwise toggles soft select."});
     snap("edge", "Snap to Edge (hold)", SnapEdge, "While held, moves snap onto the nearest edge under the cursor.");
-    snap("vertex", "Snap to Vertex (hold)", SnapVertex, "While held, moves snap to the nearest vertex under the cursor.");
+    snap("vertex", "Snap to Vertex (hold)", SnapVertex, "While held, moves snap to the nearest vertex, locator or joint under the cursor.");
     snap("surface", "Snap to Surface (hold)", SnapSurface, "While held, moves slide along the mesh surface under the cursor.");
     snap("rotateHold", "Toggle Rotate Snap (hold)", SnapRotateHold, "While held, flips rotate snapping on or off.");
 

@@ -10,6 +10,7 @@
 #include "scene/MeasureMath.h"
 #include "scene/MeshNodes.h"
 #include "ui/Actions.h"
+#include "ui/GeometrySnap.h"
 #include "ui/MeshCache.h"
 #include "ui/Tools.h"
 #include "ui/ViewportHooks.h"
@@ -410,6 +411,16 @@ Snap snapAt(QPointF px, const ViewInfo& view)
     for (NodeId id : g.nodes())
     {
         scene::Node* n = g.node(id);
+        if (geometrySnap::isPointObject(g, id))
+        {
+            glm::dvec3 w(n->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]);
+            if (auto s = view.project(w); (snaps & SnapVertex) && s && scene::effectivelyVisible(g, id) && pxDist(*s, px) < bestPx)
+            {
+                bestPx = pxDist(*s, px);
+                best = Snap{w, scene::kNoNode, -1, "object"};
+            }
+            continue;
+        }
         if (!n->type().isA("mesh") || !scene::effectivelyVisible(g, id))
             continue;
         scene::MeshPtr mesh = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
