@@ -1,5 +1,7 @@
 #include "layout/LayoutNode.h"
 
+#include "layout/SoftNet.h"
+
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "layout/Edit.h"
@@ -307,6 +309,7 @@ json layoutInfo(const Target& t, bool withPoints)
 
 void registerTypes()
 {
+    registerSoftNetTypes();
     if (types::find(kLayoutType))
         return;
     data::registerKind("panelLayout", &LayoutData::fromJson);
@@ -345,6 +348,7 @@ void registerTypes()
 
 void registerCommands()
 {
+    registerSoftNetCommands();
     using T = ArgType;
     const FlagDef tolerance{"tolerance", "", T::Float, nullptr, "Join and pick distance in world units (cm); default 1/200 of the mesh size.", {}, {}, 0.0};
 

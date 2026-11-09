@@ -13,6 +13,8 @@ lila_module(lila_deform Scene
     RigidBind.h
     Shape.cpp
     Shape.h
+    SoftNet.cpp
+    SoftNet.h
     Skinning.cpp
     Skinning.h
     Ssdr.cpp

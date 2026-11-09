@@ -9164,6 +9164,21 @@ def softMod(*objects: Any, position: Sequence[float] | None = None, radius: floa
         name: Name for the deformer.
     """
 
+def softNet(*objects: Any, layout: str | None = None, reach: float | None = None, stiffness: float | None = None, spacing: float | None = None, name: str | None = None, ly: str | None = None, r: float | None = None, st: float | None = None, sp: float | None = None, n: str | None = None) -> Any:
+    """Make a Soft Net on a mesh from its Panel Layout: the layout's lines become curves bound to the surface as it is (no cuts), every junction a knot with a control riding the surface under the net. Added on top of the stack, so it shapes the skinned mesh. Move, turn, scale or key the knot controls. Returns {softNet, knots, samples}.
+
+    Args:
+        objects: mesh.
+        layout: The Panel Layout whose lines make the net; default the mesh's topmost. Short form ly.
+        reach: How far from a line the surface follows it, cm; 0 is a sixth of the mesh's size. Short form r. Default 0.0.
+        stiffness: How closely the surface meets the lines. Short form st. Default 1.0.
+        spacing: Distance between line samples, cm; 0 is twice the layout's. Short form sp. Default 0.0.
+        name: Name for the deformer. Short form n.
+
+    Examples:
+        softNet("Mochi", reach=4.0)
+    """
+
 def softSelectCurve(keys: Sequence[Any] | None = None, preset: str | None = None, falloffMode: str | None = None, save: str | None = None, remove: str | None = None, rename: str | None = None, to: str | None = None, *, k: Sequence[Any] | None = None, p: str | None = None, fm: str | None = None) -> Any:
     """Set or query the soft select falloff curve (weight against distance from the selection, 0 at the selection, 1 at the radius). With no flags it returns the current curve.
 
