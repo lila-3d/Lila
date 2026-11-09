@@ -212,8 +212,8 @@ void registerMenus(ext::Context& ctx)
 {
     menus::addMenu(ctx, {.id = "Puppeteer", .title = "Puppeteer", .sets = {"Rig", "Animate"}});
     for (const char* a : {"mode.puppeteerRig", "mode.puppeteerAnimate", "", "puppeteer.rig.character", "puppeteer.rig.ikChain",
-                          "puppeteer.rig.reverseFoot", "puppeteer.rig.looker", "puppeteer.rig.space", "puppeteer.rig.bendBones",
-                          "puppeteer.rig.bendBoneCV"})
+                          "puppeteer.rig.reverseFoot", "puppeteer.rig.looker", "puppeteer.rig.space", "rig.bendBones",
+                          "rig.bendBoneCV", "rig.mirrorBoneCVs", "rig.bakeBendBones"})
         menus::addItem(ctx, *a ? menus::Item{.menu = "Puppeteer", .action = a} : menus::Item{.menu = "Puppeteer", .kind = menus::Kind::Separator});
     menus::addItem(ctx, {.menu = "Puppeteer", .kind = menus::Kind::Submenu, .label = "Joints"});
     for (const char* a : {"puppeteer.joint.create", "puppeteer.joint.insert", "puppeteer.joint.parent", "puppeteer.joint.unparent",

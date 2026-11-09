@@ -479,12 +479,20 @@ void registerRigActions()
         "Turns the selected pins or pinned objects into joints for Unreal: sockets where they ride a bone rigidly, else keyed bones.");
     add("rig.ikHandle", "IK Handle", [] { command("ikHandle"); }, "ikHandle()",
         "Solves the chain from the first selected joint to the last with an IK handle at its end.");
+    add("rig.bendBones", "Bind Bend Bones", [] { command("bendBones"); }, "bendBones()",
+        "Select a chain's joints from top to end, then the mesh: it bends along a smooth curve through them, the chain one influence.");
     add("rig.splineChain", "Spline Chain", [] { command("splineChain"); }, "splineChain()",
-        "Lays the joints from the first selected to the last along a curve with controls (or the selected curve).");
+        "A bend-bone chain led by a curve: lays the joints from the first selected to the last along it, with controls (or the selected curve).");
     add("rig.hoseLimb", "Rubber Hose Limb", [] { command("hoseLimb"); }, "hoseLimb()",
-        "Turns the limb from the selected shoulder or hip to the selected wrist or ankle into a rubber hose.");
+        "A bend-bone limb: turns the limb from the selected shoulder or hip to the selected wrist or ankle into a rubber hose.");
     add("rig.hoseFingers", "Rubber Hose Fingers", [] { command("hoseFingers"); }, "hoseFingers()",
-        "Makes the selected finger base joints rubber hose fingers with curl, spread and a hand fist.");
+        "Bend-bone fingers: makes the selected finger base joints rubber hose fingers with curl, spread and a hand fist.");
+    add("rig.bendBoneCV", "Add Bone CV", [] { command("bendBoneCV"); }, "bendBoneCV()",
+        "Adds a CV halfway along the selected joint's bend bone, and on the other side's: move or key it to reshape the bone.");
+    add("rig.mirrorBoneCVs", "Mirror Bone CVs", [] { command("mirrorBendBoneCVs"); }, "mirrorBendBoneCVs()",
+        "Moves the other side's bone CVs to mirror the selected ones.");
+    add("rig.bakeBendBones", "Bake Bend Bones", [] { command("bakeBendBones"); }, "bakeBendBones()",
+        "Bakes the selected mesh's bend bones to segment joints and a fitted skin for Unreal, checked against Unreal's transforms.");
     actions::add({.id = "rig.editSkeleton", .label = "Edit Skeleton", .category = "Rig", .run = [] { command("editSkeleton"); },
                   .doc = "Toggles skeleton editing: the skinned skeleton goes to bind pose so joints can be moved and reoriented "
                          "without deforming the mesh; turning it off rebinds and keeps the animation.",

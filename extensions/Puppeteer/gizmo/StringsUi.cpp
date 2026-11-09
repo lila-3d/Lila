@@ -180,51 +180,5 @@ void registerStringsUi(ext::Context& ctx)
                        .doc = "The character's contacts and limbs go back to what its rig template or rig elements say.",
                        .icon = "restore"});
     attributeEditor::addSection(ctx, kCharacterType, "Strings", [](NodeId id) { return rulesSection(id); });
-
-    actions::add(ctx, {.id = "puppeteer.rig.bendBones",
-                       .label = "Bend Bones",
-                       .category = "Puppeteer Rig",
-                       .run =
-                           [] {
-                               Graph& g = Graph::current();
-                               std::vector<std::string> joints;
-                               std::string mesh;
-                               for (NodeId id : g.selection())
-                                   if (Node* n = g.node(id); n && rig::isJoint(*n))
-                                       joints.push_back(n->path());
-                                   else if (n && n->type().isA("mesh"))
-                                       mesh = n->path();
-                               if (joints.size() < 2 || mesh.empty())
-                               {
-                                   log::write(LogLevel::Warning, "Bend Bones: select a chain's joints from top to end, then the mesh");
-                                   return;
-                               }
-                               runCommand("bendBones", {{"args", {mesh}}, {"chains", {joints}}});
-                           },
-                       .doc = "Select a chain's joints from top to end, then the mesh: it bends along a smooth curve through them.",
-                       .icon = "vector-spline"});
-    actions::add(ctx, {.id = "puppeteer.rig.bendBoneCV",
-                       .label = "Add Bone CV",
-                       .category = "Puppeteer Rig",
-                       .run =
-                           [] {
-                               Graph& g = Graph::current();
-                               const auto sel = g.selection();
-                               Node* joint = sel.empty() ? nullptr : g.node(sel.front());
-                               if (!joint || !rig::isJoint(*joint))
-                                   return log::write(LogLevel::Warning, "Add Bone CV: select a bend bones joint");
-                               // The bendBones deformer whose chains include the joint.
-                               for (NodeId d : g.nodes())
-                                   if (Node* n = g.node(d); n && n->type().name == "bendBones")
-                                       for (const PlugRef& e : g.elements({d, n->type().attrIndex("matrix"), -1}))
-                                           if (const auto src = g.source(e); src && src->node == joint->id())
-                                           {
-                                               runCommand("bendBoneCV", {{"args", {n->path()}}, {"joint", joint->path()}});
-                                               return;
-                                           }
-                               log::write(LogLevel::Warning, "Add Bone CV: " + joint->path() + " drives no bend bones");
-                           },
-                       .doc = "Add a CV halfway along the selected joint's bend bone: move or key it to reshape the bone.",
-                       .icon = "point"});
 }
 } // namespace puppeteer

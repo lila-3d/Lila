@@ -752,7 +752,7 @@ void registerCommands()
         .name = "bendBones",
         .doc = "Bind a mesh to chains of joints as bend bones: it bends along the smooth curve through each chain, each "
                "chain one influence, the joins between chains blending. Binds in the current pose. Returns the deformer.",
-        .positionalDoc = "mesh",
+        .positionalDoc = "mesh, or a chain's joints then the mesh",
         .flags = {
             {"chains", "ch", T::List, nullptr, "Chains, each a list of joints from top to end ([[thigh, calf, foot], ...])."},
             {"volume", "v", T::Float, 1.0, "Thin the mesh as chains stretch to keep its volume.", {}, {}, 0.0, 1.0},
@@ -761,19 +761,28 @@ void registerCommands()
         },
         .run = [](const Args& a) -> json {
             Graph& g = graph();
-            const std::vector<std::string> objs = a.objects();
-            if (objs.empty())
+            // A mesh and chains, or (from the selection) a chain's joints top to end and the mesh.
+            Node* meshNode = nullptr;
+            json selected = json::array();
+            for (const std::string& name : a.objects())
+            {
+                Node& n = nodeNamed(name, "bendBones");
+                if (n.type().isA("mesh") && !meshNode)
+                    meshNode = &n;
+                else if (rig::isJoint(n))
+                    selected.push_back(n.path());
+            }
+            if (!meshNode)
                 throw CommandError("bendBones: give a mesh");
-            Node& mesh = nodeNamed(objs.front(), "bendBones");
-            if (!mesh.type().isA("mesh"))
-                throw CommandError("bendBones: " + mesh.path() + " is not a mesh");
-            if (!a.has("chains") || !a.flags["chains"].is_array() || a.flags["chains"].empty())
-                throw CommandError("bendBones: give chains, each a list of joints from top to end");
+            Node& mesh = *meshNode;
+            const json chainsArg = a.has("chains") ? a.flags["chains"] : json::array({selected});
+            if (!chainsArg.is_array() || chainsArg.empty() || (!a.has("chains") && selected.size() < 2))
+                throw CommandError("bendBones: give chains, each a list of joints from top to end (or select a chain's joints, then the mesh)");
             g.evaluate();
             Bound b;
             std::vector<NodeId> joints;
             std::vector<bb::Curve> rest;
-            for (const json& chain : a.flags["chains"])
+            for (const json& chain : chainsArg)
             {
                 if (!chain.is_array() || chain.size() < 2)
                     throw CommandError("bendBones: a chain needs two joints or more");
@@ -825,7 +834,7 @@ void registerCommands()
         .name = "bendBoneCV",
         .doc = "Add a bone CV to a bend bones bone: an extra point its curve passes through, at a fraction along the bone "
                "from joint to its child. Move or key it to reshape the bone without rebinding. Returns the CV.",
-        .positionalDoc = "deformer",
+        .positionalDoc = "deformer, or a joint",
         .flags = {
             {"joint", "j", T::String, nullptr, "The bone's first joint (it runs to the next joint of its chain)."},
             {"at", "at", T::Float, 0.5, "How far along the bone, 0 to 1.", {}, {}, 0.0, 1.0},
@@ -835,11 +844,21 @@ void registerCommands()
             Graph& g = graph();
             const std::vector<std::string> objs = a.objects();
             Node* d = objs.empty() ? nullptr : g.find(objs.front());
+            // A selected joint alone: its bone on whichever bendBones drives it.
+            NodeId joint = kNoNode;
+            if (d && rig::isJoint(*d) && !a.has("joint"))
+            {
+                joint = d->id();
+                d = deformerOf(g, joint);
+                if (!d)
+                    throw CommandError("bendBoneCV: " + g.node(joint)->path() + " drives no bend bones");
+            }
             if (!d || d->type().name != kType)
-                throw CommandError("bendBoneCV: give a bendBones deformer");
-            if (!a.has("joint"))
+                throw CommandError("bendBoneCV: give a bendBones deformer, or select a bend bones joint");
+            if (joint == kNoNode && !a.has("joint"))
                 throw CommandError("bendBoneCV: give the bone's first joint");
-            const NodeId joint = jointArg(g, a.flags["joint"], "bendBoneCV");
+            if (joint == kNoNode)
+                joint = jointArg(g, a.flags["joint"], "bendBoneCV");
             const double at = std::clamp(a.get<double>("at", 0.5), 0.0, 1.0);
             const NodeId cv = addCv(g, *d, joint, at);
             if (a.get<bool>("mirror", true))
@@ -879,7 +898,7 @@ void registerCommands()
                "every sampled frame, and the mesh is skinned to them with weights fitted (SSDR) to the bend bones' result over "
                "the animation and random poses. The deformer is turned off so the viewport shows what Unreal gets. Returns "
                "{joints, skinCluster, rmse, maxError, frames, poses, unrealCheck}: the fit error in cm and the Unreal round-trip check.",
-        .positionalDoc = "deformer",
+        .positionalDoc = "deformer or mesh",
         .flags = {
             {"segments", "sg", T::Int, 3, "Segment joints per bone.", {}, {}, 1.0, 16.0},
             {"start", "", T::Int, nullptr, "First frame (the playback start by default)."},
@@ -896,8 +915,12 @@ void registerCommands()
             Graph& g = graph();
             const std::vector<std::string> objs = a.objects();
             Node* d = objs.empty() ? nullptr : g.find(objs.front());
+            if (d && d->type().isA("mesh"))
+                for (NodeId id : modifiers::stack(g, d->id()))
+                    if (g.node(id)->type().name == kType)
+                        d = g.node(id);
             if (!d || d->type().name != kType)
-                throw CommandError("bakeBendBones: give a bendBones deformer");
+                throw CommandError("bakeBendBones: give a bendBones deformer or a mesh it deforms");
             return bake(g, *d, a);
         },
     });
