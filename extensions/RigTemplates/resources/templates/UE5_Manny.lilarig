@@ -8540,7 +8540,15 @@
 			"contacts": [
 				"foot_l",
 				"foot_r"
-			]
+			],
+			"lines": {
+				"body": ["pelvis", "head"],
+				"spine": ["pelvis", "neck_01"],
+				"arm_l": ["clavicle_l", "hand_l"],
+				"arm_r": ["clavicle_r", "hand_r"],
+				"leg_l": ["thigh_l", "foot_l"],
+				"leg_r": ["thigh_r", "foot_r"]
+			}
 		},
 		"fullBody": {
 			"stiffness": {

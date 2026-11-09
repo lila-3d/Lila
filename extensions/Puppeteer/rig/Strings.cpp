@@ -5,6 +5,8 @@
 #include "rig/Rig.h"
 
 #include <lila/Prefs.h>
+#include <lila/Curves.h>
+#include <lila/SplineChain.h>
 #include <lila/Strings.h>
 #include <lila/UI.h>
 #include <lila/ViewportTool.h>
@@ -57,9 +59,29 @@ struct CharacterRules
 {
     std::vector<std::vector<std::string>> chains; // joint names, top to end
     std::vector<std::string> contacts;
+    /** Lines of action: body paths a stroke may bind to, by name, each [top joint, end joint]. */
+    std::map<std::string, std::vector<std::string>> lines;
     /** Where each came from: "character", "template", "rig elements" or "none". */
-    std::string chainsFrom = "none", contactsFrom = "none";
+    std::string chainsFrom = "none", contactsFrom = "none", linesFrom = "none";
 };
+
+/** Lines when nothing declares them: each limb, and the hips to the head when there is one. */
+void inferLines(Graph& g, NodeId character, CharacterRules& r)
+{
+    for (const auto& chain : r.chains)
+        r.lines[chain.front()] = {chain.front(), chain.back()};
+    const NodeId root = characterRoot(g, character);
+    if (!root)
+        return;
+    const strings::Skeleton k = strings::snapshot(g, root);
+    for (NodeId d : g.descendants(root))
+        if (bareJoint(g.node(d)->name()) == "head" && k.hips >= 0 && isUnder(g, d, k.joints[size_t(k.hips)]))
+        {
+            r.lines["body"] = {bareJoint(g.node(k.joints[size_t(k.hips)])->name()), "head"};
+            break;
+        }
+    r.linesFrom = "inferred";
+}
 
 /**
  * From the character's rig template when it has one: its limb groups, and rig.strings.contacts (else the ends of its
@@ -87,12 +109,21 @@ CharacterRules inheritedRules(Graph& g, NodeId character)
                     out.contacts.push_back(chain.back());
             }
             out.chainsFrom = out.contactsFrom = "template";
-            if (const json c = t.value("rig", json::object()).value("strings", json::object()); c.contains("contacts"))
+            const json c = t.value("rig", json::object()).value("strings", json::object());
+            if (c.contains("contacts"))
             {
                 out.contacts.clear();
                 for (const json& m : c["contacts"])
                     out.contacts.push_back(jointOf(m.get<std::string>()));
             }
+            if (c.contains("lines"))
+            {
+                for (const auto& [name, ends] : c["lines"].items())
+                    out.lines[name] = {jointOf(ends[0].get<std::string>()), jointOf(ends[1].get<std::string>())};
+                out.linesFrom = "template";
+            }
+            else
+                inferLines(g, character, out);
             return out;
         }
         catch (const std::exception&)
@@ -110,6 +141,7 @@ CharacterRules inheritedRules(Graph& g, NodeId character)
                 out.contacts.push_back(names.back());
             out.chainsFrom = out.contactsFrom = "rig elements";
         }
+    inferLines(g, character, out);
     return out;
 }
 
@@ -132,6 +164,11 @@ CharacterRules rulesOf(Graph& g, NodeId character)
     {
         out.chains = own["chains"].get<std::vector<std::vector<std::string>>>();
         out.chainsFrom = "character";
+    }
+    if (own.contains("lines") && own["lines"].is_object())
+    {
+        out.lines = own["lines"].get<std::map<std::string, std::vector<std::string>>>();
+        out.linesFrom = "character";
     }
     return out;
 }
@@ -550,7 +587,8 @@ NodeId stringsCharacterArg(Graph& g, const Args& a, const char* command)
 
 json rulesJson(const CharacterRules& r)
 {
-    return {{"contacts", r.contacts}, {"chains", r.chains}, {"contactsFrom", r.contactsFrom}, {"chainsFrom", r.chainsFrom}};
+    return {{"contacts", r.contacts}, {"chains", r.chains},       {"lines", r.lines},
+            {"contactsFrom", r.contactsFrom}, {"chainsFrom", r.chainsFrom}, {"linesFrom", r.linesFrom}};
 }
 
 /** The joints from top down to end, both included; empty when end is not under top. */
@@ -604,6 +642,20 @@ json stringsRules(const Args& a)
                 kept.push_back(c);
         kept.push_back(chain);
         own["chains"] = kept;
+        changed = true;
+    }
+    if (a.has("addLine"))
+    {
+        const json& l = a.flags["addLine"];
+        if (!l.is_array() || l.size() != 3)
+            throw CommandError("stringsRules: addLine is [name, top joint, end joint]");
+        const NodeId top = jointNamed(g, l[1].get<std::string>(), "stringsRules").id();
+        const NodeId end = jointNamed(g, l[2].get<std::string>(), "stringsRules").id();
+        if (pathBetween(g, top, end).size() < 2)
+            throw CommandError("stringsRules: " + g.node(end)->path() + " is not below " + g.node(top)->path());
+        if (!own.contains("lines"))
+            own["lines"] = rulesOf(g, character).lines;
+        own["lines"][l[0].get<std::string>()] = {bareJoint(g.node(top)->name()), bareJoint(g.node(end)->name())};
         changed = true;
     }
     if (changed)
@@ -1274,6 +1326,253 @@ NodeId onlyCharacter(Graph& g, const std::vector<NodeId>& joints, const char* co
  * Breakdown in space: weight -1 is the previous key's pose, 0 now, 1 the next key's, past either overshoots. Rotations
  * blend in their parents' space (arcs), the feet in world, so planted feet stay planted between two planted keys.
  */
+/** The distance from p to the nearest point of a polyline. */
+double distanceToPath(const std::vector<glm::dvec3>& path, const glm::dvec3& p)
+{
+    double best = path.empty() ? 0.0 : glm::length(p - path.front());
+    for (size_t i = 1; i < path.size(); ++i)
+    {
+        const glm::dvec3 d = path[i] - path[i - 1];
+        const double t = glm::dot(d, d) > 1e-12 ? std::clamp(glm::dot(p - path[i - 1], d) / glm::dot(d, d), 0.0, 1.0) : 0.0;
+        best = std::min(best, glm::length(path[i - 1] + t * d - p));
+    }
+    return best;
+}
+
+/** The joints of a line of action, top first: a line the rules name, two joints (top, end), or the line nearest the stroke. */
+std::vector<NodeId> lineJoints(Graph& g, NodeId character, const Args& a, const std::vector<glm::dvec3>& stroke, std::string& name)
+{
+    const CharacterRules rules = rulesOf(g, character);
+    auto resolve = [&](const std::vector<std::string>& ends) {
+        if (ends.size() != 2)
+            return std::vector<NodeId>{};
+        const NodeId top = jointNamed(g, ends[0], "lineOfAction").id(), end = jointNamed(g, ends[1], "lineOfAction").id();
+        std::vector<NodeId> out;
+        for (const std::string& n : pathBetween(g, top, end))
+            out.push_back(jointNamed(g, n, "lineOfAction").id());
+        return out;
+    };
+    if (a.has("joints"))
+    {
+        name.clear();
+        const std::vector<NodeId> out = resolve(a.flags["joints"].get<std::vector<std::string>>());
+        if (out.size() < 2)
+            throw CommandError("lineOfAction: joints is [top, end] with end below top");
+        return out;
+    }
+    if (a.has("line"))
+    {
+        name = a.get<std::string>("line");
+        const auto it = rules.lines.find(name);
+        if (it == rules.lines.end())
+            throw CommandError("lineOfAction: the character has no line named " + name);
+        return resolve(it->second);
+    }
+    // The line whose joints lie nearest the stroke.
+    double best = 1e300;
+    std::vector<NodeId> out;
+    g.evaluate();
+    for (const auto& [n, ends] : rules.lines)
+    {
+        const std::vector<NodeId> js = resolve(ends);
+        if (js.size() < 2)
+            continue;
+        std::vector<glm::dvec3> pts;
+        for (NodeId j : js)
+            pts.push_back(glm::dvec3(worldOf(g, j)[3]));
+        double sum = 0.0;
+        for (const glm::dvec3& p : stroke)
+            sum += distanceToPath(pts, p);
+        if (sum < best)
+        {
+            best = sum;
+            out = js;
+            name = n;
+        }
+    }
+    if (out.empty())
+        throw CommandError("lineOfAction: the character has no lines; give joints=[top, end]");
+    return out;
+}
+
+/** What one frame's line of action did: the plugs it wrote, and how far the path missed. */
+struct LineResult
+{
+    double error = 0.0;
+    std::vector<std::string> plugs;
+};
+
+/** Points of a line and its bend parts (bone CVs, spline chain controls), each placed at its fraction along the path. */
+struct LineParts
+{
+    std::vector<NodeId> solved;           // joints the full-body solve turns
+    std::vector<NodeId> placed;           // CVs and curve controls moved onto the stroke
+};
+
+LineParts partsOf(Graph& g, const std::vector<NodeId>& joints)
+{
+    LineParts out;
+    std::vector<NodeId> splines;
+    for (NodeId j : joints)
+    {
+        if (const NodeId chain = lila::scene::spline::splineChainContaining(g, j))
+        {
+            if (std::find(splines.begin(), splines.end(), chain) == splines.end())
+                splines.push_back(chain);
+            continue;
+        }
+        out.solved.push_back(j);
+        for (NodeId c : g.children(j))
+            if (g.node(c)->type().name == "bendBoneCV")
+                out.placed.push_back(c);
+    }
+    for (NodeId chain : splines)
+        if (Node* curve = g.find(textOf(*g.node(chain), "curve")))
+            for (NodeId c : lila::curve::curveControlNodes(g, *curve))
+                out.placed.push_back(c);
+    return out;
+}
+
+/** Poses one frame's line onto the stroke, weight w of the way. */
+LineResult conformLine(Graph& g, NodeId character, const std::vector<NodeId>& joints, const std::vector<glm::dvec3>& stroke, double window,
+                       double w, double maxStretch)
+{
+    g.evaluate();
+    std::vector<glm::dvec3> path;
+    for (NodeId j : joints)
+        path.push_back(glm::dvec3(worldOf(g, j)[3]));
+    const LineParts parts = partsOf(g, joints);
+    std::vector<std::pair<NodeId, glm::dvec3>> placements;
+    for (NodeId n : parts.placed)
+        placements.push_back({n, strings::conformAt(path, stroke, window, strings::pathFraction(path, glm::dvec3(worldOf(g, n)[3])))});
+
+    LineResult out;
+    if (parts.solved.size() >= 2 || (parts.solved.size() == 1 && window >= 0.0))
+    {
+        const NodeId root = characterRoot(g, character);
+        strings::Skeleton k = strings::snapshot(g, root, stiffnessOf(g, character, fullBodyJoints(g, joints.front())));
+        const CharacterRules rules = rulesOf(g, character);
+        std::vector<int> bones;
+        std::vector<glm::dvec3> targets;
+        for (NodeId j : parts.solved)
+            if (const int b = k.boneOf(j); b >= 0)
+            {
+                bones.push_back(b);
+                targets.push_back(strings::conformAt(path, stroke, window, strings::pathFraction(path, glm::dvec3(worldOf(g, j)[3]))));
+            }
+        const std::vector<strings::Hold> holds = holdsFor(g, character, k, {}, rules.contacts);
+        strings::Result r = strings::conform(k.problem, bones, targets, holds, window >= 0.0 ? k.hips : -1, maxStretch);
+        if (w < 1.0)
+        {
+            const strings::Pose s0 = strings::startPose(k.problem);
+            for (size_t i = 0; i < r.pose.rotation.size(); ++i)
+            {
+                r.pose.rotation[i] = glm::slerp(s0.rotation[i], r.pose.rotation[i], w);
+                r.pose.offset[i] = glm::mix(s0.offset[i], r.pose.offset[i], w);
+                r.pose.stretch[i] = glm::mix(s0.stretch[i], r.pose.stretch[i], w);
+            }
+        }
+        out.error = r.error;
+        out.plugs = strings::apply(g, k, r.pose);
+        g.evaluate();
+    }
+    for (auto& [n, target] : placements)
+    {
+        const NodeId parent = g.parent(n);
+        const glm::dvec3 now(worldOf(g, n)[3]);
+        const glm::dvec3 world = glm::mix(now, target, w);
+        const glm::dmat4 parentWorld = parent ? worldOf(g, parent) : glm::dmat4(1.0);
+        const glm::dvec3 local(glm::inverse(parentWorld) * glm::dvec4(world, 1.0));
+        g.setValue({n, Transform::kTranslate, -1}, local);
+        out.plugs.push_back(g.node(n)->path() + ".translate");
+    }
+    return out;
+}
+
+json lineOfAction(const Args& a)
+{
+    Graph& g = graph();
+    std::vector<glm::dvec3> stroke;
+    if (a.has("stroke"))
+        for (const json& p : a.flags["stroke"])
+            stroke.push_back({p[0].get<double>(), p[1].get<double>(), p[2].get<double>()});
+    if (stroke.size() < 2)
+        throw CommandError("lineOfAction: give stroke, two or more world points");
+    const NodeId character = stringsCharacterArg(g, a, "lineOfAction");
+    std::string name;
+    const std::vector<NodeId> joints = lineJoints(g, character, a, stroke, name);
+    const double maxStretch = a.get<bool>("stretch", false) ? kStretchLimit : 1.0;
+    const bool travel = a.get<bool>("travel", false);
+    json out = {{"line", name}, {"joints", json::array()}};
+    for (NodeId j : joints)
+        out["joints"].push_back(g.node(j)->path());
+
+    if (!a.has("range") && !a.has("frames"))
+    {
+        const LineResult r = conformLine(g, character, joints, stroke, travel ? 0.0 : -1.0, 1.0, maxStretch);
+        written(r.plugs);
+        out["error"] = r.error;
+        return out;
+    }
+
+    // Across frames: each solved on its own pose, keyed once all are; a travelling stroke slides along the range.
+    lila::scene::anim::TimeSelection sel{.active = true};
+    std::vector<double> times;
+    if (a.has("range"))
+    {
+        const auto [start, end] = rangeArg(a, "lineOfAction");
+        sel.start = start;
+        sel.end = end;
+        sel.falloff = std::max(0.0, a.get<double>("falloff", 0.0));
+        const double from = lila::scene::anim::frameOf(start) - sel.falloff, to = lila::scene::anim::frameOf(end) + sel.falloff;
+        if (a.get<bool>("dense", false))
+            times = framesOf(lila::scene::anim::secondsOf(from), lila::scene::anim::secondsOf(to));
+        else
+            for (double t : lila::scene::anim::keyTimes(g, fullBodyJoints(g, joints.front())))
+                if (lila::scene::anim::frameOf(t) >= from - 1e-6 && lila::scene::anim::frameOf(t) <= to + 1e-6)
+                    times.push_back(t);
+    }
+    else
+    {
+        times = a.flags["frames"].get<std::vector<double>>();
+        sel.start = *std::min_element(times.begin(), times.end());
+        sel.end = *std::max_element(times.begin(), times.end());
+    }
+    if (times.empty())
+        throw CommandError("lineOfAction: no frames to pose in the range (no keys there; dense poses every frame)");
+    FrameKeys keys(g);
+    const double strokeLen = strings::strokeLength(stroke);
+    json frames = json::array();
+    for (double t : times)
+    {
+        const double w = lila::scene::anim::timeSelectionWeight(sel, t);
+        if (w <= 0.0)
+            continue;
+        g.setTime(t, false);
+        g.evaluate();
+        double window = -1.0;
+        if (travel)
+        {
+            double pathLen = 0.0;
+            for (size_t i = 1; i < joints.size(); ++i)
+                pathLen += glm::length(glm::dvec3(worldOf(g, joints[i])[3] - worldOf(g, joints[i - 1])[3]));
+            const double u = sel.end > sel.start ? std::clamp((t - sel.start) / (sel.end - sel.start), 0.0, 1.0) : 0.0;
+            window = u * std::max(0.0, strokeLen - pathLen);
+        }
+        const LineResult r = conformLine(g, character, joints, stroke, window, w, maxStretch);
+        std::vector<NodeId> touched;
+        for (const std::string& plug : r.plugs)
+            touched.push_back(g.find(plug.substr(0, plug.rfind('.')))->id());
+        std::sort(touched.begin(), touched.end());
+        touched.erase(std::unique(touched.begin(), touched.end()), touched.end());
+        keys.record(t, touched);
+        frames.push_back({{"time", t}, {"weight", w}, {"error", r.error}});
+    }
+    keys.key();
+    out["frames"] = frames;
+    return out;
+}
+
 json stringsBreakdown(const Args& a)
 {
     Graph& g = graph();
@@ -1647,9 +1946,32 @@ void registerStrings(ext::Context& ctx)
         .flags = {
             {"contacts", "ct", T::List, nullptr, "Joints that hold by default, replacing the inherited ones."},
             {"addChain", "ac", T::List, nullptr, "[top joint, end joint]: a limb from top down to end, replacing limbs it overlaps."},
+            {"addLine", "al", T::List, nullptr, "[name, top joint, end joint]: a line of action a stroke may bind to."},
             {"reset", "rs", T::Bool, false, "Forget this character's own rules first."},
         },
         .run = stringsRules,
+    });
+    ctx.registerCommand({
+        .name = "lineOfAction",
+        .doc = "Pose a body path to a stroke's shape (line of action): the path's joints bend along the stroke through a "
+               "full-body solve with each joint's stiffness, contacts and pins holding; bone CVs and spline chain controls on "
+               "the path move onto it too. The stroke is world points, scaled to the path's length and kept at its first "
+               "joint. With range or frames it poses each frame, travel slides the body along the stroke over the range. "
+               "Returns the line, its joints and the error.",
+        .positionalDoc = "character or one of its joints (default the selection)",
+        .flags = {
+            {"stroke", "st", T::List, nullptr, "World points along the stroke, [[x, y, z], ...]."},
+            {"line", "l", T::String, nullptr, "A line of action the character's rules name (body, a limb); default the one nearest the stroke."},
+            {"joints", "j", T::List, nullptr, "[top joint, end joint] instead of a named line."},
+            {"range", "r", T::List, nullptr, "[start, end] seconds to pose across; default this frame only."},
+            {"frames", "f", T::List, nullptr, "Times in seconds to pose at, instead of a range."},
+            {"falloff", "fo", T::Float, 0.0, "Frames either side of the range the edit eases out over.", {}, {}, 0.0},
+            {"dense", "d", T::Bool, false, "Pose every frame of the range, not only its keys."},
+            {"travel", "tr", T::Bool, false, "The body lies on the stroke unscaled and slides along it over the range (a path stroke)."},
+            {"stretch", "sx", T::Bool, false, "Let bones lengthen when turning alone can't reach the stroke."},
+        },
+        .run = lineOfAction,
+        .examples = {"lineOfAction(\"manny\", line=\"body\", stroke=[[0, 100, 0], [0, 140, 15], [0, 170, 40]])"},
     });
     ctx.registerCommand({
         .name = "stringsSmooth",

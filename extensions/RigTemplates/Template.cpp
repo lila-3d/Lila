@@ -495,6 +495,15 @@ Template Template::fromJson(const json& j)
             if (!m.is_string() || !t.marker(m.get<std::string>()))
                 throw std::invalid_argument("rig strings contacts names unknown marker " + m.dump());
     }
+    if (const json st = t.rig.value("strings", json::object()); st.contains("lines"))
+    {
+        if (!st["lines"].is_object())
+            throw std::invalid_argument("rig strings lines should map names to [top marker, end marker]");
+        for (const auto& [name, ends] : st["lines"].items())
+            if (!ends.is_array() || ends.size() != 2 || !ends[0].is_string() || !ends[1].is_string() || !t.marker(ends[0].get<std::string>()) ||
+                !t.marker(ends[1].get<std::string>()))
+                throw std::invalid_argument("rig strings line " + name + " should be [top marker, end marker] of known markers");
+    }
     for (auto& [k, v] : j.items())
         if (k != "format" && k != "version" && k != "id" && k != "name" && k != "description" && k != "source" && k != "lateral" &&
             k != "markers" && k != "limbs" && k != "picker" && k != "poses" && k != "aliases" && k != "spaces" && k != "rig")

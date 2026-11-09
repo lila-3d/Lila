@@ -145,4 +145,28 @@ LILA_SCENE_API std::optional<glm::dmat4> bindWorld(Graph& g, NodeId joint);
 
 /** Writes the pose's rotations, offsets and stretches into the joints, undoably. Returns the plugs changed ("node.rotate"). */
 LILA_SCENE_API std::vector<std::string> apply(Graph& g, const Skeleton& k, const Pose& s);
+
+/**
+ * Line of action: where each joint of a body path goes so the path takes a stroke's shape. Arc length along the path maps
+ * to arc length along the stroke, which runs from the end nearer the path's first joint. With window < 0 the stroke is
+ * scaled to the path's length and the path keeps its first joint where it is; with window >= 0 the path lies on the
+ * stroke unscaled, its first joint at that arc length along it (a path stroke the body travels along).
+ */
+LILA_SCENE_API std::vector<glm::dvec3> conformTargets(const std::vector<glm::dvec3>& path, std::vector<glm::dvec3> stroke, double window = -1.0);
+
+/** The stroke point conformTargets puts at a fraction (0 to 1) of the path's arc length: where a bone CV or a curve control there goes. */
+LILA_SCENE_API glm::dvec3 conformAt(const std::vector<glm::dvec3>& path, std::vector<glm::dvec3> stroke, double window, double fraction);
+
+/** How far along a path (0 to 1 of its arc length) the point nearest p lies. */
+LILA_SCENE_API double pathFraction(const std::vector<glm::dvec3>& path, const glm::dvec3& p);
+
+/** A stroke's arc length. */
+LILA_SCENE_API double strokeLength(const std::vector<glm::dvec3>& stroke);
+
+/**
+ * Poses the path's bones (top first) onto targets with full-body IK, each bone resisting by its stiffness, the holds kept
+ * and the hips free to move when hips >= 0. Bones off the path move only as far as the targets and holds need.
+ */
+LILA_SCENE_API Result conform(const fbik::Problem& p, const std::vector<int>& path, const std::vector<glm::dvec3>& targets, const std::vector<Hold>& holds,
+                              int hips, double maxStretch = 1.0);
 } // namespace lila::scene::strings

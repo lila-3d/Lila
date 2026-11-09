@@ -259,3 +259,43 @@ TEST_CASE("strings: IK pulls a nearly straight arm inward")
     MESSAGE("error " << r.error);
     CHECK(glm::length(pos("hand_l") - target) < 1e-3);
 }
+
+TEST_CASE("line of action: the spine takes a stroke's curve, scaled to its length, while the feet hold")
+{
+    stringsRigBiped();
+    const strings::Skeleton k = snap();
+    const std::vector<int> path = {bone(k, "hips"), bone(k, "spine_01"), bone(k, "spine_02"), bone(k, "spine_03"), bone(k, "neck"), bone(k, "head")};
+    const std::vector<glm::dmat4> w0 = strings::worlds(k.problem, strings::startPose(k.problem));
+    std::vector<glm::dvec3> points;
+    for (int b : path)
+        points.push_back(glm::dvec3(w0[size_t(b)][3]));
+    // A C curve leaning forward, longer than the spine: it is scaled to the spine.
+    std::vector<glm::dvec3> stroke;
+    for (int i = 0; i <= 40; ++i)
+    {
+        const double a = glm::radians(90.0) * i / 40.0;
+        stroke.push_back(glm::dvec3(0.0, 300.0 + 80.0 * std::sin(a), 80.0 * (1.0 - std::cos(a))));
+    }
+    std::reverse(stroke.begin(), stroke.end()); // drawn from the head end: turned round to start at the hips
+    const std::vector<glm::dvec3> targets = strings::conformTargets(points, stroke);
+    REQUIRE(targets.size() == points.size());
+    CHECK(glm::length(targets.front() - points.front()) < 1e-9);
+    // Scaled to the spine's length: the targets' arc spans what the joints do.
+    CHECK(strings::strokeLength(targets) == doctest::Approx(strings::strokeLength(points)).epsilon(0.05));
+    CHECK(targets.back().z > 20.0);
+
+    const strings::Result r = strings::conform(k.problem, path, targets, {holdAt(k, "foot_l"), holdAt(k, "foot_r")}, k.hips);
+    const std::vector<glm::dmat4> w1 = strings::worlds(k.problem, r.pose);
+    double worst = 0.0;
+    for (size_t i = 0; i < path.size(); ++i)
+        worst = std::max(worst, glm::length(glm::dvec3(w1[size_t(path[i])][3]) - targets[i]));
+    CHECK(worst < 2.0);
+    for (const char* foot : {"foot_l", "foot_r"})
+        CHECK(glm::length(glm::dvec3(w1[size_t(bone(k, foot))][3] - w0[size_t(bone(k, foot))][3])) < 1e-3);
+
+    // A path stroke: the path lies on it unscaled, its first joint at the window's start.
+    const std::vector<glm::dvec3> along = strings::conformTargets(points, stroke, 10.0);
+    CHECK(glm::length(along.front() - strings::conformAt(points, stroke, 10.0, 0.0)) < 1e-9);
+    CHECK(strings::pathFraction(points, points.back()) == doctest::Approx(1.0));
+    CHECK(strings::pathFraction(points, glm::dvec3(5.0, 122.0, 0.0)) == doctest::Approx(22.0 / 62.0).epsilon(1e-6));
+}

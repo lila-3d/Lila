@@ -666,3 +666,81 @@ TEST_CASE("stringsBreakdown blends on arcs and keeps planted feet; stringsFill k
     run("currentTime", {{"args", {sec(20)}}});
     CHECK_THROWS(run("stringsBreakdown", {{"args", {"hips"}}, {"weight", 0.5}}));
 }
+
+namespace
+{
+/** A stroke from hips height curving forward over the head, world points. */
+json forwardCurve(double scale = 1.0)
+{
+    json out = json::array();
+    for (int i = 0; i <= 20; ++i)
+    {
+        const double a = glm::radians(80.0) * i / 20.0;
+        out.push_back(v3(0.0, 100.0 + scale * 62.0 * std::sin(a) / glm::radians(80.0), scale * 62.0 * (1.0 - std::cos(a)) / glm::radians(80.0)));
+    }
+    return out;
+}
+} // namespace
+
+TEST_CASE("lineOfAction: the body bends to a stroke, feet holding, the nearest line chosen, one undo")
+{
+    loadPuppeteer();
+    stringsBiped();
+    run("puppeteerPin", {{"args", {"foot_l", "foot_r"}}, {"pin", true}});
+    const glm::dvec3 foot = pos("foot_l"), hips = pos("hips"), head = pos("head");
+    const json r = run("lineOfAction", {{"args", {"hero"}}, {"stroke", forwardCurve(2.0)}});
+    CHECK(r["line"] == "body");
+    CHECK(r["error"].get<double>() < 1.0);
+    CHECK(near(pos("foot_l"), foot, 1e-3));
+    CHECK(near(pos("hips"), hips, 1e-3));
+    // The head leans forward along the curve and keeps its distance along the spine.
+    CHECK(pos("head").z > 20.0);
+    CHECK(pos("head").y < head.y - 5.0);
+    run("undo");
+    CHECK(near(pos("head"), head, 1e-6));
+
+    // A named limb line; the rules list the inferred lines.
+    const json rules = run("stringsRules", {{"args", {"hero"}}});
+    CHECK(rules["lines"].contains("body"));
+    CHECK(run("lineOfAction", {{"args", {"hero"}}, {"joints", {"upperarm_l", "hand_l"}}, {"stroke", {v3(18, 140, 0), v3(40, 120, 20), v3(50, 100, 40)}}})["joints"].size() == 3);
+    CHECK(pos("hand_l").y < 135.0);
+}
+
+TEST_CASE("lineOfAction across a range: travel slides the body along a path stroke, keyed per frame")
+{
+    loadPuppeteer();
+    keyedBiped();
+    // A long, gently curving path: the spine rides a window of it that slides forward over the range.
+    json stroke = json::array();
+    for (int i = 0; i <= 40; ++i)
+        stroke.push_back(v3(0.0, 100.0 + 2.0 * i, 0.5 * i * i / 40.0));
+    run("currentTime", {{"args", {sec(20)}}});
+    const json r = run("lineOfAction", {{"args", {"hero"}}, {"line", "body"}, {"stroke", stroke}, {"travel", true}, {"range", {sec(10), sec(30)}}, {"dense", true}});
+    CHECK(r["frames"].size() == 21);
+    run("currentTime", {{"args", {sec(10)}}});
+    const double early = pos("head").z;
+    run("currentTime", {{"args", {sec(30)}}});
+    const double late = pos("head").z;
+    CHECK(late > early + 1.0);
+}
+
+TEST_CASE("lineOfAction on a bend-bones arm: the bone CV lands on the stroke between the joints")
+{
+    loadPuppeteer();
+    stringsBiped();
+    const std::string arm = run("polyCylinder", {{"name", "Arm"}, {"radius", 3}, {"height", 54}, {"subdivisionsHeight", 12}})[0];
+    run("rotate", {{"args", {arm}}, {"to", v3(0, 0, 90)}});
+    run("move", {{"args", {arm}}, {"to", v3(45, 140, 0)}});
+    const std::string d = run("bendBones", {{"args", {arm}}, {"chains", json::array({json::array({"upperarm_l", "lowerarm_l", "hand_l"})})}}).get<std::string>();
+    const std::string cv = run("bendBoneCV", {{"args", {d}}, {"joint", "upperarm_l"}, {"mirror", false}}).get<std::string>();
+    // A bow up between shoulder and hand.
+    json stroke = json::array();
+    for (int i = 0; i <= 20; ++i)
+    {
+        const double t = i / 20.0;
+        stroke.push_back(v3(18.0 + 54.0 * t, 140.0 + 25.0 * std::sin(glm::pi<double>() * t), 0.0));
+    }
+    run("lineOfAction", {{"args", {"hero"}}, {"joints", json::array({"upperarm_l", "hand_l"})}, {"stroke", stroke}});
+    CHECK(pos(cv).y > 150.0);
+    CHECK(pos("lowerarm_l").y > 150.0);
+}

@@ -470,4 +470,112 @@ std::vector<std::string> apply(Graph& g, const Skeleton& k, const Pose& s)
     }
     return plugs;
 }
+
+double strokeLength(const std::vector<glm::dvec3>& stroke)
+{
+    double l = 0.0;
+    for (size_t i = 1; i < stroke.size(); ++i)
+        l += glm::length(stroke[i] - stroke[i - 1]);
+    return l;
+}
+
+namespace
+{
+/** The point at arc length s along a polyline, clamped to its ends. */
+glm::dvec3 alongStroke(const std::vector<glm::dvec3>& q, double s)
+{
+    if (s <= 0.0)
+        return q.front();
+    for (size_t i = 1; i < q.size(); ++i)
+    {
+        const double l = glm::length(q[i] - q[i - 1]);
+        if (s <= l && l > 0.0)
+            return glm::mix(q[i - 1], q[i], s / l);
+        s -= l;
+    }
+    return q.back();
+}
+} // namespace
+
+glm::dvec3 conformAt(const std::vector<glm::dvec3>& path, std::vector<glm::dvec3> stroke, double window, double fraction)
+{
+    if (path.empty())
+        return glm::dvec3(0.0);
+    if (stroke.size() < 2)
+        return path.front();
+    if (glm::length(stroke.back() - path.front()) < glm::length(stroke.front() - path.front()))
+        std::reverse(stroke.begin(), stroke.end());
+    double l = 0.0;
+    for (size_t i = 1; i < path.size(); ++i)
+        l += glm::length(path[i] - path[i - 1]);
+    const double m = strokeLength(stroke), s = fraction * l;
+    if (window >= 0.0)
+        return alongStroke(stroke, window + s);
+    if (m <= 1e-9 || l <= 1e-9)
+        return path.front();
+    return path.front() + (alongStroke(stroke, fraction * m) - stroke.front()) * (l / m);
+}
+
+double pathFraction(const std::vector<glm::dvec3>& path, const glm::dvec3& p)
+{
+    double total = 0.0, best = 1e300, at = 0.0;
+    for (size_t i = 1; i < path.size(); ++i)
+    {
+        const glm::dvec3 d = path[i] - path[i - 1];
+        const double len = glm::length(d);
+        const double t = len > 1e-12 ? std::clamp(glm::dot(p - path[i - 1], d) / (len * len), 0.0, 1.0) : 0.0;
+        if (const double e = glm::length(path[i - 1] + t * d - p); e < best)
+        {
+            best = e;
+            at = total + t * len;
+        }
+        total += len;
+    }
+    return total > 1e-12 ? at / total : 0.0;
+}
+
+std::vector<glm::dvec3> conformTargets(const std::vector<glm::dvec3>& path, std::vector<glm::dvec3> stroke, double window)
+{
+    if (path.empty() || stroke.size() < 2)
+        return path;
+    std::vector<double> along{0.0};
+    for (size_t i = 1; i < path.size(); ++i)
+        along.push_back(along.back() + glm::length(path[i] - path[i - 1]));
+    std::vector<glm::dvec3> out;
+    for (double s : along)
+        out.push_back(conformAt(path, stroke, window, along.back() > 1e-12 ? s / along.back() : 0.0));
+    return out;
+}
+
+Result conform(const fbik::Problem& p, const std::vector<int>& path, const std::vector<glm::dvec3>& targets, const std::vector<Hold>& holds, int hips,
+               double maxStretch)
+{
+    LILA_ZONE();
+    fbik::Problem q = p;
+    q.effectors.clear();
+    for (size_t i = 0; i < path.size() && i < targets.size(); ++i)
+        q.effectors.push_back({.bone = path[i], .position = targets[i]});
+    for (const Hold& h : holds)
+        if (std::find(path.begin(), path.end(), h.bone) == path.end())
+            q.effectors.push_back({.bone = h.bone,
+                                   .position = glm::dvec3(h.world[3]),
+                                   .rotation = h.rotation ? std::optional(glm::normalize(glm::quat_cast(orthonormal(glm::dmat3(h.world))))) : std::nullopt});
+    if (hips >= 0)
+        q.bones[size_t(hips)].translate = true;
+    if (maxStretch > 1.0)
+        for (fbik::Bone& b : q.bones)
+            b.maxStretch = maxStretch;
+    const fbik::Solution sol = fbik::solve(q);
+    Result out;
+    out.pose = {sol.rotation, sol.offset, sol.stretch.empty() ? std::vector<double>(p.bones.size(), 1.0) : sol.stretch};
+    out.error = sol.error;
+    // The solve shares its last iterations between the path and the holds; the holds' limbs then close what is left exactly.
+    std::vector<Hold> kept;
+    for (const Hold& h : holds)
+        if (std::find(path.begin(), path.end(), h.bone) == path.end())
+            kept.push_back(h);
+    if (!kept.empty())
+        holdLimbs(p, out.pose, kept, hips >= 0 ? hips : (path.empty() ? -1 : path.front()), maxStretch);
+    return out;
+}
 } // namespace lila::scene::strings
