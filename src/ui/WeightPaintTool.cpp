@@ -32,6 +32,7 @@
 #include "ui/Tools.h"
 #include "ui/UiCommon.h"
 #include "ui/ViewportDisplay.h"
+#include "ui/ViewportHooks.h"
 #include "ui/ViewportTool.h"
 
 #include <QApplication>
@@ -224,7 +225,7 @@ public:
         mTree->setContextMenuPolicy(Qt::CustomContextMenu);
         mTree->setMinimumHeight(180);
         mTree->setToolTip("The joint painted. Click the lock to lock or unlock; Alt+click it to lock every other joint. Ctrl+click a "
-                          "joint to make it the receiver, where removed weight goes.");
+                          "joint here, or Ctrl+Alt+click it in the viewport, to make it the receiver, where removed weight goes.");
         connect(mTree, &QTreeWidget::itemPressed, this, [this](QTreeWidgetItem* item, int column) { pressed(item, column); });
         connect(mTree, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem* item) { picked(item); });
         connect(mTree, &QTreeWidget::customContextMenuRequested, this, [this](QPoint at) { contextMenu(at); });
@@ -773,6 +774,11 @@ public:
             return true;
         if (e->button() != Qt::LeftButton)
             return false;
+        if ((e->modifiers() & Qt::ControlModifier) && (e->modifiers() & Qt::AltModifier))
+        {
+            pickReceiver(e->position(), view);
+            return true;
+        }
         if (!canPaint())
             return true;
         mMods = e->modifiers();
@@ -864,7 +870,7 @@ public:
                 st.fields.push_back({"proxy for", QString::fromStdString(g.node(targets.front())->name()) +
                                                       (targets.size() > 1 ? QString(" +%1").arg(targets.size() - 1) : QString())});
         }
-        st.keys = {{"Shift", "relax"}, {"Ctrl", "subtract"}};
+        st.keys = {{"Shift", "relax"}, {"Ctrl", "subtract"}, {"Ctrl+Alt+click", "receiver"}};
         st.symmetry = ToolSymmetry{ws.stroke.mirror, QString(QChar('X' + ws.mirrorAxis))};
         drawToolStatus(p, view, st);
 
@@ -1214,6 +1220,67 @@ private:
         for (auto [p, w] : mWalk.gather(*mBvhMesh, mBvh, tri, d, weightPaintSettings().stroke.resolveFalloff()))
             out.push_back({p, w});
         return out;
+    }
+
+    /**
+     * Ctrl+Alt+click: the joint under the cursor becomes the receiver, else the heaviest other unlocked joint at the
+     * vertex clicked. Clicking the receiver again clears it.
+     */
+    void pickReceiver(QPointF at, const ViewInfo& view)
+    {
+        if (mapMode() || mSkin == kNoNode)
+            return;
+        scene::Graph& g = scene::Graph::current();
+        WeightPaintSettings& s = weightPaintSettings();
+        int64_t pick = -1;
+        double best = 1e300;
+        for (const auto& picker : viewportHooks::pickers())
+            for (const auto& h : picker(at, at, true, view))
+                if (const scene::Node* n = g.find(h.name); n && h.pixels < best)
+                    for (const auto& i : mInfluences)
+                        if (i.joint == n->id() && !i.locked)
+                        {
+                            best = h.pixels;
+                            pick = i.index;
+                        }
+        if (pick < 0)
+        {
+            ensureBvh();
+            geo::BvhHit hit;
+            const auto* w = dynamic_cast<const scene::SkinWeights*>(std::get<scene::DataPtr>(g.storedValue({mSkin, scene::SkinClusterNode::kWeights, -1})).get());
+            if (w && raycast(at, view, hit))
+            {
+                const auto& tris = mBvh.triangles();
+                geo::Index point = mBvhMesh->cornerPoint(tris.corners[size_t(hit.triangle) * 3]);
+                double near = 1e300;
+                for (int k = 0; k < 3; ++k)
+                {
+                    const geo::Index q = mBvhMesh->cornerPoint(tris.corners[size_t(hit.triangle) * 3 + k]);
+                    if (const double d = glm::length(mBvhMesh->position(q) - hit.point); d < near)
+                    {
+                        near = d;
+                        point = q;
+                    }
+                }
+                const std::vector<char> locked = scene::skin::lockMask(mInfluences);
+                float heaviest = 0.0f;
+                if (point < w->pointCount())
+                    for (uint32_t k = w->offsets[point]; k < w->offsets[point + 1]; ++k)
+                    {
+                        const uint32_t i = w->influences[k];
+                        if (int64_t(i) != s.influence && !(i < locked.size() && locked[i]) && w->weights[k] > heaviest)
+                        {
+                            heaviest = w->weights[k];
+                            pick = i;
+                        }
+                    }
+            }
+        }
+        if (pick < 0 || pick == s.influence)
+            return;
+        s.receiver = s.receiver == pick ? -1 : pick;
+        syncPalette();
+        viewportTools::requestRedraw();
     }
 
     /** What the brush would do under the cursor: its refusal and the joints with weight there. */
@@ -1701,8 +1768,19 @@ void runWeightCommand(const char* command, nlohmann::json extra = nlohmann::json
     nlohmann::json call = targetArgs();
     for (auto& [k, v] : extra.items())
         call[k] = v;
-    actions::run({{"command", command}, {"args", call}});
+    // With the option box's remembered values, so its settings apply from the menu and the palette alike.
+    actions::runWithOptions(command, call);
     viewportTools::requestRedraw();
+}
+
+/** Gives a weight action its command's option box while keeping its own run, which aims at the painted mesh. */
+void optionBoxFor(const char* id, const char* command, nlohmann::json call = nlohmann::json::object())
+{
+    if (Action* a = actions::registry().find(id))
+    {
+        a->command = command;
+        a->call = std::move(call);
+    }
 }
 } // namespace
 
@@ -1751,6 +1829,27 @@ void registerWeightPaint()
         "Copies the weight proxy's weights onto its render meshes.");
     add("rig.pullProxyWeights", "Pull Proxy Weights", [] { runWeightCommand("pullProxyWeights"); }, "pullProxyWeights()",
         "Copies the render meshes' weights onto their weight proxy.");
+    // Words people search for, including other apps' names for the same tools.
+    for (auto& [id, words] : std::initializer_list<std::pair<const char*, std::vector<std::string>>>{
+             {"rig.paintWeights", {"weight paint", "skin weights", "paint skin", "artisan"}},
+             {"rig.floodWeights", {"flood", "fill weights"}},
+             {"rig.relaxWeights", {"smooth weights", "blur weights"}},
+             {"rig.settleWeights", {"hammer", "fix collapse", "candy wrapper", "delta mush", "smooth skin"}},
+             {"rig.settleWeightsSimulate", {"hammer", "simulate weights", "physics weights"}},
+             {"rig.acceptWeights", {"automatic weights", "unauthored weights"}},
+             {"rig.selectAutomaticWeights", {"automatic weights", "unauthored weights"}},
+             {"rig.flattenWeightLayers", {"merge layers", "weight layers"}},
+             {"rig.createWeightProxy", {"proxy", "cage", "weight cage", "transfer weights", "copy weights"}},
+             {"rig.pushProxyWeights", {"transfer weights", "copy weights", "proxy"}},
+             {"rig.pullProxyWeights", {"transfer weights", "copy weights", "proxy"}}})
+        if (Action* act = actions::registry().find(id))
+            for (const std::string& w : words)
+                if (std::find(act->keywords.begin(), act->keywords.end(), w) == act->keywords.end())
+                    act->keywords.push_back(w);
+    optionBoxFor("rig.relaxWeights", "relaxSkinWeights");
+    optionBoxFor("rig.settleWeights", "settleSkinWeights");
+    optionBoxFor("rig.settleWeightsSimulate", "settleSkinWeights", {{"target", "simulate"}});
+    optionBoxFor("rig.createWeightProxy", "createWeightProxy");
     actions::setEnabledWhen("rig.floodWeights", [] { return gWeightTool != nullptr; });
 }
 } // namespace lila::ui

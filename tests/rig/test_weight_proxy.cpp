@@ -154,6 +154,23 @@ TEST_CASE("a proxy over a single-sided mesh")
     run("joint", {{"position", v3(0, 0, 0)}, {"name", "bone_b"}});
     run("joint", {{"position", v3(0, 60, 0)}, {"name", "bone_c"}});
     run("skinCluster", {{"args", {"bone_a", mesh}}});
-    std::string proxy = run("createWeightProxy", {{"args", {mesh}}});
+    std::string proxy = run("createWeightProxy", {{"args", {mesh}}, {"edgesAround", 10}});
     CHECK(run("weightProxyInfo", {{"args", {proxy}}})["meshes"] == json::array({mesh}));
+    // At least edgesAround edges round the limb, so the bone's own loop spacing doesn't leave it a few edges wide.
+    MeshPtr m = outMesh(proxy);
+    // Faces cut by a plane across the limb: one per edge around it.
+    int ring = 0;
+    for (geo::Index f = 0; f < m->faceCapacity(); ++f)
+    {
+        if (!m->faceValid(f))
+            continue;
+        double lo = 1e300, hi = -1e300;
+        for (geo::Index p : m->facePoints(f))
+        {
+            lo = std::min(lo, m->position(p).y - 20.0);
+            hi = std::max(hi, m->position(p).y - 20.0);
+        }
+        ring += lo < 0.0 && hi >= 0.0;
+    }
+    CHECK(ring >= 10);
 }
