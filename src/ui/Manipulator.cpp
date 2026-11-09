@@ -670,6 +670,7 @@ bool Manipulator::press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifier
     const bool clone = tools::cloneDrag() && !mComponents && !tools::pivotEdit() && !surfaceSlide;
     if (clone)
     {
+        tools::markCloneDragUsed();
         cloneCall = ops::options::callWith("duplicate", json::object());
         try
         {
