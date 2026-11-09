@@ -58,6 +58,8 @@ lila_module(lila_scene Scene
     PostProcess.cpp PostProcess.h
     LodGroup.cpp LodGroup.h
     Materials.cpp
+    MathNodes.cpp MathNodes.h
+    Expression.cpp Expression.h
     MeshCache.cpp MeshCache.h
     Measure.cpp
     MeasureMath.cpp
