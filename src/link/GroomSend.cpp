@@ -59,6 +59,12 @@ void registerGroomSendCommands()
                   {"start", "s", T::Float, nullptr, "First frame for an animated groom; the current frame when left out."},
                   {"end", "", T::Float, nullptr, "Last frame; start when left out."},
                   {"material", "", T::Bool, true, "Set M_LilaHair on the groom."},
+                  {"bindTo", "b", T::String, nullptr,
+                   "Bind the groom to a skeletal mesh so it follows its skinning: an asset like /Game/Characters/SK_Hero, or a Lila "
+                   "node sent to Unreal as a skeletal mesh (its mapping). Remembered for the next send."},
+                  {"bindSource", "", T::String, nullptr, "The skeletal mesh the groom was made on when it differs from bindTo (transfers it)."},
+                  {"actor", "", T::String, nullptr, "With bindTo: the level actor (its label) that gets a groom component on its skeletal mesh."},
+                  {"interpolationPoints", "", T::Int, 100, "Binding: points the hair follows on the mesh.", {}, {}, 1.0, 1000.0},
                   {"wait", "wt", T::Bool, false, "Block until Unreal answers and return its reply."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
@@ -105,7 +111,33 @@ void registerGroomSendCommands()
             mapping["contentPath"] = folder + "/" + name;
             setMapping(mapping);
 
-            const json params = {{"file", file}, {"folder", folder}, {"name", name}, {"material", a.get<bool>("material", true)}};
+            json params = {{"file", file}, {"folder", folder}, {"name", name}, {"material", a.get<bool>("material", true)}};
+            // A binding target given as a Lila node is the asset it was sent as.
+            auto assetOf = [&](const std::string& what) {
+                if (what.empty() || what.front() == '/')
+                    return what;
+                scene::Node* n = g.find(what);
+                const json m = n ? mappingOf(n->fullPath()) : json();
+                if (!m.is_object() || m.value("contentPath", std::string()).empty())
+                    throw CommandError("unrealSendGroom: " + what + " has not been sent to Unreal; send it first or give its asset path");
+                const std::string path = m["contentPath"];
+                return path.find('.') == std::string::npos ? path + "." + path.substr(path.rfind('/') + 1) : path;
+            };
+            const std::string bindTo = a.has("bindTo") ? assetOf(a.get<std::string>("bindTo")) : mapping.value("bindTo", std::string());
+            if (!bindTo.empty())
+            {
+                params["bindTo"] = bindTo;
+                params["interpolationPoints"] = a.get<int>("interpolationPoints", 100);
+                if (a.has("bindSource"))
+                    params["bindSource"] = assetOf(a.get<std::string>("bindSource"));
+                const std::string actor = a.has("actor") ? a.get<std::string>("actor") : mapping.value("actor", std::string());
+                if (!actor.empty())
+                    params["actor"] = actor;
+                mapping["bindTo"] = bindTo;
+                if (!actor.empty())
+                    mapping["actor"] = actor;
+                setMapping(mapping);
+            }
             if (a.get<bool>("wait", false))
             {
                 RpcResult r = client->call("importGroom", params, importCallOptions());

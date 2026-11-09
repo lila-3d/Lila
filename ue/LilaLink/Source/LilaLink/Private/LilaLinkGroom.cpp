@@ -7,7 +7,14 @@
 #include "AssetImportTask.h"
 #include "AssetToolsModule.h"
 #include "Factories/Factory.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Editor.h"
+#include "EngineUtils.h"
+#include "Engine/SkeletalMesh.h"
 #include "GroomAsset.h"
+#include "GroomBindingAsset.h"
+#include "GroomComponent.h"
+#include "HairStrandsCore.h"
 #include "GroomAssetRendering.h"
 #include "IAssetTools.h"
 #include "Materials/Material.h"
@@ -116,6 +123,84 @@ void SetGroomMaterial(UGroomAsset* Groom, UMaterialInterface* Material)
 	Groom->MarkPackageDirty();
 }
 
+/**
+ * The groom bound to a skeletal mesh: Folder/<Name>_Binding made or retargeted and built, so the hair follows the mesh's
+ * skinning; with an actor label, a groom component on that actor's first skeletal mesh component, using the binding.
+ */
+UGroomBindingAsset* BindGroom(UGroomAsset* Groom, const FString& Folder, const FString& Name, const FString& MeshPath, const FString& SourcePath,
+	int32 Points, const FString& ActorLabel, TArray<FString>& OutAssets, TArray<FString>& OutWarnings)
+{
+	USkeletalMesh* Target = LoadObject<USkeletalMesh>(nullptr, *MeshPath);
+	if (!Target)
+	{
+		OutWarnings.Add(TEXT("bindTo: no skeletal mesh ") + MeshPath);
+		return nullptr;
+	}
+	USkeletalMesh* Source = SourcePath.IsEmpty() ? nullptr : LoadObject<USkeletalMesh>(nullptr, *SourcePath);
+	const FString BindingPath = Folder / (Name + TEXT("_Binding"));
+	UGroomBindingAsset* Binding = LoadObject<UGroomBindingAsset>(nullptr, *(BindingPath + TEXT(".") + Name + TEXT("_Binding")), nullptr, LOAD_NoWarn | LOAD_Quiet);
+	if (Binding)
+	{
+		Binding->SetGroom(Groom);
+		Binding->SetSourceSkeletalMesh(Source);
+		Binding->SetTargetSkeletalMesh(Target);
+		Binding->SetNumInterpolationPoints(Points);
+		Binding->MarkPackageDirty();
+	}
+	else
+	{
+		Binding = FHairStrandsCore::CreateGroomBindingAsset(EGroomBindingMeshType::SkeletalMesh, BindingPath, nullptr, Groom, Source, Target, Points, -1);
+	}
+	if (!Binding)
+	{
+		OutWarnings.Add(TEXT("bindTo: the binding to ") + MeshPath + TEXT(" could not be made"));
+		return nullptr;
+	}
+	Binding->Build();
+	OutAssets.Add(Binding->GetPathName());
+
+	if (ActorLabel.IsEmpty() || !GEditor)
+	{
+		return Binding;
+	}
+	UWorld* World = GEditor->GetEditorWorldContext().World();
+	AActor* Actor = nullptr;
+	for (TActorIterator<AActor> It(World); It && !Actor; ++It)
+	{
+		if (It->GetActorLabel() == ActorLabel)
+		{
+			Actor = *It;
+		}
+	}
+	USkeletalMeshComponent* Skin = Actor ? Actor->FindComponentByClass<USkeletalMeshComponent>() : nullptr;
+	if (!Skin)
+	{
+		OutWarnings.Add(TEXT("actor: no actor labelled ") + ActorLabel + TEXT(" with a skeletal mesh"));
+		return Binding;
+	}
+	const FName ComponentName(*(Name + TEXT("_Groom")));
+	UGroomComponent* Hair = nullptr;
+	TArray<UGroomComponent*> Existing;
+	Actor->GetComponents(Existing);
+	for (UGroomComponent* C : Existing)
+	{
+		if (C->GetFName() == ComponentName)
+		{
+			Hair = C;
+		}
+	}
+	Actor->Modify();
+	if (!Hair)
+	{
+		Hair = NewObject<UGroomComponent>(Actor, ComponentName, RF_Transactional);
+		Hair->SetupAttachment(Skin);
+		Actor->AddInstanceComponent(Hair);
+		Hair->RegisterComponent();
+	}
+	Hair->SetGroomAsset(Groom, Binding);
+	return Binding;
+}
+
 void ImportGroom(const TSharedPtr<FJsonObject>& Params, const FLilaLinkCallRef& Call)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkGroom::ImportGroom);
@@ -181,6 +266,16 @@ void ImportGroom(const TSharedPtr<FJsonObject>& Params, const FLilaLinkCallRef& 
 		{
 			Warnings.Add(Error);
 		}
+	}
+	FString BindTo, BindSource, Actor;
+	if (Params->TryGetStringField(TEXT("bindTo"), BindTo) && !BindTo.IsEmpty())
+	{
+		Params->TryGetStringField(TEXT("bindSource"), BindSource);
+		Params->TryGetStringField(TEXT("actor"), Actor);
+		int32 Points = 100;
+		Params->TryGetNumberField(TEXT("interpolationPoints"), Points);
+		Call->Progress(TEXT("binding"));
+		BindGroom(Groom, Folder, Name, BindTo, BindSource, Points, Actor, Assets, Warnings);
 	}
 	UE_LOG(LogLilaLink, Log, TEXT("importGroom %s -> %s"), *File, *Groom->GetPathName());
 	auto Strings = [](const TArray<FString>& In) {
