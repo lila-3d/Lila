@@ -285,7 +285,17 @@ struct FSetup
 	FTransform Now;
 };
 
-bool Prepare(const FRigUnit_LilaStringsBase& U, const FControlRigExecuteContext& ExecuteContext, URigHierarchy* H, FSetup& Out)
+/** The unit's inputs Prepare reads: Execute is static, its members passed in as parameters. */
+struct FInputs
+{
+	const FString& RuleWeb;
+	FName Bone;
+	FName Control;
+	const FTransform& Target;
+	float Alpha;
+};
+
+bool Prepare(const FInputs& U, const FControlRigExecuteContext& ExecuteContext, URigHierarchy* H, FSetup& Out)
 {
 	if (!H || U.Alpha <= 0.0f)
 	{
@@ -315,7 +325,7 @@ FRigUnit_LilaStringsForward_Execute()
 	TRACE_CPUPROFILER_EVENT_SCOPE(RigUnit_LilaStringsForward::Execute);
 
 	FSetup S;
-	if (!Prepare(*this, ExecuteContext, ExecuteContext.Hierarchy, S))
+	if (!Prepare(FInputs{RuleWeb, Bone, Control, Target, Alpha}, ExecuteContext, ExecuteContext.Hierarchy, S))
 	{
 		return;
 	}
@@ -333,7 +343,7 @@ FRigUnit_LilaStringsBackward_Execute()
 	TRACE_CPUPROFILER_EVENT_SCOPE(RigUnit_LilaStringsBackward::Execute);
 
 	FSetup S;
-	if (!Prepare(*this, ExecuteContext, ExecuteContext.Hierarchy, S))
+	if (!Prepare(FInputs{RuleWeb, Bone, Control, Target, Alpha}, ExecuteContext, ExecuteContext.Hierarchy, S))
 	{
 		return;
 	}
@@ -366,7 +376,7 @@ FRigUnit_LilaStringsIK_Execute()
 	TRACE_CPUPROFILER_EVENT_SCOPE(RigUnit_LilaStringsIK::Execute);
 
 	FSetup S;
-	if (!Prepare(*this, ExecuteContext, ExecuteContext.Hierarchy, S))
+	if (!Prepare(FInputs{RuleWeb, Bone, Control, Target, Alpha}, ExecuteContext, ExecuteContext.Hierarchy, S))
 	{
 		return;
 	}
@@ -408,7 +418,7 @@ FRigUnit_LilaStringsFullBody_Execute()
 	TRACE_CPUPROFILER_EVENT_SCOPE(RigUnit_LilaStringsFullBody::Execute);
 
 	FSetup S;
-	if (!Prepare(*this, ExecuteContext, ExecuteContext.Hierarchy, S))
+	if (!Prepare(FInputs{RuleWeb, Bone, Control, Target, Alpha}, ExecuteContext, ExecuteContext.Hierarchy, S))
 	{
 		return;
 	}
