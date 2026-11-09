@@ -5,6 +5,7 @@
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "scene/Graph.h"
+#include "scene/MeshNodes.h"
 
 #include <cmath>
 #include <filesystem>
@@ -130,6 +131,10 @@ TEST_CASE("groomCards and groomBakeCards: a preset's Cards node, its maps baked 
     scene::Graph& g = scene::Graph::current();
     const json preset = ops::execute("groomCards", {{"args", {groom}}, {"lod", "low"}});
     CHECK(preset["node"] == "cards");
+    scene::Node* cardsMesh = g.find(preset["mesh"].get<std::string>());
+    REQUIRE(cardsMesh);
+    g.evaluate();
+    CHECK(cardsMesh->as<scene::MeshPtr>(scene::MeshNode::kOutMesh)->numFaces() > 100);
     scene::Node* gr = g.find(groom);
     const std::string graph = std::get<std::string>(gr->value(gr->type().attrIndex("graph")));
     CHECK(graph.find("\"Cards\"") != std::string::npos);

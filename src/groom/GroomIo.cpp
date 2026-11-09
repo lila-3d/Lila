@@ -267,7 +267,21 @@ json cardsPreset(const Args& a)
                 if (json j = paramJson(value); !j.is_null())
                     n["params"][name] = j;
     g.setValue({gr.id(), gr.type().attrIndex("graph"), -1}, graph.dump());
-    return {{"node", node}, {"lod", lod}};
+    // The cards show on a mesh of their own, made the first time.
+    const PlugRef out{gr.id(), gr.type().attrIndex("outCards"), -1};
+    std::string mesh;
+    if (const std::vector<PlugRef> to = g.destinations(out); !to.empty())
+        mesh = g.node(to.front().node)->path();
+    else
+    {
+        std::string base = gr.name();
+        if (base.size() > 5 && base.compare(base.size() - 5, 5, "Groom") == 0)
+            base.resize(base.size() - 5);
+        Node* m = g.createNode(*types::find("mesh"), base + "Cards");
+        g.connect(out, {m->id(), MeshNode::kInMesh, -1});
+        mesh = m->path();
+    }
+    return {{"node", node}, {"lod", lod}, {"mesh", mesh}};
 }
 
 json bakeCards(const Args& a)
@@ -395,7 +409,7 @@ void registerIoCommands()
     ops::registerCommand({
         .name = "groomCards",
         .doc = "Gives the groom a Cards node (after the hair) set from a level-of-detail preset: hero, mid or low, its card count "
-               "from the preset's triangle budget or triangles. The groom's outCards then holds the cards. Returns {node, lod}.",
+               "from the preset's triangle budget or triangles, and a mesh showing the cards (made once, fed by outCards). Returns {node, lod, mesh}.",
         .positionalDoc = "groom",
         .flags = {{"lod", "l", T::String, "mid", "The preset.", {"hero", "mid", "low"}},
                   {"triangles", "t", T::Int, nullptr, "The triangle budget instead of the preset's.", {}, {}, 1.0}},
