@@ -2906,6 +2906,46 @@ size_t dropSlivers(const Layout& lay, const Traces& tr, const std::vector<Piece>
     return count;
 }
 
+/** Points within `tol` of each other, chained, share an index (union over a grid of tol-sized cells). */
+std::vector<Index> clusterPoints(const std::vector<glm::dvec3>& pts, double tol)
+{
+    std::vector<Index> up(pts.size());
+    std::iota(up.begin(), up.end(), Index(0));
+    auto root = [&](Index x) {
+        while (up[x] != x)
+            x = up[x] = up[up[x]];
+        return x;
+    };
+    using Cell = std::tuple<int64_t, int64_t, int64_t>;
+    auto cellOf = [&](const glm::dvec3& p) { return Cell{int64_t(std::floor(p.x / tol)), int64_t(std::floor(p.y / tol)), int64_t(std::floor(p.z / tol))}; };
+    std::map<Cell, std::vector<Index>> grid;
+    for (Index i = 0; i < Index(pts.size()); ++i)
+        grid[cellOf(pts[i])].push_back(i);
+    for (const auto& [cell, members] : grid)
+    {
+        const auto [cx, cy, cz] = cell;
+        for (int64_t dx = 0; dx <= 1; ++dx)
+            for (int64_t dy = -1; dy <= 1; ++dy)
+                for (int64_t dz = -1; dz <= 1; ++dz)
+                {
+                    // Each pair of neighbouring cells once.
+                    if (dx == 0 && (dy < 0 || (dy == 0 && dz < 0)))
+                        continue;
+                    const auto it = grid.find({cx + dx, cy + dy, cz + dz});
+                    if (it == grid.end())
+                        continue;
+                    for (Index a : members)
+                        for (Index b : it->second)
+                            if (a != b && glm::length(pts[a] - pts[b]) <= tol)
+                                up[root(a)] = root(b);
+                }
+    }
+    std::vector<Index> out(pts.size());
+    for (Index i = 0; i < Index(pts.size()); ++i)
+        out[i] = root(i);
+    return out;
+}
+
 struct PatchStats
 {
     int tracers = 0, segments = 0, mismatched = 0, pieces = 0, patches = 0, rectangles = 0, reflex = 0, corners[9] = {};
@@ -3171,18 +3211,47 @@ Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, cons
         {
             double angle = 0.0;
             bool border = false;
+            glm::dvec3 pos{0.0};
         };
-        std::map<std::tuple<Index, int64_t, int64_t, int64_t>, At> angleAt;
+        std::vector<glm::dvec3> cornerPos;
+        std::vector<size_t> firstCorner(pieces.size(), 0);
+        for (Index pi = 0; pi < Index(pieces.size()); ++pi)
+        {
+            firstCorner[pi] = cornerPos.size();
+            for (const glm::dvec2& p : pieces[pi].poly)
+                cornerPos.push_back(at3d(pieces[pi], p));
+        }
+        const std::vector<Index> cluster = clusterPoints(cornerPos, unit);
+        std::map<std::pair<Index, Index>, At> angleAt;
         for (Index pi = 0; pi < Index(pieces.size()); ++pi)
         {
             const Piece& P = pieces[pi];
             const size_t n = P.poly.size();
+            const Index* key = cluster.data() + firstCorner[pi];
+            // Points of one cluster in a row (a line stepping round a vertex just beside it) are one corner, measured
+            // between the points either side: the steps' own directions are noise at that scale.
+            std::vector<std::pair<size_t, size_t>> runs; // first, last
             for (size_t k = 0; k < n; ++k)
+                if (runs.empty() || key[k] != key[runs.back().second])
+                    runs.push_back({k, k});
+                else
+                    runs.back().second = k;
+            if (runs.size() > 1 && key[runs.back().first] == key[runs.front().first])
             {
-                const Index before = P.side[(k + n - 1) % n], after = P.side[k];
-                const glm::dvec2 u = P.poly[(k + n - 1) % n] - P.poly[k], v = P.poly[(k + 1) % n] - P.poly[k];
-                const glm::dvec3 p = at3d(P, P.poly[k]);
-                At& at = angleAt[{patchOf[pi], std::llround(p.x / unit), std::llround(p.y / unit), std::llround(p.z / unit)}];
+                runs.front().first = runs.back().first;
+                runs.pop_back();
+            }
+            if (runs.size() < 3)
+                continue;
+            const size_t m = runs.size();
+            for (size_t r = 0; r < m; ++r)
+            {
+                const auto [first, last] = runs[r];
+                const size_t prev = runs[(r + m - 1) % m].second, next = runs[(r + 1) % m].first;
+                const Index before = P.side[(first + n - 1) % n], after = P.side[last];
+                const glm::dvec2 u = P.poly[prev] - P.poly[first], v = P.poly[next] - P.poly[last];
+                At& at = angleAt[{patchOf[pi], key[first]}];
+                at.pos = cornerPos[firstCorner[pi] + first];
                 at.angle += std::atan2(cross2(v, u), glm::dot(u, v));
                 at.border = at.border || internalSide(P, before) == kInvalid || internalSide(P, after) == kInvalid;
                 if (const Index e = internalSide(P, before); e != kInvalid)
@@ -3197,13 +3266,12 @@ Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, cons
                 continue;
             const double deg = glm::degrees(at.angle);
             if (deg > 45.0 && deg < 135.0)
-                ++corners[std::get<0>(key)];
+                ++corners[key.first];
             else if (deg > 225.0)
             {
-                if (std::getenv("LILA_PATCH_LIST") && reflex[std::get<0>(key)] < 3)
-                    std::fprintf(stderr, "reflex in %d: %.1f deg at %.4f %.4f %.4f\n", int(std::get<0>(key)), deg, std::get<1>(key) * unit,
-                                 std::get<2>(key) * unit, std::get<3>(key) * unit);
-                ++reflex[std::get<0>(key)];
+                if (std::getenv("LILA_PATCH_LIST") && reflex[key.first] < 3)
+                    std::fprintf(stderr, "reflex in %d: %.1f deg at %.4f %.4f %.4f\n", int(key.first), deg, at.pos.x, at.pos.y, at.pos.z);
+                ++reflex[key.first];
             }
         }
         // A patch with too few corners (a ring round a bare tube, a strip) or a reflex one (where a dropped line left a
