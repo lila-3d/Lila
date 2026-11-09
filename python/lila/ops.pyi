@@ -10401,7 +10401,7 @@ def unrealAssetInfo(*objects: Any) -> Any:
     """
 
 def unrealBendBones(*objects: Any, skeletalMesh: str | None = None, deformer: str | None = None, dryRun: bool | None = None, sm: str | None = None, df: str | None = None, dry: bool | None = None) -> Any:
-    """Bend the mesh in Unreal live as bend bones bend it here: LilaLink binds the skeletal mesh's LOD 0 to the chains (each vertex takes the chain weights of the point at its place, painted ones included) and makes the Lila Bend Bones Deformer Graph its default deformer. Run it on the mesh exported from Bake Bend Bones, whose skin stays the fallback where the deformer doesn't run. Returns {skeletalMesh, deformer, unreal}: the vertices bound, how many matched a point, the rest pose error, warnings.
+    """Bend the mesh in Unreal live as bend bones bend it here: LilaLink binds every LOD of the skeletal mesh to the chains (each vertex takes the chain weights of the point at its place, painted ones included; LOD vertices with no point there take the nearest point's) and makes the Lila Bend Bones Deformer Graph its default deformer. Run it on the mesh exported from Bake Bend Bones, whose skin stays the fallback where the deformer doesn't run. Returns {skeletalMesh, deformer, unreal}: the vertices bound, how many matched a point, the rest pose error, warnings.
 
     Args:
         objects: deformer or mesh.
