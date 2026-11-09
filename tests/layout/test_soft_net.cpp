@@ -472,3 +472,60 @@ TEST_CASE("Soft Net mouth (Mochi style): a loop with spokes gives one junction p
     CHECK(glm::length(l) > 0.2);
     CHECK(glm::length(glm::dvec3(-l.x, l.y, l.z) - r) < 0.02 * glm::length(l) + 1e-3);
 }
+
+namespace softnettest
+{
+/** A skinned sheet (two joints) with an animated Soft Net over frames 0 to 20; returns the mesh. */
+std::string animatedNet()
+{
+    scene::Graph::current().clear();
+    UndoStack::get().clear();
+    const std::string mesh = softnettest::run("polyPlane", {{"name", "Sheet"}, {"width", 100.0}, {"depth", 100.0}, {"subdivisionsX", 30}, {"subdivisionsZ", 30}})[0];
+    const json r = softnettest::run("joint", {{"position", {-40.0, 0.0, 0.0}}, {"name", "root"}, {"parent", ""}});
+    const std::string root = r.is_array() ? r[0].get<std::string>() : r.get<std::string>();
+    const json t = softnettest::run("joint", {{"position", {0.0, 0.0, 0.0}}, {"name", "mid"}, {"parent", root}});
+    const std::string mid = t.is_array() ? t[0].get<std::string>() : t.get<std::string>();
+    softnettest::run("skinCluster", {{"args", {root, mid, mesh}}});
+    const std::string layout = softnettest::run("panelLayout", {{"args", {mesh}}, {"mirror", "off"}})[0];
+    softnettest::run("panelLayoutLineSet", {{"args", {layout}}, {"set", "Major"}, {"output", "none"}});
+    softnettest::run("panelLayoutStroke", {{"args", {layout}}, {"points", softnettest::segment({-30, 0, -10}, {30, 0, -10})}, {"tolerance", 1.0}});
+    softnettest::run("panelLayoutStroke", {{"args", {layout}}, {"points", softnettest::segment({10, 0, -30}, {10, 0, 30})}, {"tolerance", 1.0}});
+    const json net = softnettest::run("softNet", {{"args", {mesh}}, {"reach", 10.0}});
+    const json knots = softnettest::run("softNetKnots", {{"args", {net["knotsGroup"]}}});
+    // The skin's mid joint bends a little; every knot and handle moves on its own rhythm.
+    for (int f = 0; f <= 20; f += 2)
+    {
+        const double time = f / 30.0;
+        softnettest::run("setKeyframe", {{"args", {mid + ".rotateY"}}, {"time", time}, {"value", 20.0 * std::sin(f * 0.2)}});
+        int i = 0;
+        for (const json& k : knots)
+        {
+            const std::string kn = k["knot"].get<std::string>();
+            const double ph = f * 0.3 + i * 1.3;
+            softnettest::run("setKeyframe", {{"args", {kn + ".translateZ"}}, {"time", time}, {"value", 4.0 * std::sin(ph)}});
+            softnettest::run("setKeyframe", {{"args", {kn + ".translateX"}}, {"time", time}, {"value", 2.0 * std::cos(ph * 0.7)}});
+            softnettest::run("setKeyframe", {{"args", {kn + ".rotateZ"}}, {"time", time}, {"value", 25.0 * std::sin(ph * 0.5)}});
+            for (const json& h : k["tangents"])
+                softnettest::run("setKeyframe", {{"args", {h.get<std::string>() + ".translateZ"}}, {"time", time}, {"value", 3.0 * std::sin(ph + 0.8)}});
+            ++i;
+        }
+    }
+    return mesh;
+}
+} // namespace softnettest
+
+TEST_CASE("bakeSoftNet: knot joints as fixed bones, helpers and correctives beat a plain skin bake of the same net")
+{
+    std::string mesh = softnettest::animatedNet();
+    const json plain = softnettest::run("bakeSkinWeights", {{"args", {mesh}}, {"source", "animation"}, {"start", 0}, {"end", 20}, {"helpers", 4}});
+    MESSAGE("bakeSkinWeights helpers=4: rmse ", plain["rmse"].get<double>(), " max ", plain["maxError"].get<double>());
+
+    mesh = softnettest::animatedNet();
+    const json baked = softnettest::run("bakeSoftNet", {{"args", {mesh}}, {"start", 0}, {"end", 20}, {"helpers", 4}, {"correctives", 8}});
+    MESSAGE("bakeSoftNet: joints ", baked["joints"].size(), " correctives ", baked["correctives"].size(), " skinned rmse ", baked["skinnedRmse"].get<double>(),
+            " final rmse ", baked["rmse"].get<double>(), " max ", baked["maxError"].get<double>(), " unreal worst ", baked["unrealCheck"]["worst"].get<double>());
+    CHECK(baked["rmse"].get<double>() < plain["rmse"].get<double>());
+    CHECK(baked["rmse"].get<double>() < 0.065);
+    CHECK(baked["unrealCheck"]["mismatches"].empty());
+    CHECK(baked["frameError"].size() == 21);
+}
