@@ -642,6 +642,20 @@ TEST_CASE("bevel: clamp closes faces that run out of room")
         CHECK(shortest(w) > 1e-4);
     }
 
+    // Sides that taper close only where they are narrowest; elsewhere their bevels meet a hair apart, and must still weld
+    // rather than leave a strip of no width that shades as a hard edge.
+    for (int seg : {1, 2})
+    {
+        CAPTURE(seg);
+        Mesh m = makeCube({.width = 100.0, .height = 20.0, .depth = 100.0});
+        for (Index p = 0; p < m.pointCapacity(); ++p)
+            if (m.pointValid(p) && m.position(p).y > 0.0)
+                m.setPosition(p, m.position(p) + glm::dvec3(0.0, 0.0002 * (m.position(p).x + 50.0), 0.0));
+        bevelEdges(m, allEdges(m), {.offset = 40.0, .segments = seg});
+        checkClosedSound(m, 10.0);
+        CHECK(shortest(m) > 1e-3);
+    }
+
     // With room to spare the clamp changes nothing.
     Mesh a = makeCube(), b = makeCube();
     bevelEdges(a, allEdges(a), {.offset = 10.0, .segments = 2});

@@ -400,6 +400,12 @@ size_t flatFaces(const Mesh& mesh, double tol)
     return n;
 }
 
+/**
+ * New edges shorter than this share of the offset closed under the clamp. Only where a face's sides are exactly parallel
+ * do they meet exactly; a slight taper leaves them a hair apart, a strip of no width that shades as a hard edge.
+ */
+constexpr double kClosedShare = 0.01;
+
 /** What a clamp does with edges whose ends would meet. */
 enum class Close : uint8_t
 {
@@ -1729,7 +1735,7 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
         setHardEdgesByAngle(mesh, opts.smoothingAngle, newEdges);
     }
     if (collapses)
-        weldClosedEdges(mesh, edgeCap0, kWeldShare * offset, out);
+        weldClosedEdges(mesh, edgeCap0, kClosedShare * offset, out);
     applySymmetrySnap(mesh, opts.symmetry, firstNewPoint);
     return out;
 }
