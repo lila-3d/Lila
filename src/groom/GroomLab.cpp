@@ -8,6 +8,7 @@
 #include "groom/Groom.h"
 #include "geo/ColorSets.h"
 #include "groom/GroomEvaluator.h"
+#include "groom/GroomExport.h"
 #include "groom/Locks.h"
 #include "groom/GuideData.h"
 #include "groom/GroomNodes.h"
@@ -289,6 +290,10 @@ geo::Mesh cardsMesh(const groomlab::CardMesh& c)
 class GroomNode final : public Node
 {
 public:
+    /** Set while an export evaluates the node: strands are made, and kept in mExported. */
+    bool mExport = false;
+    GroomExportFrame mExported;
+
     ~GroomNode() override
     {
         std::lock_guard lock(registry().mutex);
@@ -334,7 +339,7 @@ public:
             Graph& g = Graph::current();
             auto read = [&](const char* a) { return !g.destinations({id(), idx(*this, a), -1}).empty(); };
             const bool locks = read("outMesh") || read("outCurve");
-            const bool strands = read("outStrands");
+            const bool strands = read("outStrands") || mExport;
             const bool cards = read("outCards");
             if (!locks && !strands && !cards)
             {
@@ -368,7 +373,9 @@ public:
             GroomEvaluator::Request request;
             request.time = b(*this, "useSceneTime") ? ctx.time : f(*this, "time");
             request.wantCards = cards;
-            if (!strands && !cards)
+            // A graph from elsewhere (an imported .groom) has no Locks node: no locks from it.
+            const bool lockNode = e.hasNode(groomGraph::kLocks);
+            if (!strands && !cards && lockNode)
                 request.stopAt = groomGraph::kLocks;
             const GroomEvaluator::Result& result = e.evaluate(request);
             for (const std::string& w : result.errors)
@@ -378,6 +385,16 @@ public:
             mMissedHistory = !historyAt(ctx.time) && e.scalpHistoryFrames() > 0;
             mMissedFeed = first && steppedPast(e);
             mReferenceToStore = scale && !(f(*this, "scaleReference") > 0.0) ? e.scaleReference() : 0.0;
+            if (mExport)
+            {
+                mExported.strands = result.strands;
+                mExported.scalp = mScalp;
+                mExported.guides = groomlab::StrandSet();
+                // The primary guides, what Unreal simulates the hair on.
+                for (const groomlab::HierarchyGuide& gd : posed.guides())
+                    if (gd.parent == groomlab::kNoGuide && gd.points.size() >= 2)
+                        mExported.guides.addStrand(gd.id, gd.points, {}, gd.root);
+            }
             if (strands)
             {
                 if (result.strands != mStrandsFrom || !mStrands)
@@ -397,7 +414,7 @@ public:
                 }
                 setOutput(idx(*this, "outCards"), MeshPtr(mCards));
             }
-            if (locks)
+            if (locks && lockNode)
             {
                 const groomlab::GuidesPtr made =
                     groomlab::valueAs<groomlab::GuidesPtr>(e.evaluateNode(groomGraph::kLocks, 1.0f, request.time));
@@ -762,6 +779,30 @@ void sampleHistories(Graph& g, bool after)
         g.evaluate();
 }
 } // namespace
+
+GroomExportFrame groomExportFrame(Graph& g, NodeId groom, double seconds)
+{
+    auto* n = dynamic_cast<GroomNode*>(g.node(groom));
+    if (!n)
+        throw std::invalid_argument("not a groom");
+    n->mExport = true;
+    n->mExported = {};
+    g.setTime(seconds, false);
+    g.touch(groom);
+    try
+    {
+        g.evaluateUpstream({groom});
+    }
+    catch (...)
+    {
+        n->mExport = false;
+        throw;
+    }
+    n->mExport = false;
+    if (!n->mExported.strands)
+        throw std::runtime_error(n->name() + " grew no strands at " + std::to_string(seconds) + " s");
+    return std::move(n->mExported);
+}
 
 std::unique_ptr<scene::Node> makeGroomNode()
 {

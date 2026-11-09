@@ -18,6 +18,7 @@ set(LILA_UNITY_SKIP
     src/scene/SceneGraphCommands.cpp
     src/ui/ArrayTool.cpp
     src/ui/BakerPanel.cpp
+    src/groom/GroomIo.cpp
     src/ui/GraphEditor.cpp
     src/ui/BakerPanelRefresh.cpp
     src/ui/BakerPanelWidgets.cpp

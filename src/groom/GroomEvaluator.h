@@ -450,6 +450,8 @@ public:
     std::vector<double> scalpHistoryLoopFrames(double now, const std::string& viewNode = {}) const;
     /** A Cards node, or a StrandMesh node, makes the output. */
     bool hasCardsNode() const;
+    /** The graph holds a node of this name. */
+    bool hasNode(const std::string& name) const { return mDoc && mDoc->nodesByName.count(name) != 0; }
     bool hasStrandMeshNode() const;
     /** The last evaluation wanted cards. */
     bool cardsEvaluated() const { return mCardDoc != nullptr; }
