@@ -1747,8 +1747,11 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
 
 namespace
 {
-/** Rounds that re-solve islands the written layout still collapses (a fit's respacing follows the new uvs). */
-constexpr int kRepairRounds = 3;
+/**
+ * Extra rounds that re-solve islands the written layout still collapses (a fit's respacing follows the new uvs). Measured
+ * on real exports they rarely open more and cost a map build each, so the written result is only checked.
+ */
+constexpr int kRepairRounds = 0;
 
 /**
  * Solves the islands, all of them or only those whose export collapses now, against the export as the cage's current
