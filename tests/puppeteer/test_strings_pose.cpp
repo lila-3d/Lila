@@ -1,0 +1,668 @@
+#include <doctest/doctest.h>
+
+#include "TestUtil.h"
+
+#include "ops/Command.h"
+#include "scene/Graph.h"
+#include "scene/Transform.h"
+#include "ui/Actions.h"
+#include "ui/Gizmo.h"
+#include "ui/MarkingMenu.h"
+#include "ui/Overlay.h"
+#include "render/FrameState.h"
+
+#include <QApplication>
+#include "extensions/ExtensionManager.h"
+
+#include <chrono>
+#include <map>
+
+#include "scene/Anim.h"
+#include <QImage>
+
+#include <glm/gtx/quaternion.hpp>
+
+using namespace lila;
+using namespace lila::scene;
+using namespace puptest;
+using json = nlohmann::json;
+
+namespace
+{
+/** A stick biped in cm with a character: hips at 100, a spine, neck and head, arms out to the sides, legs down. */
+void stringsBiped()
+{
+    run("newScene");
+    run("autoKeyframe", {{"state", false}});
+    auto j = [](const char* name, double x, double y, double z, const char* parent) {
+        run("joint", {{"position", v3(x, y, z)}, {"name", name}, {"parent", parent}, {"skipSelect", true}});
+    };
+    j("hips", 0, 100, 0, "");
+    j("spine_01", 0, 115, 0, "hips");
+    j("spine_02", 0, 134, 0, "spine_01");
+    j("neck", 0, 150, 0, "spine_02");
+    j("head", 0, 162, 0, "neck");
+    for (const char* side : {"l", "r"})
+    {
+        const double s = side[0] == 'l' ? 1.0 : -1.0;
+        auto n = [&](const char* base) { return std::string(base) + "_" + side; };
+        j(n("upperarm").c_str(), 18 * s, 140, 0, "spine_02");
+        j(n("lowerarm").c_str(), 46 * s, 140, -2, n("upperarm").c_str());
+        j(n("hand").c_str(), 72 * s, 140, 0, n("lowerarm").c_str());
+        j(n("thigh").c_str(), 10 * s, 95, 0, "hips");
+        j(n("calf").c_str(), 10 * s, 52, 4, n("thigh").c_str());
+        j(n("foot").c_str(), 10 * s, 8, 0, n("calf").c_str());
+    }
+    run("puppeteerCharacter", {{"args", {"hips"}}, {"name", "hero"}});
+}
+
+/** Sets the Strings mode the way the arc and marking menu do, and back to Full Body when the test ends. */
+struct ModeScope
+{
+    explicit ModeScope(const char* action) { ui::actions::run(action); }
+    ~ModeScope() { ui::actions::run("puppeteer.strings.fullBody"); }
+};
+
+json vj(const glm::dvec3& v) { return v3(v.x, v.y, v.z); }
+
+bool checked(const char* action) { return ui::actions::registry().find(action)->checked(); }
+
+QPointF arcPoint(double r, double screenDegrees)
+{
+    const double a = glm::radians(screenDegrees);
+    return kCenter + QPointF(r * std::cos(a), r * std::sin(a));
+}
+
+/** The middle of the arc segment for mode k (0 Forward on top ... 3 Full Body). */
+QPointF modeSegment(int k) { return arcPoint(u(177.0), 228.0 - (228.0 - 162.0) / 4.0 * (k + 0.5)); }
+} // namespace
+
+TEST_CASE("stringsPose backward from the knee keeps the pinned foot and swings the body")
+{
+    loadPuppeteer();
+    stringsBiped();
+    run("puppeteerPin", {{"args", {"foot_l", "foot_r"}}, {"pin", true}});
+    const glm::dmat4 foot = world("foot_l");
+    const glm::dvec3 hips = pos("hips"), other = pos("foot_r");
+    const json r = run("stringsPose", {{"args", {"calf_l"}}, {"mode", "backward"}, {"axis", v3(1, 0, 0)}, {"angle", 25.0}});
+    CHECK(r["mode"] == "backward");
+    CHECK(r["anchor"].get<std::string>().ends_with("foot_l"));
+    CHECK(near(world("foot_l"), foot, 1e-5));
+    CHECK(near(pos("foot_r"), other, 1e-3));
+    CHECK(glm::length(pos("hips") - hips) > 5.0);
+    run("undo");
+    CHECK(near(pos("hips"), hips, 1e-9));
+}
+
+TEST_CASE("stringsPose IK puts the hand on the target and leaves the body")
+{
+    loadPuppeteer();
+    stringsBiped();
+    const glm::dvec3 hand = pos("hand_l"), spine = pos("spine_02");
+    run("stringsPose", {{"args", {"hand_l"}}, {"mode", "ik"}, {"by", v3(-10, 15, 8)}});
+    CHECK(near(pos("hand_l"), hand + glm::dvec3(-10, 15, 8), 1e-3));
+    CHECK(near(pos("spine_02"), spine, 1e-9));
+}
+
+TEST_CASE("stringsPose IK on the hips crouches over locked or pinned feet")
+{
+    loadPuppeteer();
+    stringsBiped();
+    run("puppeteerPin", {{"args", {"foot_l", "foot_r"}}, {"pin", true}});
+    const glm::dvec3 l = pos("foot_l"), r = pos("foot_r");
+    run("stringsPose", {{"args", {"hips"}}, {"mode", "ik"}, {"by", v3(0, -15, 4)}});
+    CHECK(near(pos("hips"), glm::dvec3(0, 85, 4), 1e-6));
+    CHECK(near(pos("foot_l"), l, 1e-3));
+    CHECK(near(pos("foot_r"), r, 1e-3));
+}
+
+TEST_CASE("stringsPose anchors hold for one pose only and holds false ignores pins")
+{
+    loadPuppeteer();
+    stringsBiped();
+    const glm::dvec3 hand = pos("hand_r");
+    const json r = run("stringsPose", {{"args", {"spine_02"}}, {"mode", "backward"}, {"axis", v3(0, 0, 1)}, {"angle", 15.0}, {"anchors", {"hand_r"}}});
+    CHECK(r["anchor"].get<std::string>().ends_with("hand_r"));
+    CHECK(near(pos("hand_r"), hand, 1e-5));
+    // Nothing was stored: the next pose has no anchor but the joint itself.
+    const json next = run("stringsPose", {{"args", {"spine_02"}}, {"mode", "backward"}, {"axis", v3(0, 0, 1)}, {"angle", 5.0}});
+    CHECK(next["anchor"].get<std::string>().ends_with("spine_02"));
+
+    run("puppeteerPin", {{"args", {"foot_l"}}, {"pin", true}});
+    const json free = run("stringsPose", {{"args", {"calf_l"}}, {"mode", "backward"}, {"axis", v3(1, 0, 0)}, {"angle", 10.0}, {"holds", false}});
+    CHECK(free["anchor"].get<std::string>().ends_with("calf_l"));
+}
+
+TEST_CASE("stringsPose says when it falls back to Forward, and refuses joints outside a character")
+{
+    loadPuppeteer();
+    run("newScene");
+    run("joint", {{"position", v3(0, 0, 0)}, {"name", "root"}});
+    run("joint", {{"position", v3(0, 100, 0)}, {"name", "pelvis"}});
+    run("joint", {{"position", v3(10, 50, 0)}, {"name", "leg_l"}, {"parent", "pelvis"}, {"skipSelect", true}});
+    run("joint", {{"position", v3(-10, 50, 0)}, {"name", "leg_r"}, {"parent", "pelvis"}, {"skipSelect", true}});
+    run("joint", {{"position", v3(0, 0, 0)}, {"name", "loose"}, {"parent", ""}, {"skipSelect", true}});
+    run("puppeteerCharacter", {{"args", {"root"}}, {"name", "hero"}});
+    const json r = run("stringsPose", {{"args", {"root"}}, {"mode", "backward"}, {"axis", v3(0, 1, 0)}, {"angle", 10.0}});
+    CHECK(r.contains("fallback"));
+    CHECK_THROWS(run("stringsPose", {{"args", {"loose"}}, {"mode", "ik"}, {"by", v3(0, 1, 0)}}));
+    CHECK_THROWS(run("stringsPose", {{"args", {"pelvis"}}, {"mode", "sideways"}, {"by", v3(0, 1, 0)}}));
+}
+
+TEST_CASE("strings modes: the actions are one exclusive choice and the marking menu holds them")
+{
+    loadPuppeteer();
+    ModeScope scope("puppeteer.strings.backward");
+    CHECK(checked("puppeteer.strings.backward"));
+    CHECK_FALSE(checked("puppeteer.strings.forward"));
+    ui::actions::run("puppeteer.strings.next");
+    CHECK(checked("puppeteer.strings.ik"));
+    const json menu = ui::markingMenus::resolve("puppeteerStrings");
+    CHECK(menu["N"]["action"] == "puppeteer.strings.forward");
+    CHECK(menu["W"]["action"] == "puppeteer.strings.backward");
+    CHECK(menu["E"]["action"] == "puppeteer.strings.ik");
+    CHECK(menu["S"]["action"] == "puppeteer.strings.fullBody");
+}
+
+TEST_CASE("spinner: the mode arc picks the Strings mode and drags pose in it")
+{
+    loadPuppeteer();
+    stringsBiped();
+    ModeScope scope("puppeteer.strings.forward");
+    run("puppeteerPin", {{"args", {"foot_l", "foot_r"}}, {"pin", true}});
+    run("select", {{"args", {"calf_l"}}});
+    std::unique_ptr<ui::Gizmo> gz = ui::gizmos::create("puppeteer.spinner");
+    REQUIRE(gz);
+    gz->setView(view());
+    REQUIRE(gz->supports("rotate"));
+
+    // Each segment of the arc is its mode.
+    const char* actions[] = {"puppeteer.strings.forward", "puppeteer.strings.backward", "puppeteer.strings.ik", "puppeteer.strings.fullBody"};
+    for (int k : {3, 0, 2, 1})
+    {
+        gz->setView(view());
+        REQUIRE(gz->press(modeSegment(k), Qt::LeftButton, Qt::NoModifier));
+        gz->release();
+        CHECK(checked(actions[k]));
+    }
+
+    // Backward: a drag on the X zone keeps the pinned foot and moves the hips.
+    const glm::dmat4 foot = world("foot_l");
+    const glm::dvec3 hips = pos("hips");
+    const QPointF zone = arcPoint(u(110.0), -90.0);
+    gz->setView(view());
+    gz->hover(zone);
+    REQUIRE(gz->press(zone, Qt::LeftButton, Qt::NoModifier));
+    for (int i = 1; i <= 4; ++i)
+    {
+        gz->setView(view());
+        gz->drag(zone + QPointF(0.0, -10.0 * i), Qt::NoModifier);
+    }
+    CHECK(gz->readout().contains("Backward"));
+    CHECK(gz->readout().contains("foot_l"));
+    gz->release();
+    CHECK(near(world("foot_l"), foot, 1e-5));
+    CHECK(glm::length(pos("hips") - hips) > 1.0);
+    // One undo step for the drag.
+    run("undo");
+    CHECK(near(pos("hips"), hips, 1e-9));
+}
+
+TEST_CASE("stringsGlue: glued hands keep their offset, an attached prop follows the hand, unglue frees them")
+{
+    loadPuppeteer();
+    stringsBiped();
+    run("stringsGlue", {{"remove", true}});
+    // Arms bent first, so both hands can go somewhere together.
+    run("stringsPose", {{"args", {"hand_l"}}, {"mode", "ik"}, {"by", v3(-20, 0, 15)}});
+    run("stringsPose", {{"args", {"hand_r"}}, {"mode", "ik"}, {"by", v3(20, 0, 15)}});
+    run("stringsGlue", {{"args", {"hand_l", "hand_r"}}});
+    const glm::dvec3 gap = pos("hand_r") - pos("hand_l");
+    const glm::dvec3 spine = pos("spine_02");
+    const json r = run("stringsPose", {{"args", {"hand_l"}}, {"mode", "ik"}, {"by", v3(0, 8, 5)}});
+    CHECK(r["followed"].size() == 1);
+    CHECK(near(pos("hand_r") - pos("hand_l"), gap, 1e-3));
+    CHECK(near(pos("spine_02"), spine, 1e-9));
+
+    // A prop attached to the hand follows it; posing the prop moves the hand with it, as glue would.
+    run("spaceLocator", {{"name", "cup"}});
+    run("move", {{"args", {"cup"}}, {"by", vj(pos("hand_l") + glm::dvec3(0, 0, 5))}});
+    run("stringsGlue", {{"args", {"cup", "hand_l"}}, {"attach", true}});
+    CHECK(run("stringsGlue", {{"query", true}}).size() == 1); // the hand left the glue for the attach
+    const glm::dvec3 offset = pos("cup") - pos("hand_l");
+    run("stringsPose", {{"args", {"hand_l"}}, {"mode", "ik"}, {"by", v3(5, -5, 0)}});
+    CHECK(near(pos("cup") - pos("hand_l"), offset, 1e-3));
+    // Attach is one-way: moving the cup leaves the hand.
+    const glm::dvec3 hand = pos("hand_l");
+    run("stringsPose", {{"args", {"cup"}}, {"by", v3(0, 4, 0)}});
+    CHECK(near(pos("hand_l"), hand, 1e-9));
+
+    run("stringsGlue", {{"args", {"cup"}}, {"remove", true}});
+    CHECK(run("stringsGlue", {{"query", true}}).empty());
+    CHECK_THROWS(run("stringsPose", {{"args", {"cup"}}, {"by", v3(0, 4, 0)}}));
+    CHECK_THROWS(run("stringsGlue", {{"args", {"cup"}}}));
+}
+
+TEST_CASE("stringsGlue: a glued prop leads when it is posed, and the hand bends its arm to stay on it")
+{
+    loadPuppeteer();
+    stringsBiped();
+    run("stringsGlue", {{"remove", true}});
+    run("spaceLocator", {{"name", "bar"}});
+    run("move", {{"args", {"bar"}}, {"by", vj(pos("hand_l"))}});
+    run("stringsGlue", {{"args", {"hand_l", "bar"}}});
+    const glm::dvec3 spine = pos("spine_02");
+    const json r = run("stringsPose", {{"args", {"bar"}}, {"by", v3(-8, 12, 6)}});
+    CHECK(near(pos("hand_l"), pos("bar"), 1e-3));
+    CHECK(near(pos("spine_02"), spine, 1e-9));
+    run("stringsGlue", {{"remove", true}});
+}
+
+namespace
+{
+/** Rasterises overlay triangles (solid and atlas-tinted) onto img, alpha blended in draw order. */
+void rasterise(QImage& img, const std::vector<render::OverlayVertex>& tris, const render::OverlayAtlas* atlas)
+{
+    for (size_t i = 0; i + 2 < tris.size(); i += 3)
+    {
+        const auto &a = tris[i], &b = tris[i + 1], &c = tris[i + 2];
+        const float minX = std::floor(std::min({a.pos.x, b.pos.x, c.pos.x})), maxX = std::ceil(std::max({a.pos.x, b.pos.x, c.pos.x}));
+        const float minY = std::floor(std::min({a.pos.y, b.pos.y, c.pos.y})), maxY = std::ceil(std::max({a.pos.y, b.pos.y, c.pos.y}));
+        const float area = (b.pos.x - a.pos.x) * (c.pos.y - a.pos.y) - (b.pos.y - a.pos.y) * (c.pos.x - a.pos.x);
+        if (std::abs(area) < 1e-6f)
+            continue;
+        for (int y = std::max(0, int(minY)); y < std::min(img.height(), int(maxY) + 1); ++y)
+            for (int x = std::max(0, int(minX)); x < std::min(img.width(), int(maxX) + 1); ++x)
+            {
+                const glm::vec2 p(x + 0.5f, y + 0.5f);
+                const float w0 = ((b.pos.x - p.x) * (c.pos.y - p.y) - (b.pos.y - p.y) * (c.pos.x - p.x)) / area;
+                const float w1 = ((c.pos.x - p.x) * (a.pos.y - p.y) - (c.pos.y - p.y) * (a.pos.x - p.x)) / area;
+                const float w2 = 1.0f - w0 - w1;
+                if (w0 < 0 || w1 < 0 || w2 < 0)
+                    continue;
+                glm::vec4 col = a.color * w0 + b.color * w1 + c.color * w2;
+                if (a.uv.x >= 0.0f)
+                {
+                    if (!atlas || atlas->width == 0)
+                        continue;
+                    const glm::vec2 uv = a.uv * w0 + b.uv * w1 + c.uv * w2;
+                    const int ax = std::clamp(int(uv.x * atlas->width), 0, atlas->width - 1), ay = std::clamp(int(uv.y * atlas->height), 0, atlas->height - 1);
+                    col.a *= atlas->pixels[size_t(ay) * size_t(atlas->width) + size_t(ax)] / 255.0f;
+                }
+                const QColor under = img.pixelColor(x, y);
+                const float k = col.a;
+                img.setPixelColor(x, y, QColor::fromRgbF(under.redF() * (1 - k) + col.r * k, under.greenF() * (1 - k) + col.g * k,
+                                                         under.blueF() * (1 - k) + col.b * k));
+            }
+    }
+}
+} // namespace
+
+TEST_CASE("spinner draw: the Strings arc, saved for a look when LILA_SPINNER_PNG names a folder")
+{
+    const char* dir = std::getenv("LILA_SPINNER_PNG");
+    if (!dir || !qApp)
+        return;
+    loadPuppeteer();
+    stringsBiped();
+    run("select", {{"args", {"calf_l"}}});
+    for (auto [action, file] : {std::pair{"puppeteer.strings.backward", "backward"}, {"puppeteer.strings.fullBody", "fullbody"}})
+    {
+        ModeScope scope(action);
+        std::unique_ptr<ui::Gizmo> gz = ui::gizmos::create("puppeteer.spinner");
+        gz->setView(view());
+        gz->supports("rotate");
+        gz->hover(modeSegment(2));
+        std::vector<render::OverlayVertex> tris;
+        ui::OverlayPainter p(tris, 1.0);
+        gz->draw(p);
+        QImage img(800, 600, QImage::Format_RGB32);
+        img.fill(QColor(70, 72, 76));
+        rasterise(img, tris, p.atlas().get());
+        const QImage crop = img.copy(QRect(480, 130, 320, 340));
+        crop.save(QString("%1/spinner_%2.png").arg(dir, file));
+        crop.scaled(crop.width() / 8, crop.height() / 8, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+            .scaled(crop.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+            .save(QString("%1/spinner_%2_squint.png").arg(dir, file));
+    }
+}
+
+TEST_CASE("stringsZero zeroes through the mode: backward keeps the pinned foot")
+{
+    loadPuppeteer();
+    stringsBiped();
+    run("stringsPose", {{"args", {"calf_l"}}, {"mode", "forward"}, {"axis", v3(1, 0, 0)}, {"angle", 35.0}});
+    run("puppeteerPin", {{"args", {"foot_l"}}, {"pin", true}});
+    const glm::dmat4 foot = world("foot_l");
+    const glm::dvec3 hips = pos("hips");
+    run("stringsZero", {{"args", {"calf_l"}}, {"mode", "backward"}});
+    CHECK(near(std::get<glm::dvec3>(graph().value({id("calf_l"), Transform::kRotate, -1})), glm::dvec3(0.0), 1e-6));
+    CHECK(near(world("foot_l"), foot, 1e-5));
+    CHECK(glm::length(pos("hips") - hips) > 1.0);
+}
+
+TEST_CASE("stringsRestoreLengths puts stretched bones back to their bind length")
+{
+    loadPuppeteer();
+    stringsBiped();
+    const std::string mesh = run("polyCylinder", {{"name", "Body"}, {"radius", 20}, {"height", 160}})[0];
+    run("skinCluster", {{"args", {"hips", mesh}}});
+    const double bound = glm::length(pos("calf_l") - pos("thigh_l")), shin = glm::length(pos("foot_l") - pos("calf_l"));
+    run("stringsPose", {{"args", {"hips"}}, {"mode", "ik"}, {"by", v3(0, 30, 0)}, {"stretch", 1.5}});
+    run("puppeteerPin", {{"args", {"foot_l"}}, {"pin", true}});
+    const glm::dvec3 footAt = pos("foot_l");
+    const json st = run("stringsPose", {{"args", {"hips"}}, {"mode", "ik"}, {"by", v3(0, 20, 0)}, {"stretch", 1.5}});
+    CHECK(st["error"].get<double>() < 1e-3);
+    CHECK(near(pos("foot_l"), footAt, 1e-3));
+    CHECK(glm::length(pos("foot_l") - pos("calf_l")) > shin + 1.0);
+    const json r = run("stringsRestoreLengths", {{"args", {"calf_l", "foot_l"}}});
+    CHECK(r["restored"].size() >= 1);
+    CHECK(glm::length(pos("calf_l") - pos("thigh_l")) == doctest::Approx(bound));
+    CHECK(glm::length(pos("foot_l") - pos("calf_l")) == doctest::Approx(shin));
+    run("joint", {{"position", v3(0, 0, 0)}, {"name", "unbound"}, {"parent", "head"}, {"skipSelect", true}});
+    CHECK(run("stringsRestoreLengths", {{"args", {"unbound"}}})["skipped"].size() == 1);
+}
+
+namespace
+{
+void mannyCharacter()
+{
+    auto& em = extensions::ExtensionManager::get();
+    if (!em.isLoaded("RigTemplates"))
+        REQUIRE(em.load(LILA_TEST_RIG_TEMPLATES_PACKAGE) == "RigTemplates");
+    loadPuppeteer();
+    run("newScene");
+    run("autoKeyframe", {{"state", false}});
+    run("buildRigSkeleton", {{"args", {"UE5_Manny"}}, {"rig", false}});
+    run("puppeteerCharacter", {{"args", {"root"}}, {"template", "UE5_Manny"}, {"name", "manny"}});
+}
+} // namespace
+
+TEST_CASE("strings rules: Manny's template contacts hold the feet without pins, and the arm bends as its limb")
+{
+    mannyCharacter();
+    const glm::dmat4 foot = world("foot_l");
+    const glm::dvec3 other = pos("foot_r");
+    const json r = run("stringsPose", {{"args", {"calf_l"}}, {"mode", "backward"}, {"axis", v3(1, 0, 0)}, {"angle", 20.0}});
+    CHECK(r["anchor"].get<std::string>().ends_with("foot_l"));
+    CHECK(near(world("foot_l"), foot, 1e-4));
+    CHECK(near(pos("foot_r"), other, 1e-3));
+
+    // IK on the hand bends the arm limb the template declares (clavicle to hand), never the spine.
+    const glm::dvec3 hand = pos("hand_l"), chest = pos("spine_05"), shoulder = pos("upperarm_l");
+    const glm::dvec3 target = shoulder + 0.8 * (hand - shoulder) + glm::dvec3(0, 0, 8);
+    run("stringsPose", {{"args", {"hand_l"}}, {"mode", "ik"}, {"by", v3(target.x - hand.x, target.y - hand.y, target.z - hand.z)}});
+    CHECK(near(pos("hand_l"), target, 1e-3));
+    CHECK(near(pos("spine_05"), chest, 1e-6));
+
+    // Contacts off: the knee hangs the body from itself.
+    const json free = run("stringsPose", {{"args", {"calf_r"}}, {"mode", "backward"}, {"axis", v3(1, 0, 0)}, {"angle", 10.0}, {"contacts", false}});
+    CHECK(free["anchor"].get<std::string>().ends_with("calf_r"));
+}
+
+TEST_CASE("strings rules: posing Manny is interactive")
+{
+    mannyCharacter();
+    const auto t0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < 10; ++i)
+        run("stringsPose", {{"args", {"calf_l"}}, {"mode", "backward"}, {"axis", v3(1, 0, 0)}, {"angle", 1.0}});
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / 10.0;
+    MESSAGE("Manny backward pose with contacts, command and write: " << ms << " ms");
+    CHECK(ms < 50.0);
+}
+
+TEST_CASE("stringsRules: a character's own contacts and limbs override the template's, and reset goes back")
+{
+    mannyCharacter();
+    json r = run("stringsRules", {{"args", {"manny"}}});
+    CHECK(r["contactsFrom"] == "template");
+    CHECK(r["contacts"] == json({"foot_l", "foot_r"}));
+    CHECK(r["chainsFrom"] == "template");
+
+    r = run("stringsRules", {{"args", {"pelvis"}}, {"contacts", {"hand_l"}}, {"addChain", {"upperarm_r", "hand_r"}}});
+    CHECK(r["contactsFrom"] == "character");
+    CHECK(r["contacts"] == json({"hand_l"}));
+    bool found = false;
+    for (const json& c : r["chains"])
+    {
+        CHECK(c.front() != "clavicle_r"); // the template's arm overlapped the new limb, so it went
+        found = found || (c.front() == "upperarm_r" && c.back() == "hand_r" && c.size() == 3);
+    }
+    CHECK(found);
+
+    // The hand holds now, the feet don't: Backward from the calf hangs from the hand.
+    const glm::dvec3 hand = pos("hand_l");
+    run("stringsPose", {{"args", {"spine_03"}}, {"mode", "backward"}, {"axis", v3(0, 0, 1)}, {"angle", 10.0}});
+    CHECK(near(pos("hand_l"), hand, 1e-4));
+
+    r = run("stringsRules", {{"args", {"manny"}}, {"reset", true}});
+    CHECK(r["contactsFrom"] == "template");
+    CHECK_THROWS(run("stringsRules", {{"args", {"manny"}}, {"addChain", {"hand_r", "upperarm_r"}}}));
+    run("undo");
+}
+
+namespace
+{
+double sec(double frame) { return frame / 30.0; }
+
+/** The walk-ish keys: the hips bob on frames 0, 10, 20, 30, 40 with the feet keyed planted. */
+void keyedBiped()
+{
+    stringsBiped();
+    run("playbackOptions", {{"fps", 30.0}});
+    for (int f : {0, 10, 20, 30, 40})
+    {
+        run("currentTime", {{"args", {sec(f)}}});
+        run("move", {{"args", {"hips"}}, {"to", v3(0, 100 - (f % 20 == 0 ? 0 : 3), 0)}});
+        run("setKeyframe", {{"args", {"hips", "thigh_l", "calf_l", "foot_l", "thigh_r", "calf_r", "foot_r"}}});
+    }
+    run("currentTime", {{"args", {sec(20)}}});
+}
+} // namespace
+
+TEST_CASE("stringsPose across a range: every keyed frame moves by the drag, pinned feet stay planted on each")
+{
+    loadPuppeteer();
+    keyedBiped();
+    run("puppeteerPin", {{"args", {"foot_l", "foot_r"}}, {"pin", true}});
+    std::map<int, glm::dvec3> hips, foot;
+    for (int f : {0, 10, 20, 30, 40})
+    {
+        run("currentTime", {{"args", {sec(f)}}});
+        hips[f] = pos("hips");
+        foot[f] = pos("foot_l");
+    }
+    run("currentTime", {{"args", {sec(20)}}});
+    const json r = run("stringsPose", {{"args", {"hips"}}, {"mode", "ik"}, {"by", v3(0, -10, 0)}, {"range", {sec(10), sec(30)}}});
+    CHECK(r.size() == 3);
+    for (int f : {10, 20, 30})
+    {
+        run("currentTime", {{"args", {sec(f)}}});
+        CAPTURE(f);
+        CHECK(near(pos("hips"), hips[f] + glm::dvec3(0, -10, 0), 1e-3));
+        CHECK(near(pos("foot_l"), foot[f], 1e-3));
+    }
+    for (int f : {0, 40})
+    {
+        run("currentTime", {{"args", {sec(f)}}});
+        CHECK(near(pos("hips"), hips[f], 1e-6));
+    }
+    run("undo");
+    run("currentTime", {{"args", {sec(30)}}});
+    CHECK(near(pos("hips"), hips[30], 1e-6));
+}
+
+TEST_CASE("stringsPose across a range: falloff eases out, dense keys every frame, absolute brings frames to the pose")
+{
+    loadPuppeteer();
+    keyedBiped();
+    std::map<int, glm::dvec3> hips;
+    for (int f = 0; f <= 40; ++f)
+    {
+        run("currentTime", {{"args", {sec(f)}}});
+        hips[f] = pos("hips");
+    }
+    run("currentTime", {{"args", {sec(20)}}});
+    run("stringsPose", {{"args", {"hips"}}, {"mode", "ik"}, {"by", v3(0, 0, 12)}, {"range", {sec(20), sec(20)}}, {"falloff", 4.0}, {"dense", true}});
+    double last = 13.0;
+    for (int f = 20; f <= 25; ++f)
+    {
+        run("currentTime", {{"args", {sec(f)}}});
+        const double dz = pos("hips").z - hips[f].z;
+        CAPTURE(f);
+        CHECK(dz <= last + 1e-9);
+        last = dz;
+    }
+    CHECK(last == doctest::Approx(0.0).scale(1.0).epsilon(1e-6));
+    run("currentTime", {{"args", {sec(20)}}});
+    CHECK(pos("hips").z - hips[20].z == doctest::Approx(12.0));
+
+    // Absolute: every keyed frame's hips go to where the drag put them now.
+    run("currentTime", {{"args", {sec(10)}}});
+    const glm::dvec3 target = pos("hips") + glm::dvec3(5, 0, 0);
+    run("stringsPose", {{"args", {"hips"}}, {"mode", "ik"}, {"by", v3(5, 0, 0)}, {"range", {sec(0), sec(40)}}, {"relative", false}});
+    for (int f : {0, 10, 30, 40})
+    {
+        run("currentTime", {{"args", {sec(f)}}});
+        CAPTURE(f);
+        CHECK(near(pos("hips"), target, 1e-3));
+    }
+    CHECK_THROWS(run("stringsPose", {{"args", {"hips"}}, {"mode", "ik"}, {"by", v3(1, 0, 0)}, {"range", {sec(41), sec(45)}}}));
+}
+
+TEST_CASE("timeRange: the time slider's selection and its falloff weights")
+{
+    run("timeRange", {{"start", sec(10)}, {"end", sec(20)}, {"falloff", 5.0}});
+    const lila::scene::anim::TimeSelection& s = lila::scene::anim::timeSelection();
+    CHECK(s.active);
+    CHECK(lila::scene::anim::timeSelectionWeight(s, sec(15)) == doctest::Approx(1.0));
+    CHECK(lila::scene::anim::timeSelectionWeight(s, sec(22)) > 0.0);
+    CHECK(lila::scene::anim::timeSelectionWeight(s, sec(22)) < 1.0);
+    CHECK(lila::scene::anim::timeSelectionWeight(s, sec(26)) == 0.0);
+    run("timeRange", {{"clear", true}});
+    CHECK_FALSE(s.active);
+}
+
+TEST_CASE("spinner: the motion trail shows the joint's frames and dragging one poses that frame")
+{
+    loadPuppeteer();
+    keyedBiped();
+    run("puppeteerPin", {{"args", {"foot_l", "foot_r"}}, {"pin", true}});
+    run("select", {{"args", {"hips"}}});
+    ModeScope scope("puppeteer.strings.ik");
+    ui::actions::run("puppeteer.strings.trail");
+    std::unique_ptr<ui::Gizmo> gz = ui::gizmos::create("puppeteer.spinner");
+    gz->setView(view());
+    REQUIRE(gz->supports("rotate"));
+    {
+        std::vector<render::OverlayVertex> tris;
+        ui::OverlayPainter p(tris, 1.0);
+        gz->draw(p);
+    }
+    // Frame 30's hips, where the trail draws them.
+    run("currentTime", {{"args", {sec(30)}}});
+    const glm::dvec3 at30 = pos("hips");
+    run("currentTime", {{"args", {sec(20)}}});
+    const ui::ViewInfo v = view();
+    const auto px = v.project(at30);
+    REQUIRE(px);
+    gz->setView(view());
+    CHECK(gz->hover(*px));
+    REQUIRE(gz->press(*px, Qt::LeftButton, Qt::NoModifier));
+    gz->setView(view());
+    gz->drag(*px + QPointF(0.0, 20.0), Qt::NoModifier);
+    // Frames on the bob coincide on screen (10 and 30 are the same pose): whichever is nearest is dragged.
+    REQUIRE(gz->readout().startsWith("Frame "));
+    const int frame = gz->readout().section(' ', 1, 1).toInt();
+    CHECK((frame >= 10 && frame <= 30));
+    run("currentTime", {{"args", {sec(frame)}}});
+    const glm::dvec3 before = pos("hips");
+    run("currentTime", {{"args", {sec(20)}}});
+    gz->release();
+    run("currentTime", {{"args", {sec(frame)}}});
+    CHECK(pos("hips").y < before.y - 1.0);
+    run("currentTime", {{"args", {sec(10)}}});
+    ui::actions::run("puppeteer.strings.trail");
+}
+
+TEST_CASE("stringsSmooth evens out a jittery spine over a range and the pinned feet stay")
+{
+    loadPuppeteer();
+    stringsBiped();
+    run("playbackOptions", {{"fps", 30.0}});
+    run("puppeteerPin", {{"args", {"foot_l", "foot_r"}}, {"pin", true}});
+    std::map<int, double> before;
+    for (int f = 0; f <= 20; ++f)
+    {
+        run("currentTime", {{"args", {sec(f)}}});
+        run("setAttr", {{"args", {"spine_01.rotateZ", (f % 2 ? 8.0 : -8.0)}}});
+        run("setKeyframe", {{"args", {"spine_01", "foot_l", "foot_r", "hips"}}});
+    }
+    run("currentTime", {{"args", {sec(10)}}});
+    const glm::dvec3 foot = pos("foot_l");
+    const json r = run("stringsSmooth", {{"args", {"spine_01"}}, {"range", {sec(5), sec(15)}}, {"strength", 1.0}, {"radius", 2}});
+    CHECK(r["frames"] == 11);
+    for (int f = 6; f <= 14; ++f)
+    {
+        run("currentTime", {{"args", {sec(f)}}});
+        CAPTURE(f);
+        CHECK(std::abs(attr("spine_01.rotateZ")) < 4.0);
+        CHECK(near(pos("foot_l"), foot, 1e-3));
+    }
+    run("currentTime", {{"args", {sec(2)}}});
+    CHECK(std::abs(attr("spine_01.rotateZ")) == doctest::Approx(8.0));
+    run("undo");
+    run("currentTime", {{"args", {sec(10)}}});
+    CHECK(std::abs(attr("spine_01.rotateZ")) == doctest::Approx(8.0));
+}
+
+TEST_CASE("stringsOvershoot carries the motion on; stringsBlend goes toward another frame's pose")
+{
+    loadPuppeteer();
+    stringsBiped();
+    run("playbackOptions", {{"fps", 30.0}});
+    run("currentTime", {{"args", {sec(0)}}});
+    run("setKeyframe", {{"args", {"spine_02"}}});
+    run("currentTime", {{"args", {sec(10)}}});
+    run("setAttr", {{"args", {"spine_02.rotateZ", 20.0}}});
+    run("setKeyframe", {{"args", {"spine_02"}}});
+    run("stringsOvershoot", {{"args", {"spine_02"}}, {"amount", 0.5}, {"mode", "forward"}});
+    CHECK(attr("spine_02.rotateZ") == doctest::Approx(30.0).epsilon(1e-4));
+    run("stringsBlend", {{"args", {"spine_02"}}, {"time", sec(0)}, {"weight", 0.5}, {"mode", "forward"}});
+    CHECK(attr("spine_02.rotateZ") == doctest::Approx(15.0).epsilon(1e-4));
+    run("stringsBlend", {{"args", {"spine_02"}}, {"mode", "forward"}});
+    CHECK(attr("spine_02.rotateZ") == doctest::Approx(0.0).scale(1.0).epsilon(1e-6));
+}
+
+TEST_CASE("stringsBreakdown blends on arcs and keeps planted feet; stringsFill keys inbetweens spaced by the curve")
+{
+    loadPuppeteer();
+    stringsBiped();
+    run("playbackOptions", {{"fps", 30.0}});
+    run("stringsRules", {{"args", {"hero"}}, {"contacts", {"foot_l", "foot_r"}}});
+    const json all = {"hips", "spine_01", "spine_02", "neck", "head", "upperarm_l", "lowerarm_l", "hand_l", "upperarm_r",
+                      "lowerarm_r", "hand_r", "thigh_l", "calf_l", "foot_l", "thigh_r", "calf_r", "foot_r"};
+    run("currentTime", {{"args", {sec(0)}}});
+    run("setKeyframe", {{"args", all}});
+    const glm::dvec3 foot = pos("foot_l");
+    // The arm swings up 90 degrees by frame 10; the hips drop with the feet held.
+    run("currentTime", {{"args", {sec(10)}}});
+    run("stringsPose", {{"args", {"upperarm_l"}}, {"mode", "forward"}, {"axis", v3(0, 0, 1)}, {"angle", 90.0}});
+    run("stringsPose", {{"args", {"hips"}}, {"mode", "ik"}, {"by", v3(0, -10, 0)}});
+    run("setKeyframe", {{"args", all}});
+    run("currentTime", {{"args", {sec(5)}}});
+    // Between the keys the joints interpolate on their own and the foot drifts; the breakdown blends it in world.
+    const double drift = glm::length(pos("foot_l") - foot);
+    run("stringsBreakdown", {{"args", {"hips"}}, {"weight", 0.5}});
+    CHECK(glm::length(pos("foot_l") - foot) <= drift * 0.5 + 1e-3);
+    // On an arc: the hand stays the arm's length from the shoulder, where a straight blend would cut inside.
+    CHECK(glm::length(pos("hand_l") - pos("upperarm_l")) == doctest::Approx(glm::length(glm::dvec3(72, 140, 0) - glm::dvec3(18, 140, 0))).epsilon(1e-3));
+
+    const json f = run("stringsFill", {{"args", {"hips"}}, {"range", {sec(0), sec(10)}}, {"spacing", "linear"}, {"step", 2}});
+    CHECK(f["filled"] == 4);
+    run("currentTime", {{"args", {sec(4)}}});
+    CHECK(near(pos("foot_l"), foot, 1e-3));
+    CHECK(glm::length(pos("hand_l") - pos("upperarm_l")) == doctest::Approx(54.0).epsilon(0.01));
+    run("currentTime", {{"args", {sec(20)}}});
+    CHECK_THROWS(run("stringsBreakdown", {{"args", {"hips"}}, {"weight", 0.5}}));
+}

@@ -25,7 +25,8 @@ add_executable(lila_rig_tests
     test_rubber_hose.cpp
     test_fbik_stretch.cpp
     test_hose_reskin.cpp
-    test_pin_socket.cpp)
+    test_pin_socket.cpp
+    test_strings.cpp)
 target_link_libraries(lila_rig_tests PRIVATE LilaScene doctest::doctest)
 add_test(NAME lila_rig_tests COMMAND lila_rig_tests)
 

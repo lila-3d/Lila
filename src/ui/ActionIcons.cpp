@@ -773,7 +773,6 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"puppeteer.anim.alignFoot", "shoe"},
     {"puppeteer.spinner.inheritRotate", "rotate"},
     {"puppeteer.spinner.toonScale", "arrows-diagonal"},
-    {"puppeteer.spinner.fullBody", "arrows-move"},
     {"puppeteer.spinner.autoPose", "wand"},
     {"puppeteer.graphFullScreen", "chart-line"},
     {"edit.checkNames", "text-spellcheck"},

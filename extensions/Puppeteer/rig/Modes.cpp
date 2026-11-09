@@ -212,7 +212,8 @@ void registerMenus(ext::Context& ctx)
 {
     menus::addMenu(ctx, {.id = "Puppeteer", .title = "Puppeteer", .sets = {"Rig", "Animate"}});
     for (const char* a : {"mode.puppeteerRig", "mode.puppeteerAnimate", "", "puppeteer.rig.character", "puppeteer.rig.ikChain",
-                          "puppeteer.rig.reverseFoot", "puppeteer.rig.looker", "puppeteer.rig.space"})
+                          "puppeteer.rig.reverseFoot", "puppeteer.rig.looker", "puppeteer.rig.space", "puppeteer.rig.bendBones",
+                          "puppeteer.rig.bendBoneCV"})
         menus::addItem(ctx, *a ? menus::Item{.menu = "Puppeteer", .action = a} : menus::Item{.menu = "Puppeteer", .kind = menus::Kind::Separator});
     menus::addItem(ctx, {.menu = "Puppeteer", .kind = menus::Kind::Submenu, .label = "Joints"});
     for (const char* a : {"puppeteer.joint.create", "puppeteer.joint.insert", "puppeteer.joint.parent", "puppeteer.joint.unparent",
@@ -221,8 +222,15 @@ void registerMenus(ext::Context& ctx)
     menus::addItem(ctx, {.menu = "Puppeteer", .kind = menus::Kind::Separator});
     for (const char* a : {"puppeteer.anim.lock", "puppeteer.anim.pin", "puppeteer.anim.matchControllers", "puppeteer.anim.snapFoot",
                           "puppeteer.anim.alignFoot", "puppeteer.spinner.inheritRotate", "puppeteer.spinner.toonScale",
-                          "puppeteer.spinner.fullBody", "puppeteer.spinner.autoPose", "puppeteer.graphFullScreen"})
+                          "puppeteer.spinner.autoPose", "puppeteer.graphFullScreen"})
         menus::addItem(ctx, {.menu = "Puppeteer", .action = a});
+    menus::addItem(ctx, {.menu = "Puppeteer", .kind = menus::Kind::Submenu, .label = "Strings"});
+    for (const char* a : {"puppeteer.strings.forward", "puppeteer.strings.backward", "puppeteer.strings.ik", "puppeteer.strings.fullBody",
+                          "", "puppeteer.strings.contacts", "puppeteer.strings.stretch", "puppeteer.strings.zero", "puppeteer.strings.restoreLengths",
+                          "puppeteer.strings.overshoot", "puppeteer.strings.smooth", "puppeteer.strings.fill", "puppeteer.strings.trail", "",
+                          "puppeteer.strings.glue", "puppeteer.strings.attach", "puppeteer.strings.unglue"})
+        menus::addItem(ctx, *a ? menus::Item{.menu = "Puppeteer/Strings", .action = a}
+                               : menus::Item{.menu = "Puppeteer/Strings", .kind = menus::Kind::Separator});
 }
 
 void registerShelf(ext::Context& ctx)
@@ -277,6 +285,7 @@ void registerModeBundles(ext::Context& ctx)
     animKeys["viewport"]["Space"] = {{"press", "puppeteer.graphFullScreen"}};
     animKeys["viewport"]["Shift+L"] = {{"press", "puppeteer.anim.lock"}};
     animKeys["viewport"]["Shift+P"] = {{"press", "puppeteer.anim.pin"}};
+    animKeys["viewport"]["U"] = {{"LMB", {{"markingMenu", "puppeteerStrings"}}}};
 
     modes::add(ctx, {.id = kRigMode,
                      .label = "Puppeteer Rig",
@@ -290,7 +299,7 @@ void registerModeBundles(ext::Context& ctx)
     modes::add(ctx, {.id = kAnimateMode,
                      .label = "Puppeteer Animate",
                      .doc = "Pose the joints directly: click the mesh to pick the joint under it, turn it with the Spinner. "
-                            "Space tap: full-screen graph editor; Space hold: the hotbox.",
+                            "U + left drag: Strings modes. Space tap: full-screen graph editor; Space hold: the hotbox.",
                      .icon = "walk",
                      .layout = kAnimateLayout,
                      .hotkeys = animKeys,

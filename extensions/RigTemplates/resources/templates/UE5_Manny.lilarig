@@ -8536,6 +8536,12 @@
 		}
 	},
 	"rig": {
+		"strings": {
+			"contacts": [
+				"foot_l",
+				"foot_r"
+			]
+		},
 		"fullBody": {
 			"stiffness": {
 				"spine_01": 0.4,

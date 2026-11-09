@@ -33,6 +33,13 @@ inline NodeId ikGoalOf(Graph& g, NodeId chain) { return lila::scene::rigel::cont
 /** Whether the chain's key at time is locked. */
 inline bool chainLocked(Graph& g, NodeId chain, double time) { return lila::scene::rigel::locked(g, chain, time); }
 
+/** The character's root joint, or none. */
+NodeId characterRoot(Graph& g, NodeId character);
+/**
+ * Stiffness per joint of the character: its rig template's (rig.fullBody.stiffness, by marker), when Rig Templates is
+ * loaded and the template has one, else by name.
+ */
+std::vector<std::pair<NodeId, double>> stiffnessOf(Graph& g, NodeId character, const std::vector<NodeId>& joints);
 /** The joints full-body moves hold where they are. */
 std::vector<NodeId> pinsOf(Graph& g, NodeId character);
 /** Every joint of the character joint belongs to, its root first; empty outside a character. */

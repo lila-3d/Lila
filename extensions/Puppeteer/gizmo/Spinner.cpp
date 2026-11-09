@@ -1,6 +1,6 @@
 // The Spinner: Puppeteer's radial transform hub. Three coloured zones drag X, Y and Z (vertically: up increases), the
 // middle mouse button turns the selection freely as a trackball, and the ring holds the tool and option buttons and,
-// in Animate mode, the breakdown slider. On an IK or reverse foot controller the zones become rings around a centre
+// in Animate mode, the breakdown slider and the Strings mode arc. On an IK or reverse foot controller the zones become rings around a centre
 // disc that swings the pole, and right-dragging the rings rolls, twists and banks the foot. Every drag previews with
 // undo off and commits one Puppeteer command on release.
 
@@ -10,6 +10,7 @@
 #include "rig/AnimProxy.h"
 #include "rig/Rig.h"
 
+#include <lila/Anim.h>
 #include <lila/Gizmo.h>
 #include <lila/Prefs.h>
 #include <lila/UI.h>
@@ -63,8 +64,10 @@ struct Settings
     bool sticky2nd = false;
     bool keepDirection = false;
     bool footAlign = false;   // the reverse foot context button aligns (levels) instead of snapping
-    bool fullBody = true;     // animate: moving a joint poses the whole body around its pins
     bool autoPose = true;     // full-body moves let the auto-poser place the unpinned body
+    bool trail = false;       // animate: the selected joint's motion trail, its frames draggable
+    double trailFrames = 10.0; // frames either side of now the trail shows, without a time range
+    double trailFalloff = 5.0; // frames a trail drag eases out over, without a time range
     bool help = false;
     double moveStep = 5.0;
     double rotateStep = 15.0;
@@ -95,8 +98,10 @@ struct Settings
         read(p, "/spinner/sticky2nd", sticky2nd);
         read(p, "/spinner/keepDirection", keepDirection);
         read(p, "/spinner/footAlign", footAlign);
-        read(p, "/spinner/fullBody", fullBody);
         read(p, "/spinner/autoPose", autoPose);
+        read(p, "/spinner/trail", trail);
+        read(p, "/spinner/trailFrames", trailFrames);
+        read(p, "/spinner/trailFalloff", trailFalloff);
         read(p, "/spinner/moveStep", moveStep);
         read(p, "/spinner/rotateStep", rotateStep);
         read(p, "/spinner/scaleStep", scaleStep);
@@ -129,8 +134,10 @@ struct Settings
         p.set(kPrefs, "/spinner/sticky2nd", sticky2nd);
         p.set(kPrefs, "/spinner/keepDirection", keepDirection);
         p.set(kPrefs, "/spinner/footAlign", footAlign);
-        p.set(kPrefs, "/spinner/fullBody", fullBody);
         p.set(kPrefs, "/spinner/autoPose", autoPose);
+        p.set(kPrefs, "/spinner/trail", trail);
+        p.set(kPrefs, "/spinner/trailFrames", trailFrames);
+        p.set(kPrefs, "/spinner/trailFalloff", trailFalloff);
         p.set(kPrefs, "/spinner/moveStep", moveStep);
         p.set(kPrefs, "/spinner/rotateStep", rotateStep);
         p.set(kPrefs, "/spinner/scaleStep", scaleStep);
@@ -207,7 +214,17 @@ enum class Handle
     Help,
     Proxy,
     Breakdown,
+    // The Strings mode arc, in strings::Mode order.
+    ModeForward,
+    ModeBackward,
+    ModeIk,
+    ModeFullBody,
+    Trail, // a frame on the motion trail
 };
+
+bool isMode(Handle h) { return h >= Handle::ModeForward && h <= Handle::ModeFullBody; }
+strings::Mode modeOf(Handle h) { return strings::Mode(int(h) - int(Handle::ModeForward)); }
+Handle handleOf(strings::Mode m) { return Handle(int(Handle::ModeForward) + int(m)); }
 
 bool isAxis(Handle h) { return h == Handle::AxisX || h == Handle::AxisY || h == Handle::AxisZ; }
 int axisOf(Handle h) { return h == Handle::AxisX ? 0 : h == Handle::AxisY ? 1 : 2; }
@@ -234,6 +251,10 @@ constexpr double kBreakdownTo = 133.0;
 constexpr double kBreakdownInner = 155.0;
 constexpr double kBreakdownOuter = 199.0;
 constexpr double kGizmoPixels = 70.0;
+// The Strings mode arc, left of the zones on the breakdown slider's radius, between the context and move buttons.
+constexpr double kModeFrom = 162.0;
+constexpr double kModeTo = 228.0;
+constexpr double kModeGap = 1.5;
 
 struct Button
 {
@@ -299,6 +320,8 @@ struct Target
     NodeId chain = kNoNode; // the IK chain whose controller is selected
     NodeId foot = kNoNode;  // its reverse foot
     bool rig = false;       // Rig mode
+    bool character = false; // every selected node is a joint of a character, so Strings can pose it
+    bool related = false;   // something selected is glued or attached
 };
 
 Target currentTarget()
@@ -307,6 +330,14 @@ Target currentTarget()
     Target t;
     t.names = selectedTransforms();
     t.rig = modes::current() == kRigMode;
+    t.character = !t.names.empty() && std::all_of(t.names.begin(), t.names.end(), [&](const std::string& n) {
+        Node* node = g.find(n);
+        return node && rig::isJoint(*node) && characterFor(g, node->id());
+    });
+    t.related = std::any_of(t.names.begin(), t.names.end(), [&](const std::string& n) {
+        Node* node = g.find(n);
+        return node && stringsRelated(node->id());
+    });
     for (NodeId id : g.selection())
     {
         Node* n = g.node(id);
@@ -410,6 +441,11 @@ QString tipFor(Handle h, const Target& t)
     case Handle::Breakdown:
         return "Breakdown: drag left toward the previous key's pose, right toward the next (Shift: the whole character)";
     case Handle::Plate: return "Drag the rim to move the Spinner (reset in its settings)";
+    case Handle::ModeForward: return "Forward: the joint turns, its children follow. U + drag: Strings menu";
+    case Handle::ModeBackward: return "Backward: what is pinned below holds and the body swings. U + drag: Strings menu";
+    case Handle::ModeIk: return "IK: the limb bends to put the joint where you drag. U + drag: Strings menu";
+    case Handle::ModeFullBody: return "Full Body: the whole body moves, pins holding. U + drag: Strings menu";
+    case Handle::Trail: return "Drag a frame of the trail: the joint goes there on that frame, easing out either side";
     default: return {};
     }
 }
@@ -445,6 +481,8 @@ public:
         const bool disabled = offKey(t.names);
         drawViewportGizmo(p, t);
 
+        drawRelations(p);
+        drawTrail(p, t);
         const QPointF c = center();
         const Handle hot = mDrag ? mDrag->handle : mHover;
         p.disc(c, float(u(kPlate)), gray(0.14f, 0.92f), 72);
@@ -501,6 +539,8 @@ public:
 
         if (modes::current() != kRigMode && !t.rig)
             drawBreakdown(p, c, hot, disabled);
+        if (modeArc(t))
+            drawModes(p, c, hot);
 
         if (mDrag && !mDrag->readout.isEmpty())
             p.label(QPointF(c.x() - u(kPlate), c.y() - u(kPlate) - 10.0), mDrag->readout);
@@ -513,6 +553,14 @@ public:
     bool hover(QPointF px) override
     {
         const Handle h = visible() ? hit(px, currentTarget()) : Handle::None;
+        if (h == Handle::Trail)
+        {
+            const int frame = trailAt(px);
+            const bool moved = frame != mTrailHover;
+            mTrailHover = frame;
+            if (moved && h == mHover)
+                return true;
+        }
         if (h == mHover)
             return false;
         mHover = h;
@@ -616,6 +664,17 @@ public:
             if (button == Qt::LeftButton && !offKey(t.names))
                 beginDrag(Kind::Breakdown, h, px, mods, t);
             return true;
+        case Handle::ModeForward:
+        case Handle::ModeBackward:
+        case Handle::ModeIk:
+        case Handle::ModeFullBody:
+            if (button == Qt::LeftButton)
+                setStringsMode(modeOf(h));
+            return true;
+        case Handle::Trail:
+            if (button == Qt::LeftButton)
+                beginTrailDrag(px);
+            return true;
         default: break;
         }
         // The zones and the centre.
@@ -685,7 +744,10 @@ public:
         if (mDrag)
             mDrag->start -= offset;
     }
-    bool wrapsCursor() const override { return !mDrag || (mDrag->kind != Kind::Breakdown && mDrag->kind != Kind::Reposition); }
+    bool wrapsCursor() const override
+    {
+        return !mDrag || (mDrag->kind != Kind::Breakdown && mDrag->kind != Kind::Reposition && mDrag->kind != Kind::Trail);
+    }
 
 private:
     enum class Kind
@@ -697,6 +759,7 @@ private:
         Trackball,   // middle drag: free rotate
         Breakdown,
         Reposition,  // the rim: moves the Spinner
+        Trail,       // a frame of the motion trail
     };
 
     struct Saved
@@ -719,6 +782,9 @@ private:
         std::vector<BreakdownSample> samples;
         double weight = 0.0;
         QPointF offset, startOffset;
+        int trailFrame = -1;
+        bool strung = false; // a breakdown through stringsBreakdown
+        glm::dvec3 trailBy{0.0};
         QString readout;
         bool warned = false;
     };
@@ -867,6 +933,190 @@ private:
         p.disc(at(c, r, dot), float(u(12.0)), disabled ? gray(0.35f) : hot == Handle::Breakdown ? gray(1.0f) : gray(0.85f), 20);
     }
 
+    /** The motion trail of the first selected joint: its frames, positions and keyed frames, sampled when the scene changes. */
+    struct Trail
+    {
+        NodeId joint = kNoNode;
+        std::vector<double> times;
+        std::vector<glm::dvec3> points;
+        std::vector<bool> keyed;
+        uint64_t version = 0;
+    };
+
+    /** The trail's frames: the time slider's range and its falloff, else the trail setting either side of now. */
+    static std::vector<double> trailTimes()
+    {
+        namespace an = lila::scene::anim;
+        const an::TimeSelection& sel = an::timeSelection();
+        const an::Playback& pb = an::playback();
+        double from, to;
+        if (sel.active)
+        {
+            from = an::frameOf(sel.start) - sel.falloff;
+            to = an::frameOf(sel.end) + sel.falloff;
+        }
+        else
+        {
+            const double now = std::round(an::frameOf(graph().time()));
+            from = now - settings().trailFrames;
+            to = now + settings().trailFrames;
+        }
+        from = std::max(from, std::round(an::frameOf(pb.animStart)));
+        to = std::min(to, std::round(an::frameOf(pb.animEnd)));
+        std::vector<double> out;
+        for (double f = std::ceil(from); f <= to + 1e-6; f += 1.0)
+            out.push_back(an::secondsOf(f));
+        return out;
+    }
+
+    void refreshTrail(const Target& t)
+    {
+        if (!settings().trail || !t.character || t.rig || mDrag)
+        {
+            if (!mDrag)
+                mTrail.joint = kNoNode;
+            return;
+        }
+        Graph& g = graph();
+        const NodeId joint = g.find(t.names.front())->id();
+        std::vector<double> times = trailTimes();
+        if (joint == mTrail.joint && times == mTrail.times && g.version() == mTrail.version)
+            return;
+        std::vector<glm::dvec3> points = strings::trail(g, joint, times);
+        // While an edit is held the trail can't be sampled; the last one stays.
+        if (points.empty() && joint == mTrail.joint)
+            return;
+        mTrail = {joint, std::move(times), std::move(points), {}, 0};
+        const std::vector<double> keys = lila::scene::anim::keyTimes(g, {joint});
+        for (double tm : mTrail.times)
+            mTrail.keyed.push_back(std::any_of(keys.begin(), keys.end(), [&](double k) { return std::abs(k - tm) < 1e-6; }));
+        mTrail.version = g.version();
+    }
+
+    /** The trail frame under px, or -1. */
+    int trailAt(QPointF px) const
+    {
+        if (mTrail.joint == kNoNode)
+            return -1;
+        int best = -1;
+        double bestD = 7.0;
+        for (size_t i = 0; i < mTrail.points.size(); ++i)
+            if (const auto at = mView.project(mTrail.points[i]))
+                if (const double d = std::hypot(at->x() - px.x(), at->y() - px.y()); d < bestD)
+                {
+                    bestD = d;
+                    best = int(i);
+                }
+        return best;
+    }
+
+    /** A thin line through the frames, a dot per frame, larger on keys; the current frame ringed, the dragged one moved. */
+    void drawTrail(OverlayPainter& p, const Target& t)
+    {
+        refreshTrail(t);
+        if (mTrail.joint == kNoNode || mTrail.points.size() < 2)
+            return;
+        const double now = graph().time();
+        const int hot = mDrag && mDrag->kind == Kind::Trail ? mDrag->trailFrame : mHover == Handle::Trail ? mTrailHover : -1;
+        std::vector<QPointF> line;
+        for (const glm::dvec3& pt : mTrail.points)
+            if (const auto at = mView.project(pt))
+                line.push_back(*at);
+        p.polyline(line, 1.5f, gray(0.9f, 0.45f));
+        for (size_t i = 0; i < mTrail.points.size(); ++i)
+        {
+            const auto at = mView.project(mTrail.points[i]);
+            if (!at)
+                continue;
+            const bool current = std::abs(mTrail.times[i] - now) < 1e-6;
+            const float r = mTrail.keyed[i] ? 4.0f : 2.5f;
+            p.disc(*at, int(i) == hot ? r + 1.5f : r, int(i) == hot ? gray(1.0f) : gray(0.85f, 0.85f), 12);
+            if (current)
+                p.disc(*at, r + 3.0f, gray(0.95f, 0.35f), 16);
+        }
+        if (mDrag && mDrag->kind == Kind::Trail && mDrag->trailFrame >= 0)
+            if (const auto from = mView.project(mTrail.points[size_t(mDrag->trailFrame)]))
+                if (const auto to = mView.project(mTrail.points[size_t(mDrag->trailFrame)] + mDrag->trailBy))
+                {
+                    p.line(*from, *to, 1.5f, gray(1.0f, 0.8f));
+                    p.disc(*to, 5.0f, gray(1.0f), 16);
+                }
+    }
+
+    void beginTrailDrag(QPointF px)
+    {
+        const int frame = trailAt(px);
+        if (frame < 0)
+            return;
+        Drag d;
+        d.kind = Kind::Trail;
+        d.handle = Handle::Trail;
+        d.start = d.current = px;
+        d.target = currentTarget();
+        d.trailFrame = frame;
+        mDrag = std::move(d);
+    }
+
+    /** A trail frame dragged: shown while dragging, posed on release at that frame, easing out across the falloff. */
+    void applyTrail(bool commit)
+    {
+        Drag& d = *mDrag;
+        const glm::dvec3 at = mTrail.points[size_t(d.trailFrame)];
+        d.trailBy = screenDelta(d.start, d.current, at);
+        const double frame = lila::scene::anim::frameOf(mTrail.times[size_t(d.trailFrame)]);
+        d.readout = QString("Frame %1  %2 cm").arg(frame).arg(glm::length(d.trailBy), 0, 'f', 2);
+        if (!commit || glm::length(d.trailBy) < 1e-9)
+            return;
+        // Forward has nothing that bends to put a joint somewhere: the trail drags in IK there.
+        const strings::Mode mode = stringsMode() == strings::Mode::Forward ? strings::Mode::Ik : stringsMode();
+        const lila::scene::anim::TimeSelection& sel = lila::scene::anim::timeSelection();
+        const double t = mTrail.times[size_t(d.trailFrame)];
+        json call = {{"args", {graph().node(mTrail.joint)->path()}},
+                     {"mode", strings::modeName(mode)},
+                     {"by", vecJson(d.trailBy)},
+                     {"stretch", stringsStretch()}};
+        if (sel.active && t >= sel.start - 1e-6 && t <= sel.end + 1e-6)
+        {
+            call["range"] = json::array({sel.start, sel.end});
+            call["falloff"] = sel.falloff;
+        }
+        else
+        {
+            call["range"] = json::array({t, t});
+            call["falloff"] = settings().trailFalloff;
+        }
+        // Keyed animation moves its keys; a frame between keys, or dense motion, moves every frame.
+        call["dense"] = !mTrail.keyed[size_t(d.trailFrame)];
+        runCommand("stringsPose", call);
+        mTrail.version = 0;
+    }
+
+    /** The Strings modes show on joints being animated; controllers and rigging have their own behaviour. */
+    bool modeArc(const Target& t) const { return modes::current() != kRigMode && !t.rig && !t.chain && t.character; }
+
+    static std::pair<double, double> modeSpan(strings::Mode m)
+    {
+        // Forward on top, down to Full Body, in the order the modes widen.
+        const double step = (kModeTo - kModeFrom) / 4.0;
+        const double from = kModeTo - step * (int(m) + 1);
+        return {from + kModeGap * 0.5, from + step - kModeGap * 0.5};
+    }
+
+    /** One joined strip of four segments; the current mode is the bright one. */
+    void drawModes(OverlayPainter& p, QPointF c, Handle hot)
+    {
+        static const char* icons[] = {"puppeteer.forward", "puppeteer.backward", "puppeteer.ik", "puppeteer.fullBody"};
+        const strings::Mode current = stringsMode();
+        for (strings::Mode m : {strings::Mode::Forward, strings::Mode::Backward, strings::Mode::Ik, strings::Mode::FullBody})
+        {
+            const auto [from, to] = modeSpan(m);
+            const bool on = m == current, lit = hot == handleOf(m);
+            fillZone(p, c, u(kBreakdownInner), u(kBreakdownOuter), from, to, on ? gray(0.88f) : lit ? gray(0.34f) : gray(0.22f));
+            iconAt(p, at(c, u((kBreakdownInner + kBreakdownOuter) * 0.5), (from + to) * 0.5), u(28.0), icons[int(m)],
+                   on ? gray(0.1f) : lit ? gray(1.0f) : gray(0.78f));
+        }
+    }
+
     void drawHelp(OverlayPainter& p, QPointF c)
     {
         const QStringList lines = {"Drag a zone up or down: X, Y, Z",
@@ -875,12 +1125,32 @@ private:
                                    "Reverse foot, right drag a ring: roll, twist, bank",
                                    "Right-click a controller in the view: lock its key",
                                    "Right-click a button with a corner box: its alternative",
+                                   "Left arc: Strings mode (U + drag: its marking menu)",
                                    "Drag the rim: move the Spinner"};
         double y = c.y() + u(kPlate) + 18.0;
         for (const QString& l : lines)
         {
             p.label(QPointF(c.x() - u(kPlate), y), l);
             y += 18.0;
+        }
+    }
+
+    /** Glue and attach sets: a thin line from each member to the set's leader (an attach set's last), dots on the members. */
+    void drawRelations(OverlayPainter& p)
+    {
+        Graph& g = graph();
+        for (const std::vector<NodeId>& set : stringsRelations())
+        {
+            const auto lead = mView.project(glm::dvec3(worldOf(g, set.back())[3]));
+            if (!lead)
+                continue;
+            p.disc(*lead, 4.0f, gray(0.95f, 0.9f), 12);
+            for (size_t i = 0; i + 1 < set.size(); ++i)
+                if (const auto at = mView.project(glm::dvec3(worldOf(g, set[i])[3])))
+                {
+                    p.line(*at, *lead, 1.5f, gray(0.95f, 0.55f));
+                    p.disc(*at, 3.0f, gray(0.95f, 0.9f), 12);
+                }
         }
     }
 
@@ -960,7 +1230,7 @@ private:
                     return b.handle;
             }
         if (d > u(kPlate))
-            return Handle::None;
+            return trailAt(px) >= 0 ? Handle::Trail : Handle::None;
         const double a = std::atan2(dy, dx) * 180.0 / math::kPi;
         const bool rings = ringLayout(t);
         if (rings ? d <= u(kCenterDisc) : d <= u(kFreeDot))
@@ -970,6 +1240,12 @@ private:
             if (rings && d < u(kRingInner))
                 return Handle::Plate;
             return a >= kZoneX[0] && a <= kZoneX[1] ? Handle::AxisX : a > kZoneZ[0] && a <= kZoneZ[1] ? Handle::AxisZ : Handle::AxisY;
+        }
+        if (modeArc(t) && d >= u(kBreakdownInner) && d <= u(kBreakdownOuter))
+        {
+            const double around = a < 0.0 ? a + 360.0 : a;
+            if (around >= kModeFrom && around <= kModeTo)
+                return handleOf(strings::Mode(std::clamp(int((kModeTo - around) / ((kModeTo - kModeFrom) / 4.0)), 0, 3)));
         }
         if (!t.rig && modes::current() != kRigMode && a >= kBreakdownFrom && a <= kBreakdownTo && d >= u(kBreakdownInner) &&
             d <= u(kBreakdownOuter))
@@ -1020,8 +1296,10 @@ private:
         m->addSeparator();
         toggle("Inherit Rotate", s.inherit);
         toggle("Toon Scale", s.toon);
-        toggle("Full Body Move", s.fullBody);
         toggle("Auto Pose", s.autoPose);
+        toggle("Motion Trail", s.trail);
+        choice("Motion Trail Frames", s.trailFrames, {{"5", 5.0}, {"10", 10.0}, {"20", 20.0}, {"40", 40.0}});
+        choice("Trail Drag Falloff", s.trailFalloff, {{"None", 0.0}, {"2 frames", 2.0}, {"5 frames", 5.0}, {"10 frames", 10.0}});
         toggle("Sticky Aim (rigging)", s.stickyAim);
         toggle("Pivot (rigging)", s.pivot);
         m->addSeparator();
@@ -1059,7 +1337,16 @@ private:
         g.evaluate();
         if (kind == Kind::Breakdown)
         {
-            d.samples = sampleBreakdown(g, breakdownNodes(g, t.names, d.all), g.time());
+            // In a Strings mode the breakdown is the space-aware one: the whole character blends, feet in world.
+            if (posesStrings(t) && t.character)
+            {
+                for (NodeId j : fullBodyJoints(g, g.find(t.names.front())->id()))
+                    d.saved.push_back({j, {{int(Transform::kTranslate), g.value({j, Transform::kTranslate, -1})},
+                                           {int(Transform::kRotate), g.value({j, Transform::kRotate, -1})}}});
+                d.strung = true;
+            }
+            else
+                d.samples = sampleBreakdown(g, breakdownNodes(g, t.names, d.all), g.time());
             mDrag = std::move(d);
             return;
         }
@@ -1078,11 +1365,20 @@ private:
         }
         if (t.foot)
             touch(t.foot);
-        // A full-body move writes every joint of the character.
-        if (d.tool == Tool::Move && !t.rig && settings().fullBody)
+        // A Strings pose can write every joint of the character.
+        if (posesStrings(t) && d.tool != Tool::Scale)
+        {
             for (const std::string& n : t.names)
                 for (NodeId j : fullBodyJoints(g, g.find(n)->id()))
                     touch(j);
+            for (const std::vector<NodeId>& set : stringsRelations())
+                for (NodeId m : set)
+                {
+                    touch(m);
+                    for (NodeId j : fullBodyJoints(g, m))
+                        touch(j);
+                }
+        }
         // Posing a controller writes its chain's joint rotations, which a preview step must put back.
         if (t.chain)
         {
@@ -1184,8 +1480,10 @@ private:
                 return {"", call};
             call["axis"] = vecJson(ax);
             call["angle"] = angle;
-            call["inherit"] = s.inherit;
             d.readout = QString("Free rotate %1°").arg(angle, 0, 'f', 1);
+            if (posesStrings(t))
+                return stringsCall(call);
+            call["inherit"] = s.inherit;
             return {"puppeteerRotate", call};
         }
         default: break;
@@ -1217,10 +1515,10 @@ private:
                 call["sticky2nd"] = s.sticky2nd;
                 call["keepDirection"] = s.keepDirection;
             }
-            else if (s.fullBody)
+            else if (posesStrings(t))
             {
-                call["fullBody"] = true;
                 call["autoPose"] = s.autoPose;
+                return stringsCall(call);
             }
             return {"puppeteerMove", call};
         }
@@ -1231,8 +1529,12 @@ private:
             const glm::dvec3 ax = axis >= 0 ? d.axes[axis] : -mView.viewDir(d.pivot);
             call["axis"] = vecJson(ax);
             call["angle"] = angle;
-            call["inherit"] = s.inherit && !t.chain;
-            d.readout = QString("%1%2°%3").arg(axis >= 0 ? QString(axisName[axis]) + " " : QString()).arg(angle, 0, 'f', 1).arg(s.inherit ? "  inherit" : "");
+            const bool strung = posesStrings(t);
+            const bool inherit = s.inherit && !t.chain && !strung;
+            d.readout = QString("%1%2°%3").arg(axis >= 0 ? QString(axisName[axis]) + " " : QString()).arg(angle, 0, 'f', 1).arg(inherit ? "  inherit" : "");
+            if (strung)
+                return stringsCall(call);
+            call["inherit"] = inherit;
             return {"puppeteerRotate", call};
         }
         case Tool::Scale:
@@ -1249,6 +1551,22 @@ private:
         }
         }
         return {"", call};
+    }
+
+    /** Whether a drag on these joints poses through Strings rather than the plain move and turn. */
+    static bool posesStrings(const Target& t)
+    {
+        return !t.rig && !t.chain && ((t.character && stringsMode() != strings::Mode::Forward) || t.related);
+    }
+
+    /** The drag as a stringsPose call in the current mode; the readout names the mode. */
+    std::pair<const char*, json> stringsCall(json call)
+    {
+        static const char* labels[] = {"Forward", "Backward", "IK", "Full Body"};
+        call["mode"] = strings::modeName(stringsMode());
+        call["stretch"] = stringsStretch();
+        mDrag->readout += QString("  %1").arg(labels[int(stringsMode())]);
+        return {"stringsPose", call};
     }
 
     /**
@@ -1294,12 +1612,33 @@ private:
             }
             return;
         }
+        if (d.kind == Kind::Trail)
+        {
+            applyTrail(commit);
+            return;
+        }
         if (d.kind == Kind::Breakdown)
         {
             const Settings& s = settings();
             d.weight = math::breakdownWeight(d.current.x() - d.start.x(), s.breakdownDeadZone, s.breakdownFull);
             d.readout = d.weight < 0.0 ? QString("Previous key %1%").arg(int(std::round(-d.weight * 100.0)))
                                        : QString("Next key %1%").arg(int(std::round(d.weight * 100.0)));
+            if (d.strung)
+            {
+                restore();
+                if (d.weight == 0.0)
+                    return;
+                const json call = {{"args", namesJson(d.target.names)}, {"weight", d.weight}};
+                if (commit)
+                    runCommand("stringsBreakdown", call);
+                else if (std::string error = quietly([&] { ops::execute("stringsBreakdown", call, CallSource::Script); }); !error.empty() && !d.warned)
+                {
+                    d.warned = true;
+                    log::write(LogLevel::Warning, "Spinner: " + error);
+                }
+                d.readout += "  in space";
+                return;
+            }
             if (commit)
             {
                 restore();
@@ -1324,22 +1663,41 @@ private:
         restore();
         if (!*name)
             return;
+        // A range selected on the time slider: the drag previews on this frame and lands on every frame in it.
+        const lila::scene::anim::TimeSelection& range = lila::scene::anim::timeSelection();
+        if (range.active && std::string_view(name) == "stringsPose")
+            d.readout += QString("  frames %1-%2").arg(lila::scene::anim::frameOf(range.start)).arg(lila::scene::anim::frameOf(range.end));
         if (commit)
         {
+            if (range.active && std::string_view(name) == "stringsPose")
+            {
+                call["range"] = json::array({range.start, range.end});
+                call["falloff"] = range.falloff;
+            }
             runCommand(name, call);
             return;
         }
         // A failing preview says why once per drag rather than doing nothing silently.
-        if (std::string error = quietly([&] { ops::execute(name, call, CallSource::Script); }); !error.empty() && !d.warned)
+        json result;
+        if (std::string error = quietly([&] { result = ops::execute(name, call, CallSource::Script); }); !error.empty() && !d.warned)
         {
             d.warned = true;
             log::write(LogLevel::Warning, "Spinner: " + error);
+        }
+        if (result.is_object())
+        {
+            if (result.contains("anchor"))
+                d.readout += QString("  from %1").arg(QString::fromStdString(result["anchor"].get<std::string>()).section('|', -1).section(':', -1));
+            if (result.contains("fallback"))
+                d.readout += QString("  (%1)").arg(QString::fromStdString(result["fallback"].get<std::string>()));
         }
     }
 
     ViewInfo mView;
     Handle mHover = Handle::None;
     std::optional<Drag> mDrag;
+    Trail mTrail;
+    int mTrailHover = -1;
     mutable std::string mLastMode;
 };
 
@@ -1352,7 +1710,8 @@ void registerIcons(ext::Context& ctx)
         {"puppeteer.screen", "device-desktop"},    {"puppeteer.pivot", "focus-centered"},    {"puppeteer.discrete", "grid-dots"},
         {"puppeteer.sticky", "target-arrow"},      {"puppeteer.sticky2nd", "vector-bezier"}, {"puppeteer.keepDirection", "direction"},
         {"puppeteer.foot", "shoe"},                {"puppeteer.footAlign", "line"},          {"puppeteer.pole", "target"},
-        {"puppeteer.proxy", "puzzle"},
+        {"puppeteer.proxy", "puzzle"},             {"puppeteer.forward", "arrow-down-tail"}, {"puppeteer.backward", "arrow-up-tail"},
+        {"puppeteer.ik", "hand-grab"},             {"puppeteer.fullBody", "man"},
     };
     for (const auto& [id, tabler] : icons)
         overlayIcons::add(ctx, id, {.tabler = tabler});
@@ -1412,8 +1771,8 @@ void registerSpinnerActions(ext::Context& ctx)
     flag("puppeteer.spinner.discrete", "Discrete Steps", &Settings::discrete, "Spinner drags move, turn and scale in fixed steps.");
     flag("puppeteer.spinner.stickyAim", "Sticky Aim", &Settings::stickyAim, "Rigging: orients follow the bones as joints move.");
     flag("puppeteer.spinner.pivot", "Pivot", &Settings::pivot, "Rigging: the Spinner moves joints without their children.");
-    flag("puppeteer.spinner.fullBody", "Full Body Move", &Settings::fullBody,
-         "Animating: moving a joint poses the whole body, holding pinned joints and locked hands and feet.");
+    flag("puppeteer.strings.trail", "Motion Trail", &Settings::trail,
+         "The selected joint's motion trail over the time range, or around now: drag a frame of it to move the joint there.");
     flag("puppeteer.spinner.autoPose", "Auto Pose", &Settings::autoPose,
          "Full-body moves let the auto-poser place the rest of the body, as a person would move to reach.");
 }

@@ -38,6 +38,7 @@ lila_module(lila_scene Scene
     SplitRingsModifier.cpp SplitRingsModifier.h
     AutoPose.cpp AutoPose.h
     FullBodyIk.cpp FullBodyIk.h
+    Strings.cpp Strings.h
     Fracture.cpp Fracture.h
     DominantInfluence.cpp
     Ghosts.cpp

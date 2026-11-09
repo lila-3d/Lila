@@ -487,6 +487,14 @@ Template Template::fromJson(const json& j)
             if (!v.is_number() || !t.marker(m))
                 throw std::invalid_argument("rig fullBody stiffness names unknown marker " + m + " or is not a number");
     }
+    if (const json st = t.rig.value("strings", json::object()); st.contains("contacts"))
+    {
+        if (!st["contacts"].is_array())
+            throw std::invalid_argument("rig strings contacts should be a list of markers");
+        for (const json& m : st["contacts"])
+            if (!m.is_string() || !t.marker(m.get<std::string>()))
+                throw std::invalid_argument("rig strings contacts names unknown marker " + m.dump());
+    }
     for (auto& [k, v] : j.items())
         if (k != "format" && k != "version" && k != "id" && k != "name" && k != "description" && k != "source" && k != "lateral" &&
             k != "markers" && k != "limbs" && k != "picker" && k != "poses" && k != "aliases" && k != "spaces" && k != "rig")

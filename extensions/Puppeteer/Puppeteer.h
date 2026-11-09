@@ -1,6 +1,7 @@
 #pragma once
 
 #include <lila/Extension.h>
+#include <lila/Strings.h>
 
 /**
  * Puppeteer: character animation done on the joints themselves. Each subsystem registers through its own function so
@@ -39,6 +40,19 @@ void registerControllers(lila::ext::Context& ctx);
 void registerControllerDrawing(lila::ext::Context& ctx);
 /** Pins for full-body posing. */
 void registerFullBody(lila::ext::Context& ctx);
+/** Strings: stringsPose, the mode drags pose in, its actions and marking menu (rig/Strings.cpp). */
+void registerStrings(lila::ext::Context& ctx);
+/** The Strings rules on a character's Attribute Editor and the actions behind its buttons (gizmo/StringsUi.cpp). */
+void registerStringsUi(lila::ext::Context& ctx);
+/** The Strings mode Spinner drags pose in. */
+lila::scene::strings::Mode stringsMode();
+void setStringsMode(lila::scene::strings::Mode m);
+/** How far drags may stretch bones: 1 with Stretch off. */
+double stringsStretch();
+/** Whether node is glued or attached to anything. */
+bool stringsRelated(lila::scene::NodeId node);
+/** Each glue or attach set's members, for drawing; attach sets lead with their last. */
+std::vector<std::vector<lila::scene::NodeId>> stringsRelations();
 /** Joint tools: commands and actions. */
 void registerJointTools(lila::ext::Context& ctx);
 /** The Spinner's commands (rotate with inherit, toon scale, aim moves, breakdown), usable without the UI. */
