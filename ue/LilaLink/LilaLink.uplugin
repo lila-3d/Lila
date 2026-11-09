@@ -20,6 +20,11 @@
 			"LoadingPhase": "Default"
 		},
 		{
+			"Name": "LilaLinkDeformer",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
 			"Name": "LilaLinkAnimGraph",
 			"Type": "UncookedOnly",
 			"LoadingPhase": "Default"
@@ -66,6 +71,10 @@
 		},
 		{
 			"Name": "ControlRig",
+			"Enabled": true
+		},
+		{
+			"Name": "DeformerGraph",
 			"Enabled": true
 		},
 		{

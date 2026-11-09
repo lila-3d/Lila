@@ -344,3 +344,39 @@ TEST_CASE("bendBoneCV mirrors onto the other side's bone, and mirrorBendBoneCVs 
     CHECK(pr[1].get<double>() == doctest::Approx(pl[1].get<double>()).epsilon(1e-6));
     CHECK(pr[2].get<double>() == doctest::Approx(pl[2].get<double>()).epsilon(1e-6));
 }
+
+TEST_CASE("unrealBendBones: chains by bone name, rest joints and every point's chain weights in Unreal space")
+{
+    using namespace deformtest;
+    using json = nlohmann::json;
+    run("newScene");
+    run("joint", {{"position", v3(0, 45, 0)}, {"name", "hip"}});
+    run("joint", {{"position", v3(0, 0, 0)}, {"name", "knee"}});
+    run("joint", {{"position", v3(0, -45, 0)}, {"name", "ankle"}});
+    const std::string mesh = run("polyCylinder", {{"name", "Leg"}, {"radius", 6}, {"height", 90}, {"subdivisionsHeight", 30}})[0];
+    const std::string d = run("bendBones", {{"args", {mesh}}, {"chains", {{"hip", "knee", "ankle"}}}}).get<std::string>();
+    const json r = run("unrealBendBones", {{"args", {mesh}}, {"skeletalMesh", "/Game/Leg/SK_Leg"}, {"dryRun", true}});
+    const json& p = r["payload"];
+    CHECK(p["chains"] == json::array({json::array({"hip", "knee", "ankle"})}));
+    CHECK(p["deformer"] == "/Game/Lila/DG_LilaBendBones");
+    const json points = run("meshData", {{"args", {mesh}}, {"worldSpace", true}})["points"];
+    REQUIRE(p["points"].size() == points.size());
+    for (const json& pt : p["points"])
+    {
+        double total = 0.0;
+        for (const json& w : pt["w"])
+            total += w[1].get<double>();
+        CHECK(total == doctest::Approx(1.0));
+    }
+    // Unreal is Z up: the hip, 45 up in Lila, is 45 up there.
+    CHECK(p["restJoints"][0][0][2].get<double>() == doctest::Approx(45.0));
+    CHECK(p["restJoints"][0][2][2].get<double>() == doctest::Approx(-45.0));
+    // The curve normals at rest, one per joint: Unreal bends with these rather than choosing its own.
+    REQUIRE(p["restNormals"][0].size() == 3);
+    for (const json& n : p["restNormals"][0])
+        CHECK(std::hypot(n[0].get<double>(), n[1].get<double>(), n[2].get<double>()) == doctest::Approx(1.0));
+    CHECK(p["warnings"].empty());
+    run("bendBoneCV", {{"args", {d}}, {"joint", "hip"}, {"mirror", false}});
+    CHECK(run("unrealBendBones", {{"args", {d}}, {"skeletalMesh", "/Game/Leg/SK_Leg"}, {"dryRun", true}})["payload"]["warnings"].size() == 1);
+    CHECK_THROWS(run("unrealBendBones", {{"args", {mesh}}, {"dryRun", true}}));
+}

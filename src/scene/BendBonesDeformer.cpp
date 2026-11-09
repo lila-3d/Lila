@@ -26,6 +26,7 @@
 #include "scene/SplineChain.h"
 #include "scene/Transform.h"
 #include "scene/UnrealCheck.h"
+#include "math/Unreal.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -399,6 +400,87 @@ bool moves(const std::vector<std::vector<glm::dmat4>>& frames, size_t count)
                 if (glm::length(frames[f][i][c] - frames[0][i][c]) > 1e-7)
                     return true;
     return false;
+}
+
+/** The deformer a command acts on: the named one, or the one in the named mesh's stack. */
+Node* deformerArg(Graph& g, const Args& a, const char* command)
+{
+    const std::vector<std::string> objs = a.objects();
+    Node* d = objs.empty() ? nullptr : g.find(objs.front());
+    if (d && d->type().isA("mesh"))
+        for (NodeId id : modifiers::stack(g, d->id()))
+            if (g.node(id)->type().name == kType)
+                d = g.node(id);
+    if (!d || d->type().name != kType)
+        throw CommandError(std::string(command) + ": give a bendBones deformer or a mesh it deforms");
+    return d;
+}
+
+std::string bareName(const std::string& path) { return path.substr(path.find_last_of("|:") + 1); }
+
+json toUnrealJson(const glm::dvec3& v)
+{
+    const math::Vector u = math::toUnreal(math::Vector(v.x, v.y, v.z));
+    return {u.x, u.y, u.z};
+}
+
+/**
+ * Bend bones live in Unreal: the chains by bone name, the options, and each point where it sits at bind (Unreal space)
+ * with its chains' weights, painted ones included. LilaLink binds the skeletal mesh's LOD 0 to them and gives it the
+ * Lila Bend Bones Deformer Graph.
+ */
+json unrealPayload(Graph& g, Node& d, const std::string& mesh, const std::string& deformerPath)
+{
+    const auto& node = static_cast<const BendBonesNode&>(d);
+    g.evaluate();
+    const Bound bound = node.boundWithRest();
+    const auto [chainJoints, cvNodes] = inputsOf(g, d);
+    if (bound.sizes.empty() || chainJoints.size() != bound.rest.size())
+        throw CommandError("unrealBendBones: " + d.path() + " has no bind");
+    const MeshPtr in = d.as<MeshPtr>(DeformerNode::kInMesh);
+    if (!in || bound.binding.offsets.size() != in->positions().size() + 1)
+        throw CommandError("unrealBendBones: the mesh changed since it was bound; bind it again");
+    const bb::Binding binding = node.binding(bound, curvesOf(bound, bound.rest, restCvs(bound)).first, in->positions());
+    // The curve normals at rest go too, in world space: the twist depends on them, so Unreal can't choose its own.
+    json chains = json::array(), restJoints = json::array(), restNormals = json::array();
+    for (size_t at = 0; int n : bound.sizes)
+    {
+        json names = json::array(), rest = json::array(), normals = json::array();
+        for (int k = 0; k < n; ++k, ++at)
+        {
+            names.push_back(bareName(g.node(chainJoints[at])->name()));
+            rest.push_back(toUnrealJson(glm::dvec3(bound.rest[at][3])));
+            if (at < bound.normals.size())
+                normals.push_back(toUnrealJson(orthonormal(glm::dmat3(bound.rest[at])) * bound.normals[at]));
+        }
+        chains.push_back(names);
+        restJoints.push_back(rest);
+        restNormals.push_back(normals);
+    }
+    json points = json::array();
+    const std::span<const glm::dvec3> pos = in->positions();
+    for (size_t i = 0; i + 1 < binding.offsets.size() && i < pos.size(); ++i)
+    {
+        json w = json::array();
+        for (uint32_t e = binding.offsets[i]; e < binding.offsets[i + 1]; ++e)
+            w.push_back({binding.chain[e], binding.weight[e]});
+        points.push_back({{"p", toUnrealJson(glm::dvec3(bound.meshWorld * glm::dvec4(pos[i], 1.0)))}, {"w", w}});
+    }
+    const bb::Options o = node.options();
+    json warnings = json::array();
+    if (!cvNodes.empty())
+        warnings.push_back(std::to_string(cvNodes.size()) + " bone CVs don't reach Unreal live; the curves there run through the joints alone (Bake Bend Bones carries them)");
+    return {{"skeletalMesh", mesh},
+            {"deformer", deformerPath},
+            {"chains", chains},
+            {"restJoints", restJoints},
+            {"restNormals", restNormals},
+            {"volume", o.volume},
+            {"evenBend", o.evenBend},
+            {"samplesPerSpan", 16},
+            {"blend", 0.35},
+            {"points", points},
+            {"warnings", warnings}};
 }
 
 json bake(Graph& g, Node& d, const Args& a)
@@ -1056,6 +1138,67 @@ void registerCommands()
             if (!d || d->type().name != kType)
                 throw CommandError("bakeBendBones: give a bendBones deformer or a mesh it deforms");
             return bake(g, *d, a);
+        },
+    });
+
+    ops::registerCommand({
+        .name = "unrealBendBones",
+        .doc = "Bend the mesh in Unreal live as bend bones bend it here: LilaLink binds the skeletal mesh's LOD 0 to the "
+               "chains (each vertex takes the chain weights of the point at its place, painted ones included) and makes "
+               "the Lila Bend Bones Deformer Graph its default deformer. Run it on the mesh exported from Bake Bend Bones, "
+               "whose skin stays the fallback where the deformer doesn't run. Returns {skeletalMesh, deformer, unreal}: the "
+               "vertices bound, how many matched a point, the rest pose error, warnings.",
+        .positionalDoc = "deformer or mesh",
+        .flags = {{"skeletalMesh", "sm", ArgType::String, nullptr, "The skeletal mesh asset. Default: the mesh's mapping."},
+                  {"deformer", "df", ArgType::String, "/Game/Lila/DG_LilaBendBones", "The Deformer Graph asset to use, made when missing."},
+                  {"dryRun", "dry", ArgType::Bool, false, "Return what would be sent without connecting to Unreal."}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            Graph& g = graph();
+            Node* d = deformerArg(g, a, "unrealBendBones");
+            std::string mesh = a.get<std::string>("skeletalMesh", "");
+            if (mesh.empty() && ops::find("unrealMappings"))
+            {
+                const NodeId target = modifiers::meshOf(g, d->id());
+                auto holds = [&](NodeId root) {
+                    for (NodeId n = target; n != kNoNode; n = g.parent(n))
+                        if (n == root)
+                            return true;
+                    return false;
+                };
+                for (const json& m : ops::execute("unrealMappings", json::object()))
+                    if (Node* mapped = g.find(m.value("node", "")); mapped && m.value("kind", "") == "skeletal" && holds(mapped->id()))
+                        mesh = m.value("contentPath", "");
+            }
+            if (mesh.empty())
+                throw CommandError("unrealBendBones: give skeletalMesh, or map the mesh's character with unrealMap kind=skeletal");
+            const json payload = unrealPayload(g, *d, mesh, a.get<std::string>("deformer", "/Game/Lila/DG_LilaBendBones"));
+            if (a.get<bool>("dryRun"))
+                return {{"skeletalMesh", mesh}, {"deformer", payload["deformer"]}, {"payload", payload}};
+            const std::string code = "import importlib, lila_link_bend_bones\nimportlib.reload(lila_link_bend_bones)\nlila_link_bend_bones.setup_and_print(" +
+                                     json(payload.dump()).dump() + ")\n";
+            const json r = ops::execute("unrealCall", {{"args", {"runPython"}}, {"params", {{"code", code}}}, {"timeoutMs", 300000}});
+            if (!r.value("ok", false))
+                throw CommandError("unrealBendBones: " + r.value("error", std::string("Unreal didn't answer")));
+            json result;
+            std::string log;
+            for (const json& line : r.value("result", json::object()).value("log", json::array()))
+            {
+                const std::string text = line.value("text", "");
+                if (text.rfind("LILA_RESULT:", 0) == 0)
+                    result = json::parse(text.substr(12), nullptr, false);
+                else
+                    log += text + "\n";
+            }
+            if (!result.is_object())
+                throw CommandError("unrealBendBones: Unreal didn't bind the mesh" + (log.empty() ? std::string() : ":\n" + log));
+            if (const json errors = result.value("errors", json::array()); !errors.empty())
+                throw CommandError("unrealBendBones: " + errors[0].get<std::string>());
+            for (const json& w : payload["warnings"])
+                result["warnings"].push_back(w);
+            for (const json& w : result.value("warnings", json::array()))
+                log::write(LogLevel::Warning, "unrealBendBones: " + w.get<std::string>());
+            return {{"skeletalMesh", mesh}, {"deformer", payload["deformer"]}, {"unreal", result}};
         },
     });
 }
