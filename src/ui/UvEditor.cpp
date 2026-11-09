@@ -1,6 +1,7 @@
 #include "ui/UvEditorInternal.h"
 
 #include "ops/CommandOptions.h"
+#include "ui/Menus.h"
 #include "ui/OptionBox.h"
 #include "ui/PanelDefaults.h"
 #include "ui/FlowLayout.h"
@@ -1012,6 +1013,9 @@ void registerUvActions()
     cmd("uv.auto", "Auto UV", "uvAuto", json::object(), "Seams, unwrap and pack in one step.");
     cmd("uv.autoSeams", "Auto Seams", "uvAutoSeams", json::object(), "Place seams for game assets.");
     cmd("uv.unwrap", "Unwrap", "uvUnwrap", json::object(), "Unwrap along the seams with low stretch.");
+    cmd("uv.unwrapExported", "Unwrap Exported Mesh", "uvUnwrapExported", json::object(),
+        "Apply the modifier stack and unwrap the result: no collapsed UVs. The modifiers are gone afterwards.");
+    menus::addItem({.menu = "UV", .action = "uv.unwrapExported", .after = "UV/uv.unwrap"});
     // uv.cut, uv.sew and uv.weld come from uvLive::install, which re-solves the touched islands in live mode.
     uvLive::install();
     for (auto [mode, label, doc] : {std::tuple{"vertex", "UV Vertex Select", "Select uv points in the UV editor (vertex mode)."},

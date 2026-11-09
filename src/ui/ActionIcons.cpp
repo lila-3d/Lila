@@ -826,6 +826,7 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"uv.auto", "wand"},
     {"uv.autoSeams", "scissors"},
     {"uv.unwrap", "cube-unfolded"},
+    {"uv.unwrapExported", "stack-pop"},
     {"uv.projectPlanar", "square"},
     {"uv.projectPlanarBest", "square"},
     {"uv.projectPlanarX", "square"},

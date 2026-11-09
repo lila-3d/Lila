@@ -1006,6 +1006,53 @@ void registerCommands()
     });
 
     ops::registerCommand({
+        .name = "uvUnwrapExported",
+        .doc = "Apply the selected meshes' modifier stacks, then unwrap the result along its seams: the uvs are solved on the exported "
+               "surface itself, so no triangle collapses. The modifiers are gone afterwards (undo brings them back).",
+        .flags = join({uvSetFlag(),
+                       {"method", "", T::String, "slim", "slim (low stretch), conformal (LSCM only) or bff (Boundary First Flattening).",
+                        {"slim", "conformal", "bff"}},
+                       {"iterations", "", T::Int, 12, "SLIM iterations.", {}, {}, 0.0, 200.0},
+                       {"pack", "", T::Bool, false, "Pack the unwrapped islands into 0-1."}},
+                      packFlags()),
+        .run = [](const Args& a) -> json {
+            UnwrapFacesOptions o;
+            const std::string method = a.get<std::string>("method", "slim");
+            o.unwrap.method = method == "conformal" ? UnwrapMethod::Conformal : method == "bff" ? UnwrapMethod::Bff : UnwrapMethod::Slim;
+            o.unwrap.iterations = std::clamp(a.get<int>("iterations", 12), 0, 200);
+            o.pack = a.get<bool>("pack", false);
+            o.packing = packArgs(a);
+            // Seams the export's islands need to unfold are cut rather than refused: this path always ends unwrapped.
+            o.openIslands = true;
+            const std::string set = uvSetArg(a);
+            Graph& g = graph();
+            std::vector<NodeId> meshes;
+            for (const auto& [node, ids] : targets(K::Face, true))
+                meshes.push_back(node);
+            if (meshes.empty())
+                throw CommandError("uvUnwrapExported: select a mesh first");
+            UndoChunk chunk("Unwrap Exported Mesh");
+            json out = json::object();
+            for (NodeId id : meshes)
+            {
+                Node& n = *g.node(id);
+                const bool applied = !exportStack(n).empty();
+                if (applied)
+                    ops::execute("bakeModifierStack", {{"args", {n.path()}}});
+                g.evaluate();
+                const scene::PlugRef base = basePlug(n);
+                geo::Mesh m = baseMesh(base);
+                if (m.cornerAttrs().get<glm::vec2>(set).empty())
+                    throw CommandError("uvUnwrapExported: " + n.name() + " has no " + set);
+                const UnwrapFacesResult r = unwrapFaces(m, {}, set, o);
+                g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
+                out[n.path()] = {{"modifiersApplied", applied}, {"islands", r.islands}, {"failed", r.failed}, {"seamsAdded", r.seamsAdded}};
+            }
+            return out.size() == 1 ? out.begin().value() : out;
+        },
+    });
+
+    ops::registerCommand({
         .name = "uvProject",
         .doc = "Project uvs onto the selected faces: planar, box, cylindrical, spherical or camera (matrix=object to clip, 16 numbers). "
                "Camera uses camera=, else the active view, unless matrix= is given. The frame is fitted to the faces unless given; "

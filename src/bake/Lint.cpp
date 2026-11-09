@@ -766,7 +766,8 @@ size_t collapsedUvTriangles(const geo::Mesh& m)
 
 /**
  * A uvMissing collapse the base mesh doesn't have comes from the mesh's modifiers moving the surface under islands whose
- * uvs they only blend. Says so, and that Relax or Unwrap (which solve on the exported mesh) fix it.
+ * uvs they only blend. Says so, that Relax or Unwrap (which solve on the exported mesh) fix it, and that Unwrap Exported
+ * Mesh always does.
  */
 void explainDraggedUvs(scene::Graph& g, LintReport& r)
 {
@@ -790,8 +791,9 @@ void explainDraggedUvs(scene::Graph& g, LintReport& r)
         const size_t count = i.data["count"].get<size_t>();
         i.message = std::to_string(count) + " triangle(s) are collapsed in UV on the exported mesh only: its modifiers (" + names +
                     ") move the surface under UVs they keep; the base mesh's UVs are fine. Relax or Unwrap the mesh to solve its UVs on the "
-                    "exported mesh";
+                    "exported mesh, or UV > Unwrap Exported Mesh to apply the modifiers and unwrap the result";
         i.data["fromModifiers"] = mods;
+        i.data["fix"] = "uvUnwrapExported";
     }
 }
 
