@@ -5,7 +5,6 @@
 
 #if WITH_EDITOR
 #include "Animation/MeshDeformerGeometryReadback.h"
-#include "Animation/MeshDeformerInstance.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Components/SkinnedMeshComponent.h"
 #include "Misc/FileHelper.h"
@@ -175,9 +174,7 @@ UObject* ULilaBendBonesLibrary::MakeBendBonesDeformer(const FString& AssetPath, 
 bool ULilaBendBonesLibrary::WriteDeformedPositions(USkinnedMeshComponent* Component, const FString& File)
 {
 #if WITH_EDITORONLY_DATA
-	// The component's own instance (an instance manager for Deformer Graphs) gathers readbacks across its instances.
-	UMeshDeformerInstance* Instance = Component ? Component->GetMeshDeformerInstanceForLOD(0) : nullptr;
-	if (!Instance)
+	if (!Component)
 	{
 		return false;
 	}
@@ -191,7 +188,7 @@ bool ULilaBendBonesLibrary::WriteDeformedPositions(USkinnedMeshComponent* Compon
 		Out += TEXT("]}");
 		FFileHelper::SaveStringToFile(Out, *File);
 	};
-	return Instance->RequestReadbackDeformerGeometry(MoveTemp(Request));
+	return Component->RequestReadbackRenderGeometry(MoveTemp(Request));
 #else
 	return false;
 #endif

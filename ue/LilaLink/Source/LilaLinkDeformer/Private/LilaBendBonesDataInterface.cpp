@@ -208,7 +208,8 @@ public:
 
 	FSceneInterface* SceneInterface = nullptr;
 	FPrimitiveComponentId ComponentId;
-	int32 VertexCount = 0;
+	/** The LOD being deformed, chosen in IsValid from the one the mesh renders. */
+	mutable int32 Lod = 0;
 	float Volume = 1.0f;
 	float EvenBend = 1.0f;
 	TSharedPtr<FLilaBendBonesGpuBinding, ESPMode::ThreadSafe> Binding;
@@ -228,24 +229,25 @@ public:
 		{
 			return false;
 		}
-		// Bound on LOD 0: other LODs have other vertices.
-		const FSkeletalMeshLODRenderData& Lod = MeshObject->GetSkeletalMeshRenderData().LODRenderData[MeshObject->GetLOD()];
-		return int32(Lod.GetNumVertices()) == VertexCount;
+		Lod = MeshObject->GetLOD();
+		const TIndirectArray<FSkeletalMeshLODRenderData>& RenderLods = MeshObject->GetSkeletalMeshRenderData().LODRenderData;
+		return Binding->Lods.IsValidIndex(Lod) && RenderLods.IsValidIndex(Lod) && int32(RenderLods[Lod].GetNumVertices()) == Binding->Lods[Lod].VertexCount;
 	}
 
 	void AllocateResources(FRDGBuilder& GraphBuilder, FAllocationData const& InAllocationData) override
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(LilaBendBonesProxy::AllocateResources);
 
+		FLilaBendBonesGpuLod& Bound = Binding->Lods[Lod];
 		FRDGBufferRef Entries;
-		if (Binding->Pooled.IsValid())
+		if (Bound.Pooled.IsValid())
 		{
-			Entries = GraphBuilder.RegisterExternalBuffer(Binding->Pooled);
+			Entries = GraphBuilder.RegisterExternalBuffer(Bound.Pooled);
 		}
 		else
 		{
-			Entries = CreateStructuredBuffer(GraphBuilder, TEXT("LilaBendBones.Entries"), Binding->Entries);
-			Binding->Pooled = GraphBuilder.ConvertToExternalBuffer(Entries);
+			Entries = CreateStructuredBuffer(GraphBuilder, TEXT("LilaBendBones.Entries"), Bound.Entries);
+			Bound.Pooled = GraphBuilder.ConvertToExternalBuffer(Entries);
 		}
 		EntriesSRV = GraphBuilder.CreateSRV(Entries);
 		PointSRV = GraphBuilder.CreateSRV(CreateStructuredBuffer(GraphBuilder, TEXT("LilaBendBones.CurvePoint"), CurvePoint));
@@ -260,7 +262,7 @@ public:
 		for (int32 I = 0; I < ParameterArray.Num(); ++I)
 		{
 			FParameters& P = ParameterArray[I];
-			P.NumVertices = uint32(VertexCount);
+			P.NumVertices = uint32(Binding->Lods[Lod].VertexCount);
 			P.Volume = Volume;
 			P.EvenBend = EvenBend;
 			P.Entries = EntriesSRV;
@@ -364,12 +366,14 @@ FComputeDataProviderRenderProxy* ULilaBendBonesDataProvider::GetRenderProxy()
 		}
 		Binding = MakeShared<FLilaBendBonesGpuBinding, ESPMode::ThreadSafe>();
 		Binding->Revision = Data->Revision;
-		Binding->Entries = Data->Entries;
+		for (const FLilaBendBonesLod& L : Data->Lods)
+		{
+			Binding->Lods.Add({L.VertexCount, L.Entries, nullptr});
+		}
 	}
 
 	Proxy->SceneInterface = Component->GetScene();
 	Proxy->ComponentId = Component->GetPrimitiveSceneId();
-	Proxy->VertexCount = Data->VertexCount;
 	Proxy->Volume = Data->Volume;
 	Proxy->EvenBend = Data->EvenBend;
 	Proxy->Binding = Binding;

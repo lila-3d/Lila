@@ -76,6 +76,49 @@ struct FPointGrid
 		}
 		return Best;
 	}
+
+	/** The nearest point at any distance, searching rings of cells outward; INDEX_NONE when there are none. */
+	int32 NearestAny(const TArray<FPoint>& Points, const FVector& P) const
+	{
+		const FIntVector K = KeyOf(P);
+		int32 Best = INDEX_NONE;
+		double BestD = TNumericLimits<double>::Max();
+		for (int32 R = 0; R <= MaxRing; ++R)
+		{
+			// Every point in ring R is at least (R - 1) cells away.
+			if (Best != INDEX_NONE && double(R - 1) * Cell > BestD)
+			{
+				break;
+			}
+			for (int32 X = -R; X <= R; ++X)
+			{
+				for (int32 Y = -R; Y <= R; ++Y)
+				{
+					for (int32 Z = -R; Z <= R; ++Z)
+					{
+						if (FMath::Max3(FMath::Abs(X), FMath::Abs(Y), FMath::Abs(Z)) != R)
+						{
+							continue;
+						}
+						if (const TArray<int32>* Found = Cells.Find(K + FIntVector(X, Y, Z)))
+						{
+							for (const int32 I : *Found)
+							{
+								if (const double D = (Points[I].Position - P).Size(); D < BestD)
+								{
+									BestD = D;
+									Best = I;
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		return Best;
+	}
+
+	int32 MaxRing = 0;
 };
 } // namespace
 
@@ -192,83 +235,123 @@ FString ULilaBendBonesLibrary::BindBendBones(USkeletalMesh* Mesh, const FString&
 	}
 	const double Blend = P->HasField(TEXT("blend")) ? P->GetNumberField(TEXT("blend")) : 0.25;
 
-	TArray<FSoftSkinVertex> Vertices;
-	Model->LODModels[0].GetVertices(Vertices);
-	int32 Unmatched = 0;
-	Data->VertexCount = Vertices.Num();
-	Data->Entries.Reserve(Vertices.Num() * 6);
-	for (const FSoftSkinVertex& V : Vertices)
+	// LODs 1 and up have vertices Lila may not: they take the nearest point's weights, found on a coarser grid.
+	FBox Bounds(ForceInit);
+	for (const FPoint& Pt : Points)
 	{
-		const FVector Pos(V.Position);
-		TArray<TPair<int32, double>, TInlineAllocator<2>> Weights;
-		TArray<FPlace, TInlineAllocator<2>> Places;
-		const int32 Match = Grid.Nearest(Points, Pos, 0.05);
-		if (Match != INDEX_NONE && Points[Match].Weights.Num() > 0)
+		Bounds += Pt.Position;
+	}
+	FPointGrid Coarse;
+	Coarse.Cell = FMath::Max(Bounds.IsValid ? Bounds.GetSize().GetMax() / 64.0 : 1.0, 0.1);
+	Coarse.MaxRing = 64;
+	for (int32 I = 0; I < Points.Num(); ++I)
+	{
+		Coarse.Cells.FindOrAdd(Coarse.KeyOf(Points[I].Position)).Add(I);
+	}
+
+	// Binds one LOD's vertices; returns how many had no Lila point at their position.
+	auto BindLod = [&](const TArray<FSoftSkinVertex>& Vertices, const bool bNearestPoint, FLilaBendBonesLod& Out) {
+		TRACE_CPUPROFILER_EVENT_SCOPE(LilaBendBonesLibrary::BindLod);
+
+		int32 Unmatched = 0;
+		Out.VertexCount = Vertices.Num();
+		Out.Entries.Reset(Vertices.Num() * 6);
+		for (const FSoftSkinVertex& V : Vertices)
 		{
-			Weights = Points[Match].Weights;
-			for (const TPair<int32, double>& W : Weights)
+			const FVector Pos(V.Position);
+			TArray<TPair<int32, double>, TInlineAllocator<2>> Weights;
+			TArray<FPlace, TInlineAllocator<2>> Places;
+			int32 Match = Grid.Nearest(Points, Pos, 0.05);
+			if (Match == INDEX_NONE)
 			{
-				Places.Add(Locate(Rest[W.Key], Pos));
-			}
-		}
-		else
-		{
-			// No Lila point here: the nearest chains, blended as Lila binds them.
-			++Unmatched;
-			TArray<FPlace> All;
-			double Nearest = TNumericLimits<double>::Max();
-			for (const FCurve& C : Rest)
-			{
-				All.Add(Locate(C, Pos));
-				Nearest = FMath::Min(Nearest, All.Last().Distance);
-			}
-			const double Band = FMath::Max(Blend * Nearest, 1e-6);
-			TArray<TPair<double, int32>> Ranked;
-			for (int32 C = 0; C < All.Num(); ++C)
-			{
-				if (const double Over = All[C].Distance - Nearest; Over < Band)
+				++Unmatched;
+				if (bNearestPoint)
 				{
-					const double X = 1.0 - Over / Band;
-					Ranked.Emplace(X * X, C);
+					Match = Coarse.NearestAny(Points, Pos);
 				}
 			}
-			Ranked.Sort([](const auto& A, const auto& B) { return A.Key > B.Key; });
-			for (int32 K = 0; K < FMath::Min(2, Ranked.Num()); ++K)
+			if (Match != INDEX_NONE && Points[Match].Weights.Num() > 0)
 			{
-				Weights.Emplace(Ranked[K].Value, Ranked[K].Key);
-				Places.Add(All[Ranked[K].Value]);
-			}
-		}
-		double Total = 0.0;
-		for (const TPair<int32, double>& W : Weights)
-		{
-			Total += W.Value;
-		}
-		for (int32 E = 0; E < 2; ++E)
-		{
-			if (E < Weights.Num() && Total > 1e-12)
-			{
-				const FPlace& Pl = Places[E];
-				Data->Entries.Add(FVector4f(FMath::AsFloat(uint32(Weights[E].Key)), FMath::AsFloat(uint32(Pl.Segment)), float(Weights[E].Value / Total), float(Pl.Fraction)));
-				Data->Entries.Add(FVector4f(FVector3f(Pl.Offset), float(Pl.Strand)));
-				Data->Entries.Add(FVector4f(float(Pl.Frame.X), float(Pl.Frame.Y), float(Pl.Frame.Z), float(Pl.Frame.W)));
+				Weights = Points[Match].Weights;
+				for (const TPair<int32, double>& W : Weights)
+				{
+					Places.Add(Locate(Rest[W.Key], Pos));
+				}
 			}
 			else
 			{
-				Data->Entries.Add(FVector4f(FMath::AsFloat(~0u), 0.0f, 0.0f, 0.0f));
-				Data->Entries.Add(FVector4f(0.0f, 0.0f, 0.0f, 0.0f));
-				Data->Entries.Add(FVector4f(0.0f, 0.0f, 0.0f, 1.0f));
+				// No Lila point here: the nearest chains, blended as Lila binds them.
+				TArray<FPlace> All;
+				double Nearest = TNumericLimits<double>::Max();
+				for (const FCurve& C : Rest)
+				{
+					All.Add(Locate(C, Pos));
+					Nearest = FMath::Min(Nearest, All.Last().Distance);
+				}
+				const double Band = FMath::Max(Blend * Nearest, 1e-6);
+				TArray<TPair<double, int32>> Ranked;
+				for (int32 C = 0; C < All.Num(); ++C)
+				{
+					if (const double Over = All[C].Distance - Nearest; Over < Band)
+					{
+						const double X = 1.0 - Over / Band;
+						Ranked.Emplace(X * X, C);
+					}
+				}
+				Ranked.Sort([](const auto& A, const auto& B) { return A.Key > B.Key; });
+				for (int32 K = 0; K < FMath::Min(2, Ranked.Num()); ++K)
+				{
+					Weights.Emplace(Ranked[K].Value, Ranked[K].Key);
+					Places.Add(All[Ranked[K].Value]);
+				}
 			}
+			double Total = 0.0;
+			for (const TPair<int32, double>& W : Weights)
+			{
+				Total += W.Value;
+			}
+			for (int32 E = 0; E < 2; ++E)
+			{
+				if (E < Weights.Num() && Total > 1e-12)
+				{
+					const FPlace& Pl = Places[E];
+					Out.Entries.Add(FVector4f(FMath::AsFloat(uint32(Weights[E].Key)), FMath::AsFloat(uint32(Pl.Segment)), float(Weights[E].Value / Total), float(Pl.Fraction)));
+					Out.Entries.Add(FVector4f(FVector3f(Pl.Offset), float(Pl.Strand)));
+					Out.Entries.Add(FVector4f(float(Pl.Frame.X), float(Pl.Frame.Y), float(Pl.Frame.Z), float(Pl.Frame.W)));
+				}
+				else
+				{
+					Out.Entries.Add(FVector4f(FMath::AsFloat(~0u), 0.0f, 0.0f, 0.0f));
+					Out.Entries.Add(FVector4f(0.0f, 0.0f, 0.0f, 0.0f));
+					Out.Entries.Add(FVector4f(0.0f, 0.0f, 0.0f, 1.0f));
+				}
+			}
+		}
+		return Unmatched;
+	};
+
+	TArray<TSharedPtr<FJsonValue>> LodReports;
+	int32 Unmatched = 0;
+	int32 Vertices0 = 0;
+	for (int32 L = 0; L < Model->LODModels.Num(); ++L)
+	{
+		TArray<FSoftSkinVertex> Vertices;
+		Model->LODModels[L].GetVertices(Vertices);
+		const int32 Missed = BindLod(Vertices, L > 0, Data->Lods.AddDefaulted_GetRef());
+		TSharedRef<FJsonObject> Lod = MakeShared<FJsonObject>();
+		Lod->SetNumberField(TEXT("vertices"), Vertices.Num());
+		Lod->SetNumberField(TEXT("matched"), Vertices.Num() - Missed);
+		LodReports.Add(MakeShared<FJsonValueObject>(Lod));
+		if (L == 0)
+		{
+			Unmatched = Missed;
+			Vertices0 = Vertices.Num();
 		}
 	}
 	if (Unmatched > 0)
 	{
 		Warnings.Add(MakeShared<FJsonValueString>(FString::Printf(
-			TEXT("%d of %d vertices have no Lila point at their position, so they take the nearest chains' weights rather than Lila's"), Unmatched, Vertices.Num())));
-	}
-	if (Model->LODModels.Num() > 1)
-	{
-		Warnings.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("only LOD 0 bends; LODs 1 to %d keep their skin"), Model->LODModels.Num() - 1)));
+			TEXT("%d of %d vertices have no Lila point at their position, so they take the nearest chains' weights rather than Lila's"), Unmatched, Vertices0)));
 	}
 
 	if (ULilaBendBonesData* Old = Mesh->GetAssetUserData<ULilaBendBonesData>())
@@ -280,10 +363,11 @@ FString ULilaBendBonesLibrary::BindBendBones(USkeletalMesh* Mesh, const FString&
 	Mesh->MarkPackageDirty();
 
 	TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
-	Obj->SetNumberField(TEXT("vertices"), Vertices.Num());
-	Obj->SetNumberField(TEXT("matched"), Vertices.Num() - Unmatched);
+	Obj->SetNumberField(TEXT("vertices"), Vertices0);
+	Obj->SetNumberField(TEXT("matched"), Vertices0 - Unmatched);
 	Obj->SetNumberField(TEXT("unmatched"), Unmatched);
 	Obj->SetNumberField(TEXT("chains"), Data->Chains.Num());
+	Obj->SetArrayField(TEXT("lods"), LodReports);
 	Obj->SetNumberField(TEXT("restError"), RestError);
 	Obj->SetArrayField(TEXT("warnings"), Warnings);
 	Obj->SetArrayField(TEXT("errors"), {});

@@ -40,12 +40,19 @@ public:
 	//~ End UComputeDataInterface Interface
 };
 
+/** One LOD's binding, uploaded once. */
+struct FLilaBendBonesGpuLod
+{
+	int32 VertexCount = 0;
+	TArray<FVector4f> Entries;
+	TRefCountPtr<FRDGPooledBuffer> Pooled;
+};
+
 /** The binding uploaded once per mesh revision, shared by the provider and its render proxies. */
 struct FLilaBendBonesGpuBinding
 {
 	int32 Revision = -1;
-	TArray<FVector4f> Entries;
-	TRefCountPtr<FRDGPooledBuffer> Pooled;
+	TArray<FLilaBendBonesGpuLod> Lods;
 };
 
 UCLASS(BlueprintType, EditInlineNew, Category = ComputeFramework)

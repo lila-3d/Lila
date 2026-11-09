@@ -426,8 +426,8 @@ json toUnrealJson(const glm::dvec3& v)
 
 /**
  * Bend bones live in Unreal: the chains by bone name, the options, and each point where it sits at bind (Unreal space)
- * with its chains' weights, painted ones included. LilaLink binds the skeletal mesh's LOD 0 to them and gives it the
- * Lila Bend Bones Deformer Graph.
+ * with its chains' weights, painted ones included. LilaLink binds every LOD of the skeletal mesh to them and gives it
+ * the Lila Bend Bones Deformer Graph.
  */
 json unrealPayload(Graph& g, Node& d, const std::string& mesh, const std::string& deformerPath)
 {
@@ -1143,8 +1143,9 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "unrealBendBones",
-        .doc = "Bend the mesh in Unreal live as bend bones bend it here: LilaLink binds the skeletal mesh's LOD 0 to the "
-               "chains (each vertex takes the chain weights of the point at its place, painted ones included) and makes "
+        .doc = "Bend the mesh in Unreal live as bend bones bend it here: LilaLink binds every LOD of the skeletal mesh to the "
+               "chains (each vertex takes the chain weights of the point at its place, painted ones included; LOD vertices "
+               "with no point there take the nearest point's) and makes "
                "the Lila Bend Bones Deformer Graph its default deformer. Run it on the mesh exported from Bake Bend Bones, "
                "whose skin stays the fallback where the deformer doesn't run. Returns {skeletalMesh, deformer, unreal}: the "
                "vertices bound, how many matched a point, the rest pose error, warnings.",

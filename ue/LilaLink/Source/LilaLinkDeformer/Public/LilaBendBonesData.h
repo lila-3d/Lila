@@ -27,8 +27,26 @@ struct FLilaBendBonesChain
 	TArray<double> RestKnotLength;
 };
 
+/** One LOD's binding: each of its vertices' places on the chains. */
+USTRUCT()
+struct FLilaBendBonesLod
+{
+	GENERATED_BODY()
+
+	/** Vertices bound; the deformer runs on the LOD only while it has this many. */
+	UPROPERTY(VisibleAnywhere, Category = "Bend Bones")
+	int32 VertexCount = 0;
+
+	/**
+	 * Two entries per vertex, three float4 each: (chain as uint bits or ~0u, segment as uint bits, weight, fraction),
+	 * (offset in the curve frame, strand fraction), (the rest frame there as a quaternion).
+	 */
+	UPROPERTY()
+	TArray<FVector4f> Entries;
+};
+
 /**
- * Lila Bend Bones on a skeletal mesh: its chains and each LOD 0 vertex's place on them, made by LilaLink's
+ * Lila Bend Bones on a skeletal mesh: its chains and each LOD's vertices' places on them, made by LilaLink's
  * unrealBendBones and read by the Lila Bend Bones data interface in the mesh's Deformer Graph.
  */
 UCLASS(MinimalAPI)
@@ -51,16 +69,9 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Bend Bones", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float EvenBend = 1.0f;
 
-	/** LOD 0 vertices bound; the deformer runs only where the mesh has this many. */
+	/** A binding per LOD, LOD 0 first. */
 	UPROPERTY(VisibleAnywhere, Category = "Bend Bones")
-	int32 VertexCount = 0;
-
-	/**
-	 * Two entries per vertex, three float4 each: (chain as uint bits or ~0u, segment as uint bits, weight, fraction),
-	 * (offset in the curve frame, strand fraction), (the rest frame there as a quaternion).
-	 */
-	UPROPERTY()
-	TArray<FVector4f> Entries;
+	TArray<FLilaBendBonesLod> Lods;
 
 	/** Bumped whenever the binding changes, so deformers upload it again. */
 	UPROPERTY()
@@ -74,10 +85,11 @@ class LILALINKDEFORMER_API ULilaBendBonesLibrary : public UBlueprintFunctionLibr
 
 public:
 	/**
-	 * Binds the mesh's LOD 0 to bend bones chains from Lila: Json is unrealBendBones' payload (chains of bone names,
+	 * Binds every LOD of the mesh to bend bones chains from Lila: Json is unrealBendBones' payload (chains of bone names,
 	 * volume, evenBend, samplesPerSpan, blend, each point's position and chain weights, the rest joints). Vertices take
-	 * the chain weights of the Lila point at their position; places are found on curves through the reference pose.
-	 * Returns a JSON report: vertices, matched, unmatched, restError (cm between Lila's rest joints and the reference
+	 * the chain weights of the Lila point at their position (LODs 1 and up, whose vertices Lila may not have, the nearest
+	 * point's); places are found on curves through the reference pose. Returns a JSON report: vertices, matched,
+	 * unmatched (LOD 0), lods ([{vertices, matched}] per LOD), restError (cm between Lila's rest joints and the reference
 	 * pose), warnings, errors. Editor only.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Lila|Bend Bones")
@@ -92,8 +104,8 @@ public:
 	static UObject* MakeBendBonesDeformer(const FString& AssetPath, FString& OutError);
 
 	/**
-	 * Writes the component's deformed LOD 0 positions (component space) to File as JSON once the GPU has them, to
-	 * compare with Lila. Returns false when its deformer can't read back. Editor only.
+	 * Writes the component's deformed positions (component space, of the LOD it renders) to File as JSON {lod, positions}
+	 * once the GPU has them, to compare with Lila. Returns false when its deformer can't read back. Editor only.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Lila|Bend Bones")
 	static bool WriteDeformedPositions(USkinnedMeshComponent* Component, const FString& File);
