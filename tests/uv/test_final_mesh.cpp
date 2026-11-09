@@ -72,6 +72,102 @@ geo::Mesh lidPlate(double thick = 0.4, int grid = 6, bool slit = false)
     return m;
 }
 
+/** A 6 x 1.2 x 6 cm box on a 3 x 3 grid, seamed where seam(a, b) says, unwrapped and packed. */
+template <class Seam> geo::Mesh seamedBox(Seam&& seamAt, double scale = 1.0)
+{
+    geo::CubeOptions co;
+    co.width = 6.0 * scale;
+    co.height = 1.2 * scale;
+    co.depth = 6.0 * scale;
+    co.subdivX = 3;
+    co.subdivZ = 3;
+    geo::Mesh m = geo::makeCube(co);
+    std::span<bool> seam = m.edgeAttrs().getOrAdd<bool>(geo::attr::kSeam);
+    for (Index e = 0; e < m.edgeCapacity(); ++e)
+        if (m.edgeValid(e))
+            seam[e] = seamAt(m.position(m.edgePoint(e, 0)) / scale, m.position(m.edgePoint(e, 1)) / scale);
+    uv::UnwrapFacesOptions uo;
+    uv::unwrapFaces(m, {}, "uv0", uo);
+    REQUIRE(uv::packIslands(m, {}, "uv0").ok);
+    return m;
+}
+
+/**
+ * A unit grid sheet, nx by nz cells, its cells in islands by islandOf(cell x, cell z), laid out flat, as a bevel leaves a
+ * cage: the given points of island 0 take another point's uvs in it, uvs and spacing proxy alike.
+ */
+template <class IslandOf>
+geo::Mesh bunchedSheet(int nx, int nz, IslandOf&& islandOf, const std::vector<std::pair<glm::ivec2, glm::ivec2>>& bunch,
+                       std::vector<double> xs = {}, std::vector<double> zs = {}, bool creased = false)
+{
+    for (int i = int(xs.size()); i <= nx; ++i)
+        xs.push_back(double(i));
+    for (int i = int(zs.size()); i <= nz; ++i)
+        zs.push_back(double(i));
+    geo::Mesh m = geo::makePlane({.width = double(nx), .depth = double(nz), .subdivX = nx, .subdivZ = nz});
+    std::span<glm::vec2> uv = m.cornerAttrs().getOrAdd<glm::vec2>("uv0");
+    std::span<glm::vec2> proxy = m.cornerAttrs().getOrAdd<glm::vec2>("__fitSpacing@uv0");
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+    {
+        if (!m.faceValid(f))
+            continue;
+        const glm::dvec3 c = m.faceCentroid(f) + glm::dvec3(0.5 * nx, 0.0, 0.5 * nz);
+        const int island = islandOf(int(std::floor(c.x)), int(std::floor(c.z)));
+        m.forEachFaceCorner(f, [&](Index k) {
+            const glm::dvec3 p = m.position(m.cornerPoint(k)) + glm::dvec3(0.5 * nx, 0.0, 0.5 * nz);
+            glm::ivec2 at(int(std::lround(p.x)), int(std::lround(p.z)));
+            if (island == 0)
+                for (const auto& [from, to] : bunch)
+                    if (at == from)
+                        at = to;
+            const glm::vec2 q{float(xs[size_t(at.x)]), float(zs[size_t(at.y)])};
+            proxy[k] = q;
+            uv[k] = q * 0.02f + glm::vec2(0.05f + 0.3f * float(island), 0.05f);
+        });
+    }
+    if (creased)
+        for (float& c : m.edgeAttrs().getOrAdd<float>(geo::attr::kCrease))
+            c = 10.0f;
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        if (m.pointValid(p))
+        {
+            const glm::dvec3 q = m.position(p) + glm::dvec3(0.5 * nx, 0.0, 0.5 * nz);
+            m.setPosition(p, glm::dvec3(xs[size_t(std::lround(q.x))], 0.0, zs[size_t(std::lround(q.z))]));
+        }
+    return m;
+}
+
+/** Triangles of the mesh's faces whose uv area is under kCollapsedFraction of their surface area at their island's density, or turned over. */
+size_t collapsedOn(const geo::Mesh& m)
+{
+    const std::span<const glm::vec2> uv = m.cornerAttrs().get<glm::vec2>("uv0");
+    uv::ChartOptions co;
+    co.source = uv::IslandSource::Uvs;
+    size_t out = 0;
+    for (const std::vector<Index>& faces : uv::islandFaces(m, {}, co))
+    {
+        std::vector<std::pair<double, double>> tris;
+        double a3 = 0.0, auv = 0.0;
+        for (Index f : faces)
+        {
+            const std::vector<Index> fc = m.faceCorners(f);
+            for (size_t k = 1; k + 1 < fc.size(); ++k)
+            {
+                const glm::dvec3 p0 = m.position(m.cornerPoint(fc[0]));
+                const double s = 0.5 * glm::length(glm::cross(m.position(m.cornerPoint(fc[k])) - p0, m.position(m.cornerPoint(fc[k + 1])) - p0));
+                const glm::dvec2 u1 = glm::dvec2(uv[fc[k]] - uv[fc[0]]), u2 = glm::dvec2(uv[fc[k + 1]] - uv[fc[0]]);
+                tris.push_back({s, 0.5 * (u1.x * u2.y - u1.y * u2.x)});
+                a3 += s;
+                auv += tris.back().second;
+            }
+        }
+        const double density = auv / std::max(a3, 1e-300);
+        for (auto [s, a] : tris)
+            out += s > 1e-12 * a3 && a / density < uv::kCollapsedFraction * s;
+    }
+    return out;
+}
+
 /** Every edge bevelled 0.13 cm, then two levels of Catmull-Clark: the game-art stack that drags rim islands. */
 uv::Stack bevelSubdivStack(double offset = 0.13, int segments = 1, int levels = 2, geo::SubdivideUvs uvs = geo::SubdivideUvs::FitSurface)
 {
@@ -414,6 +510,89 @@ TEST_CASE("final mesh: refine reports the slivers the written uvs leave, and rep
     CHECK(r.collapsedAfter == after.collapsed);
     CHECK(after.collapsed == 0);
     CHECK(islandsOf(m)[1 - lid].uv == other);
+}
+
+TEST_CASE("final mesh: a turn a bevel moved along a respaced border stays at the layout's turn")
+{
+    // An L-shaped island whose bevel gave the cell inside its reflex corner to its neighbour: the export's border runs on
+    // past the cage's corner and turns at the far side of that cell, and Blend leaves the cell's border points on the
+    // corner, spacing proxy included. Spread by surface length, the turning point lands down the next leg and the strip
+    // beside it turns with it.
+    using Bunch = std::vector<std::pair<glm::ivec2, glm::ivec2>>;
+    const geo::Mesh m = bunchedSheet(5, 4, [](int x, int z) { return (z <= 1 || x <= 1) && !(x == 2 && z == 1) ? 0 : 1; }, Bunch{{{2, 1}, {2, 2}}, {{3, 1}, {2, 2}}},
+                                     {0, 4, 8, 8.15, 12.15, 16.15}, {0, 4, 4.15, 8.15, 12.15});
+    CHECK(collapsedOn(geo::subdivide(m, {.levels = 2, .uvs = geo::SubdivideUvs::FitSurface})) == 0);
+}
+
+TEST_CASE("final mesh: a border point between two bunched runs is respaced with them")
+{
+    // A bevel's corner patch left the island's border points round a reflex corner on two cage uvs, so two bunched runs
+    // meet at one point. Respaced as two windows, that point stays where Blend left it, on the corner, and the cells
+    // beside it can't open.
+    using Bunch = std::vector<std::pair<glm::ivec2, glm::ivec2>>;
+    const geo::Mesh m = bunchedSheet(5, 4, [](int x, int z) { return z >= 2 || x >= 3 ? 0 : 1; },
+                                     Bunch{{{1, 2}, {2, 1}}, {{2, 2}, {2, 1}}, {{3, 2}, {2, 1}}, {{3, 1}, {2, 1}}, {{3, 0}, {2, 0}}}, {}, {}, true);
+    CHECK(collapsedOn(geo::subdivide(m, {.levels = 2, .uvs = geo::SubdivideUvs::FitSurface})) == 0);
+}
+
+TEST_CASE("final mesh: islands whose export reads a neighbour that moved solve again")
+{
+    // A sheet in two islands split down x = 0 with a hair's gap between them; the stack bends it and welds the seam, so
+    // the seam's exported uvs read both islands. The columns beside the seam are squeezed and everything but the seam is
+    // pinned: each island opens its column by pushing the weld, solved first against the other where it started.
+    geo::Mesh m = geo::makePlane({.width = 8.0, .depth = 4.0, .subdivX = 8, .subdivZ = 4});
+    std::span<glm::vec2> uv = m.cornerAttrs().getOrAdd<glm::vec2>("uv0");
+    std::span<bool> pin = m.cornerAttrs().getOrAdd<bool>("uvPin");
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+    {
+        if (!m.faceValid(f))
+            continue;
+        const double side = m.faceCentroid(f).x;
+        m.forEachFaceCorner(f, [&](Index c) {
+            const glm::dvec3 p = m.position(m.cornerPoint(c));
+            const double x = std::abs(std::abs(p.x) - 1.0) < 1e-9 ? 0.01 * p.x : p.x;
+            pin[c] = std::abs(p.x) > 1e-9;
+            uv[c] = glm::vec2(float(x / 10.0 + 0.5 + (side > 0.0 ? 0.002 : 0.0)), float(p.z / 10.0 + 0.5));
+        });
+    }
+    REQUIRE(islandsOf(m).size() == 2);
+    uv::Stack stack;
+    stack.push_back({"bend", [](const geo::Mesh& in) {
+                         geo::Mesh out = in;
+                         for (Index p = 0; p < out.pointCapacity(); ++p)
+                             if (out.pointValid(p))
+                                 out.setPosition(p, out.position(p) + glm::dvec3(0.0, 0.02 * out.position(p).z * out.position(p).z, 0.0));
+                         return out;
+                     }});
+    stack.push_back({"weldSeam", [](const geo::Mesh& in) {
+                         geo::Mesh out = in;
+                         for (size_t l = 0; l < out.cornerAttrs().layerCount(); ++l)
+                         {
+                             geo::Attribute& a = out.cornerAttrs().layer(l);
+                             if (a.type() != geo::AttrType::Float2)
+                                 continue;
+                             const std::span<glm::vec2> v = a.values<glm::vec2>();
+                             for (Index p = 0; p < out.pointCapacity(); ++p)
+                             {
+                                 if (!out.pointValid(p) || std::abs(out.position(p).x) > 1e-9)
+                                     continue;
+                                 glm::dvec2 sum(0.0);
+                                 double n = 0.0;
+                                 out.forEachPointCorner(p, [&](Index c) {
+                                     sum += glm::dvec2(v[c]);
+                                     n += 1.0;
+                                 });
+                                 out.forEachPointCorner(p, [&](Index c) { v[c] = glm::vec2(sum / n); });
+                             }
+                         }
+                         return out;
+                     }});
+    const size_t before = exportState(m, stack).collapsed;
+    REQUIRE(before > 0);
+    const uv::FinalRefineResult r = uv::refineFinal(m, {}, "uv0", stack);
+    MESSAGE("collapsed " << before << " -> " << r.collapsedAfter);
+    CHECK(r.collapsedAfter == exportState(m, stack).collapsed);
+    CHECK(r.collapsedAfter == 0);
 }
 
 TEST_CASE("final mesh: islands stay where they were")
