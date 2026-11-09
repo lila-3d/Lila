@@ -1252,3 +1252,36 @@ TEST_CASE("Strings Rules editor: contacts, limbs and lines toggle on the joint g
     CHECK(near(pos("hand_l"), hand, 1e-9));
     CHECK(run("undoInfo")["undo"] == undo);
 }
+
+#include <filesystem>
+#include <fstream>
+
+TEST_CASE("stringsRuleWeb and unrealStringsRig: the rule web by bone name, written to a file and sent with a control per line end")
+{
+    loadPuppeteer();
+    stringsBiped();
+    run("stringsRules", {{"args", {"hero"}}, {"contacts", {"foot_l", "foot_r"}}, {"addChain", {"upperarm_l", "hand_l"}}});
+    const std::filesystem::path file = std::filesystem::temp_directory_path() / "lila_rule_web_test.json";
+    const json web = run("stringsRuleWeb", {{"args", {"hand_l"}}, {"file", file.string()}});
+    CHECK(web["version"] == 1);
+    CHECK(web["hips"] == "hips");
+    CHECK(web["contacts"] == json({"foot_l", "foot_r"}));
+    CHECK(web["chains"].back() == json({"upperarm_l", "lowerarm_l", "hand_l"}));
+    CHECK(web["bones"].size() == 17);
+    for (const json& b : web["bones"])
+        if (b["name"] == "lowerarm_l")
+            CHECK(b["parent"] == "upperarm_l");
+    std::ifstream in(file);
+    REQUIRE(in);
+    CHECK(json::parse(in) == web);
+    in.close();
+    std::filesystem::remove(file);
+
+    const json sent = run("unrealStringsRig", {{"args", {"hero"}}, {"skeletalMesh", "/Game/Hero/SK_Hero"}, {"dryRun", true}});
+    CHECK(sent["rig"] == "/Game/Hero/CR_Hero_Strings");
+    CHECK(sent["payload"]["ruleWeb"] == web);
+    const json controls = sent["payload"]["controls"];
+    CHECK(controls.front() == "hips");
+    CHECK(std::find(controls.begin(), controls.end(), json("hand_l")) != controls.end());
+    CHECK_THROWS(run("unrealStringsRig", {{"args", {"hero"}}, {"dryRun", true}}));
+}

@@ -8,6 +8,7 @@
 #include <lila/Curves.h>
 #include <lila/Ghosts.h>
 #include <lila/OptionBox.h>
+#include <lila/Paths.h>
 #include <lila/SplineChain.h>
 #include <lila/Strings.h>
 #include <lila/UI.h>
@@ -19,6 +20,8 @@
 #include <lila/Anim.h>
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <map>
 
@@ -721,6 +724,128 @@ json stringsRules(const Args& a)
     if (changed)
         g.setValue(plug, own.dump());
     return rulesJson(rulesOf(g, character));
+}
+
+/**
+ * The rule web as plain data for Unreal: bone names as the skeleton has them (the joints' names), the hips, contacts,
+ * limbs, lines of action and each bone's full-body stiffness. Nothing positional: the Rig Units read the skeleton itself.
+ */
+json ruleWeb(Graph& g, NodeId character)
+{
+    const NodeId root = characterRoot(g, character);
+    if (!root)
+        throw CommandError("stringsRuleWeb: " + g.node(character)->path() + " has no skeleton");
+    const CharacterRules r = rulesOf(g, character);
+    const std::vector<NodeId> joints = fullBodyJoints(g, root);
+    const strings::Skeleton k = strings::snapshot(g, root);
+    json bones = json::array();
+    for (NodeId j : joints)
+    {
+        const NodeId parent = g.parent(j);
+        bones.push_back({{"name", bareJoint(g.node(j)->name())},
+                         {"parent", parent && std::find(joints.begin(), joints.end(), parent) != joints.end() ? bareJoint(g.node(parent)->name()) : ""}});
+    }
+    json stiffness = json::object();
+    for (const auto& [j, v] : stiffnessOf(g, character, joints))
+        if (v != 0.0)
+            stiffness[bareJoint(g.node(j)->name())] = v;
+    return {{"version", 1},
+            {"character", g.node(character)->name()},
+            {"root", bareJoint(g.node(root)->name())},
+            {"hips", k.hips >= 0 ? bareJoint(g.node(k.joints[size_t(k.hips)])->name()) : ""},
+            {"bones", bones},
+            {"contacts", r.contacts},
+            {"chains", r.chains},
+            {"lines", r.lines},
+            {"stiffness", stiffness}};
+}
+
+json stringsRuleWeb(const Args& a)
+{
+    Graph& g = graph();
+    const json web = ruleWeb(g, stringsCharacterArg(g, a, "stringsRuleWeb"));
+    if (a.has("file"))
+    {
+        const std::string path = a.get<std::string>("file");
+        std::ofstream out(lila::paths::fromUtf8(path));
+        if (!out)
+            throw CommandError("stringsRuleWeb: can't write " + path);
+        out << web.dump(2);
+    }
+    return web;
+}
+
+/**
+ * The rule web sent to Unreal: LilaLink makes or updates a Control Rig on the skeletal mesh with a control on each hand,
+ * foot, head and the hips, each posing its bone through a Lila Strings Full Body unit given the web.
+ */
+json unrealStringsRig(const Args& a)
+{
+    Graph& g = graph();
+    const NodeId character = stringsCharacterArg(g, a, "unrealStringsRig");
+    const json web = ruleWeb(g, character);
+    std::string mesh = a.get<std::string>("skeletalMesh", "");
+    if (mesh.empty() && ops::find("unrealMappings"))
+        try
+        {
+            const std::string root = g.node(characterRoot(g, character))->path();
+            const json maps = ops::execute("unrealMappings", json::object());
+            for (const json& m : maps.is_array() ? maps : maps.value("mappings", json::array()))
+                if (m.value("kind", "") == "skeletal" && (m.value("node", "") == root || g.find(m.value("node", "")) == g.node(characterRoot(g, character))))
+                    mesh = m.value("contentPath", "");
+        }
+        catch (const std::exception&)
+        {
+        }
+    if (mesh.empty())
+        throw CommandError("unrealStringsRig: give skeletalMesh, or map the character's root with unrealMap kind=skeletal");
+    std::string rig = a.get<std::string>("rig", "");
+    if (rig.empty())
+    {
+        const size_t slash = mesh.rfind('/');
+        std::string name = mesh.substr(slash + 1);
+        if (name.rfind("SK_", 0) == 0)
+            name = name.substr(3);
+        rig = mesh.substr(0, slash + 1) + "CR_" + name + "_Strings";
+    }
+    json controls = json::array();
+    auto addControl = [&](const json& bone) {
+        if (bone.is_string() && !bone.get<std::string>().empty() && std::find(controls.begin(), controls.end(), bone) == controls.end())
+            controls.push_back(bone);
+    };
+    addControl(web["hips"]);
+    for (const auto& [name, ends] : web["lines"].items())
+        if (ends.size() == 2)
+            addControl(ends[1]);
+    for (const json& chain : web["chains"])
+        if (!chain.empty())
+            addControl(chain.back());
+    for (const json& c : web["contacts"])
+        addControl(c);
+    const json payload = {{"skeletalMesh", mesh}, {"rig", rig}, {"ruleWeb", web}, {"controls", controls}};
+    if (a.get<bool>("dryRun", false))
+        return {{"rig", rig}, {"skeletalMesh", mesh}, {"payload", payload}};
+    // Reloaded so a LilaLink update takes effect without restarting the editor.
+    const std::string code = "import importlib, lila_link_strings\nimportlib.reload(lila_link_strings)\nlila_link_strings.build_and_print(" +
+                             json(payload.dump()).dump() + ")\n";
+    const json r = ops::execute("unrealCall", {{"args", {"runPython"}}, {"params", {{"code", code}}}, {"timeoutMs", 180000}});
+    if (!r.value("ok", false))
+        throw CommandError("unrealStringsRig: " + r.value("error", std::string("Unreal didn't answer")));
+    json result;
+    std::string log;
+    for (const json& line : r.value("result", json::object()).value("log", json::array()))
+    {
+        const std::string text = line.value("text", "");
+        if (text.rfind("LILA_RESULT:", 0) == 0)
+            result = json::parse(text.substr(12), nullptr, false);
+        else
+            log += text + "\n";
+    }
+    if (!result.is_object())
+        throw CommandError("unrealStringsRig: Unreal didn't build the rig" + (log.empty() ? std::string() : ":\n" + log));
+    if (const json errors = result.value("errors", json::array()); !errors.empty())
+        throw CommandError("unrealStringsRig: " + errors[0].get<std::string>());
+    return {{"rig", result.value("rig", rig)}, {"skeletalMesh", mesh}, {"unreal", result}};
 }
 
 json stringsRestoreLengths(const Args& a)
@@ -2542,6 +2667,28 @@ void registerStrings(ext::Context& ctx)
         .run = stringsRetime,
     });
     ops::options::setOverride("stringsRetime", {.order = {"easeIn", "easeOut"}, .hidden = {"range", "warp"}});
+    ctx.registerCommand({
+        .name = "stringsRuleWeb",
+        .doc = "The character's rule web as data for Unreal: its hips, contacts, limbs, lines of action and full-body stiffness, "
+               "by bone name, plus the bones and their parents. Writes it to file as JSON when given. Returns the web.",
+        .positionalDoc = "character or one of its joints (default the selection)",
+        .flags = {{"file", "f", T::String, nullptr, "A .json file to write the web to."}},
+        .undoable = false,
+        .run = stringsRuleWeb,
+    });
+    ctx.registerCommand({
+        .name = "unrealStringsRig",
+        .doc = "Pose the character in Unreal the way Strings poses it here: LilaLink makes or updates a Control Rig on its skeletal "
+               "mesh: a control on the hips and the end of each line of action and limb (hands, feet, head) and each contact, each posing its bone through a Lila "
+               "Strings Full Body unit given the character's rule web; swap a unit for Forward, Backward or IK to change how it poses. "
+               "Returns {rig, skeletalMesh, unreal}, or {rig, skeletalMesh, payload} with dryRun.",
+        .positionalDoc = "character or one of its joints (default the selection)",
+        .flags = {{"skeletalMesh", "sm", T::String, nullptr, "The skeletal mesh asset. Default: the root's skeletal mapping."},
+                  {"rig", "r", T::String, nullptr, "The Control Rig asset to make or update. Default: CR_<mesh>_Strings beside the mesh."},
+                  {"dryRun", "dry", T::Bool, false, "Return what would be sent without connecting to Unreal."}},
+        .undoable = false,
+        .run = unrealStringsRig,
+    });
     ctx.registerCommand({
         .name = "stringsRestoreLengths",
         .doc = "Put stretched bones back to the length they were bound at, each keeping its direction. Joints that drive no "
