@@ -20,6 +20,7 @@
 #include "ui/Actions.h"
 #include "ui/AttributeEditor.h"
 #include "ui/Controls.h"
+#include "ui/FileDialog.h"
 #include "ui/GroomGpu.h"
 #include "ui/Icons.h"
 #include "ui/NodeHandles.h"
@@ -1346,5 +1347,31 @@ void registerGroomUi()
     attributeEditor::filters().put("lila.groomGraph", {.typeName = "groom", .triggers = {"graph", "lockCount"}});
     registerLockHandles();
     registerGroomBrushTool();
+    actions::add({.id = "groom.export",
+                  .label = "Export Groom...",
+                  .category = "Groom",
+                  .run =
+                      [] {
+                          const QString file = fileDialog::getSaveFileName(QApplication::activeWindow(), "Export Groom", {},
+                                                                           "Unreal groom (*.abc);;USD curves (*.usd *.usda *.usdc);;GroomLab groom (*.groom)");
+                          if (!file.isEmpty())
+                              actions::runWithOptions("exportGroom", {{"path", file.toStdString()}});
+                      },
+                  .doc = "Writes the selected groom's strands for Unreal or Unity (.abc with groom_* attributes and guides), as USD curves, "
+                         "or as a GroomLab .groom file.",
+                  .python = "exportGroom(\"HairGroom\", path=\"hair.abc\", start=1, end=48)",
+                  .keywords = {"alembic", "abc", "unreal", "groom", "usd", "hair", "export"}});
+    actions::add({.id = "groom.import",
+                  .label = "Import Groom...",
+                  .category = "Groom",
+                  .run =
+                      [] {
+                          const QString file = fileDialog::getOpenFileName(QApplication::activeWindow(), "Import Groom", {}, "GroomLab groom (*.groom)");
+                          if (!file.isEmpty())
+                              actions::runWithOptions("importGroom", {{"args", {file.toStdString()}}});
+                      },
+                  .doc = "Reads a GroomLab .groom file into a new groom, on the selected mesh or the file's own scalp.",
+                  .python = "importGroom(\"hair.groom\", mesh=\"Head\")",
+                  .keywords = {"groomlab", "groom", "hair", "import"}});
 }
 } // namespace lila::ui
