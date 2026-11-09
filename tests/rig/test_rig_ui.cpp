@@ -139,6 +139,34 @@ TEST_CASE("a weight paint stroke paints the current influence as one undo step")
     lila::ui::viewportTools::set(nullptr);
 }
 
+TEST_CASE("Ctrl+Alt+click picks the receiver, and Strict then paints where it refused")
+{
+    std::string mesh = skinnedCylinder(20);
+    run("select", {{"args", {mesh, "bone_c"}}});
+    lila::PrefStore::get().set("general", skinpaint::kStrictPref, true);
+    lila::ui::startWeightPaint();
+    lila::ui::ViewportTool* tool = lila::ui::viewportTools::active();
+    REQUIRE(tool);
+    lila::ui::ViewInfo view = frontView();
+    const json weights = run("skinPercent", {{"args", {mesh}}});
+    QPointF mid(200, 200);
+    mouse(tool, QEvent::MouseButtonPress, mid, view);
+    mouse(tool, QEvent::MouseButtonRelease, mid, view);
+    CHECK(run("skinPercent", {{"args", {mesh}}}) == weights);
+
+    // On the surface, the heaviest other joint there (bone_b in the middle) becomes the receiver.
+    const auto mods = Qt::ControlModifier | Qt::AltModifier;
+    QMouseEvent press(QEvent::MouseButtonPress, mid, mid, Qt::LeftButton, Qt::LeftButton, mods);
+    CHECK(tool->mousePress(&press, view));
+    QMouseEvent release(QEvent::MouseButtonRelease, mid, mid, Qt::LeftButton, Qt::NoButton, mods);
+    tool->mouseRelease(&release, view);
+    mouse(tool, QEvent::MouseButtonPress, mid, view);
+    mouse(tool, QEvent::MouseButtonRelease, mid, view);
+    CHECK(run("skinPercent", {{"args", {mesh}}}) != weights);
+    CHECK(run("skinInfo", {{"args", {mesh}}})["unnormalized"] == 0);
+    lila::ui::viewportTools::set(nullptr);
+}
+
 TEST_CASE("relax and settle strokes keep weights normalized")
 {
     std::string mesh = skinnedCylinder(20);

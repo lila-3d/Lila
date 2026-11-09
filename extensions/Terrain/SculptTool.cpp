@@ -487,7 +487,7 @@ public:
 
     bool ownsBrushRadius() const override { return true; }
 
-    std::optional<QCursor> cursor() const override { return QCursor(Qt::CrossCursor); }
+    std::optional<QCursor> cursor() const override { return QCursor(Qt::BlankCursor); }
 
     bool mousePress(QMouseEvent* e, const ViewInfo& view) override
     {

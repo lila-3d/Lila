@@ -15,6 +15,7 @@
 #include "groomlab/correctives.h"
 #include "groomlab/export_view.h"
 #include "groom/GroomEvaluator.h"
+#include "groomlab/card_files.h"
 #include "groomlab/hair_color.h"
 #include "groomlab/guide_hierarchy.h"
 #include "groomlab/operator_state.h"
@@ -427,7 +428,60 @@ TEST(Session, LiveCorrectiveWeightsReplaceTheLayersEnvelopes) {
     EXPECT_EQ(session.evaluate(GroomEvaluator::Request{}).hierarchy, kept);  // the same weights: the same hierarchy
 }
 
+TEST(Session, ViewsANodeAndCountsWhatItShows) {
+    GroomEvaluator session(groomData());
+    GroomEvaluator::Request request;
+    request.viewNode = "scatter";
+    const GroomEvaluator::Result& view = session.evaluate(request);
+    EXPECT_EQ(view.viewedNode, "scatter");
+    EXPECT_TRUE(view.viewedRoots);
+    request.viewNode = "nope";  // not a node: the output
+    EXPECT_EQ(session.evaluate(request).viewedNode, "");
+    const GroomEvaluator::Stats stats = session.stats();
+    EXPECT_EQ(stats.strands, session.last().strands->strandCount());
+    EXPECT_EQ(stats.guides, 8u);
+    EXPECT_TRUE(stats.times.count("scatter"));
+    const nlohmann::json json = nlohmann::json::parse(stats.toJson());
+    for (const char* key : {"view", "strands", "points", "guides", "cards", "cardNodes", "hairColor", "renderData", "colorNodes", "colorBlends",
+                            "times", "channels", "notes", "scalpHistory", "instances", "restEvaluations", "cardsStale"}) {
+        EXPECT_TRUE(json.contains(key)) << key;
+    }
+}
 
+TEST(Session, CardsAtTheirDensityKeepABakedAtlas) {
+    const std::string graph = withNode(R"({"name": "cards", "type": "Cards", "params": {"segments": 4, "maxCards": 40}})", "cards");
+    GroomEvaluator session(groomData(graph));
+    EXPECT_TRUE(session.hasCardsNode());
+    GroomEvaluator::Request request;
+    request.density = 0.2f;
+    request.wantCards = true;
+    const GroomEvaluator::Result first = session.evaluate(request);
+    ASSERT_TRUE(first.cards);
+    EXPECT_FALSE(first.cards->cards.empty());
+    EXPECT_EQ(first.cardStrands->strandCount(), GroomEvaluator(groomData(graph)).evaluate(1.0f, 0.0)->strandCount());
+    EXPECT_EQ(session.evaluate(request).versions.cards, first.versions.cards);  // nothing changed: the same cards
+
+    // A bake's atlas: the stamp says nothing is stale; cards rebuilt keep the baked cells.
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "groomlab_session_cards";
+    std::filesystem::create_directories(dir);
+    const std::string atlas = (dir / "hair_Atlas.json").generic_string();
+    {
+        std::ofstream out(atlas, std::ios::binary | std::ios::trunc);
+        out << captureCardAtlas(*first.cards, first.cardStrands.get()).toJson();
+    }
+    session.setCardMaps("Coverage=" + (dir / "hair_Coverage.tga").generic_string() + ";Atlas=" + atlas +
+                        ";Strands=" + cardsBakeStamp(first.cardNodes));
+    const GroomEvaluator::Result& relaid = session.evaluate(request);
+    EXPECT_GT(relaid.versions.cards, first.versions.cards);  // laid out for the bake
+    GroomEvaluator::Stats stats = session.stats();
+    EXPECT_TRUE(stats.cardsBaked);
+    EXPECT_FALSE(stats.cardsStale);
+    EXPECT_EQ(stats.cards, first.cards->cards.size());
+
+    request.wantCards = false;  // nothing wants them: dropped
+    EXPECT_FALSE(session.evaluate(request).cards);
+    std::filesystem::remove_all(dir);
+}
 
 TEST(Session, RachisAndScratchEvaluationsLeaveTheViewAlone) {
     GroomEvaluator session(groomData());

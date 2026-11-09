@@ -16,8 +16,10 @@ namespace lila::scene::weightproxy
 {
 struct Options
 {
-    /** Edge loops between one joint's loop and the next. */
+    /** Edge loops between one joint's loop and the next, at least. */
     int loopsPerBone = 3;
+    /** Edges around a limb, at least; more makes the loops closer too. */
+    int edgesAround = 8;
     /** Voxels along the longest side when the render meshes are fused; lower fills more detail. */
     int resolution = 128;
     /** Joints to bind to when the render meshes aren't skinned. */

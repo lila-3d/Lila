@@ -5,6 +5,7 @@
 #include "uv/Chart.h"
 #include "uv/Optimize.h"
 
+#include <complex>
 #include <functional>
 #include <memory>
 #include <span>
@@ -21,6 +22,15 @@ struct StackStep
     std::function<geo::Mesh(const geo::Mesh&)> apply;
 };
 using Stack = std::vector<StackStep>;
+
+/** A map entry: it scales and rotates a uv read as u + iv (the 2x2 block [re -im; im re]). */
+using FinalWeight = std::complex<double>;
+
+/** w times the uv, read as u + iv. */
+inline glm::dvec2 weigh(FinalWeight w, glm::dvec2 v)
+{
+    return {w.real() * v.x - w.imag() * v.y, w.real() * v.y + w.imag() * v.x};
+}
 
 /** How a FinalMap relates cage uvs to the exported mesh's. */
 enum class FinalMethod : uint8_t
@@ -45,7 +55,8 @@ struct FinalFill
 
 /**
  * The exported mesh's corner uvs as a sparse linear map of the cage's: exported uv = sum of weight * cage uv over the
- * row's cage corners. Holds for any stack whose modifiers only blend corner uvs (bevel, subdivision, mirror...), for a
+ * row's cage corners, each weight a scale and rotation (a Fit Surface subdivision rebuilds island corners by turning
+ * their border edge). Holds for any stack whose modifiers only blend corner uvs (bevel, subdivision, mirror...), for a
  * fixed cage topology and seam layout. Columns are cage corners standing for their whole uv wedge. The interior corners
  * of a Fit Surface fill have empty rows: their uvs come from the fill.
  */
@@ -59,7 +70,7 @@ struct LILA_SCENE_API FinalMap
     /** Per exported corner (capacity), its entries in cols and weights; one extra at the end. */
     std::vector<Index> rowStart;
     std::vector<Index> cols;
-    std::vector<double> weights;
+    std::vector<FinalWeight> weights;
     std::vector<FinalFill> fills;
     /** Per exported face (capacity), the cage face it came from. */
     std::vector<Index> sourceFace;
@@ -101,10 +112,11 @@ LILA_SCENE_API std::vector<glm::dvec2> exportedUvs(const FinalMap& map, const ge
 struct LILA_SCENE_API FinalIsland
 {
     std::vector<glm::dvec3> pos;    // per local corner
+    std::vector<Index> corner;      // per local corner: the exported corner it stands for
     std::vector<glm::dvec2> offset; // per local corner: the part of its uv from cage wedges outside the chart
     std::vector<Index> rowStart;    // per local corner, into cols and weights; one extra at the end
     std::vector<Index> cols;        // chart vertices
-    std::vector<double> weights;
+    std::vector<FinalWeight> weights;
     std::vector<std::array<Index, 3>> tris; // local corners
     std::vector<Index> triFace;             // exported face per triangle
     std::vector<FinalFill> fills;
@@ -157,6 +169,8 @@ LILA_SCENE_API ChartStats finalStats(const FinalIsland& island, const Chart& cha
  * counts them (uvMissing).
  */
 LILA_SCENE_API size_t collapsedTriangles(const FinalIsland& island, const Chart& chart);
+/** The same count for exported uvs measured on the exported mesh (per exported corner, capacity). */
+LILA_SCENE_API size_t collapsedTriangles(const FinalIsland& island, std::span<const glm::vec2> exportedUv);
 inline constexpr double kCollapsedFraction = 0.02;
 
 /** Sets chart.densityArea so areaUv() / densityArea() is the exported island's texel density. */
@@ -192,8 +206,8 @@ struct FinalRefineResult
 
 /**
  * Re-solves the uv islands of the faces (all when empty) against the exported mesh and writes them back, then measures the
- * export the written uvs give (a Fit Surface subdivision respaces borders from the new uvs) and puts back any island that
- * came out with more collapsed triangles than it started with.
+ * export the written uvs give with one run of the stack and puts back any island that came out with more collapsed
+ * triangles than it started with.
  * Does nothing when the stack leaves the surface alone.
  */
 LILA_SCENE_API FinalRefineResult refineFinal(geo::Mesh& cage, std::span<const Index> faces, std::string_view uvSet, const Stack& stack,

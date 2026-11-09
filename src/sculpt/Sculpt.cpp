@@ -617,6 +617,11 @@ void SculptMesh::addDisplacement(const Side& s)
             case Brush::Count: break;
             }
             out[i] = d;
+            if (paint && mSettings.cavityPaint)
+            {
+                const double inward = -glm::dot(glm::dvec3(mNormals[p]), d);
+                paintOut[i] = inward > 0.0 ? float(std::min(1.0, inward / std::max(1e-9, r * kDrawStep * 0.5))) : 0.0f;
+            }
         }
     });
     for (size_t i = 0; i < n; ++i)

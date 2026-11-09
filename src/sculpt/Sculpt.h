@@ -121,6 +121,8 @@ struct BrushSettings
     brush::Radial radial;
     /** Shape brushes also paint color where they move points; the Paint brush always does. */
     bool paint = false;
+    /** With paint: color goes only where a stroke digs in, more the deeper it digs (dark seams along Dam Standard lines). */
+    bool cavityPaint = false;
     /** Linear RGB. */
     glm::vec3 color{1.0f};
 };

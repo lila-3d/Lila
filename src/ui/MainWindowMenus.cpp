@@ -98,7 +98,7 @@ void MainWindow::buildMenus()
     menus::addActions("File", {"file.closeFolder", "", "file.welcome", "", "file.exit"});
 
     menu("Edit", "Edit", Area::MenuBar, {}, "duplicate");
-    menus::addActions("Edit", {"#History", "edit.undo", "edit.redo", "edit.repeatLast", "adjustLastOp.show", "edit.flushUndo", "edit.flushRedo", "edit.flushAll", "#Selection",
+    menus::addActions("Edit", {"#History", "edit.undo", "edit.redo", "edit.repeatLast", "tool.repeatLast", "adjustLastOp.show", "edit.flushUndo", "edit.flushRedo", "edit.flushAll", "#Selection",
                         "edit.selectAll", "edit.deselect", "edit.invertSelection", "edit.delete"});
     addSubmenu("Edit", "Quick Select Sets", [](QMenu* m) { sets::attachQuickSelectMenu(m); });
     menus::addActions("Edit", {"#Hierarchy", "edit.duplicate", "edit.duplicateWithTransform", "edit.instance", "edit.instanceReference", "edit.array", "edit.bakeArray",
@@ -149,6 +149,8 @@ void MainWindow::buildMenus()
                                "#Mirror", "mesh.mirror", "#Booleans", "mesh.booleanUnion", "mesh.booleanDifference", "mesh.booleanIntersection"});
     addSubmenu("Mesh", "Clay");
     menus::addActions("Mesh/Clay", {"clay.create", "clay.tool", "clay.addShape", "clay.addCut", "clay.group", "", "clay.refresh", "clay.convert"});
+    addSubmenu("Mesh", "Plating");
+    menus::addActions("Mesh/Plating", {"layout.pencil", "layout.plates", "layout.fasteners", "layout.patterns", "", "layout.loosen", "layout.deleteLines", "layout.clear"});
     addSubmenu("Mesh", "Symmetry");
     menus::addActions("Mesh/Symmetry", {"mesh.toggleSymmetry", "mesh.symmetryX", "mesh.symmetryY", "mesh.symmetryZ", "mesh.symmetryRadial", "mesh.symmetryOff", "viewport.toggleSymmetryLine", "",
                                  "mesh.symmetryCheck", "mesh.symmetrizePositive", "mesh.symmetrizeNegative", "mesh.symmetryRebuild", "mesh.symmetrizeRadial",
@@ -197,7 +199,7 @@ void MainWindow::buildMenus()
     addSubmenu("Curves", "Sketch");
     menus::addActions("Curves/Sketch", {"curve.sketchTool", "", "curve.sketchCombine", "curve.sketchSolve", "curve.sketchClear"});
     addSubmenu("Curves", "Groom");
-    menus::addActions("Curves/Groom", {"groom.create", "groom.drawHair", "curve.sculptCurves"});
+    menus::addActions("Curves/Groom", {"groom.create", "groom.drawHair", "groom.brushes", "curve.sculptCurves"});
     addSubmenu("Curves/Groom", "Style");
     menus::addActions("Curves/Groom/Style", {"groom.style.split", "groom.style.clump", "groom.style.curl", "groom.style.wave", "groom.style.frizz",
                                              "groom.style.noise", "groom.style.length", "groom.style.cut", "groom.style.flyaways"});
@@ -216,7 +218,7 @@ void MainWindow::buildMenus()
     menus::addActions("Sculpt", {"#Sculpt", "sculpt.tool", "sculpt.enter", "sculpt.exit", "sculpt.cancel", "sculpt.toggleSeeThrough", "window.sculpt", "#Levels",
                                  "sculpt.levelUp", "sculpt.levelDown", "sculpt.addLevel", "sculpt.reconstruct", "sculpt.deleteLower", "sculpt.deleteHigher",
                                  "sculpt.deleteLevels", "#Duplicate", "sculpt.duplicate", "sculpt.duplicateHide", "#Shape", "sculpt.remesh",
-                                 "mesh.relaxKeepForm", "mesh.reproject", "mesh.transferShape"});
+                                 "mesh.relaxKeepForm", "mesh.reproject", "mesh.transferShape", "#Hard Surface", "layout.pencil", "layout.plates", "layout.fasteners", "layout.patterns"});
 
     // The modifier kinds fill in above these rows each time it opens.
     menu("Modifiers", "Modifiers", Area::MenuBar, [](QMenu* m) { fillAddModifierMenu(m, false); }, "", {"Model", "Level"});

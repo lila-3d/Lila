@@ -23,6 +23,8 @@ struct SculptSettings
     std::string preset;
     /** Shape brushes paint polypaint too; the Paint brush always does. */
     bool paint = false;
+    /** With paint: only where strokes dig in, more the deeper. */
+    bool cavityPaint = false;
     /** Polypaint color, linear RGB. */
     glm::vec3 color{1.0f};
     /** The current brush's radius (screen px), strength, spacing, falloff, pressure and the rest of the shared brush core. */

@@ -78,6 +78,7 @@ private:
     bool mPresetsQueued = false;
     QToolButton* mColor = nullptr;
     QCheckBox* mPaint = nullptr;
+    QCheckBox* mCavityPaint = nullptr;
     QCheckBox* mShareRadius = nullptr;
     QCheckBox* mShareStrength = nullptr;
     QCheckBox* mShareStroke = nullptr;

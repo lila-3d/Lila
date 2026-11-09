@@ -40,7 +40,7 @@ lila_module(lila_ui UI
     ChannelBox.cpp ChannelBox.h
     CurveTools.cpp CurveToolkit.cpp CurveToolkit.h CurveToolsCommon.h EzCurveTool.cpp CurvePointTool.cpp CurveUi.cpp CurveUi.h PipeTool.cpp PipeLevelTools.cpp CableTool.cpp SectionTool.cpp StrapTool.cpp PlanarCurveUi.cpp
     BlendCurveTool.cpp CurvePick.cpp CurvePick.h TrimCurveTool.cpp VehicleCurveUi.cpp
-    SketchTool.cpp SketchUi.cpp SketchUi.h CurveSculptTool.cpp GroomTool.cpp
+    SketchTool.cpp SketchUi.cpp SketchUi.h CurveSculptTool.cpp GroomBrushTool.cpp GroomGpu.cpp GroomGpu.h GroomTool.cpp
     DisplayLayersPanel.cpp DisplayLayersPanel.h
     AnimLayersPanel.cpp AnimLayersPanel.h
     OffsetsPanel.cpp OffsetsPanel.h
@@ -130,6 +130,7 @@ lila_module(lila_ui UI
     ArrayTool.cpp ArrayTool.h
     ClayTool.cpp
     ClayUi.cpp ClayUi.h
+    LayoutPencil.cpp LayoutPencil.h
     ConformTool.cpp ConformTool.h
     PythonBridge.cpp PythonBridge.h
     RigViewport.cpp RigViewport.h WeightPaintTool.cpp WeightPaintTool.h RigHandles.cpp RigHandles.h

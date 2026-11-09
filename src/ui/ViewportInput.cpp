@@ -92,6 +92,11 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
         bool overObject = !hitTest(e->position(), e->position()).empty();
         std::string base = (e->modifiers() & Qt::ShiftModifier) ? "viewportShift" : (e->modifiers() & Qt::ControlModifier) ? "viewportCtrl" : "viewport";
         QPoint at = e->globalPosition().toPoint();
+        if (ViewportTool* tool = viewportTools::active())
+            if (const std::string own = tool->markingMenu(base); !own.empty())
+                if (json def = markingMenus::resolve(own);
+                    def.is_object() && !def.empty() && MarkingMenu::popupDefinition(def, MarkingMenu::Trigger::MouseButton, Qt::RightButton, at))
+                    return;
         // Over a skinned mesh, a joint-picking selection handler offers the joints under the cursor instead.
         if (overObject && base == "viewport" && scene::components::mode() == scene::ComponentMode::Object)
             if (selectionHandlers::Hit hit = selectionHit(e->position()); hit.face != selectionHandlers::kNone)

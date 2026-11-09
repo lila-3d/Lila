@@ -27,6 +27,7 @@
 #include <cstring>
 #include <set>
 #include <stdexcept>
+#include <unordered_map>
 
 namespace lila::groom
 {
@@ -1909,6 +1910,52 @@ std::string GroomEvaluator::hairLookJson() const
     return out.dump();
 }
 
+std::string GroomEvaluator::Stats::toJson() const
+{
+    nlohmann::json out;
+    out["view"] = view;
+    out["strands"] = strands;
+    out["points"] = points;
+    out["guides"] = guides;
+    out["cards"] = cards;
+    out["cardStrands"] = cardStrands;
+    out["cardTriangles"] = cardTriangles;
+    out["cardTextures"] = cardTextures;
+    out["cardFeathers"] = cardFeathers;
+    out["cardsBaked"] = cardsBaked;
+    out["cardsStale"] = cardsStale;
+    nlohmann::json nodes = nlohmann::json::object();
+    for (const auto& [name, n] : cardNodes)
+        nodes[name] = {{"cards", n.cards}, {"triangles", n.triangles}, {"textures", n.textures}, {"feathers", n.feathers}, {"stale", n.stale}};
+    out["cardNodes"] = std::move(nodes);
+    out["hairColor"] = hairColor;
+    out["renderData"] = renderData;
+    out["colorNodes"] = colorNodes;
+    out["colorBlends"] = colorBlends;
+    out["times"] = times;
+    out["runs"] = runs;
+    out["channels"] = channels;
+    out["notes"] = notes;
+    out["scalpHistory"] = {{"frames", scalpHistoryFrames}};
+    out["instances"] = instances;
+    out["restEvaluations"] = restEvaluations;
+    out["cacheBytes"] = cacheBytes;
+    out["cacheEvictions"] = cacheEvictions;
+    out["strokeDocument"] = strokeDocument;
+    nlohmann::json sims = nlohmann::json::object();
+    for (const groomlab::SimStatus& s : simulations)
+    {
+        nlohmann::json ranges = nlohmann::json::array();
+        for (const auto& [first, last] : s.ranges)
+            ranges.push_back({first, last});
+        sims[s.node] = {{"startFrame", s.startFrame}, {"ranges", ranges}, {"frames", s.frames}, {"live", s.live}, {"baked", s.baked},
+                        {"bakeStale", s.bakeStale}, {"bakedFirst", s.bakedFirst}, {"bakedLast", s.bakedLast}, {"bakedFile", s.bakedFile},
+                        {"stepMs", s.stepMs}, {"bytes", s.bytes}};
+    }
+    out["simulations"] = std::move(sims);
+    return out.dump();
+}
+
 GroomEvaluator::Stats GroomEvaluator::stats() const
 {
     Stats out;
@@ -1971,6 +2018,19 @@ GroomEvaluator::Stats GroomEvaluator::stats() const
     }
     out.scalpHistoryFrames = scalpHistoryFrames(mResult.viewedNode);
     out.restEvaluations = restEvaluations();
+    if (strands && strands->instances() && !strands->instances()->empty())
+    {
+        std::unordered_map<std::uint64_t, std::size_t> index;
+        index.reserve(strands->strandCount());
+        for (std::size_t s = 0; s < strands->strandCount(); ++s)
+            index.emplace(strands->ids()[s], s);
+        for (const auto& placed : strands->instances()->instances)
+        {
+            const auto it = index.find(placed.strand);
+            if (it != index.end() && strands->strandPointCount(it->second) > 0)
+                ++out.instances;
+        }
+    }
     out.strokeDocument = mSculptDoc != nullptr;
     out.simulations = simulationStatus();
     return out;

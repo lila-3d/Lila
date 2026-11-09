@@ -1,5 +1,7 @@
 #pragma once
 
+#include "groom/GroomBrush.h"
+
 #include "core/Export.h"
 #include "ui/ViewportTool.h"
 
@@ -50,8 +52,27 @@ void setCurveSculptSettleGrab(bool on);
 void resetCurveSculptSettings();
 /** The Sculpt Curves keys that matter now, for the key list. */
 std::vector<KeyHint> curveSculptKeys();
-/** The Groom palette: shown while Draw Hair or Sculpt Curves is active, on that tool's page; synced when settings change. */
-void showGroomPalette(bool drawHair);
+/** The Groom palette's pages: Draw Hair's modes, Sculpt Curves' brushes on curves, the groom brushes on a groom. */
+enum class GroomPalettePage
+{
+    Draw,
+    Sculpt,
+    Groom,
+};
+/** The Groom palette: shown while Draw Hair, Sculpt Curves or Groom Brushes is active, on that tool's page; synced when settings change. */
+void showGroomPalette(GroomPalettePage page);
+/** Groom Brushes (GroomBrushTool.cpp): GroomLab's tools on a groom; called by registerGroomUi. */
+void registerGroomBrushTool();
+const groom::GroomBrushSettings& groomBrushSettings();
+void setGroomBrushSettings(const groom::GroomBrushSettings& settings);
+/** Picks a groom brush, bringing back its strength, and starts Groom Brushes. */
+void setGroomBrushMode(const std::string& id);
+void resetGroomBrushSettings();
+bool groomBrushToolActive();
+std::vector<KeyHint> groomBrushKeys();
+/** The Groom palette's Groom Brushes page. */
+QWidget* makeGroomBrushPage(QWidget* parent);
+void syncGroomBrushPage(QWidget* page);
 void hideGroomPalette();
 void syncGroomPalette();
 /** Whether the tools list their keys in the corner of the view. */

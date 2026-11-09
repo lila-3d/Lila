@@ -2,6 +2,7 @@
 
 #include "core/Log.h"
 #include "core/Profile.h"
+#include "core/Progress.h"
 #include "geo/Bvh.h"
 #include "geo/CrossSection.h"
 #include "geo/Mesh.h"
@@ -325,6 +326,32 @@ double edgeLengthFor(const std::vector<Bone>& bones, int between, double fallbac
     return lens[lens.size() / 2];
 }
 
+/** Median length around the sheet at each bone's middle, counting only the part on that bone; 0 when none is cut. */
+double medianGirth(const geo::Mesh& sheet, const std::vector<Bone>& bones)
+{
+    std::vector<double> girths;
+    const geo::SectionMesh sm{&sheet, glm::dmat4(1.0)};
+    for (size_t k = 0; k < bones.size(); ++k)
+    {
+        if (bones[k].parent < 0)
+            continue;
+        const glm::dvec3 a = bones[size_t(bones[k].parent)].pos, d = bones[k].pos - a;
+        if (glm::length(d) < 1e-9)
+            continue;
+        double girth = 0.0;
+        for (const geo::SectionChain& chain : geo::sectionChains(std::span(&sm, 1), a + d * 0.5, glm::normalize(d)))
+            for (size_t i = 1; i < chain.points.size(); ++i)
+                if (nearestBone(bones, chain.points[i]) == int(k) && nearestBone(bones, chain.points[i - 1]) == int(k))
+                    girth += glm::length(chain.points[i] - chain.points[i - 1]);
+        if (girth > 0.0)
+            girths.push_back(girth);
+    }
+    if (girths.empty())
+        return 0.0;
+    std::nth_element(girths.begin(), girths.begin() + girths.size() / 2, girths.end());
+    return girths[girths.size() / 2];
+}
+
 Node& meshArg(Graph& g, const std::string& name, const char* cmd)
 {
     Node* n = g.find(name);
@@ -540,12 +567,21 @@ NodeId create(Graph& g, const std::vector<NodeId>& meshes, const Options& o)
 
     retopo::QuadRemeshOptions qo;
     qo.targetEdgeLength = edgeLengthFor(bones, std::max(0, o.loopsPerBone), glm::length(sheet.bounds().size()) / 40.0);
+    if (const double girth = medianGirth(sheet, bones); girth > 0.0 && o.edgesAround > 0)
+        // A little under the girth's share: the remesh rounds a loop's count down as often as up.
+        qo.targetEdgeLength = std::min(qo.targetEdgeLength, 0.85 * girth / double(o.edgesAround));
     qo.adaptivity = 0.0;
     qo.jointDensity = 0.0;
     qo.featureGuides = loopGuides(sheet, bones, std::max(0, o.loopsPerBone));
-    retopo::QuadRemeshResult r = retopo::quadRemesh(sheet, qo);
+    // Off the UI thread, cancellable, and bounded: a shape the remesh struggles with fails with a reason, not a freeze.
+    qo.timeout = 120.0;
+    retopo::QuadRemeshResult r;
+    {
+        progress::Scope scope("Weight proxy", 1.0, progress::Cancellable);
+        progress::runOnWorker([&] { r = retopo::quadRemesh(sheet, qo); });
+    }
     if (!r.ok())
-        throw CommandError("createWeightProxy: " + r.error);
+        throw CommandError("createWeightProxy: " + r.error + (r.error.rfind("gave up", 0) == 0 ? "; try a lower resolution or fewer loops" : ""));
     for (const std::string& note : r.notes)
         log::warn("createWeightProxy: {}", note);
 
@@ -603,7 +639,8 @@ void registerCommands()
                "pushProxyWeights. Returns the proxy.",
         .positionalDoc = "meshes...",
         .flags = {
-            {"loopsPerBone", "lpb", T::Int, 3, "Edge loops between each joint's loop and the next.", {}, {}, 0.0, 20.0},
+            {"loopsPerBone", "lpb", T::Int, 3, "Edge loops between each joint's loop and the next, at least.", {}, {}, 0.0, 20.0},
+            {"edgesAround", "ea", T::Int, 8, "Edges around a limb, at least; more makes the loops closer too.", {}, {}, 0.0, 64.0},
             {"resolution", "res", T::Int, 128, "Voxels along the longest side when fusing the meshes; lower fills more detail.", {}, {}, 16.0, 1024.0},
             {"joints", "j", T::List, nullptr, "Joints to bind to when the meshes aren't skinned."},
             {"name", "n", T::String, nullptr, "Name of the proxy."},
@@ -629,6 +666,7 @@ void registerCommands()
                     o.joints.push_back(n->id());
                 }
             o.loopsPerBone = a.get<int>("loopsPerBone", 3);
+            o.edgesAround = a.get<int>("edgesAround", 8);
             o.resolution = a.get<int>("resolution", 128);
             o.name = a.get<std::string>("name", "");
             return g.node(create(g, meshes, o))->path();

@@ -19,6 +19,7 @@
 #include "groomlab/groom_file.h"
 #include "groom/GroomDisplay.h"
 #include "groom/GroomEvaluator.h"
+#include "groom/GroomStrokeHost.h"
 #include "groomlab/flow.h"
 #include "groomlab/guide_hierarchy.h"
 #include "groomlab/operator_state.h"
@@ -781,9 +782,155 @@ TEST(SubdivisionBinding, FollowingTheScalpCarriesThemOnTheRefinedRestPose) {
     expectNear(carried.lines[0], drawn, 0.35f, "part, where it was drawn");
 }
 
+TEST(SubdivisionBinding, StrokesOnTheRefinedScalpAreStoredOnTheCage) {
+    // Drawn on the scalp as shown (level 2): stored on the cage, so they show where they were
+    // drawn at level 2, and at the same places of the surface at the other levels.
+    const auto head = quadSphere(12, 16);
+    GroomData data;
+    data.graphJson = graphWith("2");
+    data.scalp = head;
+    data.hierarchyJson = guidesOn(*head);
+    GroomEvaluator session(data);
+    lila::groom::GroomStrokeHost host(session);
+    std::vector<Vec3f> path;
+    for (int k = 0; k <= 16; ++k) path.push_back(onSphere(10.0f, 15.0f + 3.0f * static_cast<float>(k), -40.0f));
+    const MeshPtr shown = session.scalp();
+    ASSERT_EQ(shown->subdivisionLevel(), 2);
+    BrushToolSettings part;
+    part.tool = BrushToolSettings::Tool::Part;
+    part.partName = "side";
+    scriptedStroke(host, part, path);
+    BrushToolSettings flow;
+    flow.tool = BrushToolSettings::Tool::Flow;
+    flow.brush.radius = 1.5f;
+    scriptedStroke(host, flow, path);
+    // The stored data is on the cage: its faces are the cage's.
+    const PartSet stored = PartSet::fromJson(session.data().partsJson);
+    ASSERT_EQ(stored.parts.size(), 1u);
+    for (const StrandRoot& r : stored.parts[0].points) ASSERT_TRUE(head->contains(r));
+    const FlowSet storedFlow = FlowSet::fromJson(session.data().flowJson);
+    ASSERT_GT(storedFlow.pins.size(), 3u);
+    // At level 2, where the tool put them: the part as PartSet::add binds the path to the refined scalp.
+    PartSet direct;
+    direct.add("side", path, *shown);
+    const PartLines directLines(direct, *shown);
+    const Overlays two = overlaysOf(session, {});
+    ASSERT_EQ(two.lines.size(), 1u);
+    expectNear(two.lines[0], directLines.lines()[0], 1e-4f, "part at the level drawn");
+    FlowSet directFlow;
+    {
+        std::vector<Vec3f> onScalp;
+        for (const Vec3f& p : path) onScalp.push_back(shown->closestPoint(p).position);
+        const FlowWeightFn weight = [&](const Vec3f& pin, std::size_t i) {
+            const float d = (pin - onScalp[i]).length() / 1.5f;
+            return d >= 1.0f ? 0.0f : (1.0f - d * d) * (1.0f - d * d);
+        };
+        flowAlongStroke(directFlow, *shown, flow, onScalp, weight, 0.75f, false);
+    }
+    const FlowField directField(directFlow, *shown);
+    expectNear(two.pins, directField.positions(), 1e-4f, "pins at the level drawn");
+    ASSERT_EQ(two.directions.size(), directField.directions().size());
+    for (std::size_t i = 0; i < two.directions.size(); ++i) EXPECT_LT(degreesBetween(two.directions[i], directField.directions()[i]), 0.05f) << i;
+    // Off and at level 1: the same places of the surface.
+    for (const char* level : {"off", "1", "3"}) {
+        session.setGraphJson(graphWith(level));
+        const Overlays other = overlaysOf(session, {});
+        ASSERT_EQ(other.lines.size(), 1u) << level;
+        const float tol = level[0] == 'o' ? 0.35f : 0.1f;  // refined at both: nearer each other than to the cage
+        expectNear(other.lines[0], two.lines[0], tol, std::string("part at ") + level);
+        expectNear(other.pins, two.pins, tol, std::string("pins at ") + level);
+        for (std::size_t i = 0; i < other.directions.size() && i < two.directions.size(); ++i) {
+            EXPECT_LT(degreesBetween(other.directions[i], two.directions[i]), 8.0f) << level << " pin " << i;
+        }
+    }
+}
 
+TEST(SubdivisionBinding, ThePartToolDrawsOnTheScalpShown) {
+    // The interactive Part tool on a scalp shown at level 2: drawn on the refined surface under
+    // the cursor, stored on the cage, shown where it was drawn.
+    const auto head = quadSphere(12, 16);
+    GroomData data;
+    data.graphJson = graphWith("2");
+    data.scalp = head;
+    data.hierarchyJson = guidesOn(*head);
+    GroomEvaluator session(data);
+    session.evaluate(GroomEvaluator::Request{});
+    lila::groom::GroomStrokeHost host(session);
+    const ToolView view = ToolView::fromMatrix(test::lookAtProjection({0.0f, 8.0f, 30.0f}, {0.0f, 6.0f, 0.0f}, 40.0, 1.0), 800, 800);
+    std::vector<std::array<float, 2>> points;
+    for (int k = 0; k <= 12; ++k) {
+        float x = 0.0f, y = 0.0f;
+        ASSERT_TRUE(view.project(onSphere(10.0f, 25.0f + 3.0f * static_cast<float>(k), 90.0f), x, y));
+        points.push_back({x, y});
+    }
+    BrushTool tool;
+    tool.settings.tool = BrushToolSettings::Tool::Part;
+    tool.settings.partName = "drawn";
+    tool.stroke(host, view, points);  // a Part stroke commits as it ends
+    const PartSet stored = PartSet::fromJson(session.data().partsJson);
+    ASSERT_EQ(stored.parts.size(), 1u);
+    for (const StrandRoot& r : stored.parts[0].points) ASSERT_TRUE(head->contains(r));
+    const GroomEvaluator::Result& shown = session.evaluate(GroomEvaluator::Request{});
+    ASSERT_TRUE(shown.parts);
+    ASSERT_EQ(shown.parts->lines().size(), 1u);
+    const std::vector<Vec3f>& line = shown.parts->lines()[0];
+    ASSERT_GT(line.size(), 10u);
+    for (const Vec3f& p : line) {
+        EXPECT_LT((shown.scalp->closestPoint(p).position - p).length(), 1e-4f);  // on the refined surface
+        EXPECT_LT(std::abs(p.x), 2e-3f);  // under the cursor: the stroke ran down the middle of the view
+    }
+}
 
+TEST(SubdivisionBinding, BrushingStoredPartsKeepsTheUntouchedOnes) {
+    // A stroke brushes the parts on the refined scalp and stores them back on the cage: the parts
+    // it did not touch come back where they were (to rounding).
+    const auto head = quadSphere(12, 16);
+    GroomData data;
+    data.graphJson = graphWith("2");
+    data.scalp = head;
+    data.hierarchyJson = guidesOn(*head);
+    partsAndFlowOn(*head, data);
+    GroomEvaluator session(data);
+    session.evaluate(GroomEvaluator::Request{});
+    lila::groom::GroomStrokeHost host(session);
+    BrushToolSettings comb;
+    comb.setMode("comb");
+    comb.brushGuides = false;
+    comb.brushParts = true;
+    comb.brush.radius = 1.0f;
+    const std::vector<Vec3f> far{onSphere(10.0f, 100.0f, 200.0f), onSphere(10.0f, 104.0f, 200.0f)};  // nowhere near the part
+    const PartSet before = PartSet::fromJson(session.data().partsJson);
+    scriptedStroke(host, comb, far);
+    const PartSet after = PartSet::fromJson(session.data().partsJson);
+    ASSERT_EQ(after.parts.size(), before.parts.size());
+    ASSERT_EQ(after.parts[0].points.size(), before.parts[0].points.size());
+    for (std::size_t i = 0; i < before.parts[0].points.size(); ++i) {
+        EXPECT_LT((head->position(after.parts[0].points[i]) - head->position(before.parts[0].points[i])).length(), 1e-4f) << i;
+    }
+}
 
+TEST(SubdivisionBinding, ScriptedVertexPaintPaintsTheCage) {
+    const auto head = quadSphere(10, 12);
+    GroomData data;
+    data.graphJson = graphWith("2");
+    data.scalp = head;
+    GroomEvaluator session(data);
+    session.setScalpMapsJson(R"({"density": {"kind": "vertices", "values": []}})");
+    lila::groom::GroomStrokeHost host(session);
+    BrushToolSettings paint;
+    paint.setMode("paint");
+    paint.paintKind = "vertices";
+    paint.brush.attribute = "density";
+    paint.brush.radius = 3.0f;
+    paint.brush.value = 1.0f;
+    EXPECT_GT(scriptedStroke(host, paint, {onSphere(10.0f, 0.0f, 0.0f)}), 0u);
+    const ScalpMaps& maps = session.scalpMaps();
+    ASSERT_TRUE(maps.maps.count("density"));
+    const std::vector<float>& values = maps.maps.at("density").values;
+    ASSERT_EQ(values.size(), head->pointCount());  // per cage vertex, as the interactive brush paints
+    EXPECT_EQ(values[0], 1.0f);                    // the crown
+
+}
 
 // ---- The same groom at every level (smooth preview on or off, match render) -------------------
 

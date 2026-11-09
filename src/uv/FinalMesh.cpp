@@ -322,12 +322,17 @@ std::vector<int> sourceFaces(const geo::Mesh& cage, const geo::Mesh& res, std::s
     return src;
 }
 
-using Row = std::vector<std::pair<Index, double>>;
+using Row = std::vector<std::pair<Index, FinalWeight>>;
+
+bool byColumn(const std::pair<Index, FinalWeight>& a, const std::pair<Index, FinalWeight>& b)
+{
+    return a.first < b.first;
+}
 
 /** Sorts a row by column and sums repeated columns. */
 void mergeRow(Row& r)
 {
-    std::sort(r.begin(), r.end());
+    std::sort(r.begin(), r.end(), byColumn);
     size_t n = 0;
     for (size_t k = 0; k < r.size(); ++k)
         if (n > 0 && r[n - 1].first == r[k].first)
@@ -460,7 +465,11 @@ std::string probe(const geo::Mesh& cage, std::string_view uvSet, const Stack& st
     }
     std::vector<int> colour;
     const int colours = colourWedges(hoods, w.rep.size(), colour);
-    const int layers = (colours + 1) / 2;
+    // A composed fit's rotations come from its recording, so its ring-local probes only see blends that scale: a layer moves
+    // one colour in u and another in v. Otherwise each colour gets a layer of its own, moved in u, and both channels answer,
+    // so a weight that rotates shows in v.
+    const int perLayer = composeFit ? 2 : 1;
+    const int layers = (colours + perLayer - 1) / perLayer;
     const int perRun = wholeIslands ? kIslandLayersPerRun : kLayersPerRun;
     // Each hood's wedges by colour, which is unique within a hood.
     std::vector<std::vector<std::pair<int, Index>>> byColour(hoods.size());
@@ -508,9 +517,9 @@ std::string probe(const geo::Mesh& cage, std::string_view uvSet, const Stack& st
                 if (wd == kInvalid)
                     continue;
                 glm::dvec2 v(cageUv[c]);
-                if (colour[wd] == cu)
+                if (perLayer == 1 ? colour[wd] == first + k : colour[wd] == cu)
                     v.x += kDelta;
-                else if (colour[wd] == cv)
+                else if (perLayer == 2 && colour[wd] == cv)
                     v.y += kDelta;
                 p[c] = glm::vec2(v);
             }
@@ -556,12 +565,13 @@ std::string probe(const geo::Mesh& cage, std::string_view uvSet, const Stack& st
                 const std::vector<std::pair<int, Index>>* hood = src >= 0 && Index(src) < hoodOf.size() ? &byColour[hoodOf[Index(src)]] : nullptr;
                 res.forEachFaceCorner(f, [&](Index c) {
                     for (int k = 0; k < count; ++k)
-                        for (int ch = 0; ch < 2; ++ch)
+                        for (int ch = 0; ch < perLayer; ++ch)
                         {
-                            const double d = (double(probes[size_t(k)][c][ch]) - double(baseUv[c][ch])) / kDelta;
+                            const glm::dvec2 r = (glm::dvec2(probes[size_t(k)][c]) - glm::dvec2(baseUv[c])) / kDelta;
+                            const FinalWeight d = perLayer == 1 ? FinalWeight(r.x, r.y) : FinalWeight(r[ch], 0.0);
                             if (std::abs(d) < (wholeIslands ? kMinIslandWeight : kMinWeight))
                                 continue;
-                            const int col = 2 * (first + k) + ch;
+                            const int col = perLayer * (first + k) + ch;
                             Index found = kInvalid;
                             if (hood)
                                 if (auto it = std::lower_bound(hood->begin(), hood->end(), std::pair<int, Index>{col, 0}); it != hood->end() && it->first == col)
@@ -595,7 +605,7 @@ std::string probe(const geo::Mesh& cage, std::string_view uvSet, const Stack& st
     std::vector<glm::dvec2> mapped(rows, glm::dvec2(0.0));
     for (Index c = 0; c < rows; ++c)
         for (auto [wd, wt] : entries[c])
-            mapped[c] += wt * glm::dvec2(cageUv[w.rep[wd]]);
+            mapped[c] += weigh(wt, glm::dvec2(cageUv[w.rep[wd]]));
     applyFills(out.fills, mapped);
     double worstMiss = 0.0, worstFit = 0.0;
     for (Index f = 0; f < real.faceCapacity(); ++f)
@@ -612,8 +622,8 @@ std::string probe(const geo::Mesh& cage, std::string_view uvSet, const Stack& st
     out.rowStart.assign(size_t(rows) + 1, 0);
     for (Index c = 0; c < rows; ++c)
     {
-        std::vector<std::pair<Index, double>>& e = entries[c];
-        std::sort(e.begin(), e.end());
+        Row& e = entries[c];
+        std::sort(e.begin(), e.end(), byColumn);
         out.rowStart[c + 1] = out.rowStart[c] + Index(e.size());
     }
     out.cols.resize(out.rowStart.back());
@@ -852,7 +862,7 @@ std::vector<glm::dvec2> exportedUvs(const FinalMap& map, const geo::Mesh& cage, 
     out.assign(map.exported->cornerCapacity(), glm::dvec2(0.0));
     for (size_t c = 0; c + 1 < map.rowStart.size(); ++c)
         for (Index k = map.rowStart[c]; k < map.rowStart[c + 1]; ++k)
-            out[c] += map.weights[k] * glm::dvec2(cageUv[map.cols[k]]);
+            out[c] += weigh(map.weights[k], glm::dvec2(cageUv[map.cols[k]]));
     applyFills(map.fills, out);
     return out;
 }
@@ -872,7 +882,7 @@ std::vector<glm::dvec2> FinalIsland::uvs(const Chart& chart) const
     {
         glm::dvec2 s = offset[c];
         for (Index k = rowStart[c]; k < rowStart[c + 1]; ++k)
-            s += weights[k] * chart.uv[cols[k]];
+            s += weigh(weights[k], chart.uv[cols[k]]);
         out[c] = s;
     }
     applyFills(fills, out);
@@ -955,7 +965,7 @@ std::vector<FinalIsland> finalIslands(const FinalMap& map, const geo::Mesh& cage
         }
     });
     std::vector<Index> local(ex.cornerCapacity(), kInvalid), cornerIsland(ex.cornerCapacity(), kInvalid), tri;
-    std::vector<std::pair<Index, double>> row;
+    Row row;
     // A corner of the island's faces, or (not own) one only a fill of the island reads.
     auto addCorner = [&](Index ci, Index c, bool own) {
         FinalIsland& isl = out[ci];
@@ -968,6 +978,7 @@ std::vector<FinalIsland> finalIslands(const FinalMap& map, const geo::Mesh& cage
             cornerIsland[c] = ci;
         }
         isl.pos.push_back(ex.position(ex.cornerPoint(c)));
+        isl.corner.push_back(c);
         glm::dvec2 off(0.0);
         row.clear();
         for (Index k = map.rowStart[c]; k < map.rowStart[c + 1]; ++k)
@@ -976,9 +987,9 @@ std::vector<FinalIsland> finalIslands(const FinalMap& map, const geo::Mesh& cage
             if (cornerChart[col] == ci)
                 row.push_back({cornerVertex[col], map.weights[k]});
             else if (col < cageUv.size())
-                off += map.weights[k] * glm::dvec2(cageUv[col]);
+                off += weigh(map.weights[k], glm::dvec2(cageUv[col]));
         }
-        std::sort(row.begin(), row.end());
+        std::sort(row.begin(), row.end(), byColumn);
         for (size_t k = 0; k < row.size(); ++k)
             if (!isl.cols.empty() && isl.cols.size() > isl.rowStart.back() && isl.cols.back() == row[k].first)
                 isl.weights.back() += row[k].second;
@@ -1035,43 +1046,70 @@ std::vector<FinalIsland> finalIslands(const FinalMap& map, const geo::Mesh& cage
     return out;
 }
 
-detail::FinalOperator::FinalOperator(const FinalIsland& isl, size_t vertexCount) : mIsl(isl), mCorners(isl.pos.size()), mVertices(vertexCount)
+detail::FinalOperator::FinalOperator(const FinalIsland& isl, size_t vertexCount, bool conjugate)
+    : mIsl(isl), mCorners(isl.pos.size()), mVertices(vertexCount), mConjugate(conjugate)
 {
     LILA_ZONE();
 
+    mRotates = std::ranges::any_of(isl.weights, [](const FinalWeight& w) { return w.imag() != 0.0; });
     const auto C = Eigen::Index(mCorners), V = Eigen::Index(mVertices);
-    std::vector<Triplet> trips;
-    trips.reserve(isl.cols.size());
+    std::vector<Triplet> re, im;
+    re.reserve(isl.cols.size());
     for (size_t c = 0; c < mCorners; ++c)
         for (Index k = isl.rowStart[c]; k < isl.rowStart[c + 1]; ++k)
-            trips.emplace_back(int(c), int(isl.cols[k]), isl.weights[k]);
+        {
+            const FinalWeight w = weight(k);
+            re.emplace_back(int(c), int(isl.cols[k]), w.real());
+            if (w.imag() != 0.0)
+                im.emplace_back(int(c), int(isl.cols[k]), w.imag());
+        }
     mR.resize(C, V);
-    mR.setFromTriplets(trips.begin(), trips.end());
-    mRt = mR.transpose();
+    mR.setFromTriplets(re.begin(), re.end());
+    mRi.resize(C, V);
+    mRi.setFromTriplets(im.begin(), im.end());
     std::vector<int> at(mVertices, -1);
     for (const FinalFill& f : isl.fills)
     {
         Block b;
         for (Index c : f.border)
             for (Index k = isl.rowStart[c]; k < isl.rowStart[c + 1]; ++k)
+            {
                 b.cols.push_back(isl.cols[k]);
-        std::sort(b.cols.begin(), b.cols.end());
-        b.cols.erase(std::unique(b.cols.begin(), b.cols.end()), b.cols.end());
+                if (isl.weights[k].imag() != 0.0)
+                    b.imCols.push_back(isl.cols[k]);
+            }
+        for (std::vector<Index>* v : {&b.cols, &b.imCols})
+        {
+            std::sort(v->begin(), v->end());
+            v->erase(std::unique(v->begin(), v->end()), v->end());
+        }
         for (size_t j = 0; j < b.cols.size(); ++j)
             at[b.cols[j]] = int(j);
-        const auto nb = Eigen::Index(f.border.size()), m = Eigen::Index(b.cols.size()), ni = Eigen::Index(f.fill->interiorCount());
-        // The border's rows over the fill's columns.
-        Eigen::MatrixXd rows = Eigen::MatrixXd::Zero(nb, m);
+        const auto nb = Eigen::Index(f.border.size()), m = Eigen::Index(b.cols.size()), q = Eigen::Index(b.imCols.size());
+        const auto ni = Eigen::Index(f.fill->interiorCount());
+        // The border's rows over the fill's columns (real parts), then over the columns that rotate (imaginary parts): the
+        // fill solves both alike.
+        Eigen::MatrixXd rows = Eigen::MatrixXd::Zero(nb, m + q);
         for (Eigen::Index k = 0; k < nb; ++k)
         {
             const Index c = f.border[size_t(k)];
             for (Index e = isl.rowStart[c]; e < isl.rowStart[c + 1]; ++e)
-                rows(k, at[isl.cols[e]]) += isl.weights[e];
+            {
+                const FinalWeight w = weight(e);
+                rows(k, at[isl.cols[e]]) += w.real();
+                if (w.imag() != 0.0)
+                {
+                    const auto j = std::lower_bound(b.imCols.begin(), b.imCols.end(), isl.cols[e]) - b.imCols.begin();
+                    rows(k, m + j) += w.imag();
+                }
+            }
         }
         for (Index v : b.cols)
             at[v] = -1;
-        b.d.resize(ni, m);
-        f.fill->solve(std::span<const double>(rows.data(), size_t(rows.size())), std::span<double>(b.d.data(), size_t(b.d.size())), size_t(m));
+        Eigen::MatrixXd d(ni, m + q);
+        f.fill->solve(std::span<const double>(rows.data(), size_t(rows.size())), std::span<double>(d.data(), size_t(d.size())), size_t(m + q));
+        b.d = d.leftCols(m);
+        b.di = d.rightCols(q);
         b.start = f.interiorStart;
         b.corners = f.interiorCorners;
         mBlocks.push_back(std::move(b));
@@ -1084,7 +1122,7 @@ void detail::FinalOperator::apply(std::span<const glm::dvec2> x, std::span<glm::
     {
         glm::dvec2 s = mIsl.offset[c] * offsetScale;
         for (Index k = mIsl.rowStart[c]; k < mIsl.rowStart[c + 1]; ++k)
-            s += mIsl.weights[k] * x[mIsl.cols[k]];
+            s += weigh(weight(k), x[mIsl.cols[k]]);
         y[c] = s;
     }
     // A solve reads far less memory than the dense blocks.
@@ -1096,7 +1134,7 @@ void detail::FinalOperator::applyTransposed(std::span<const glm::dvec2> g, std::
     std::fill(out.begin(), out.end(), glm::dvec2(0.0));
     for (size_t c = 0; c < mCorners; ++c)
         for (Index k = mIsl.rowStart[c]; k < mIsl.rowStart[c + 1]; ++k)
-            out[mIsl.cols[k]] += mIsl.weights[k] * g[c];
+            out[mIsl.cols[k]] += weigh(std::conj(weight(k)), g[c]);
     std::vector<double> gi, gb;
     for (const FinalFill& f : mIsl.fills)
     {
@@ -1114,22 +1152,90 @@ void detail::FinalOperator::applyTransposed(std::span<const glm::dvec2> g, std::
         {
             const Index c = f.border[k];
             for (Index e = mIsl.rowStart[c]; e < mIsl.rowStart[c + 1]; ++e)
-                out[mIsl.cols[e]] += mIsl.weights[e] * glm::dvec2(gb[k], gb[nb + k]);
+                out[mIsl.cols[e]] += weigh(std::conj(weight(e)), glm::dvec2(gb[k], gb[nb + k]));
         }
     }
 }
 
-SpMat detail::FinalOperator::gram(const SpMat& s) const
+namespace
+{
+/** One part (real or imaginary) of the operator: its sparse rows, and per fill block its dense rows over some vertices. */
+struct OperatorPart
+{
+    const SpMat* rows;
+    std::vector<const Eigen::MatrixXd*> d;
+    std::vector<const std::vector<Index>*> cols;
+};
+
+/** a^T g b for dense a, b and sparse g, split over column blocks of b so one big fill uses every core. */
+Eigen::MatrixXd denseProduct(const Eigen::MatrixXd& a, const SpMat& g, const Eigen::MatrixXd& b)
+{
+    Eigen::MatrixXd out(a.cols(), b.cols());
+    constexpr Eigen::Index kBlock = 16;
+    tbb::parallel_for(Eigen::Index(0), (b.cols() + kBlock - 1) / kBlock, [&](Eigen::Index blk) {
+        const Eigen::Index c0 = blk * kBlock, n = std::min(kBlock, b.cols() - c0);
+        out.middleCols(c0, n) = a.transpose() * (g * b.middleCols(c0, n));
+    });
+    return out;
+}
+
+/** A^T S B for two parts of the operator, as triplets; fills of different islands share no triangles. */
+void crossTerms(const OperatorPart& a, const OperatorPart& b, const SpMat& s, std::span<const SpMat> zt, std::span<const SpMat> g,
+                std::vector<Triplet>& out, SpMat& sparse)
+{
+    sparse = SpMat(SpMat(a.rows->transpose()) * (s * *b.rows)).pruned();
+    // A^T S A is symmetric: one cross product gives both of its sides.
+    const bool same = &a == &b;
+    for (size_t k = 0; k < zt.size(); ++k)
+    {
+        const Eigen::MatrixXd& da = *a.d[k];
+        const Eigen::MatrixXd& db = *b.d[k];
+        const std::vector<Index>& ca = *a.cols[k];
+        const std::vector<Index>& cb = *b.cols[k];
+        if (da.cols() > 0 && db.cols() > 0)
+        {
+            const Eigen::MatrixXd dgd = denseProduct(da, g[k], db);
+            for (Eigen::Index i = 0; i < dgd.rows(); ++i)
+                for (Eigen::Index j = 0; j < dgd.cols(); ++j)
+                    out.emplace_back(int(ca[size_t(i)]), int(cb[size_t(j)]), dgd(i, j));
+        }
+        // Chart vertices are few, so each cross term is a dense vertices x columns product.
+        if (db.cols() > 0 && a.rows->nonZeros() > 0)
+        {
+            const SpMat xa = zt[k] * *a.rows;
+            const Eigen::MatrixXd cross = SpMat(xa.transpose()) * db;
+            for (Eigen::Index v = 0; v < cross.rows(); ++v)
+                for (Eigen::Index j = 0; j < cross.cols(); ++j)
+                    if (const double x = cross(v, j); x != 0.0)
+                    {
+                        out.emplace_back(int(v), int(cb[size_t(j)]), x);
+                        if (same)
+                            out.emplace_back(int(cb[size_t(j)]), int(v), x);
+                    }
+        }
+        if (!same && da.cols() > 0 && b.rows->nonZeros() > 0)
+        {
+            const SpMat xb = zt[k] * *b.rows;
+            const Eigen::MatrixXd cross = SpMat(xb.transpose()) * da;
+            for (Eigen::Index v = 0; v < cross.rows(); ++v)
+                for (Eigen::Index i = 0; i < cross.cols(); ++i)
+                    if (const double x = cross(v, i); x != 0.0)
+                        out.emplace_back(int(ca[size_t(i)]), int(v), x);
+        }
+    }
+}
+} // namespace
+
+std::pair<SpMat, SpMat> detail::FinalOperator::gram(const SpMat& s) const
 {
     LILA_ZONE();
 
-    SpMat k = (mRt * (s * mR)).pruned();
-    if (mBlocks.empty())
-        return k;
-    std::vector<Triplet> extra;
-    for (const Block& b : mBlocks)
+    std::vector<SpMat> zt(mBlocks.size()), g(mBlocks.size());
+    OperatorPart re{&mR, {}, {}}, im{&mRi, {}, {}};
+    for (size_t k = 0; k < mBlocks.size(); ++k)
     {
-        const auto ni = Eigen::Index(b.start.size() - 1), m = Eigen::Index(b.cols.size());
+        const Block& b = mBlocks[k];
+        const auto ni = Eigen::Index(b.start.size() - 1);
         std::vector<Triplet> e;
         for (Eigen::Index q = 0; q < ni; ++q)
             for (Index c = b.start[size_t(q)]; c < b.start[size_t(q) + 1]; ++c)
@@ -1137,25 +1243,33 @@ SpMat detail::FinalOperator::gram(const SpMat& s) const
         SpMat E(Eigen::Index(mCorners), ni);
         E.setFromTriplets(e.begin(), e.end());
         // Interior groups against themselves through the block, and against the rows they share triangles with.
-        const SpMat zt = SpMat(E.transpose()) * s;
-        const SpMat g = zt * E;
-        const Eigen::MatrixXd dgd = b.d.transpose() * (g * b.d);
-        for (Eigen::Index i = 0; i < m; ++i)
-            for (Eigen::Index j = 0; j < m; ++j)
-                extra.emplace_back(int(b.cols[size_t(i)]), int(b.cols[size_t(j)]), dgd(i, j));
-        const SpMat x = zt * mR;
-        for (int col = 0; col < x.outerSize(); ++col)
-            for (SpMat::InnerIterator it(x, col); it; ++it)
-                for (Eigen::Index i = 0; i < m; ++i)
-                {
-                    const double v = b.d(it.row(), i) * it.value();
-                    extra.emplace_back(int(b.cols[size_t(i)]), col, v);
-                    extra.emplace_back(col, int(b.cols[size_t(i)]), v);
-                }
+        zt[k] = SpMat(E.transpose()) * s;
+        g[k] = zt[k] * E;
+        re.d.push_back(&b.d);
+        re.cols.push_back(&b.cols);
+        im.d.push_back(&b.di);
+        im.cols.push_back(&b.imCols);
     }
-    SpMat add(k.rows(), k.cols());
-    add.setFromTriplets(extra.begin(), extra.end());
-    return k + add;
+    const auto V = Eigen::Index(mVertices);
+    auto build = [&](const std::vector<Triplet>& t, const SpMat& sparse) {
+        SpMat add(V, V);
+        add.setFromTriplets(t.begin(), t.end());
+        return SpMat(sparse + add);
+    };
+    // R^H S R with R = Re + i Im: the real part is Re^T S Re + Im^T S Im, the imaginary part Re^T S Im - (Re^T S Im)^T.
+    std::vector<Triplet> t;
+    SpMat sparse;
+    crossTerms(re, re, s, zt, g, t, sparse);
+    SpMat k = build(t, sparse);
+    if (!mRotates)
+        return {k, SpMat()};
+    t.clear();
+    crossTerms(im, im, s, zt, g, t, sparse);
+    k += build(t, sparse);
+    t.clear();
+    crossTerms(re, im, s, zt, g, t, sparse);
+    const SpMat ri = build(t, sparse);
+    return {k, SpMat(ri - SpMat(ri.transpose())).pruned()};
 }
 
 std::vector<double> detail::FinalOperator::columnWeight() const
@@ -1169,8 +1283,61 @@ std::vector<double> detail::FinalOperator::columnWeight() const
             const double n = double(b.start[q + 1] - b.start[q]);
             for (size_t j = 0; j < b.cols.size(); ++j)
                 w[b.cols[j]] += n * std::abs(b.d(Eigen::Index(q), Eigen::Index(j)));
+            for (size_t j = 0; j < b.imCols.size(); ++j)
+                w[b.imCols[j]] += n * std::abs(b.di(Eigen::Index(q), Eigen::Index(j)));
         }
     return w;
+}
+
+bool detail::UvFactor::compute(const SpMat& re, const SpMat& im)
+{
+    LILA_ZONE();
+
+    mComplex = im.nonZeros() > 0;
+    mCxReady = false;
+    mRe = mComplex ? re : SpMat();
+    mIm = mComplex ? im : SpMat();
+    mReal.compute(re);
+    mOk = mReal.info() == Eigen::Success;
+    return mOk;
+}
+
+bool detail::UvFactor::solve(const Eigen::VectorXd& bu, const Eigen::VectorXd& bv, Eigen::VectorXd& su, Eigen::VectorXd& sv) const
+{
+    if (!mOk)
+        return false;
+    su = mReal.solve(bu);
+    sv = mReal.solve(bv);
+    if (!mComplex)
+        return mReal.info() == Eigen::Success && su.allFinite() && sv.allFinite();
+    // Re u - Im v = bu, Re v + Im u = bv. The imaginary part is a few rotated corners, so refining against it with the real
+    // factor converges in a handful of steps; the complex factor is built only when it doesn't.
+    const double scale = std::max(bu.norm() + bv.norm(), 1e-300);
+    for (int it = 0; it < kRefineSteps; ++it)
+    {
+        const Eigen::VectorXd ru = bu - (mRe * su - mIm * sv), rv = bv - (mRe * sv + mIm * su);
+        if (!ru.allFinite() || !rv.allFinite())
+            break;
+        if (ru.norm() + rv.norm() <= 1e-12 * scale)
+            return true;
+        su += mReal.solve(ru);
+        sv += mReal.solve(rv);
+    }
+    if (!mCxReady)
+    {
+        const CSpMat k = mRe.cast<std::complex<double>>() + std::complex<double>(0.0, 1.0) * mIm.cast<std::complex<double>>();
+        mCx.compute(k);
+        mCxReady = true;
+    }
+    if (mCx.info() != Eigen::Success)
+        return false;
+    Eigen::VectorXcd b(bu.size());
+    b.real() = bu;
+    b.imag() = bv;
+    const Eigen::VectorXcd z = mCx.solve(b);
+    su = z.real();
+    sv = z.imag();
+    return su.allFinite() && sv.allFinite();
 }
 
 struct UninfluencedFill::Solver
@@ -1277,7 +1444,7 @@ FinalIsland UninfluencedFill::fold(const FinalIsland& isl) const
     out.rowStart.assign(1, 0);
     out.cols.clear();
     out.weights.clear();
-    std::vector<std::pair<Index, double>> row;
+    Row row;
     for (size_t c = 0; c + 1 < isl.rowStart.size(); ++c)
     {
         row.clear();
@@ -1290,7 +1457,7 @@ FinalIsland UninfluencedFill::fold(const FinalIsland& isl) const
             else
                 row.push_back({v, isl.weights[k]});
         }
-        std::sort(row.begin(), row.end());
+        std::sort(row.begin(), row.end(), byColumn);
         for (size_t k = 0; k < row.size(); ++k)
             if (k > 0 && row[k].first == out.cols.back() && out.cols.size() > out.rowStart.back())
                 out.weights.back() += row[k].second;
@@ -1364,9 +1531,10 @@ ChartStats finalStats(const FinalIsland& isl, const Chart& chart)
     return s;
 }
 
-size_t collapsedTriangles(const FinalIsland& isl, const Chart& chart)
+namespace
 {
-    const std::vector<glm::dvec2> y = isl.uvs(chart);
+size_t collapsedOf(const FinalIsland& isl, std::span<const glm::dvec2> y)
+{
     double a3 = 0.0, au = 0.0;
     std::vector<double> tri3(isl.tris.size()), triUv(isl.tris.size());
     for (size_t i = 0; i < isl.tris.size(); ++i)
@@ -1385,6 +1553,20 @@ size_t collapsedTriangles(const FinalIsland& isl, const Chart& chart)
         if (tri3[i] > 1e-12 * a3 && triUv[i] < tri3[i] * density * kCollapsedFraction)
             ++n;
     return n;
+}
+} // namespace
+
+size_t collapsedTriangles(const FinalIsland& isl, const Chart& chart)
+{
+    return collapsedOf(isl, isl.uvs(chart));
+}
+
+size_t collapsedTriangles(const FinalIsland& isl, std::span<const glm::vec2> exportedUv)
+{
+    std::vector<glm::dvec2> y(isl.corner.size());
+    for (size_t k = 0; k < y.size(); ++k)
+        y[k] = isl.corner[k] < exportedUv.size() ? glm::dvec2(exportedUv[isl.corner[k]]) : glm::dvec2(0.0);
+    return collapsedOf(isl, y);
 }
 
 void setDensityArea(Chart& chart, const FinalIsland& isl)
@@ -1439,7 +1621,7 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
     }
 
     // y = R x + off: exported corner uvs from chart vertex uvs.
-    const FinalOperator op(isl, V);
+    const FinalOperator op(isl, V, mirror);
     const glm::dvec2 offScale(sx, 1.0);
     std::vector<glm::dvec2> off(C);
     op.apply(std::vector<glm::dvec2>(V, glm::dvec2(0.0)), off, offScale);
@@ -1468,11 +1650,17 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
     struct Coupling
     {
         int row, col;
-        double w;
+        FinalWeight w;
     };
     SpMat S(static_cast<Eigen::Index>(C), static_cast<Eigen::Index>(C));
+    Eigen::VectorXd offU(static_cast<Eigen::Index>(C)), offV(static_cast<Eigen::Index>(C)), soU, soV;
+    for (size_t c = 0; c < C; ++c)
+    {
+        offU[Eigen::Index(c)] = off[c].x;
+        offV[Eigen::Index(c)] = off[c].y;
+    }
     std::vector<Coupling> kfc;
-    auto solver = std::make_unique<Eigen::SimplicialLDLT<SpMat>>();
+    auto solver = std::make_unique<UvFactor>();
     auto factor = [&](const std::vector<double>& wt) {
         std::vector<Triplet> trips;
         trips.reserve(T * 9);
@@ -1486,33 +1674,44 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
                     trips.push_back(Triplet(int(isl.tris[i][p]), int(isl.tris[i][q]), a * glm::dot(fr[i].g[p], fr[i].g[q])));
         }
         S.setFromTriplets(trips.begin(), trips.end());
-        const SpMat K = op.gram(S);
-        std::vector<Triplet> kff;
+        soU = S * offU;
+        soV = S * offV;
+        const auto [K, Ki] = op.gram(S);
+        std::vector<Triplet> kff, kffi;
         kfc.clear();
         double diag = 0.0;
-        for (int k = 0; k < K.outerSize(); ++k)
-            for (SpMat::InnerIterator it(K, k); it; ++it)
-            {
-                const int fr0 = freeIdx[size_t(it.row())], fc0 = freeIdx[size_t(it.col())];
-                if (fr0 < 0)
-                    continue;
-                if (fc0 >= 0)
+        for (int part = 0; part < 2; ++part)
+        {
+            const SpMat& M = part == 0 ? K : Ki;
+            for (int k = 0; k < M.outerSize(); ++k)
+                for (SpMat::InnerIterator it(M, k); it; ++it)
                 {
-                    kff.push_back(Triplet(fr0, fc0, it.value()));
-                    if (fr0 == fc0)
-                        diag += it.value();
+                    const int fr0 = freeIdx[size_t(it.row())], fc0 = freeIdx[size_t(it.col())];
+                    if (fr0 < 0)
+                        continue;
+                    if (fc0 >= 0)
+                    {
+                        (part == 0 ? kff : kffi).push_back(Triplet(fr0, fc0, it.value()));
+                        if (fr0 == fc0 && part == 0)
+                            diag += it.value();
+                    }
+                    else
+                        kfc.push_back({fr0, int(it.col()), part == 0 ? FinalWeight(it.value(), 0.0) : FinalWeight(0.0, it.value())});
                 }
-                else
-                    kfc.push_back({fr0, int(it.col()), it.value()});
-            }
+        }
         // Chart vertices no exported triangle reaches keep a tiny diagonal so the system stays solvable.
         const double eps = 1e-9 * std::max(diag / nFree, 1e-30);
         for (int i = 0; i < nFree; ++i)
             kff.push_back(Triplet(i, i, eps));
-        SpMat Kff(nFree, nFree);
+        SpMat Kff(nFree, nFree), Kffi;
         Kff.setFromTriplets(kff.begin(), kff.end());
-        solver = std::make_unique<Eigen::SimplicialLDLT<SpMat>>(Kff);
-        return solver->info() == Eigen::Success;
+        if (!kffi.empty())
+        {
+            Kffi.resize(nFree, nFree);
+            Kffi.setFromTriplets(kffi.begin(), kffi.end());
+        }
+        solver = std::make_unique<UvFactor>();
+        return solver->compute(Kff, Kffi);
     };
 
     auto exportUv = [&](const std::vector<glm::dvec2>& xs, std::vector<glm::dvec2>& y) {
@@ -1573,7 +1772,7 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
         return n;
     };
     // Triangles under kCollapsedFraction of the uv area the island's density gives them, as bake lint counts them, with a
-    // margin: the export the written uvs give can differ a little (a fit respaces borders from the new uvs).
+    // margin: the export the written uvs give can differ a little (a fit's rebuilt island corners follow the new uvs).
     auto collapsed = [&](const std::vector<glm::dvec2>& y) {
         double a3 = 0.0, au = 0.0;
         for (size_t i = 0; i < T; ++i)
@@ -1648,18 +1847,8 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
                                                fr[i].g[p].x * target[i].c + fr[i].g[p].y * target[i].d);
             }
             // rhs = R^T (be - S off), then moved over the fixed vertices.
-            const auto nC = static_cast<Eigen::Index>(C);
-            Eigen::VectorXd eu(nC), ev(nC), ou(nC), ov(nC);
             for (size_t c = 0; c < C; ++c)
-            {
-                eu[Eigen::Index(c)] = be[c].x;
-                ev[Eigen::Index(c)] = be[c].y;
-                ou[Eigen::Index(c)] = off[c].x;
-                ov[Eigen::Index(c)] = off[c].y;
-            }
-            const Eigen::VectorXd gu = eu - S * ou, gv = ev - S * ov;
-            for (size_t c = 0; c < C; ++c)
-                gc[c] = glm::dvec2(gu[Eigen::Index(c)], gv[Eigen::Index(c)]);
+                gc[c] = be[c] - glm::dvec2(soU[Eigen::Index(c)], soV[Eigen::Index(c)]);
             op.applyTransposed(gc, fuv);
             for (size_t v = 0; v < V; ++v)
                 if (freeIdx[v] >= 0)
@@ -1669,11 +1858,12 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
                 }
             for (const Coupling& cp : kfc)
             {
-                bu[cp.row] -= cp.w * x[size_t(cp.col)].x;
-                bv[cp.row] -= cp.w * x[size_t(cp.col)].y;
+                const glm::dvec2 k = weigh(cp.w, x[size_t(cp.col)]);
+                bu[cp.row] -= k.x;
+                bv[cp.row] -= k.y;
             }
-            const Eigen::VectorXd su = solver->solve(bu), sv = solver->solve(bv);
-            if (solver->info() != Eigen::Success || !su.allFinite() || !sv.allFinite())
+            Eigen::VectorXd su, sv;
+            if (!solver->solve(bu, bv, su, sv))
                 return false;
             for (size_t v = 0; v < V; ++v)
                 dir[v] = freeIdx[v] >= 0 ? glm::dvec2(su[freeIdx[v]], sv[freeIdx[v]]) - x[v] : glm::dvec2(0.0);
@@ -1748,15 +1938,10 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
 namespace
 {
 /**
- * Extra rounds that re-solve islands the written layout still collapses (a fit's respacing follows the new uvs). Measured
- * on real exports they rarely open more and cost a map build each, so the written result is only checked.
- */
-constexpr int kRepairRounds = 0;
-
-/**
  * Solves the islands, all of them or only those whose export collapses now, against the export as the cage's current
  * uvs give it, and writes them back. Each island keeps its solve only when it collapses no more than before; a move back
- * into its tile that would cost it slivers is dropped on its own.
+ * into its tile that would cost it slivers is dropped on its own. The written uvs' export is then measured with one run of
+ * the stack, and islands that came out with more slivers than they started with go back.
  */
 FinalRefineResult refineRounds(geo::Mesh& cage, std::span<const Index> faces, std::string_view uvSet, const Stack& stack,
                                const FinalSolveOptions& opts, bool repairOnly)
@@ -1779,94 +1964,83 @@ FinalRefineResult refineRounds(geo::Mesh& cage, std::span<const Index> faces, st
             }
         return w > 0.0 ? d / w : 0.0;
     };
-    // Per island, its uvs and collapsed count before its last solve; an island its solve made worse goes back and stays.
-    std::vector<std::vector<glm::dvec2>> prevUv;
-    std::vector<size_t> prevCount;
-    std::vector<uint8_t> solved, frozen;
-    bool measureOnly = false;
-    for (int round = 0;; ++round)
+    const FinalMap map = buildFinalMap(cage, uvSet, stack);
+    out.method = map.method;
+    out.warning = map.warning;
+    if (!map.active())
+        return out;
+    std::vector<Chart> charts = buildCharts(cage, live, co);
+    const std::vector<FinalIsland> islands = finalIslands(map, cage, charts, uvSet);
+    const size_t n = charts.size();
+    std::vector<size_t> now(n, 0);
+    tbb::parallel_for(size_t(0), n, size_t(1), [&](size_t i) {
+        if (!islands[i].tris.empty())
+            now[i] = collapsedTriangles(islands[i], charts[i]);
+    });
+    out.collapsedBefore = std::accumulate(now.begin(), now.end(), size_t(0));
+    out.distortionBefore = distortion(islands, charts);
+    out.islands = size_t(std::ranges::count_if(islands, [](const FinalIsland& isl) { return !isl.tris.empty(); }));
+    std::vector<uint8_t> pick(n, 0);
+    for (size_t i = 0; i < n; ++i)
+        pick[i] = !islands[i].tris.empty() && (!repairOnly || now[i] > 0);
+    if (std::ranges::none_of(pick, [](uint8_t p) { return p != 0; }))
     {
-        const FinalMap map = buildFinalMap(cage, uvSet, stack);
-        if (round == 0)
+        out.collapsedAfter = out.collapsedBefore;
+        out.distortionAfter = out.distortionBefore;
+        return out;
+    }
+    std::vector<std::vector<glm::dvec2>> prevUv(n);
+    std::vector<uint8_t> ok(n, 1);
+    tbb::parallel_for(size_t(0), n, size_t(1), [&](size_t i) {
+        if (!pick[i])
+            return;
+        prevUv[i] = charts[i].uv;
+        Chart trial = charts[i];
+        const glm::ivec2 tile(glm::floor(trial.uvCentroid()));
+        ok[i] = solveFinal(trial, islands[i], opts).ok;
+        if (!ok[i])
+            return;
+        // Moving the island alone shifts it against the uvs its neighbours lend its export: that move goes, not the solve.
+        if (!opts.usePins || std::ranges::none_of(trial.pinned, [](uint8_t p) { return p != 0; }))
         {
-            out.method = map.method;
-            out.warning = map.warning;
+            Chart moved = trial;
+            keepInTile(moved, tile);
+            if (collapsedTriangles(islands[i], moved) <= collapsedTriangles(islands[i], trial))
+                trial = std::move(moved);
         }
-        if (!map.active())
-            return out;
-        std::vector<Chart> charts = buildCharts(cage, live, co);
-        const std::vector<FinalIsland> islands = finalIslands(map, cage, charts, uvSet);
-        const size_t n = charts.size();
-        std::vector<size_t> now(n, 0);
+        if (collapsedTriangles(islands[i], trial) <= now[i])
+            charts[i] = std::move(trial);
+    });
+    out.failed = size_t(std::ranges::count(ok, uint8_t(0)));
+    writeCharts(cage, charts, uvSet);
+    // Measured on the export itself, so the count is what bake lint finds; the map's prediction stands in if the stack's
+    // output no longer matches it.
+    auto measure = [&](std::vector<size_t>& count) {
+        const geo::Mesh ex = runStack(cage, stack);
+        const std::span<const glm::vec2> uv = ex.cornerAttrs().get<glm::vec2>(uvSet);
+        const bool same = !uv.empty() && ex.cornerCapacity() == map.exported->cornerCapacity() && ex.faceCapacity() == map.exported->faceCapacity();
         tbb::parallel_for(size_t(0), n, size_t(1), [&](size_t i) {
             if (!islands[i].tris.empty())
-                now[i] = collapsedTriangles(islands[i], charts[i]);
+                count[i] = same ? collapsedTriangles(islands[i], uv) : collapsedTriangles(islands[i], charts[i]);
         });
-        if (round == 0)
+    };
+    std::vector<size_t> after(n, 0);
+    measure(after);
+    bool restored = false;
+    for (size_t i = 0; i < n; ++i)
+        if (pick[i] && after[i] > now[i])
         {
-            out.collapsedBefore = std::accumulate(now.begin(), now.end(), size_t(0));
-            out.distortionBefore = distortion(islands, charts);
-            out.islands = size_t(std::ranges::count_if(islands, [](const FinalIsland& isl) { return !isl.tris.empty(); }));
-            prevUv.resize(n);
-            prevCount.assign(n, 0);
-            solved.assign(n, 0);
-            frozen.assign(n, 0);
+            charts[i].uv = prevUv[i];
+            restored = true;
         }
-        bool restored = false;
-        for (size_t i = 0; i < n; ++i)
-            if (solved[i] && now[i] >= prevCount[i] && now[i] > 0)
-            {
-                frozen[i] = 1;
-                if (now[i] > prevCount[i])
-                {
-                    charts[i].uv = prevUv[i];
-                    restored = true;
-                }
-            }
-        const bool solveAll = round == 0 && !repairOnly;
-        std::vector<uint8_t> pick(n, 0);
-        for (size_t i = 0; i < n; ++i)
-            pick[i] = !islands[i].tris.empty() && (solveAll || (!frozen[i] && now[i] > 0));
-        if (measureOnly || round > kRepairRounds || std::ranges::none_of(pick, [](uint8_t p) { return p != 0; }))
-        {
-            if (restored)
-            {
-                writeCharts(cage, charts, uvSet);
-                measureOnly = true;
-                continue;
-            }
-            out.collapsedAfter = std::accumulate(now.begin(), now.end(), size_t(0));
-            out.distortionAfter = distortion(islands, charts);
-            return out;
-        }
-        std::vector<uint8_t> ok(n, 1);
-        std::fill(solved.begin(), solved.end(), uint8_t(0));
-        tbb::parallel_for(size_t(0), n, size_t(1), [&](size_t i) {
-            if (!pick[i])
-                return;
-            prevUv[i] = charts[i].uv;
-            prevCount[i] = now[i];
-            solved[i] = 1;
-            Chart trial = charts[i];
-            const glm::ivec2 tile(glm::floor(trial.uvCentroid()));
-            ok[i] = solveFinal(trial, islands[i], opts).ok;
-            if (!ok[i])
-                return;
-            // Moving the island alone shifts it against the uvs its neighbours lend its export: that move goes, not the solve.
-            if (!opts.usePins || std::ranges::none_of(trial.pinned, [](uint8_t p) { return p != 0; }))
-            {
-                Chart moved = trial;
-                keepInTile(moved, tile);
-                if (collapsedTriangles(islands[i], moved) <= collapsedTriangles(islands[i], trial))
-                    trial = std::move(moved);
-            }
-            if (collapsedTriangles(islands[i], trial) <= now[i])
-                charts[i] = std::move(trial);
-        });
-        if (round == 0)
-            out.failed = size_t(std::ranges::count(ok, uint8_t(0)));
+    if (restored)
+    {
         writeCharts(cage, charts, uvSet);
+        measure(after);
     }
+    out.collapsedAfter = std::accumulate(after.begin(), after.end(), size_t(0));
+    out.distortionAfter = distortion(islands, charts);
+    return out;
 }
 } // namespace
 
