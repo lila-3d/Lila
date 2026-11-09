@@ -44,19 +44,17 @@ private:
     struct Block
     {
         std::vector<Index> cols;           // chart vertices the fill's border reads
-        Eigen::MatrixXd d;                 // interior group x cols (real weights)
-        Eigen::MatrixXcd dc;               // the same when the weights rotate
+        std::vector<Index> imCols;         // those it reads through weights that rotate
+        Eigen::MatrixXd d;                 // interior group x cols: real parts
+        Eigen::MatrixXd di;                // interior group x imCols: imaginary parts
         std::vector<Index> start, corners; // interior group -> local corners
     };
     FinalWeight weight(Index k) const { return mConjugate ? std::conj(mIsl.weights[k]) : mIsl.weights[k]; }
-    template <class T>
-    Eigen::SparseMatrix<T> gramOf(const SpMat& s, const Eigen::SparseMatrix<T>& r) const;
 
     const FinalIsland& mIsl;
     size_t mCorners = 0, mVertices = 0;
     bool mConjugate = false, mRotates = false;
-    SpMat mR;
-    CSpMat mRc;
+    SpMat mR, mRi; // real and imaginary parts of the rows
     std::vector<Block> mBlocks;
 };
 

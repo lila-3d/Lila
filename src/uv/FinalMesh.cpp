@@ -1053,41 +1053,43 @@ detail::FinalOperator::FinalOperator(const FinalIsland& isl, size_t vertexCount,
 
     mRotates = std::ranges::any_of(isl.weights, [](const FinalWeight& w) { return w.imag() != 0.0; });
     const auto C = Eigen::Index(mCorners), V = Eigen::Index(mVertices);
-    if (mRotates)
-    {
-        std::vector<Eigen::Triplet<std::complex<double>>> trips;
-        trips.reserve(isl.cols.size());
-        for (size_t c = 0; c < mCorners; ++c)
-            for (Index k = isl.rowStart[c]; k < isl.rowStart[c + 1]; ++k)
-                trips.emplace_back(int(c), int(isl.cols[k]), weight(k));
-        mRc.resize(C, V);
-        mRc.setFromTriplets(trips.begin(), trips.end());
-    }
-    else
-    {
-        std::vector<Triplet> trips;
-        trips.reserve(isl.cols.size());
-        for (size_t c = 0; c < mCorners; ++c)
-            for (Index k = isl.rowStart[c]; k < isl.rowStart[c + 1]; ++k)
-                trips.emplace_back(int(c), int(isl.cols[k]), isl.weights[k].real());
-        mR.resize(C, V);
-        mR.setFromTriplets(trips.begin(), trips.end());
-    }
+    std::vector<Triplet> re, im;
+    re.reserve(isl.cols.size());
+    for (size_t c = 0; c < mCorners; ++c)
+        for (Index k = isl.rowStart[c]; k < isl.rowStart[c + 1]; ++k)
+        {
+            const FinalWeight w = weight(k);
+            re.emplace_back(int(c), int(isl.cols[k]), w.real());
+            if (w.imag() != 0.0)
+                im.emplace_back(int(c), int(isl.cols[k]), w.imag());
+        }
+    mR.resize(C, V);
+    mR.setFromTriplets(re.begin(), re.end());
+    mRi.resize(C, V);
+    mRi.setFromTriplets(im.begin(), im.end());
     std::vector<int> at(mVertices, -1);
     for (const FinalFill& f : isl.fills)
     {
         Block b;
         for (Index c : f.border)
             for (Index k = isl.rowStart[c]; k < isl.rowStart[c + 1]; ++k)
+            {
                 b.cols.push_back(isl.cols[k]);
-        std::sort(b.cols.begin(), b.cols.end());
-        b.cols.erase(std::unique(b.cols.begin(), b.cols.end()), b.cols.end());
+                if (isl.weights[k].imag() != 0.0)
+                    b.imCols.push_back(isl.cols[k]);
+            }
+        for (std::vector<Index>* v : {&b.cols, &b.imCols})
+        {
+            std::sort(v->begin(), v->end());
+            v->erase(std::unique(v->begin(), v->end()), v->end());
+        }
         for (size_t j = 0; j < b.cols.size(); ++j)
             at[b.cols[j]] = int(j);
-        const auto nb = Eigen::Index(f.border.size()), m = Eigen::Index(b.cols.size()), ni = Eigen::Index(f.fill->interiorCount());
-        // The border's rows over the fill's columns, real parts then imaginary parts: the fill solves both alike.
-        const Eigen::Index parts = mRotates ? 2 : 1;
-        Eigen::MatrixXd rows = Eigen::MatrixXd::Zero(nb, m * parts);
+        const auto nb = Eigen::Index(f.border.size()), m = Eigen::Index(b.cols.size()), q = Eigen::Index(b.imCols.size());
+        const auto ni = Eigen::Index(f.fill->interiorCount());
+        // The border's rows over the fill's columns (real parts), then over the columns that rotate (imaginary parts): the
+        // fill solves both alike.
+        Eigen::MatrixXd rows = Eigen::MatrixXd::Zero(nb, m + q);
         for (Eigen::Index k = 0; k < nb; ++k)
         {
             const Index c = f.border[size_t(k)];
@@ -1095,22 +1097,19 @@ detail::FinalOperator::FinalOperator(const FinalIsland& isl, size_t vertexCount,
             {
                 const FinalWeight w = weight(e);
                 rows(k, at[isl.cols[e]]) += w.real();
-                if (mRotates)
-                    rows(k, m + at[isl.cols[e]]) += w.imag();
+                if (w.imag() != 0.0)
+                {
+                    const auto j = std::lower_bound(b.imCols.begin(), b.imCols.end(), isl.cols[e]) - b.imCols.begin();
+                    rows(k, m + j) += w.imag();
+                }
             }
         }
         for (Index v : b.cols)
             at[v] = -1;
-        Eigen::MatrixXd d(ni, m * parts);
-        f.fill->solve(std::span<const double>(rows.data(), size_t(rows.size())), std::span<double>(d.data(), size_t(d.size())), size_t(m * parts));
-        if (mRotates)
-        {
-            b.dc.resize(ni, m);
-            b.dc.real() = d.leftCols(m);
-            b.dc.imag() = d.rightCols(m);
-        }
-        else
-            b.d = std::move(d);
+        Eigen::MatrixXd d(ni, m + q);
+        f.fill->solve(std::span<const double>(rows.data(), size_t(rows.size())), std::span<double>(d.data(), size_t(d.size())), size_t(m + q));
+        b.d = d.leftCols(m);
+        b.di = d.rightCols(q);
         b.start = f.interiorStart;
         b.corners = f.interiorCorners;
         mBlocks.push_back(std::move(b));
@@ -1158,24 +1157,85 @@ void detail::FinalOperator::applyTransposed(std::span<const glm::dvec2> g, std::
     }
 }
 
-template <class T>
-Eigen::SparseMatrix<T> detail::FinalOperator::gramOf(const SpMat& s, const Eigen::SparseMatrix<T>& r) const
+namespace
 {
-    using Sp = Eigen::SparseMatrix<T>;
-    using Dense = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
-    const Sp rh = r.adjoint();
-    Sp k = (rh * (Sp(s.cast<T>()) * r)).pruned();
-    if (mBlocks.empty())
-        return k;
-    std::vector<Eigen::Triplet<T>> extra;
-    for (const Block& b : mBlocks)
+/** One part (real or imaginary) of the operator: its sparse rows, and per fill block its dense rows over some vertices. */
+struct OperatorPart
+{
+    const SpMat* rows;
+    std::vector<const Eigen::MatrixXd*> d;
+    std::vector<const std::vector<Index>*> cols;
+};
+
+/** a^T g b for dense a, b and sparse g, split over column blocks of b so one big fill uses every core. */
+Eigen::MatrixXd denseProduct(const Eigen::MatrixXd& a, const SpMat& g, const Eigen::MatrixXd& b)
+{
+    Eigen::MatrixXd out(a.cols(), b.cols());
+    constexpr Eigen::Index kBlock = 16;
+    tbb::parallel_for(Eigen::Index(0), (b.cols() + kBlock - 1) / kBlock, [&](Eigen::Index blk) {
+        const Eigen::Index c0 = blk * kBlock, n = std::min(kBlock, b.cols() - c0);
+        out.middleCols(c0, n) = a.transpose() * (g * b.middleCols(c0, n));
+    });
+    return out;
+}
+
+/** A^T S B for two parts of the operator, as triplets; fills of different islands share no triangles. */
+void crossTerms(const OperatorPart& a, const OperatorPart& b, const SpMat& s, std::span<const SpMat> zt, std::span<const SpMat> g,
+                std::vector<Triplet>& out, SpMat& sparse)
+{
+    sparse = SpMat(SpMat(a.rows->transpose()) * (s * *b.rows)).pruned();
+    // A^T S A is symmetric: one cross product gives both of its sides.
+    const bool same = &a == &b;
+    for (size_t k = 0; k < zt.size(); ++k)
     {
-        const Dense* d = nullptr;
-        if constexpr (std::is_same_v<T, double>)
-            d = &b.d;
-        else
-            d = &b.dc;
-        const auto ni = Eigen::Index(b.start.size() - 1), m = Eigen::Index(b.cols.size());
+        const Eigen::MatrixXd& da = *a.d[k];
+        const Eigen::MatrixXd& db = *b.d[k];
+        const std::vector<Index>& ca = *a.cols[k];
+        const std::vector<Index>& cb = *b.cols[k];
+        if (da.cols() > 0 && db.cols() > 0)
+        {
+            const Eigen::MatrixXd dgd = denseProduct(da, g[k], db);
+            for (Eigen::Index i = 0; i < dgd.rows(); ++i)
+                for (Eigen::Index j = 0; j < dgd.cols(); ++j)
+                    out.emplace_back(int(ca[size_t(i)]), int(cb[size_t(j)]), dgd(i, j));
+        }
+        // Chart vertices are few, so each cross term is a dense vertices x columns product.
+        if (db.cols() > 0 && a.rows->nonZeros() > 0)
+        {
+            const SpMat xa = zt[k] * *a.rows;
+            const Eigen::MatrixXd cross = SpMat(xa.transpose()) * db;
+            for (Eigen::Index v = 0; v < cross.rows(); ++v)
+                for (Eigen::Index j = 0; j < cross.cols(); ++j)
+                    if (const double x = cross(v, j); x != 0.0)
+                    {
+                        out.emplace_back(int(v), int(cb[size_t(j)]), x);
+                        if (same)
+                            out.emplace_back(int(cb[size_t(j)]), int(v), x);
+                    }
+        }
+        if (!same && da.cols() > 0 && b.rows->nonZeros() > 0)
+        {
+            const SpMat xb = zt[k] * *b.rows;
+            const Eigen::MatrixXd cross = SpMat(xb.transpose()) * da;
+            for (Eigen::Index v = 0; v < cross.rows(); ++v)
+                for (Eigen::Index i = 0; i < cross.cols(); ++i)
+                    if (const double x = cross(v, i); x != 0.0)
+                        out.emplace_back(int(ca[size_t(i)]), int(v), x);
+        }
+    }
+}
+} // namespace
+
+std::pair<SpMat, SpMat> detail::FinalOperator::gram(const SpMat& s) const
+{
+    LILA_ZONE();
+
+    std::vector<SpMat> zt(mBlocks.size()), g(mBlocks.size());
+    OperatorPart re{&mR, {}, {}}, im{&mRi, {}, {}};
+    for (size_t k = 0; k < mBlocks.size(); ++k)
+    {
+        const Block& b = mBlocks[k];
+        const auto ni = Eigen::Index(b.start.size() - 1);
         std::vector<Triplet> e;
         for (Eigen::Index q = 0; q < ni; ++q)
             for (Index c = b.start[size_t(q)]; c < b.start[size_t(q) + 1]; ++c)
@@ -1183,36 +1243,33 @@ Eigen::SparseMatrix<T> detail::FinalOperator::gramOf(const SpMat& s, const Eigen
         SpMat E(Eigen::Index(mCorners), ni);
         E.setFromTriplets(e.begin(), e.end());
         // Interior groups against themselves through the block, and against the rows they share triangles with.
-        const SpMat zt = SpMat(E.transpose()) * s;
-        const SpMat g = zt * E;
-        const Dense dgd = d->adjoint() * (Sp(g.cast<T>()) * *d);
-        for (Eigen::Index i = 0; i < m; ++i)
-            for (Eigen::Index j = 0; j < m; ++j)
-                extra.emplace_back(int(b.cols[size_t(i)]), int(b.cols[size_t(j)]), dgd(i, j));
-        // Chart vertices are few, so the cross term is a dense vertices x columns product.
-        const Sp x = Sp(zt.cast<T>()) * r;
-        const Dense cross = Sp(x.adjoint()) * *d;
-        for (Eigen::Index col = 0; col < cross.rows(); ++col)
-            for (Eigen::Index i = 0; i < m; ++i)
-                if (const T v = cross(col, i); v != T(0))
-                {
-                    extra.emplace_back(int(col), int(b.cols[size_t(i)]), v);
-                    extra.emplace_back(int(b.cols[size_t(i)]), int(col), Eigen::numext::conj(v));
-                }
+        zt[k] = SpMat(E.transpose()) * s;
+        g[k] = zt[k] * E;
+        re.d.push_back(&b.d);
+        re.cols.push_back(&b.cols);
+        im.d.push_back(&b.di);
+        im.cols.push_back(&b.imCols);
     }
-    Sp add(k.rows(), k.cols());
-    add.setFromTriplets(extra.begin(), extra.end());
-    return k + add;
-}
-
-std::pair<SpMat, SpMat> detail::FinalOperator::gram(const SpMat& s) const
-{
-    LILA_ZONE();
-
+    const auto V = Eigen::Index(mVertices);
+    auto build = [&](const std::vector<Triplet>& t, const SpMat& sparse) {
+        SpMat add(V, V);
+        add.setFromTriplets(t.begin(), t.end());
+        return SpMat(sparse + add);
+    };
+    // R^H S R with R = Re + i Im: the real part is Re^T S Re + Im^T S Im, the imaginary part Re^T S Im - (Re^T S Im)^T.
+    std::vector<Triplet> t;
+    SpMat sparse;
+    crossTerms(re, re, s, zt, g, t, sparse);
+    SpMat k = build(t, sparse);
     if (!mRotates)
-        return {gramOf<double>(s, mR), SpMat()};
-    const CSpMat k = gramOf<std::complex<double>>(s, mRc);
-    return {SpMat(k.real()), SpMat(k.imag())};
+        return {k, SpMat()};
+    t.clear();
+    crossTerms(im, im, s, zt, g, t, sparse);
+    k += build(t, sparse);
+    t.clear();
+    crossTerms(re, im, s, zt, g, t, sparse);
+    const SpMat ri = build(t, sparse);
+    return {k, SpMat(ri - SpMat(ri.transpose())).pruned()};
 }
 
 std::vector<double> detail::FinalOperator::columnWeight() const
@@ -1225,7 +1282,9 @@ std::vector<double> detail::FinalOperator::columnWeight() const
         {
             const double n = double(b.start[q + 1] - b.start[q]);
             for (size_t j = 0; j < b.cols.size(); ++j)
-                w[b.cols[j]] += n * (mRotates ? std::abs(b.dc(Eigen::Index(q), Eigen::Index(j))) : std::abs(b.d(Eigen::Index(q), Eigen::Index(j))));
+                w[b.cols[j]] += n * std::abs(b.d(Eigen::Index(q), Eigen::Index(j)));
+            for (size_t j = 0; j < b.imCols.size(); ++j)
+                w[b.imCols[j]] += n * std::abs(b.di(Eigen::Index(q), Eigen::Index(j)));
         }
     return w;
 }
