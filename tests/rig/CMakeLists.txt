@@ -2,6 +2,7 @@ add_executable(lila_rig_tests
     main.cpp
     test_joints.cpp
     test_skin.cpp
+    test_weight_paint.cpp
     test_constraints.cpp
     test_center.cpp
     test_ik.cpp

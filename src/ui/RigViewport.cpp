@@ -510,6 +510,7 @@ void registerRigViewport()
     viewportHooks::addDrawer(drawIkHandles);
     viewportHooks::addPicker(pickIkHandles);
     registerRigActions();
+    registerWeightPaint();
     rigHandles::registerRigHandles();
     registerDominantInfluenceUi();
     registerAnimProxyUi();

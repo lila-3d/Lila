@@ -296,7 +296,7 @@ QPointF ringPosition(const Stroke& stroke, QPointF hover)
 void drawCursor(lila::ui::OverlayPainter& p, const lila::ui::ViewInfo& view, const BrushSettings& s, QPointF at,
                 const std::optional<CursorSurface>& surface, const CursorOptions& o)
 {
-    const glm::vec4 rim(0.95f, 0.95f, 0.95f, 1.0f), dim(0.6f, 0.6f, 0.6f, 0.8f), strength(0.82f, 0.82f, 0.82f, 0.95f);
+    const glm::vec4 rim = o.color.value_or(glm::vec4(0.95f, 0.95f, 0.95f, 1.0f)), dim(0.6f, 0.6f, 0.6f, 0.8f), strength(0.82f, 0.82f, 0.82f, 0.95f);
     if (o.stroke && o.stroke->active())
     {
         const StrokeSampler& sm = o.stroke->sampler();

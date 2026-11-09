@@ -242,7 +242,7 @@ void MainWindow::buildMenus()
     menus::addActions("Rig", {"#Skeleton", "rig.jointTool", "rig.orientJoint", "rig.mirrorJoints", "rig.insertJoint", "rig.rerootSkeleton", "rig.centerJoint",
                        "rig.snapToComponentCenter", "#Skin", "rig.bindSkin",
                        "rig.bindSkinHeatmap", "rig.unbindSkin", "rig.goToBindPose", "rig.editSkeleton", "#Weights", "rig.paintWeights", "rig.mirrorSkinWeights",
-                       "rig.copySkinWeights", "rig.normalizeWeights", "rig.pruneWeights", "#Constraints", "rig.parentConstraint", "rig.pointConstraint",
+                       "rig.copySkinWeights", "rig.normalizeWeights", "rig.pruneWeights", "rig.relaxWeights", "rig.settleWeights", "rig.settleWeightsSimulate", "rig.selectAutomaticWeights", "rig.acceptWeights", "#Constraints", "rig.parentConstraint", "rig.pointConstraint",
                        "rig.orientConstraint", "rig.aimConstraint", "rig.removeConstraint", "rig.pin", "rig.bakePin", "#Curve Controls", "curve.controls",
                        "curve.removeControls", "#IK", "rig.ikHandle", "rig.splineChain", "rig.hoseLimb", "rig.hoseFingers", "#Display", "rig.xrayJoints", "rig.showIkLimits",
                        "rig.dominantInfluenceSelect"});
