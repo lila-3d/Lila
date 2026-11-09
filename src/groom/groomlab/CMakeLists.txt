@@ -39,6 +39,7 @@ set_source_files_properties(${_kernels_cpp} PROPERTIES GENERATED ON HEADER_FILE_
 add_library(groomlab_core STATIC
     core/src/attributes.cpp
     core/src/brush.cpp
+    core/src/brush_catalog.cpp
     core/src/brush_alpha.cpp
     core/src/camera_solve.cpp
     core/src/card_atlas.cpp

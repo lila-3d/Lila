@@ -134,11 +134,16 @@ public:
         std::map<std::string, std::vector<std::string>> channels;
         std::map<std::string, std::string> notes;
         int scalpHistoryFrames = 0;
+        /** The placed instances whose strand the view has. */
+        std::size_t instances = 0;
         std::size_t restEvaluations = 0;
         std::size_t cacheBytes = 0, cacheEvictions = 0;
         /** A stroke document is kept (a stroke made one, or warmStroke). */
         bool strokeDocument = false;
         std::vector<groomlab::SimStatus> simulations;
+
+        /** Every field as a JSON object (the MCP and Python stats). */
+        std::string toJson() const;
     };
 
     struct Result
@@ -247,6 +252,8 @@ public:
     void setScalpMapsJson(const std::string& json);
     void setScalpMaps(groomlab::ScalpMaps maps);
     const groomlab::ScalpMaps& scalpMaps() const { return mScalpMaps; }
+    /** The scalp maps as stored: the text set, else the maps as JSON. */
+    std::string scalpMapsJson() const { return mScalpMapsFromText ? mScalpMapsText : mScalpMaps.toJson(); }
     const std::string& scalpMapsError() const { return mScalpMapsError; }
     /** The map catalog when the scalp carries its vertex maps already; used while no scalp maps are set. */
     void setMapCatalog(groomlab::MapCatalog maps);

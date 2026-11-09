@@ -11,6 +11,7 @@ add_executable(lila_groomlab_tests
     core/test_budgets.cpp
     core/test_budgets_ops.cpp
     core/test_budgets_paint.cpp
+    core/test_budgets_stroke.cpp
     core/test_camera_solve.cpp
     core/test_card_maps.cpp
     core/test_card_separation.cpp
