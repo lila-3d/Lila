@@ -4,9 +4,13 @@
 
 #include "scene/BendBonesDeformer.h"
 
+#include "core/Log.h"
 #include "core/Profile.h"
 #include "deform/BendBones.h"
 #include "deform/Ssdr.h"
+#include "curve/CurveControls.h"
+#include "curve/NodeHelpers.h"
+#include "curve/Tessellate.h"
 #include "geo/Mesh.h"
 #include "ops/Command.h"
 #include "scene/Deformers.h"
@@ -19,6 +23,7 @@
 #include "scene/Rig.h"
 #include "scene/RigUtil.h"
 #include "scene/Skin.h"
+#include "scene/SplineChain.h"
 #include "scene/Transform.h"
 #include "scene/UnrealCheck.h"
 
@@ -692,21 +697,121 @@ NodeId partnerCv(Graph& g, NodeId cv)
     return kNoNode;
 }
 
-/** Moves cv's partner to cv's position mirrored across the character's centre (its top joint's YZ plane). */
-NodeId mirrorCv(Graph& g, NodeId cv)
+/** The hose limb a joint shapes or rides: its limb joints feed the hose, its hose joints ride the hose's chain. */
+NodeId hoseOf(Graph& g, NodeId joint)
 {
-    const NodeId partner = partnerCv(g, cv);
+    const NodeId chain = spline::splineChainContaining(g, joint);
+    for (NodeId id : g.nodes())
+    {
+        Node* n = g.node(id);
+        if (!n || !n->type().isA(spline::kHoseType))
+            continue;
+        if (chain && spline::hoseChain(g, id) == chain)
+            return id;
+        for (const char* attr : {"rootMatrix", "midMatrix"})
+            if (const auto src = g.source({id, n->type().attrIndex(attr), -1}); src && src->node == joint)
+                return id;
+    }
+    return kNoNode;
+}
+
+/** A hose limb's bone CV is its bend control: the hose's arc goes through it. */
+NodeId hoseCv(Graph& g, NodeId hose)
+{
+    const auto src = g.source({hose, g.node(hose)->type().attrIndex("bendMatrix"), -1});
+    return src ? src->node : kNoNode;
+}
+
+/**
+ * A bone CV on a spline chain: a point inserted into the chain's curve at the bone's middle (its shape unchanged), with
+ * a control like the others. The curve's controls are rebuilt, so it refuses while any of them is keyed.
+ */
+NodeId addSplineCv(Graph& g, NodeId chain, NodeId joint, double at)
+{
+    const std::vector<NodeId> joints = spline::splineChainJoints(g, chain);
+    const auto it = std::find(joints.begin(), joints.end(), joint);
+    if (it == joints.end() || it + 1 == joints.end())
+        throw CommandError("bendBoneCV: " + g.node(joint)->path() + " ends its spline chain, so it has no bone after it");
+    Node* curve = g.find(g.node(chain)->as<std::string>(g.node(chain)->type().attrIndex("curve")));
+    if (!curve)
+        throw CommandError("bendBoneCV: the spline chain of " + g.node(joint)->path() + " has no curve");
+    std::vector<NodeId> controls = curve::curveControlNodes(g, *curve);
+    for (NodeId c : controls)
+        for (int attr : {int(Transform::kTranslate), int(Transform::kRotate)})
+            if (g.source({c, attr, -1}) || g.source({c, attr, 0}) || g.source({c, attr, 1}) || g.source({c, attr, 2}))
+                throw CommandError("bendBoneCV: " + g.node(c)->name() + " is keyed or driven, and adding a point rebuilds the curve's controls");
+    g.evaluate();
+    const glm::dvec3 mid = glm::mix(glm::dvec3(worldOf(*g.node(*it))[3]), glm::dvec3(worldOf(*g.node(*(it + 1)))[3]), at);
+    const glm::dvec3 local(glm::inverse(worldOf(*curve)) * glm::dvec4(mid, 1.0));
+    const curve::Splines splines = curve::helpers::storedSplines(g, *curve);
+    if (splines.empty())
+        throw CommandError("bendBoneCV: the spline chain's curve is empty");
+    const double u = curve::closestParam(splines.front(), local);
+    const bool hadControls = !controls.empty();
+    const bool handles = hadControls && controls.size() > splines.front().points.size();
+    if (hadControls)
+        ops::execute("removeCurveControls", {{"args", {curve->path()}}});
+    const size_t inserted = ops::execute("insertCurvePoint", {{"args", {curve->path()}}, {"parameter", u}}).get<size_t>();
+    const json made = ops::execute("curveControls", {{"args", {curve->path()}}, {"handles", handles}});
+    // One control per point, in point order, unless handles have controls of their own.
+    if (!handles && inserted < made.size())
+        if (Node* c = g.find(made[inserted].get<std::string>()))
+            return c->id();
+    NodeId best = kNoNode;
+    double bestD = 1e300;
+    g.evaluate();
+    for (const json& n : made)
+        if (Node* c = g.find(n.get<std::string>()))
+            if (const double d = glm::length(glm::dvec3(worldOf(*c)[3]) - mid); d < bestD)
+            {
+                bestD = d;
+                best = c->id();
+            }
+    return best;
+}
+
+/** A bone CV on joint's bone, whatever kind of bend-bone chain it is in; kNoNode when it is in none. */
+NodeId cvOnChain(Graph& g, NodeId joint, double at)
+{
+    if (Node* d = deformerOf(g, joint))
+        return addCv(g, *d, joint, at);
+    if (const NodeId hose = hoseOf(g, joint))
+    {
+        log::write(LogLevel::Info, "bendBoneCV: " + g.node(hose)->name() + " is a hose limb, which bends through its bend control");
+        return hoseCv(g, hose);
+    }
+    if (const NodeId chain = spline::splineChainContaining(g, joint))
+        return addSplineCv(g, chain, joint, at);
+    return kNoNode;
+}
+
+/** Moves cv's partner to cv's position mirrored across the character's centre (its top joint's YZ plane). */
+NodeId mirrorCv(Graph& g, NodeId cv, NodeId partner = kNoNode)
+{
+    if (partner == kNoNode)
+        partner = partnerCv(g, cv);
+    if (partner == kNoNode)
+    {
+        const std::string other = poses::mirrorNodeName(g.node(cv)->name());
+        if (Node* n = other != g.node(cv)->name() ? g.find(other) : nullptr)
+            partner = n->id();
+    }
     if (partner == kNoNode)
         return kNoNode;
     g.evaluate();
+    // The centre: the top joint above the CV, else the world origin.
     NodeId top = g.parent(cv);
-    while (g.parent(top) != kNoNode && rig::isJoint(*g.node(g.parent(top))))
+    while (top != kNoNode && !rig::isJoint(*g.node(top)))
         top = g.parent(top);
-    const glm::dmat4 centre = worldOf(*g.node(top));
+    while (top != kNoNode && g.parent(top) != kNoNode && rig::isJoint(*g.node(g.parent(top))))
+        top = g.parent(top);
+    const glm::dmat4 centre = top != kNoNode ? worldOf(*g.node(top)) : glm::dmat4(1.0);
     glm::dvec3 local = glm::dvec3(glm::inverse(centre) * worldOf(*g.node(cv))[3]);
     local.x = -local.x;
     const glm::dvec3 world = glm::dvec3(centre * glm::dvec4(local, 1.0));
-    g.setValue({partner, Transform::kTranslate, -1}, glm::dvec3(glm::inverse(worldOf(*g.node(g.parent(partner)))) * glm::dvec4(world, 1.0)));
+    const NodeId parent = g.parent(partner);
+    const glm::dmat4 parentWorld = parent != kNoNode ? worldOf(*g.node(parent)) : glm::dmat4(1.0);
+    g.setValue({partner, Transform::kTranslate, -1}, glm::dvec3(glm::inverse(parentWorld) * glm::dvec4(world, 1.0)));
     return partner;
 }
 } // namespace
@@ -832,8 +937,8 @@ void registerCommands()
     });
     ops::registerCommand({
         .name = "bendBoneCV",
-        .doc = "Add a bone CV to a bend bones bone: an extra point its curve passes through, at a fraction along the bone "
-               "from joint to its child. Move or key it to reshape the bone without rebinding. Returns the CV.",
+        .doc = "Add a bone CV to a bend bones bone (or a spline chain bone, as a curve point with a control; a hose limb answers with its bend control), an extra point the curve passes through at a fraction "
+               "along the bone from joint to its child. Move or key it to reshape the bone without rebinding. Returns the CV.",
         .positionalDoc = "deformer, or a joint",
         .flags = {
             {"joint", "j", T::String, nullptr, "The bone's first joint (it runs to the next joint of its chain)."},
@@ -846,12 +951,23 @@ void registerCommands()
             Node* d = objs.empty() ? nullptr : g.find(objs.front());
             // A selected joint alone: its bone on whichever bendBones drives it.
             NodeId joint = kNoNode;
+            const double at = std::clamp(a.get<double>("at", 0.5), 0.0, 1.0);
             if (d && rig::isJoint(*d) && !a.has("joint"))
             {
                 joint = d->id();
                 d = deformerOf(g, joint);
+                // Spline chains and hose limbs are bend-bone chains too.
                 if (!d)
-                    throw CommandError("bendBoneCV: " + g.node(joint)->path() + " drives no bend bones");
+                {
+                    const NodeId cv = cvOnChain(g, joint, at);
+                    if (cv == kNoNode)
+                        throw CommandError("bendBoneCV: " + g.node(joint)->path() + " is in no bend bones, spline chain or hose limb");
+                    if (a.get<bool>("mirror", true))
+                        if (const NodeId other = mirrorJoint(g, joint); other != kNoNode && other != joint)
+                            if (const NodeId ocv = cvOnChain(g, other, at); ocv != kNoNode)
+                                mirrorCv(g, cv, ocv);
+                    return g.node(cv)->path();
+                }
             }
             if (!d || d->type().name != kType)
                 throw CommandError("bendBoneCV: give a bendBones deformer, or select a bend bones joint");
@@ -859,7 +975,6 @@ void registerCommands()
                 throw CommandError("bendBoneCV: give the bone's first joint");
             if (joint == kNoNode)
                 joint = jointArg(g, a.flags["joint"], "bendBoneCV");
-            const double at = std::clamp(a.get<double>("at", 0.5), 0.0, 1.0);
             const NodeId cv = addCv(g, *d, joint, at);
             if (a.get<bool>("mirror", true))
                 if (const NodeId other = mirrorJoint(g, joint); other != kNoNode)
@@ -881,7 +996,7 @@ void registerCommands()
             Graph& g = graph();
             std::vector<NodeId> cvs;
             for (const std::string& name : a.objects())
-                if (Node* n = g.find(name); n && n->type().name == kCvType)
+                if (Node* n = g.find(name); n && n->type().isA("transform"))
                     cvs.push_back(n->id());
             if (cvs.empty())
                 throw CommandError("mirrorBendBoneCVs: give bone CVs");
@@ -897,7 +1012,8 @@ void registerCommands()
         .doc = "Bake a bendBones deformer to plain joints for Unreal: each bone gets segment joints along its curve, keyed on "
                "every sampled frame, and the mesh is skinned to them with weights fitted (SSDR) to the bend bones' result over "
                "the animation and random poses. The deformer is turned off so the viewport shows what Unreal gets. Returns "
-               "{joints, skinCluster, rmse, maxError, frames, poses, unrealCheck}: the fit error in cm and the Unreal round-trip check.",
+               "{joints, skinCluster, rmse, maxError, frames, poses, unrealCheck}: the fit error in cm and the Unreal round-trip check. "
+               "A mesh skinned to spline chain or hose joints is already joints: it gets the Unreal check alone.",
         .positionalDoc = "deformer or mesh",
         .flags = {
             {"segments", "sg", T::Int, 3, "Segment joints per bone.", {}, {}, 1.0, 16.0},
@@ -919,6 +1035,24 @@ void registerCommands()
                 for (NodeId id : modifiers::stack(g, d->id()))
                     if (g.node(id)->type().name == kType)
                         d = g.node(id);
+            // A mesh skinned to spline chain or hose joints is already plain joints: only the Unreal check is left to do.
+            if (d && d->type().isA("mesh") && skin::find(g, d->id()) != kNoNode)
+            {
+                std::vector<NodeId> chained;
+                for (const skin::Influence& i : skin::influences(g, skin::find(g, d->id())))
+                    if (i.joint != kNoNode && spline::splineChainContaining(g, i.joint))
+                        chained.push_back(i.joint);
+                if (!chained.empty())
+                {
+                    const anim::Playback& pb = anim::playback();
+                    const uecheck::ExportCheck c = uecheck::checkExport(g, {d->id()}, false, pb.minTime, pb.maxTime, pb.fps, "bakeBendBones");
+                    json mismatches = json::array();
+                    for (const uecheck::Mismatch& m : c.report.mismatches)
+                        mismatches.push_back({{"joint", g.node(m.joint)->path()}, {"error", m.error}, {"time", m.time}});
+                    log::write(LogLevel::Info, "bakeBendBones: " + d->name() + " is skinned to spline chain joints, which export as they are; checked them for Unreal");
+                    return {{"joints", json::array()}, {"alreadyJoints", true}, {"unrealCheck", {{"worst", c.report.worst}, {"frames", c.report.frames}, {"mismatches", mismatches}, {"error", c.error}}}};
+                }
+            }
             if (!d || d->type().name != kType)
                 throw CommandError("bakeBendBones: give a bendBones deformer or a mesh it deforms");
             return bake(g, *d, a);

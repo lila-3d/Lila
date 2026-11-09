@@ -488,7 +488,7 @@ void registerRigActions()
     add("rig.hoseFingers", "Rubber Hose Fingers", [] { command("hoseFingers"); }, "hoseFingers()",
         "Bend-bone fingers: makes the selected finger base joints rubber hose fingers with curl, spread and a hand fist.");
     add("rig.bendBoneCV", "Add Bone CV", [] { command("bendBoneCV"); }, "bendBoneCV()",
-        "Adds a CV halfway along the selected joint's bend bone, and on the other side's: move or key it to reshape the bone.");
+        "Adds a CV halfway along the selected joint's bend bone or spline chain bone, and on the other side's; on a hose limb, picks its bend control.");
     add("rig.mirrorBoneCVs", "Mirror Bone CVs", [] { command("mirrorBendBoneCVs"); }, "mirrorBendBoneCVs()",
         "Moves the other side's bone CVs to mirror the selected ones.");
     add("rig.bakeBendBones", "Bake Bend Bones", [] { command("bakeBendBones"); }, "bakeBendBones()",
