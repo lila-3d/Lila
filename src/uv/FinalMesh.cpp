@@ -322,12 +322,17 @@ std::vector<int> sourceFaces(const geo::Mesh& cage, const geo::Mesh& res, std::s
     return src;
 }
 
-using Row = std::vector<std::pair<Index, double>>;
+using Row = std::vector<std::pair<Index, FinalWeight>>;
+
+bool byColumn(const std::pair<Index, FinalWeight>& a, const std::pair<Index, FinalWeight>& b)
+{
+    return a.first < b.first;
+}
 
 /** Sorts a row by column and sums repeated columns. */
 void mergeRow(Row& r)
 {
-    std::sort(r.begin(), r.end());
+    std::sort(r.begin(), r.end(), byColumn);
     size_t n = 0;
     for (size_t k = 0; k < r.size(); ++k)
         if (n > 0 && r[n - 1].first == r[k].first)
@@ -460,7 +465,11 @@ std::string probe(const geo::Mesh& cage, std::string_view uvSet, const Stack& st
     }
     std::vector<int> colour;
     const int colours = colourWedges(hoods, w.rep.size(), colour);
-    const int layers = (colours + 1) / 2;
+    // A composed fit's rotations come from its recording, so its ring-local probes only see blends that scale: a layer moves
+    // one colour in u and another in v. Otherwise each colour gets a layer of its own, moved in u, and both channels answer,
+    // so a weight that rotates shows in v.
+    const int perLayer = composeFit ? 2 : 1;
+    const int layers = (colours + perLayer - 1) / perLayer;
     const int perRun = wholeIslands ? kIslandLayersPerRun : kLayersPerRun;
     // Each hood's wedges by colour, which is unique within a hood.
     std::vector<std::vector<std::pair<int, Index>>> byColour(hoods.size());
@@ -508,9 +517,9 @@ std::string probe(const geo::Mesh& cage, std::string_view uvSet, const Stack& st
                 if (wd == kInvalid)
                     continue;
                 glm::dvec2 v(cageUv[c]);
-                if (colour[wd] == cu)
+                if (perLayer == 1 ? colour[wd] == first + k : colour[wd] == cu)
                     v.x += kDelta;
-                else if (colour[wd] == cv)
+                else if (perLayer == 2 && colour[wd] == cv)
                     v.y += kDelta;
                 p[c] = glm::vec2(v);
             }
@@ -556,12 +565,13 @@ std::string probe(const geo::Mesh& cage, std::string_view uvSet, const Stack& st
                 const std::vector<std::pair<int, Index>>* hood = src >= 0 && Index(src) < hoodOf.size() ? &byColour[hoodOf[Index(src)]] : nullptr;
                 res.forEachFaceCorner(f, [&](Index c) {
                     for (int k = 0; k < count; ++k)
-                        for (int ch = 0; ch < 2; ++ch)
+                        for (int ch = 0; ch < perLayer; ++ch)
                         {
-                            const double d = (double(probes[size_t(k)][c][ch]) - double(baseUv[c][ch])) / kDelta;
+                            const glm::dvec2 r = (glm::dvec2(probes[size_t(k)][c]) - glm::dvec2(baseUv[c])) / kDelta;
+                            const FinalWeight d = perLayer == 1 ? FinalWeight(r.x, r.y) : FinalWeight(r[ch], 0.0);
                             if (std::abs(d) < (wholeIslands ? kMinIslandWeight : kMinWeight))
                                 continue;
-                            const int col = 2 * (first + k) + ch;
+                            const int col = perLayer * (first + k) + ch;
                             Index found = kInvalid;
                             if (hood)
                                 if (auto it = std::lower_bound(hood->begin(), hood->end(), std::pair<int, Index>{col, 0}); it != hood->end() && it->first == col)
@@ -595,7 +605,7 @@ std::string probe(const geo::Mesh& cage, std::string_view uvSet, const Stack& st
     std::vector<glm::dvec2> mapped(rows, glm::dvec2(0.0));
     for (Index c = 0; c < rows; ++c)
         for (auto [wd, wt] : entries[c])
-            mapped[c] += wt * glm::dvec2(cageUv[w.rep[wd]]);
+            mapped[c] += weigh(wt, glm::dvec2(cageUv[w.rep[wd]]));
     applyFills(out.fills, mapped);
     double worstMiss = 0.0, worstFit = 0.0;
     for (Index f = 0; f < real.faceCapacity(); ++f)
@@ -612,8 +622,8 @@ std::string probe(const geo::Mesh& cage, std::string_view uvSet, const Stack& st
     out.rowStart.assign(size_t(rows) + 1, 0);
     for (Index c = 0; c < rows; ++c)
     {
-        std::vector<std::pair<Index, double>>& e = entries[c];
-        std::sort(e.begin(), e.end());
+        Row& e = entries[c];
+        std::sort(e.begin(), e.end(), byColumn);
         out.rowStart[c + 1] = out.rowStart[c] + Index(e.size());
     }
     out.cols.resize(out.rowStart.back());
@@ -852,7 +862,7 @@ std::vector<glm::dvec2> exportedUvs(const FinalMap& map, const geo::Mesh& cage, 
     out.assign(map.exported->cornerCapacity(), glm::dvec2(0.0));
     for (size_t c = 0; c + 1 < map.rowStart.size(); ++c)
         for (Index k = map.rowStart[c]; k < map.rowStart[c + 1]; ++k)
-            out[c] += map.weights[k] * glm::dvec2(cageUv[map.cols[k]]);
+            out[c] += weigh(map.weights[k], glm::dvec2(cageUv[map.cols[k]]));
     applyFills(map.fills, out);
     return out;
 }
@@ -872,7 +882,7 @@ std::vector<glm::dvec2> FinalIsland::uvs(const Chart& chart) const
     {
         glm::dvec2 s = offset[c];
         for (Index k = rowStart[c]; k < rowStart[c + 1]; ++k)
-            s += weights[k] * chart.uv[cols[k]];
+            s += weigh(weights[k], chart.uv[cols[k]]);
         out[c] = s;
     }
     applyFills(fills, out);
@@ -955,7 +965,7 @@ std::vector<FinalIsland> finalIslands(const FinalMap& map, const geo::Mesh& cage
         }
     });
     std::vector<Index> local(ex.cornerCapacity(), kInvalid), cornerIsland(ex.cornerCapacity(), kInvalid), tri;
-    std::vector<std::pair<Index, double>> row;
+    Row row;
     // A corner of the island's faces, or (not own) one only a fill of the island reads.
     auto addCorner = [&](Index ci, Index c, bool own) {
         FinalIsland& isl = out[ci];
@@ -977,9 +987,9 @@ std::vector<FinalIsland> finalIslands(const FinalMap& map, const geo::Mesh& cage
             if (cornerChart[col] == ci)
                 row.push_back({cornerVertex[col], map.weights[k]});
             else if (col < cageUv.size())
-                off += map.weights[k] * glm::dvec2(cageUv[col]);
+                off += weigh(map.weights[k], glm::dvec2(cageUv[col]));
         }
-        std::sort(row.begin(), row.end());
+        std::sort(row.begin(), row.end(), byColumn);
         for (size_t k = 0; k < row.size(); ++k)
             if (!isl.cols.empty() && isl.cols.size() > isl.rowStart.back() && isl.cols.back() == row[k].first)
                 isl.weights.back() += row[k].second;
@@ -1036,19 +1046,33 @@ std::vector<FinalIsland> finalIslands(const FinalMap& map, const geo::Mesh& cage
     return out;
 }
 
-detail::FinalOperator::FinalOperator(const FinalIsland& isl, size_t vertexCount) : mIsl(isl), mCorners(isl.pos.size()), mVertices(vertexCount)
+detail::FinalOperator::FinalOperator(const FinalIsland& isl, size_t vertexCount, bool conjugate)
+    : mIsl(isl), mCorners(isl.pos.size()), mVertices(vertexCount), mConjugate(conjugate)
 {
     LILA_ZONE();
 
+    mRotates = std::ranges::any_of(isl.weights, [](const FinalWeight& w) { return w.imag() != 0.0; });
     const auto C = Eigen::Index(mCorners), V = Eigen::Index(mVertices);
-    std::vector<Triplet> trips;
-    trips.reserve(isl.cols.size());
-    for (size_t c = 0; c < mCorners; ++c)
-        for (Index k = isl.rowStart[c]; k < isl.rowStart[c + 1]; ++k)
-            trips.emplace_back(int(c), int(isl.cols[k]), isl.weights[k]);
-    mR.resize(C, V);
-    mR.setFromTriplets(trips.begin(), trips.end());
-    mRt = mR.transpose();
+    if (mRotates)
+    {
+        std::vector<Eigen::Triplet<std::complex<double>>> trips;
+        trips.reserve(isl.cols.size());
+        for (size_t c = 0; c < mCorners; ++c)
+            for (Index k = isl.rowStart[c]; k < isl.rowStart[c + 1]; ++k)
+                trips.emplace_back(int(c), int(isl.cols[k]), weight(k));
+        mRc.resize(C, V);
+        mRc.setFromTriplets(trips.begin(), trips.end());
+    }
+    else
+    {
+        std::vector<Triplet> trips;
+        trips.reserve(isl.cols.size());
+        for (size_t c = 0; c < mCorners; ++c)
+            for (Index k = isl.rowStart[c]; k < isl.rowStart[c + 1]; ++k)
+                trips.emplace_back(int(c), int(isl.cols[k]), isl.weights[k].real());
+        mR.resize(C, V);
+        mR.setFromTriplets(trips.begin(), trips.end());
+    }
     std::vector<int> at(mVertices, -1);
     for (const FinalFill& f : isl.fills)
     {
@@ -1061,18 +1085,32 @@ detail::FinalOperator::FinalOperator(const FinalIsland& isl, size_t vertexCount)
         for (size_t j = 0; j < b.cols.size(); ++j)
             at[b.cols[j]] = int(j);
         const auto nb = Eigen::Index(f.border.size()), m = Eigen::Index(b.cols.size()), ni = Eigen::Index(f.fill->interiorCount());
-        // The border's rows over the fill's columns.
-        Eigen::MatrixXd rows = Eigen::MatrixXd::Zero(nb, m);
+        // The border's rows over the fill's columns, real parts then imaginary parts: the fill solves both alike.
+        const Eigen::Index parts = mRotates ? 2 : 1;
+        Eigen::MatrixXd rows = Eigen::MatrixXd::Zero(nb, m * parts);
         for (Eigen::Index k = 0; k < nb; ++k)
         {
             const Index c = f.border[size_t(k)];
             for (Index e = isl.rowStart[c]; e < isl.rowStart[c + 1]; ++e)
-                rows(k, at[isl.cols[e]]) += isl.weights[e];
+            {
+                const FinalWeight w = weight(e);
+                rows(k, at[isl.cols[e]]) += w.real();
+                if (mRotates)
+                    rows(k, m + at[isl.cols[e]]) += w.imag();
+            }
         }
         for (Index v : b.cols)
             at[v] = -1;
-        b.d.resize(ni, m);
-        f.fill->solve(std::span<const double>(rows.data(), size_t(rows.size())), std::span<double>(b.d.data(), size_t(b.d.size())), size_t(m));
+        Eigen::MatrixXd d(ni, m * parts);
+        f.fill->solve(std::span<const double>(rows.data(), size_t(rows.size())), std::span<double>(d.data(), size_t(d.size())), size_t(m * parts));
+        if (mRotates)
+        {
+            b.dc.resize(ni, m);
+            b.dc.real() = d.leftCols(m);
+            b.dc.imag() = d.rightCols(m);
+        }
+        else
+            b.d = std::move(d);
         b.start = f.interiorStart;
         b.corners = f.interiorCorners;
         mBlocks.push_back(std::move(b));
@@ -1085,7 +1123,7 @@ void detail::FinalOperator::apply(std::span<const glm::dvec2> x, std::span<glm::
     {
         glm::dvec2 s = mIsl.offset[c] * offsetScale;
         for (Index k = mIsl.rowStart[c]; k < mIsl.rowStart[c + 1]; ++k)
-            s += mIsl.weights[k] * x[mIsl.cols[k]];
+            s += weigh(weight(k), x[mIsl.cols[k]]);
         y[c] = s;
     }
     // A solve reads far less memory than the dense blocks.
@@ -1097,7 +1135,7 @@ void detail::FinalOperator::applyTransposed(std::span<const glm::dvec2> g, std::
     std::fill(out.begin(), out.end(), glm::dvec2(0.0));
     for (size_t c = 0; c < mCorners; ++c)
         for (Index k = mIsl.rowStart[c]; k < mIsl.rowStart[c + 1]; ++k)
-            out[mIsl.cols[k]] += mIsl.weights[k] * g[c];
+            out[mIsl.cols[k]] += weigh(std::conj(weight(k)), g[c]);
     std::vector<double> gi, gb;
     for (const FinalFill& f : mIsl.fills)
     {
@@ -1115,21 +1153,28 @@ void detail::FinalOperator::applyTransposed(std::span<const glm::dvec2> g, std::
         {
             const Index c = f.border[k];
             for (Index e = mIsl.rowStart[c]; e < mIsl.rowStart[c + 1]; ++e)
-                out[mIsl.cols[e]] += mIsl.weights[e] * glm::dvec2(gb[k], gb[nb + k]);
+                out[mIsl.cols[e]] += weigh(std::conj(weight(e)), glm::dvec2(gb[k], gb[nb + k]));
         }
     }
 }
 
-SpMat detail::FinalOperator::gram(const SpMat& s) const
+template <class T>
+Eigen::SparseMatrix<T> detail::FinalOperator::gramOf(const SpMat& s, const Eigen::SparseMatrix<T>& r) const
 {
-    LILA_ZONE();
-
-    SpMat k = (mRt * (s * mR)).pruned();
+    using Sp = Eigen::SparseMatrix<T>;
+    using Dense = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
+    const Sp rh = r.adjoint();
+    Sp k = (rh * (Sp(s.cast<T>()) * r)).pruned();
     if (mBlocks.empty())
         return k;
-    std::vector<Triplet> extra;
+    std::vector<Eigen::Triplet<T>> extra;
     for (const Block& b : mBlocks)
     {
+        const Dense* d = nullptr;
+        if constexpr (std::is_same_v<T, double>)
+            d = &b.d;
+        else
+            d = &b.dc;
         const auto ni = Eigen::Index(b.start.size() - 1), m = Eigen::Index(b.cols.size());
         std::vector<Triplet> e;
         for (Eigen::Index q = 0; q < ni; ++q)
@@ -1140,24 +1185,34 @@ SpMat detail::FinalOperator::gram(const SpMat& s) const
         // Interior groups against themselves through the block, and against the rows they share triangles with.
         const SpMat zt = SpMat(E.transpose()) * s;
         const SpMat g = zt * E;
-        const Eigen::MatrixXd dgd = b.d.transpose() * (g * b.d);
+        const Dense dgd = d->adjoint() * (Sp(g.cast<T>()) * *d);
         for (Eigen::Index i = 0; i < m; ++i)
             for (Eigen::Index j = 0; j < m; ++j)
                 extra.emplace_back(int(b.cols[size_t(i)]), int(b.cols[size_t(j)]), dgd(i, j));
         // Chart vertices are few, so the cross term is a dense vertices x columns product.
-        const SpMat x = zt * mR;
-        const Eigen::MatrixXd cross = SpMat(x.transpose()) * b.d;
+        const Sp x = Sp(zt.cast<T>()) * r;
+        const Dense cross = Sp(x.adjoint()) * *d;
         for (Eigen::Index col = 0; col < cross.rows(); ++col)
             for (Eigen::Index i = 0; i < m; ++i)
-                if (const double v = cross(col, i); v != 0.0)
+                if (const T v = cross(col, i); v != T(0))
                 {
-                    extra.emplace_back(int(b.cols[size_t(i)]), int(col), v);
                     extra.emplace_back(int(col), int(b.cols[size_t(i)]), v);
+                    extra.emplace_back(int(b.cols[size_t(i)]), int(col), Eigen::numext::conj(v));
                 }
     }
-    SpMat add(k.rows(), k.cols());
+    Sp add(k.rows(), k.cols());
     add.setFromTriplets(extra.begin(), extra.end());
     return k + add;
+}
+
+std::pair<SpMat, SpMat> detail::FinalOperator::gram(const SpMat& s) const
+{
+    LILA_ZONE();
+
+    if (!mRotates)
+        return {gramOf<double>(s, mR), SpMat()};
+    const CSpMat k = gramOf<std::complex<double>>(s, mRc);
+    return {SpMat(k.real()), SpMat(k.imag())};
 }
 
 std::vector<double> detail::FinalOperator::columnWeight() const
@@ -1170,9 +1225,45 @@ std::vector<double> detail::FinalOperator::columnWeight() const
         {
             const double n = double(b.start[q + 1] - b.start[q]);
             for (size_t j = 0; j < b.cols.size(); ++j)
-                w[b.cols[j]] += n * std::abs(b.d(Eigen::Index(q), Eigen::Index(j)));
+                w[b.cols[j]] += n * (mRotates ? std::abs(b.dc(Eigen::Index(q), Eigen::Index(j))) : std::abs(b.d(Eigen::Index(q), Eigen::Index(j))));
         }
     return w;
+}
+
+bool detail::UvFactor::compute(const SpMat& re, const SpMat& im)
+{
+    LILA_ZONE();
+
+    mComplex = im.nonZeros() > 0;
+    if (!mComplex)
+    {
+        mReal.compute(re);
+        mOk = mReal.info() == Eigen::Success;
+        return mOk;
+    }
+    const CSpMat k = re.cast<std::complex<double>>() + std::complex<double>(0.0, 1.0) * im.cast<std::complex<double>>();
+    mCx.compute(k);
+    mOk = mCx.info() == Eigen::Success;
+    return mOk;
+}
+
+bool detail::UvFactor::solve(const Eigen::VectorXd& bu, const Eigen::VectorXd& bv, Eigen::VectorXd& su, Eigen::VectorXd& sv) const
+{
+    if (!mOk)
+        return false;
+    if (!mComplex)
+    {
+        su = mReal.solve(bu);
+        sv = mReal.solve(bv);
+        return mReal.info() == Eigen::Success && su.allFinite() && sv.allFinite();
+    }
+    Eigen::VectorXcd b(bu.size());
+    b.real() = bu;
+    b.imag() = bv;
+    const Eigen::VectorXcd z = mCx.solve(b);
+    su = z.real();
+    sv = z.imag();
+    return mCx.info() == Eigen::Success && su.allFinite() && sv.allFinite();
 }
 
 struct UninfluencedFill::Solver
@@ -1279,7 +1370,7 @@ FinalIsland UninfluencedFill::fold(const FinalIsland& isl) const
     out.rowStart.assign(1, 0);
     out.cols.clear();
     out.weights.clear();
-    std::vector<std::pair<Index, double>> row;
+    Row row;
     for (size_t c = 0; c + 1 < isl.rowStart.size(); ++c)
     {
         row.clear();
@@ -1292,7 +1383,7 @@ FinalIsland UninfluencedFill::fold(const FinalIsland& isl) const
             else
                 row.push_back({v, isl.weights[k]});
         }
-        std::sort(row.begin(), row.end());
+        std::sort(row.begin(), row.end(), byColumn);
         for (size_t k = 0; k < row.size(); ++k)
             if (k > 0 && row[k].first == out.cols.back() && out.cols.size() > out.rowStart.back())
                 out.weights.back() += row[k].second;
@@ -1456,7 +1547,7 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
     }
 
     // y = R x + off: exported corner uvs from chart vertex uvs.
-    const FinalOperator op(isl, V);
+    const FinalOperator op(isl, V, mirror);
     const glm::dvec2 offScale(sx, 1.0);
     std::vector<glm::dvec2> off(C);
     op.apply(std::vector<glm::dvec2>(V, glm::dvec2(0.0)), off, offScale);
@@ -1485,7 +1576,7 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
     struct Coupling
     {
         int row, col;
-        double w;
+        FinalWeight w;
     };
     SpMat S(static_cast<Eigen::Index>(C), static_cast<Eigen::Index>(C));
     Eigen::VectorXd offU(static_cast<Eigen::Index>(C)), offV(static_cast<Eigen::Index>(C)), soU, soV;
@@ -1495,7 +1586,7 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
         offV[Eigen::Index(c)] = off[c].y;
     }
     std::vector<Coupling> kfc;
-    auto solver = std::make_unique<Eigen::SimplicialLDLT<SpMat>>();
+    auto solver = std::make_unique<UvFactor>();
     auto factor = [&](const std::vector<double>& wt) {
         std::vector<Triplet> trips;
         trips.reserve(T * 9);
@@ -1511,33 +1602,42 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
         S.setFromTriplets(trips.begin(), trips.end());
         soU = S * offU;
         soV = S * offV;
-        const SpMat K = op.gram(S);
-        std::vector<Triplet> kff;
+        const auto [K, Ki] = op.gram(S);
+        std::vector<Triplet> kff, kffi;
         kfc.clear();
         double diag = 0.0;
-        for (int k = 0; k < K.outerSize(); ++k)
-            for (SpMat::InnerIterator it(K, k); it; ++it)
-            {
-                const int fr0 = freeIdx[size_t(it.row())], fc0 = freeIdx[size_t(it.col())];
-                if (fr0 < 0)
-                    continue;
-                if (fc0 >= 0)
+        for (int part = 0; part < 2; ++part)
+        {
+            const SpMat& M = part == 0 ? K : Ki;
+            for (int k = 0; k < M.outerSize(); ++k)
+                for (SpMat::InnerIterator it(M, k); it; ++it)
                 {
-                    kff.push_back(Triplet(fr0, fc0, it.value()));
-                    if (fr0 == fc0)
-                        diag += it.value();
+                    const int fr0 = freeIdx[size_t(it.row())], fc0 = freeIdx[size_t(it.col())];
+                    if (fr0 < 0)
+                        continue;
+                    if (fc0 >= 0)
+                    {
+                        (part == 0 ? kff : kffi).push_back(Triplet(fr0, fc0, it.value()));
+                        if (fr0 == fc0 && part == 0)
+                            diag += it.value();
+                    }
+                    else
+                        kfc.push_back({fr0, int(it.col()), part == 0 ? FinalWeight(it.value(), 0.0) : FinalWeight(0.0, it.value())});
                 }
-                else
-                    kfc.push_back({fr0, int(it.col()), it.value()});
-            }
+        }
         // Chart vertices no exported triangle reaches keep a tiny diagonal so the system stays solvable.
         const double eps = 1e-9 * std::max(diag / nFree, 1e-30);
         for (int i = 0; i < nFree; ++i)
             kff.push_back(Triplet(i, i, eps));
-        SpMat Kff(nFree, nFree);
+        SpMat Kff(nFree, nFree), Kffi;
         Kff.setFromTriplets(kff.begin(), kff.end());
-        solver = std::make_unique<Eigen::SimplicialLDLT<SpMat>>(Kff);
-        return solver->info() == Eigen::Success;
+        if (!kffi.empty())
+        {
+            Kffi.resize(nFree, nFree);
+            Kffi.setFromTriplets(kffi.begin(), kffi.end());
+        }
+        solver = std::make_unique<UvFactor>();
+        return solver->compute(Kff, Kffi);
     };
 
     auto exportUv = [&](const std::vector<glm::dvec2>& xs, std::vector<glm::dvec2>& y) {
@@ -1684,11 +1784,12 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
                 }
             for (const Coupling& cp : kfc)
             {
-                bu[cp.row] -= cp.w * x[size_t(cp.col)].x;
-                bv[cp.row] -= cp.w * x[size_t(cp.col)].y;
+                const glm::dvec2 k = weigh(cp.w, x[size_t(cp.col)]);
+                bu[cp.row] -= k.x;
+                bv[cp.row] -= k.y;
             }
-            const Eigen::VectorXd su = solver->solve(bu), sv = solver->solve(bv);
-            if (solver->info() != Eigen::Success || !su.allFinite() || !sv.allFinite())
+            Eigen::VectorXd su, sv;
+            if (!solver->solve(bu, bv, su, sv))
                 return false;
             for (size_t v = 0; v < V; ++v)
                 dir[v] = freeIdx[v] >= 0 ? glm::dvec2(su[freeIdx[v]], sv[freeIdx[v]]) - x[v] : glm::dvec2(0.0);

@@ -69,8 +69,9 @@ struct LiveIsland::Factor
     double mean = 1.0;         // mean diagonal of the elastic part
     double prox = 0.0;
     bool ok = false;
-    // Exported-mesh mode: the exported corners' stiffness matrix.
+    // Exported-mesh mode: the exported corners' stiffness matrix, and the system's factor (complex when weights rotate).
     SpMat s;
+    detail::UvFactor uv;
 };
 
 std::string_view liveBrushName(LiveBrush b)
@@ -253,7 +254,7 @@ void LiveIsland::prepareFinal()
         mFinalFill = std::move(fill);
     }
     const FinalIsland& isl = *mFinal;
-    mFinalOp = std::make_shared<const detail::FinalOperator>(isl, size_t(vertexCount()));
+    mFinalOp = std::make_shared<const detail::FinalOperator>(isl, size_t(vertexCount()), mSign < 0.0);
     mFinalFrames.assign(isl.tris.size(), {});
     for (size_t i = 0; i < isl.tris.size(); ++i)
     {
@@ -310,7 +311,7 @@ void LiveIsland::factorFinal()
     }
     f->s.resize(Eigen::Index(C), Eigen::Index(C));
     f->s.setFromTriplets(trips.begin(), trips.end());
-    const SpMat k = mFinalOp->gram(f->s);
+    const auto [k, ki] = mFinalOp->gram(f->s);
     double trace = 0.0;
     for (Index v = 0; v < V; ++v)
         trace += k.coeff(v, v);
@@ -341,8 +342,7 @@ void LiveIsland::factorFinal()
     SpMat d(V, V);
     d.setFromTriplets(trips.begin(), trips.end());
     f->a = k + d;
-    f->ldlt.compute(f->a);
-    f->ok = f->ldlt.info() == Eigen::Success;
+    f->ok = f->uv.compute(f->a, ki);
     mFactor = std::move(f);
     ++mFactorizations;
     mMatrixDirty = false;
@@ -824,8 +824,17 @@ void LiveIsland::step(std::span<const double> weights)
     }
 
     // Global step.
-    Eigen::VectorXd su = f.ldlt.solve(bu), sv = f.ldlt.solve(bv);
-    if (!su.allFinite() || !sv.allFinite())
+    Eigen::VectorXd su, sv;
+    bool solved = false;
+    if (mFinal)
+        solved = f.uv.solve(bu, bv, su, sv);
+    else
+    {
+        su = f.ldlt.solve(bu);
+        sv = f.ldlt.solve(bv);
+        solved = su.allFinite() && sv.allFinite();
+    }
+    if (!solved)
     {
         mSettled = true;
         return;

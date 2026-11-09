@@ -40,9 +40,10 @@ geo::Mesh plate(double thick = 0.4, int grid = 6)
 
 /**
  * The plate unfolded like a box lid: the top and its four thin sides in one island (seams round the bottom and up the
- * corners), the bottom in another, packed. The sides are thin strips beside the big top, as on a game-art panel.
+ * corners), the bottom in another, packed. The sides are thin strips beside the big top, as on a game-art panel. With a
+ * slit, a seam also runs from one side's edge to the middle of the top, ending inside the island.
  */
-geo::Mesh lidPlate(double thick = 0.4, int grid = 6)
+geo::Mesh lidPlate(double thick = 0.4, int grid = 6, bool slit = false)
 {
     geo::CubeOptions co;
     co.width = 10.0;
@@ -62,7 +63,8 @@ geo::Mesh lidPlate(double thick = 0.4, int grid = 6)
                             ((std::abs(a.x) > 4.99 && std::abs(b.x) > 4.99 && std::abs(a.x - b.x) < 1e-9) ||
                              (std::abs(a.z) > 4.99 && std::abs(b.z) > 4.99 && std::abs(a.z - b.z) < 1e-9));
         const bool corner = std::abs(a.x) > 4.99 && std::abs(a.z) > 4.99 && std::abs(b.x) > 4.99 && std::abs(b.z) > 4.99 && glm::length(glm::dvec2(a.x - b.x, a.z - b.z)) < 1e-9;
-        seam[e] = bottom || corner;
+        const bool cut = slit && a.y > 0.0 && b.y > 0.0 && std::abs(a.x) < 1e-9 && std::abs(b.x) < 1e-9 && std::max(a.z, b.z) < 1e-9;
+        seam[e] = bottom || corner || cut;
     }
     uv::UnwrapFacesOptions uo;
     REQUIRE(uv::unwrapFaces(m, {}, "uv0", uo).islands == 2);
@@ -304,10 +306,14 @@ TEST_CASE("final mesh: respaced borders ease into the spacing beside them")
 
 TEST_CASE("final mesh: a map stays exact after the cage's uvs are rewritten")
 {
-    // A tool solves against the map of the layout it starts from; respacing must not move with the layout it writes.
-    for (int grid : {3, 6})
+    // A tool solves against the map of the layout it starts from; respacing and rebuilt corners must not move with the
+    // layout it writes. A slit's tip (the lid's corner seams, a cut into the top) is respaced by its own uvs, so windows
+    // reaching one follow the layout a little.
+    for (int shape = 0; shape < 4; ++shape)
     {
-        geo::Mesh m = plate(0.4, grid);
+        const int grid = shape == 0 ? 3 : 6;
+        const bool slits = shape >= 2;
+        geo::Mesh m = slits ? lidPlate(0.4, grid, shape == 3) : plate(0.4, grid);
         const uv::Stack stack = bevelSubdivStack(0.13, 3, 2);
         const uv::FinalMap map = uv::buildFinalMap(m, "uv0", stack);
         REQUIRE(map.active());
@@ -322,10 +328,35 @@ TEST_CASE("final mesh: a map stays exact after the cage's uvs are rewritten")
         for (Index f = 0; f < exported.faceCapacity(); ++f)
             if (exported.faceValid(f))
                 exported.forEachFaceCorner(f, [&](Index c) { worst = std::max(worst, glm::length(predicted[c] - glm::dvec2(actual[c]))); });
-        INFO("grid " << grid << ", worst " << worst);
-        // Island corners rebuilt from their quad still weigh it by the layout, so the export moves a little there.
-        CHECK(worst < 2e-3);
+        INFO("shape " << shape << ", worst " << worst);
+        CHECK(worst < (slits ? 1e-2 : 1e-5));
     }
+}
+
+TEST_CASE("final mesh: rebuilt island corners turn with their border, whatever the layout")
+{
+    // A respaced corner rises off its border square to its neighbours' edge: a rotation of that edge, so the map carries
+    // it however the layout turns the border (here up to a radian across the sheet).
+    geo::Mesh m = plate(0.4, 2);
+    const uv::Stack stack = bevelSubdivStack(0.13, 3, 2);
+    const uv::FinalMap map = uv::buildFinalMap(m, "uv0", stack);
+    REQUIRE(map.active());
+    CHECK(std::ranges::any_of(map.weights, [](const uv::FinalWeight& w) { return std::abs(w.imag()) > 1e-6; }));
+    std::span<glm::vec2> uv = m.cornerAttrs().get<glm::vec2>("uv0");
+    for (glm::vec2& v : uv)
+    {
+        const float a = v.x;
+        v = glm::vec2(v.x * std::cos(a) - v.y * std::sin(a), v.x * std::sin(a) + v.y * std::cos(a));
+    }
+    const std::vector<glm::dvec2> predicted = uv::exportedUvs(map, m, "uv0");
+    const geo::Mesh exported = uv::runStack(m, stack);
+    const std::span<const glm::vec2> actual = exported.cornerAttrs().get<glm::vec2>("uv0");
+    double worst = 0.0;
+    for (Index f = 0; f < exported.faceCapacity(); ++f)
+        if (exported.faceValid(f))
+            exported.forEachFaceCorner(f, [&](Index c) { worst = std::max(worst, glm::length(predicted[c] - glm::dvec2(actual[c]))); });
+    INFO("worst " << worst);
+    CHECK(worst < 1e-5);
 }
 
 TEST_CASE("final mesh: a fit surface map reaches across whole islands")

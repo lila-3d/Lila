@@ -1008,26 +1008,37 @@ std::vector<BorderBlend> respaceBorder(const Mesh& m, const Islands& is, Index i
     return out;
 }
 
-/** An island corner's new value as plain weights of its quad's other three points (probing can't follow u mixed into v). */
+/** An island corner lifted off its border: its value plus (b - a) * lift, values read as u + iv. */
 struct CornerApex
 {
-    Index group, a, b, d;
-    double wa, wb, wd;
+    Index group, a, b;
+    std::complex<double> lift;
 };
 
-/** How much wider than on the surface an island corner may open in uv before it is rebuilt, radians. */
-constexpr double kCornerSlack = 1.0;
-/** The rebuilt corner rises this share of the surface's height, so it stays close to the border it leaves. */
+/** Island corners turning less than this on the surface (radians off straight) are left to the border's spacing. */
+constexpr double kCornerTurn = 1.0;
+/** A rebuilt corner rises this share of its height over its neighbours' edge on the surface: enough to open its quad. */
 constexpr double kApexHeight = 0.5;
 
-/**
- * Island corners (one face of the island at the point) that open much wider in uv than on the surface, such as a corner
- * on a straight stretch of border: pinned there, no fill can open the face. Each becomes the apex of the triangle its two
- * border neighbours make with it on the surface, scaled into uv along their edge, written as weights of those two and the
- * quad's opposite point.
- */
-std::vector<CornerApex> openCorners(const Mesh& m, const Islands& is, Index island, std::span<const glm::vec2> set)
+/** A uv read as u + iv, so a complex weight scales and rotates it. */
+std::complex<double> cx(glm::dvec2 v)
 {
+    return {v.x, v.y};
+}
+
+/**
+ * Island corners (one quad of the island at the point) that respacing moved onto its straight uv polyline although they
+ * turn on the surface: pinned there, no fill could open their quad. Each rises off the border, square to the edge its two
+ * border neighbours make, by part of its height over that edge on the surface, keeping its respaced place along the border.
+ * Which corners, and their lift, come from the surface and the spacing proxy; only the island's orientation is read from
+ * the uvs, so the weights hold for any layout of the cage.
+ */
+std::vector<CornerApex> openCorners(const Mesh& m, const Islands& is, Index island, std::span<const glm::vec2> set,
+                                    std::span<const BorderBlend> blends)
+{
+    std::unordered_set<Index> respaced;
+    for (const BorderBlend& b : blends)
+        respaced.insert(b.group);
     std::vector<CornerApex> out;
     double area = 0.0;
     for (Index f : is.faces[island])
@@ -1043,7 +1054,7 @@ std::vector<CornerApex> openCorners(const Mesh& m, const Islands& is, Index isla
     for (Index f : is.faces[island])
         m.forEachFaceCorner(f, [&](Index c) {
             const Index g = is.groupOfCorner[c];
-            if (!is.border[g] || is.groupCorners[g].size() != 1 || m.faceSize(m.cornerFace(c)) != 4)
+            if (!is.border[g] || is.groupCorners[g].size() != 1 || m.faceSize(m.cornerFace(c)) != 4 || !respaced.count(g))
                 return;
             const Index ca = m.cornerPrev(c), cb = m.cornerNext(c);
             const glm::dvec3 pa = m.position(m.cornerPoint(ca)), pc = m.position(m.cornerPoint(c)), pb = m.position(m.cornerPoint(cb));
@@ -1052,25 +1063,10 @@ std::vector<CornerApex> openCorners(const Mesh& m, const Islands& is, Index isla
             const double ea = glm::length(pa - pc), eb = glm::length(pb - pc);
             if (ab2 <= 0.0 || ea <= 0.0 || eb <= 0.0)
                 return;
-            const double angle3 = std::acos(std::clamp(glm::dot(pa - pc, pb - pc) / (ea * eb), -1.0, 1.0));
-            // The face's angle at the corner in uv, measured inside the island.
-            const glm::dvec2 ua = glm::dvec2(set[ca]) - glm::dvec2(set[c]), ub = glm::dvec2(set[cb]) - glm::dvec2(set[c]);
-            double angleUv = std::atan2(side * (ub.x * ua.y - ub.y * ua.x), glm::dot(ua, ub));
-            if (angleUv < 0.0)
-                angleUv += 2.0 * std::numbers::pi;
-            if (angleUv <= angle3 + kCornerSlack)
+            if (std::acos(std::clamp(glm::dot(pa - pc, pb - pc) / (ea * eb), -1.0, 1.0)) > std::numbers::pi - kCornerTurn)
                 return;
-            const double t = glm::dot(pc - pa, ab) / ab2, h = glm::length(glm::cross(pc - pa, ab)) / ab2 * kApexHeight;
-            const Index cd = m.cornerNext(cb);
-            const glm::dvec2 a = set[ca], b = set[cb], d = set[cd], e = b - a;
-            const glm::dvec2 apex = a + e * t + glm::dvec2(e.y, -e.x) * (side * h);
-            // Barycentric weights of the apex in the triangle a, b, d; d must stand clear of the edge to carry them.
-            const double det = e.x * (d.y - a.y) - e.y * (d.x - a.x);
-            if (std::abs(det) < 1e-3 * glm::dot(e, e))
-                return;
-            const glm::dvec2 q = apex - a;
-            const double wb = (q.x * (d.y - a.y) - q.y * (d.x - a.x)) / det, wd = (e.x * q.y - e.y * q.x) / det;
-            out.push_back({g, is.groupOfCorner[ca], is.groupOfCorner[cb], is.groupOfCorner[cd], 1.0 - wb - wd, wb, wd});
+            // -i turns the edge into the island.
+            out.push_back({g, is.groupOfCorner[ca], is.groupOfCorner[cb], {0.0, -side * glm::length(glm::cross(pc - pa, ab)) / ab2 * kApexHeight}});
         });
     return out;
 }
@@ -1107,12 +1103,13 @@ FitIslandRecord recordIsland(const Islands& is, std::span<const BorderBlend> ble
     for (Index g : s.interior)
         id(g);
     // Respacing reads the values before it, the corners read respaced ones.
-    std::unordered_map<Index, std::vector<std::pair<Index, double>>> from;
+    using Blend = std::vector<std::pair<Index, std::complex<double>>>;
+    std::unordered_map<Index, Blend> from;
     auto value = [&](Index g) {
         auto it = from.find(g);
-        return it != from.end() ? it->second : std::vector<std::pair<Index, double>>{{id(g), 1.0}};
+        return it != from.end() ? it->second : Blend{{id(g), 1.0}};
     };
-    std::vector<std::pair<Index, std::vector<std::pair<Index, double>>>> moved;
+    std::vector<std::pair<Index, Blend>> moved;
     for (const BorderBlend& b : blends)
         moved.push_back({b.group, {{id(b.a), 1.0 - b.t}, {id(b.b), b.t}}});
     for (auto& [g, v] : moved)
@@ -1120,8 +1117,8 @@ FitIslandRecord recordIsland(const Islands& is, std::span<const BorderBlend> ble
     moved.clear();
     for (const CornerApex& x : apexes)
     {
-        std::vector<std::pair<Index, double>> v;
-        for (auto [g, w] : {std::pair{x.a, x.wa}, std::pair{x.b, x.wb}, std::pair{x.d, x.wd}})
+        Blend v;
+        for (auto [g, w] : {std::pair{x.group, std::complex<double>(1.0)}, std::pair{x.a, -x.lift}, std::pair{x.b, x.lift}})
             for (auto [q, wq] : value(g))
                 v.push_back({q, w * wq});
         moved.push_back({x.group, std::move(v)});
@@ -1319,20 +1316,8 @@ void fitSurface(Mesh& m)
         tbb::parallel_for(Index(0), Index(is.faces.size()), [&](Index island) {
             const std::vector<BorderBlend> blends = respaceBorder(m, is, island, proxy, set);
             std::vector<glm::vec2> moved(blends.size());
-            // Recording leaves the uvs alone, so corners are found on a respaced copy of the island layer.
-            std::vector<glm::vec2> respacedSet;
-            std::span<const glm::vec2> cornerSet = set;
-            if (record && !blends.empty())
-            {
-                respacedSet.assign(set.begin(), set.end());
-                for (const BorderBlend& b : blends)
-                {
-                    const glm::vec2 v(glm::mix(groupValue(set, is.groupCorners[b.a]), groupValue(set, is.groupCorners[b.b]), b.t));
-                    for (Index c : is.groupCorners[b.group])
-                        respacedSet[c] = v;
-                }
-                cornerSet = respacedSet;
-            }
+            // The island's orientation, all openCorners reads of the layout, is the same before and after respacing.
+            const std::vector<CornerApex> apexes = openCorners(m, is, island, set, blends);
             if (!record)
                 for (std::span<glm::vec2> uv : spans)
                 {
@@ -1342,7 +1327,6 @@ void fitSurface(Mesh& m)
                         for (Index c : is.groupCorners[blends[k].group])
                             uv[c] = moved[k];
                 }
-            const std::vector<CornerApex> apexes = openCorners(m, is, island, cornerSet);
             const System s = systemOf(m, is, island);
             std::shared_ptr<const Factor> f;
             if (!s.interior.empty() && !s.border.empty())
@@ -1359,8 +1343,9 @@ void fitSurface(Mesh& m)
                 for (size_t k = 0; k < apexes.size(); ++k)
                 {
                     const CornerApex& x = apexes[k];
-                    moved[k] = glm::vec2(groupValue(uv, is.groupCorners[x.a]) * x.wa + groupValue(uv, is.groupCorners[x.b]) * x.wb +
-                                         groupValue(uv, is.groupCorners[x.d]) * x.wd);
+                    const std::complex<double> v =
+                        cx(groupValue(uv, is.groupCorners[x.group])) + (cx(groupValue(uv, is.groupCorners[x.b])) - cx(groupValue(uv, is.groupCorners[x.a]))) * x.lift;
+                    moved[k] = glm::vec2(float(v.real()), float(v.imag()));
                 }
                 for (size_t k = 0; k < apexes.size(); ++k)
                     for (Index c : is.groupCorners[apexes[k].group])

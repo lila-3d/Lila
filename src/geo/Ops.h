@@ -8,6 +8,7 @@
 #include "geo/Triangulate.h"
 
 #include <array>
+#include <complex>
 #include <functional>
 #include <memory>
 #include <span>
@@ -339,9 +340,12 @@ private:
 struct FitIslandRecord
 {
     std::vector<std::vector<Index>> groups;
-    /** Groups the fill reads, and each one's value as a blend of groups' values before the fit (respaced borders). */
+    /**
+     * Groups the fill reads, and each one's value as a blend of groups' values before the fit (respaced borders, rebuilt
+     * island corners). A weight is complex: it scales and rotates the uv, read as u + iv.
+     */
     std::vector<Index> border;
-    std::vector<std::vector<std::pair<Index, double>>> borderFrom;
+    std::vector<std::vector<std::pair<Index, std::complex<double>>>> borderFrom;
     /** Groups the fill writes, in the fill's order. */
     std::vector<Index> interior;
     std::shared_ptr<const FitFill> fill;
