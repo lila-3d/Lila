@@ -642,3 +642,37 @@ TEST_CASE("final mesh: the spacing proxy bunches like the uvs under a bevel, sli
         CHECK(off == 0);
     }
 }
+
+TEST_CASE("final mesh: a bevel gives one wedge's corners at a point the same uvs, however the layout bends")
+{
+    // Only the lid's top rim bevelled: strip ends meet corner patches, two blends of the same point that agree only where
+    // the layout is flat. A bent layout must not crack the wedge open, or the island splits wherever its layout bends and
+    // a Fit Surface map stops being a fixed blend.
+    geo::Mesh m = lidPlate(0.4, 3);
+    for (glm::vec2& v : m.cornerAttrs().get<glm::vec2>("uv0"))
+        v = glm::vec2(v.x + 0.4f * v.y * v.y, v.y + 0.3f * v.x * v.x);
+    std::vector<Index> edges;
+    for (Index e = 0; e < m.edgeCapacity(); ++e)
+        if (m.edgeValid(e) && uv::dihedralAngle(m, e) > 30.0 && m.position(m.edgePoint(e, 0)).y > 0.0 && m.position(m.edgePoint(e, 1)).y > 0.0)
+            edges.push_back(e);
+    geo::BevelOptions o;
+    o.offset = 0.13;
+    o.segments = 3;
+    geo::bevelEdges(m, edges, o);
+    const std::span<const glm::vec2> uv = m.cornerAttrs().get<glm::vec2>("uv0");
+    const std::span<const bool> seam = m.edgeAttrs().get<bool>(geo::attr::kSeam);
+    auto cornerAt = [&](Index c, Index p) { return m.cornerPoint(c) == p ? c : m.cornerNext(c); };
+    size_t cracks = 0;
+    for (Index e = 0; e < m.edgeCapacity(); ++e)
+    {
+        if (!m.edgeValid(e) || !m.isManifoldEdge(e) || (e < seam.size() && seam[e]))
+            continue;
+        const Index c = m.edgeCorner(e), rc = m.cornerRadial(c);
+        for (int k = 0; k < 2; ++k)
+        {
+            const Index p = m.edgePoint(e, k);
+            cracks += glm::length(uv[cornerAt(c, p)] - uv[cornerAt(rc, p)]) > 1e-6f;
+        }
+    }
+    CHECK(cracks == 0);
+}
