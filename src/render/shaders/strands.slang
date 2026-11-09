@@ -4,29 +4,29 @@
 
 #include "scene_color.slang"
 
+/** A cloud's buffers: points (xyz, width), segments (first point, strand), strands (first point, count, rank bits, colour). */
+struct StrandHeader
+{
+    float4* points;
+    uint2* segments;
+    uint4* strands;
+};
+
 struct StrandsPush
 {
     float4x4 mvp;
     /** Object space: xyz the eye, or for an orthographic view the direction it looks; w 1 orthographic. */
     float4 eye;
-    /** x keep, y width scale, z exposure, w pixels per object unit at distance 1 (the view's height * proj[1][1] / 2). */
+    /** x keep, y width scale, z exposure, w pixels per object unit at distance 1 (the view's height * |proj[1][1]| / 2). */
     float4 params;
-    /** rgb highlight (linear, black none), w the frame for the dither. */
-    float4 tint;
-    /** xyz object-space up for the key light, w unused. */
-    float4 up;
+    /** xyz object-space up for the key light, w the highlight's RGBA8 bits (0 none). */
+    float4 upTint;
+    StrandHeader* header;
+    uint frame;
+    uint pad;
 };
 
 [[vk::push_constant]] StrandsPush pc;
-
-struct VSIn
-{
-    float4 a : A;     // xyz, w width
-    float4 b : B;     // xyz, w width
-    float2 t : T;     // root to tip at a and b
-    float rank : RANK;
-    uint color : COLOR;
-};
 
 struct VSOut
 {
@@ -45,20 +45,26 @@ float3 srgbToLinear(float3 c)
 }
 
 [shader("vertex")]
-VSOut strandsVS(VSIn v, uint id : SV_VertexID)
+VSOut strandsVS(uint id : SV_VertexID)
 {
     VSOut o;
-    // Two triangles: corners (end, side) of the ribbon.
+    // Six vertices a segment, two triangles: corners (end, side) of the ribbon.
     const uint2 corners[6] = {uint2(0, 0), uint2(1, 0), uint2(1, 1), uint2(0, 0), uint2(1, 1), uint2(0, 1)};
     const uint2 c = corners[id % 6];
-    if (v.rank >= pc.params.x)
+    const StrandHeader h = *pc.header;
+    const uint2 seg = h.segments[id / 6];
+    const uint4 strand = h.strands[seg.y];
+    const float rank = asfloat(strand.z);
+    if (rank >= pc.params.x)
     {
         o.pos = float4(2.0, 2.0, 2.0, 1.0);
         return o;
     }
-    const float3 p = c.x == 0 ? v.a.xyz : v.b.xyz;
-    float width = (c.x == 0 ? v.a.w : v.b.w) * pc.params.y;
-    float3 t = v.b.xyz - v.a.xyz;
+    const float4 a = h.points[seg.x], b = h.points[seg.x + 1];
+    const float last = float(max(strand.y, 2u) - 1u);
+    const float3 p = c.x == 0 ? a.xyz : b.xyz;
+    float width = (c.x == 0 ? a.w : b.w) * pc.params.y;
+    float3 t = b.xyz - a.xyz;
     t = dot(t, t) > 1e-20 ? normalize(t) : float3(0.0, 1.0, 0.0);
     const bool ortho = pc.eye.w > 0.5;
     const float3 toEye = ortho ? -pc.eye.xyz : pc.eye.xyz - p;
@@ -73,9 +79,10 @@ VSOut strandsVS(VSIn v, uint id : SV_VertexID)
     o.pos = mul(pc.mvp, float4(p + side * ((c.y == 0 ? -0.5 : 0.5) * width), 1.0));
     o.tangent = t;
     o.view = view;
-    o.t = c.x == 0 ? v.t.x : v.t.y;
-    o.color = srgbToLinear(float3(v.color & 0xff, (v.color >> 8) & 0xff, (v.color >> 16) & 0xff) / 255.0);
-    o.seed = v.rank;
+    o.t = float(seg.x + c.x - strand.x) / last;
+    const uint color = strand.w;
+    o.color = srgbToLinear(float3(color & 0xff, (color >> 8) & 0xff, (color >> 16) & 0xff) / 255.0);
+    o.seed = rank;
     return o;
 }
 
@@ -89,11 +96,11 @@ float hash(float3 p)
 [shader("fragment")]
 float4 strandsPS(VSOut i) : SV_Target
 {
-    if (i.coverage < 1.0 && hash(float3(i.pos.xy, i.seed * 977.0 + pc.tint.w)) >= i.coverage)
+    if (i.coverage < 1.0 && hash(float3(i.pos.xy, i.seed * 977.0 + float(pc.frame))) >= i.coverage)
         discard;
     const float3 t = normalize(i.tangent);
     const float3 v = normalize(i.view);
-    const float3 l = normalize(v * 0.6 + normalize(pc.up.xyz));
+    const float3 l = normalize(v * 0.6 + normalize(pc.upTint.xyz));
     const float3 h = normalize(l + v);
     const float tl = dot(t, l), th = dot(t, h);
     const float diffuse = lerp(0.3, 1.0, sqrt(saturate(1.0 - tl * tl)));
@@ -102,8 +109,9 @@ float4 strandsPS(VSOut i) : SV_Target
     const float primary = pow(sinTH, 90.0) * 0.3;
     const float secondary = pow(sinTH, 18.0) * 0.25;
     float3 base = i.color * lerp(0.35, 1.0, smoothstep(0.0, 0.3, i.t));
-    if (any(pc.tint.rgb > 0.0))
-        base = lerp(base, pc.tint.rgb, 0.4);
+    const uint tint = asuint(pc.upTint.w);
+    if (tint != 0u)
+        base = lerp(base, float3(tint & 0xff, (tint >> 8) & 0xff, (tint >> 16) & 0xff) / 255.0, 0.4);
     const float3 c = base * (diffuse * 0.85 + 0.15) + primary + secondary * base * 2.0;
     return float4(sceneCompress(c * pc.params.z), 1.0);
 }

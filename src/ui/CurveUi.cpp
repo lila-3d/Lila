@@ -166,26 +166,31 @@ struct StrandEntry
 {
     const void* data = nullptr;
     std::shared_ptr<const render::StrandCloud> cloud;
+    /** What the layout was made for: each strand's point count and id. */
+    uint64_t layoutSignature = 0;
     glm::dvec3 centre{0.0};
     double radius = 0.0;
 };
 
-/**
- * The strands as ribbon segments, rebuilt when the curve's data changes. Each strand's rank spreads its clump's
- * strands evenly over 0 to 1, so thinning keeps every clump, each with the same share of its strands.
- */
-const StrandEntry& strandEntry(const scene::Node& n, const curve::Splines& splines)
+/** The strands' layout identity: their point counts and ids, so moving strands keep it. */
+uint64_t layoutSignature(const curve::Splines& splines)
 {
-    static std::unordered_map<scene::NodeId, StrandEntry> cache;
-    const scene::PlugValue& v = n.value(CurveShape::kLocal);
-    const auto* d = std::get_if<scene::DataPtr>(&v);
-    const void* data = d ? d->get() : nullptr;
-    StrandEntry& e = cache[n.id()];
-    if (e.cloud && e.data == data)
-        return e;
-    e.data = data;
-    auto cloud = std::make_shared<render::StrandCloud>();
-    cloud->strands = splines.size();
+    uint64_t h = mix64(splines.size());
+    for (const curve::Spline& s : splines)
+    {
+        const auto id = s.attrs.find("id");
+        h = mix64(h ^ (uint64_t(s.size()) * 0x9e3779b97f4a7c15ull) ^ (id == s.attrs.end() ? 0 : uint64_t(id->second)));
+    }
+    return h;
+}
+
+/**
+ * Segments and strands for the renderer. Each strand's rank spreads its clump's strands evenly over 0 to 1, so thinning
+ * keeps every clump, each with the same share of its strands.
+ */
+std::shared_ptr<const render::StrandLayout> strandLayout(const curve::Splines& splines)
+{
+    auto layout = std::make_shared<render::StrandLayout>();
     std::map<double, std::vector<size_t>> clumps;
     for (size_t k = 0; k < splines.size(); ++k)
     {
@@ -203,11 +208,43 @@ const StrandEntry& strandEntry(const scene::Node& n, const curve::Splines& splin
         for (size_t i = 0; i < members.size(); ++i)
             rank[members[i]] = (float(i) + float(key(members[i]) % 1000) / 1000.0f) / float(members.size());
     }
-    glm::dvec3 lo(std::numeric_limits<double>::max()), hi(-std::numeric_limits<double>::max());
     constexpr uint32_t kHair = 0xff2f4c6eu; // sRGB (110, 76, 47)
+    uint32_t first = 0;
     for (size_t k = 0; k < splines.size(); ++k)
     {
-        const curve::Spline& sp = splines[k];
+        const uint32_t count = uint32_t(splines[k].size());
+        if (count >= 2)
+        {
+            const uint32_t strand = uint32_t(layout->strands.size());
+            layout->strands.push_back({first, count, glm::floatBitsToUint(rank[k]), kHair});
+            for (uint32_t i = 0; i + 1 < count; ++i)
+                layout->segments.push_back({first + i, strand});
+            first += count;
+        }
+    }
+    layout->points = first;
+    return layout;
+}
+
+/** The strands for the renderer: their points each time the curve's data changes, the layout while it holds. */
+const StrandEntry& strandEntry(const scene::Node& n, const curve::Splines& splines)
+{
+    static std::unordered_map<scene::NodeId, StrandEntry> cache;
+    const scene::PlugValue& v = n.value(CurveShape::kLocal);
+    const auto* d = std::get_if<scene::DataPtr>(&v);
+    const void* data = d ? d->get() : nullptr;
+    StrandEntry& e = cache[n.id()];
+    if (e.cloud && e.data == data)
+        return e;
+    e.data = data;
+    auto cloud = std::make_shared<render::StrandCloud>();
+    const uint64_t signature = layoutSignature(splines);
+    cloud->layout = e.cloud && signature == e.layoutSignature ? e.cloud->layout : strandLayout(splines);
+    e.layoutSignature = signature;
+    cloud->points.reserve(cloud->layout->points);
+    glm::dvec3 lo(std::numeric_limits<double>::max()), hi(-std::numeric_limits<double>::max());
+    for (const curve::Spline& sp : splines)
+    {
         if (sp.size() < 2)
             continue;
         // GroomLab's strands carry width 1 until a Width node gives them widths in scene units.
@@ -215,21 +252,10 @@ const StrandEntry& strandEntry(const scene::Node& n, const curve::Splines& splin
         static const std::vector<double> none;
         const bool unset = wi == sp.pointAttrs.end() || std::all_of(wi->second.begin(), wi->second.end(), [](double x) { return x == 1.0; });
         const std::vector<double>& w = unset ? none : wi->second;
-        const double last = double(sp.size() - 1);
-        for (size_t i = 0; i + 1 < sp.size(); ++i)
+        for (size_t i = 0; i < sp.size(); ++i)
         {
-            render::StrandSegment seg;
-            seg.a = glm::vec3(sp.points[i]);
-            seg.b = glm::vec3(sp.points[i + 1]);
-            seg.widthA = i < w.size() ? float(w[i]) : kDefaultStrandWidth;
-            seg.widthB = i + 1 < w.size() ? float(w[i + 1]) : kDefaultStrandWidth;
-            seg.t = glm::vec2(float(i / last), float((i + 1) / last));
-            seg.rank = rank[k];
-            seg.color = kHair;
-            cloud->segments.push_back(seg);
-        }
-        for (const glm::dvec3& p : sp.points)
-        {
+            const glm::dvec3& p = sp.points[i];
+            cloud->points.emplace_back(glm::vec3(p), i < w.size() ? float(w[i]) : kDefaultStrandWidth);
             lo = glm::min(lo, p);
             hi = glm::max(hi, p);
         }
@@ -252,7 +278,7 @@ render::StrandDraw strandDraw(const scene::Node& n, const curve::Splines& spline
     const double pixels = e.radius * scale / std::max(1e-9, view.unitsPerPixel(centre));
     // About a strand per two pixels of the groom's disc on screen; fewer drawn, each wider, so the coverage holds.
     const double wanted = 1.5 * pixels * pixels;
-    d.keep = float(std::clamp(wanted / double(std::max<size_t>(1, e.cloud->strands)), 0.02, 1.0));
+    d.keep = float(std::clamp(wanted / double(std::max<size_t>(1, e.cloud->layout->strands.size())), 0.02, 1.0));
     d.widthScale = std::min(1.0f / d.keep, 8.0f);
     return d;
 }

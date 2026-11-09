@@ -63,25 +63,24 @@ struct PointDraw
     float selectedSize = 6.0f;
 };
 
-/** One hair segment: its ends with their world widths and root-to-tip parameter, its strand's thinning rank and colour. */
-struct StrandSegment
+/**
+ * How hair strands are laid out, kept on the GPU while the strands only move: per segment its first point and its strand,
+ * per strand its first point, point count, thinning rank (float bits: the strand's place in its clump's thinning order, 0
+ * to 1, drawn while below the draw's keep) and sRGB colour (R in the low byte).
+ */
+struct StrandLayout
 {
-    glm::vec3 a{0.0f};
-    float widthA = 0.0f;
-    glm::vec3 b{0.0f};
-    float widthB = 0.0f;
-    glm::vec2 t{0.0f}; // root (0) to tip (1) at a and b
-    /** The strand's place in its clump's thinning order, 0 to 1: drawn while below the draw's keep. */
-    float rank = 0.0f;
-    uint32_t color = 0xff000000u; // sRGB, R in the low byte
+    std::vector<glm::uvec2> segments;
+    std::vector<glm::uvec4> strands;
+    size_t points = 0;
+    uint64_t key = nextResourceKey();
 };
-static_assert(sizeof(StrandSegment) == 48, "matches the strands vertex input");
 
-/** Hair strands kept on the GPU between frames. */
+/** Hair strands: their points (xyz, world width) on a layout. A new cloud on the same layout uploads only the points. */
 struct StrandCloud
 {
-    std::vector<StrandSegment> segments;
-    size_t strands = 0;
+    std::vector<glm::vec4> points;
+    std::shared_ptr<const StrandLayout> layout;
     uint64_t key = nextResourceKey();
 };
 

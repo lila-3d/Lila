@@ -319,8 +319,10 @@ struct StrandsPush
     glm::mat4 mvp{1.0f};
     glm::vec4 eye{0.0f};
     glm::vec4 params{1.0f, 1.0f, 1.0f, 1.0f}; // keep, width scale, exposure, pixels per unit at distance 1
-    glm::vec4 tint{0.0f};
-    glm::vec4 up{0.0f, 1.0f, 0.0f, 0.0f};
+    glm::vec4 upTint{0.0f, 1.0f, 0.0f, 0.0f}; // xyz object-space up, w the highlight as RGBA8 bits (0 none)
+    VkDeviceAddress header = 0;               // StrandHeader: the cloud's points, segments and strands
+    uint32_t frame = 0;
+    uint32_t pad = 0;
 };
 static_assert(sizeof(StrandsPush) == 128, "matches StrandsPush in strands.slang");
 
@@ -436,10 +438,12 @@ struct GpuPoints
     uint64_t lastUsed = 0;
 };
 
+/** A strand layout on the GPU and the points last uploaded on it; the header holds the three buffers' addresses. */
 struct GpuStrands
 {
-    AllocatedBuffer buffer;
-    uint32_t count = 0;
+    AllocatedBuffer segments, strands, points, header;
+    uint32_t count = 0; // segments
+    uint64_t pointsKey = 0;
     std::shared_ptr<const StrandCloud> keep;
     uint64_t lastUsed = 0;
 };
@@ -1572,6 +1576,12 @@ struct Renderer::Impl
         return b;
     }
 
+    void destroyStrands(GpuStrands& g)
+    {
+        for (AllocatedBuffer* b : {&g.segments, &g.strands, &g.points, &g.header})
+            destroyBuffer(*b);
+    }
+
     void destroyBuffer(AllocatedBuffer& b)
     {
         if (b.buffer)
@@ -1723,7 +1733,7 @@ struct Renderer::Impl
         }
         for (uint64_t key : staleStrands)
         {
-            destroyBuffer(strandCache[key].buffer);
+            destroyStrands(strandCache[key]);
             strandCache.erase(key);
         }
     }
@@ -1734,7 +1744,7 @@ struct Renderer::Impl
             destroyBuffer(g.buffer);
         pointCache.clear();
         for (auto& [key, g] : strandCache)
-            destroyBuffer(g.buffer);
+            destroyStrands(g);
         strandCache.clear();
         heightfields.destroy(vk);
         for (auto& [key, g] : meshCache)
@@ -2616,17 +2626,11 @@ struct Renderer::Impl
                 pointCache.emplace(p.cloud->key, std::move(g));
             }
         for (const StrandDraw& d : s.strands)
-            if (d.cloud && !d.cloud->segments.empty() && !strandCache.contains(d.cloud->key))
-            {
-                GpuStrands g;
-                g.buffer = deviceBuffer(cmd, f, d.cloud->segments.data(), d.cloud->segments.size() * sizeof(StrandSegment), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-                g.count = uint32_t(d.cloud->segments.size());
-                g.keep = d.cloud;
-                strandCache.emplace(d.cloud->key, std::move(g));
-            }
+            if (d.cloud && d.cloud->layout && !d.cloud->layout->segments.empty())
+                uploadStrands(cmd, f, *d.cloud, d.cloud);
         if (f.staging.size() != staged)
             memoryBarrier(cmd, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                          VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT |
+                          VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT |
                               VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                           VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
     }
@@ -3972,17 +3976,8 @@ struct Renderer::Impl
         strandsLayout = layoutFor(sizeof(StrandsPush), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
         if (VkShaderModule strands = module(loadSpirv("strands.spv")))
         {
-            VkVertexInputBindingDescription sb{0, sizeof(StrandSegment), VK_VERTEX_INPUT_RATE_INSTANCE};
-            VkVertexInputAttributeDescription sa[5] = {{0, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(StrandSegment, a)},
-                                                       {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(StrandSegment, b)},
-                                                       {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(StrandSegment, t)},
-                                                       {3, 0, VK_FORMAT_R32_SFLOAT, offsetof(StrandSegment, rank)},
-                                                       {4, 0, VK_FORMAT_R32_UINT, offsetof(StrandSegment, color)}};
+            // No vertex input: the shader reads the points, segments and strands through the push constants' header.
             VkPipelineVertexInputStateCreateInfo svin{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-            svin.vertexBindingDescriptionCount = 1;
-            svin.pVertexBindingDescriptions = &sb;
-            svin.vertexAttributeDescriptionCount = 5;
-            svin.pVertexAttributeDescriptions = sa;
             strandsPipeline = buildPipeline(strandsLayout, strands, "strandsVS", "strandsPS", sceneFormat, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, svin, true, false);
             vkDestroyShaderModule(vk.device, strands, nullptr);
         }
@@ -6191,6 +6186,43 @@ struct Renderer::Impl
     }
     VkDeviceSize frameCullCells = 0;
 
+    VkDeviceAddress addressOf(const AllocatedBuffer& b) const
+    {
+        VkBufferDeviceAddressInfo bai{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
+        bai.buffer = b.buffer;
+        return vkGetBufferDeviceAddress(vk.device, &bai);
+    }
+
+    /**
+     * A strand cloud on the GPU: its layout once (segments, strands), its points whenever a new cloud on that layout comes
+     * (the old points buffer goes with this frame's staging, freed once the frames that read it are done).
+     */
+    void uploadStrands(VkCommandBuffer cmd, Frame& f, const StrandCloud& cloud, const std::shared_ptr<const StrandCloud>& keep)
+    {
+        constexpr VkBufferUsageFlags kRead = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+        const StrandLayout& layout = *cloud.layout;
+        auto [it, made] = strandCache.try_emplace(layout.key);
+        GpuStrands& g = it->second;
+        if (made)
+        {
+            g.segments = deviceBuffer(cmd, f, layout.segments.data(), layout.segments.size() * sizeof(glm::uvec2), kRead);
+            g.strands = deviceBuffer(cmd, f, layout.strands.data(), layout.strands.size() * sizeof(glm::uvec4), kRead);
+            g.count = uint32_t(layout.segments.size());
+        }
+        if (made || g.pointsKey != cloud.key)
+        {
+            if (g.points.buffer)
+                f.staging.push_back(g.points);
+            if (g.header.buffer)
+                f.staging.push_back(g.header);
+            g.points = deviceBuffer(cmd, f, cloud.points.data(), cloud.points.size() * sizeof(glm::vec4), kRead);
+            const VkDeviceAddress header[3] = {addressOf(g.points), addressOf(g.segments), addressOf(g.strands)};
+            g.header = deviceBuffer(cmd, f, header, sizeof(header), kRead);
+            g.pointsKey = cloud.key;
+        }
+        g.keep = keep;
+    }
+
     /** Hair strands as ribbons in the scene pass (strands.slang), lit by a key light over the camera. */
     void drawStrands(VkCommandBuffer cmd, const FrameState& s, const glm::mat4& viewProj, uint32_t heightPx)
     {
@@ -6204,8 +6236,8 @@ struct Renderer::Impl
         const glm::vec3 camUp(invView[1]), camForward(-glm::vec3(invView[2]));
         for (const StrandDraw& d : s.strands)
         {
-            auto it = d.cloud ? strandCache.find(d.cloud->key) : strandCache.end();
-            if (it == strandCache.end() || !it->second.count)
+            auto it = d.cloud && d.cloud->layout ? strandCache.find(d.cloud->layout->key) : strandCache.end();
+            if (it == strandCache.end() || !it->second.count || it->second.pointsKey != d.cloud->key)
                 continue;
             it->second.lastUsed = frameCounter;
             const glm::mat4 inv = glm::inverse(d.world);
@@ -6213,12 +6245,13 @@ struct Renderer::Impl
             p.mvp = viewProj * d.world;
             p.eye = ortho ? glm::vec4(glm::normalize(glm::vec3(inv * glm::vec4(camForward, 0.0f))), 1.0f) : glm::vec4(glm::vec3(inv * glm::vec4(glm::vec3(s.eye), 1.0f)), 0.0f);
             p.params = glm::vec4(d.keep, d.widthScale, s.exposure, float(heightPx) * std::abs(float(s.proj[1][1])) * 0.5f);
-            p.tint = glm::vec4(d.tint, float(frameCounter % 4096));
-            p.up = glm::vec4(glm::normalize(glm::vec3(inv * glm::vec4(camUp, 0.0f))), 0.0f);
+            const glm::uvec3 t = glm::uvec3(glm::clamp(d.tint, 0.0f, 1.0f) * 255.0f + 0.5f);
+            const uint32_t tint = glm::any(glm::greaterThan(d.tint, glm::vec3(0.0f))) ? (t.r | t.g << 8 | t.b << 16 | 255u << 24) : 0u;
+            p.upTint = glm::vec4(glm::normalize(glm::vec3(inv * glm::vec4(camUp, 0.0f))), glm::uintBitsToFloat(tint));
+            p.header = addressOf(it->second.header);
+            p.frame = uint32_t(frameCounter % 4096);
             vkCmdPushConstants(cmd, strandsLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
-            VkDeviceSize offset = 0;
-            vkCmdBindVertexBuffers(cmd, 0, 1, &it->second.buffer.buffer, &offset);
-            vkCmdDraw(cmd, 6, it->second.count, 0, 0);
+            vkCmdDraw(cmd, 6 * it->second.count, 1, 0, 0);
         }
     }
 
