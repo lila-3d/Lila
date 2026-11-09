@@ -4,6 +4,7 @@
 
 #include "geo/Mesh.h"
 #include "ops/Command.h"
+#include "ops/CommandOptions.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 
@@ -89,6 +90,15 @@ TEST_CASE("loft joins a half curve and its live symmetry mirror into one closed 
     CHECK(check["shells"] == 1);
     CHECK(check["nonManifoldEdges"] == 0);
     CHECK(check["borderEdges"] == 16 * 2);
+}
+
+TEST_CASE("option boxes built from node attrs show the attrs' defaults without passing them")
+{
+    json v = ops::options::values("loft");
+    CHECK(v["smooth"] == true);
+    CHECK(v["autoAlign"] == true);
+    CHECK(v["spansBetween"] == 1);
+    CHECK(ops::options::callWith("loft").empty());
 }
 
 TEST_CASE("array inputs survive save and load, and read the numbered attrs older files used")

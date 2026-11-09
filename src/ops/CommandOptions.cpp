@@ -381,7 +381,8 @@ Field fieldFor(const FlagDef& flag)
     f.max = flag.max.value_or(f.max);
     if (f.kind == FieldKind::Int || f.kind == FieldKind::Float)
         f.presets = flag.presets;
-    json def = flag.defaultValue.is_null() ? json(nullptr) : normalize(f, flag.defaultValue);
+    const json& given = flag.defaultValue.is_null() ? flag.shownDefault : flag.defaultValue;
+    json def = given.is_null() ? json(nullptr) : normalize(f, given);
     f.defaultValue = def.is_null() ? kindZero(f) : def;
     return f;
 }
@@ -419,7 +420,7 @@ std::vector<Field> fields(std::string_view command, const json& fixed)
                     f.choiceLabels.push_back(label);
                 }
                 f.choiceDocs = choiceDocs(flag.doc, f.choices);
-                json d = normalize(f, flag.defaultValue);
+                json d = normalize(f, flag.defaultValue.is_null() ? flag.shownDefault : flag.defaultValue);
                 f.defaultValue = d.is_null() ? kindZero(f) : d;
             }
             if (auto it = o->choiceDocs.find(flag.name); it != o->choiceDocs.end())
