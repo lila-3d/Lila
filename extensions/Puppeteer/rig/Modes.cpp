@@ -228,6 +228,7 @@ void registerMenus(ext::Context& ctx)
     for (const char* a : {"puppeteer.strings.forward", "puppeteer.strings.backward", "puppeteer.strings.ik", "puppeteer.strings.fullBody",
                           "", "puppeteer.strings.lineOfAction", "", "puppeteer.strings.contacts", "puppeteer.strings.onLayer", "puppeteer.strings.stretch", "puppeteer.strings.zero", "puppeteer.strings.restoreLengths",
                           "puppeteer.strings.overshoot", "puppeteer.strings.smooth", "puppeteer.strings.fill", "puppeteer.strings.retime", "puppeteer.strings.trail", "",
+                          "puppeteer.strings.breakdownParts", "puppeteer.strings.clearBreakdownParts", "",
                           "puppeteer.strings.glue", "puppeteer.strings.attach", "puppeteer.strings.unglue"})
         menus::addItem(ctx, *a ? menus::Item{.menu = "Puppeteer/Strings", .action = a}
                                : menus::Item{.menu = "Puppeteer/Strings", .kind = menus::Kind::Separator});

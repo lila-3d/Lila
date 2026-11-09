@@ -1087,3 +1087,76 @@ TEST_CASE("stringsRetime on sparse keys: the frames out to the neighbouring keys
         listed = listed || item->action == "puppeteer.strings.retime";
     CHECK(listed);
 }
+
+TEST_CASE("stringsBreakdownParts: a brushed part takes its share of the slider's weight, cleared parts follow again")
+{
+    loadPuppeteer();
+    stringsBiped();
+    run("playbackOptions", {{"fps", 30.0}});
+    const json all = {"hips", "spine_01", "spine_02", "neck", "head", "upperarm_l", "lowerarm_l", "hand_l"};
+    run("currentTime", {{"args", {sec(0)}}});
+    run("setKeyframe", {{"args", all}});
+    run("currentTime", {{"args", {sec(10)}}});
+    for (const char* j : {"spine_01", "upperarm_l"})
+        run("rotate", {{"args", {j}}, {"to", v3(0, 0, 30)}});
+    run("setKeyframe", {{"args", all}});
+    run("currentTime", {{"args", {sec(0)}}});
+    const json parts = run("stringsBreakdownParts", {{"args", {"upperarm_l"}}, {"factor", 0.5}});
+    REQUIRE(parts.size() == 1);
+    run("stringsBreakdown", {{"args", {"hips"}}, {"weight", 1.0}});
+    CHECK(run("getAttr", {{"args", {"upperarm_l.rotate"}}})[2].get<double>() == doctest::Approx(15.0).epsilon(1e-3));
+    CHECK(run("getAttr", {{"args", {"spine_01.rotate"}}})[2].get<double>() == doctest::Approx(30.0).epsilon(1e-3));
+    run("undo");
+    // brushed False ignores them; remove with no joints clears every part.
+    run("stringsBreakdown", {{"args", {"hips"}}, {"weight", 1.0}, {"brushed", false}});
+    CHECK(run("getAttr", {{"args", {"upperarm_l.rotate"}}})[2].get<double>() == doctest::Approx(30.0).epsilon(1e-3));
+    run("undo");
+    CHECK(run("stringsBreakdownParts", {{"remove", true}}).empty());
+    CHECK(ui::actions::registry().find("puppeteer.strings.breakdownParts"));
+}
+
+TEST_CASE("spinner breakdown in a Strings mode: dragging down lags the extremities, and their arcs draw while dragging")
+{
+    loadPuppeteer();
+    stringsBiped();
+    run("playbackOptions", {{"fps", 30.0}});
+    run("stringsRules", {{"args", {"hero"}}, {"addLine", {"arm", "upperarm_l", "hand_l"}}});
+    const json all = {"hips", "spine_01", "spine_02", "neck", "head", "upperarm_l", "lowerarm_l", "hand_l"};
+    run("currentTime", {{"args", {sec(0)}}});
+    run("setKeyframe", {{"args", all}});
+    run("currentTime", {{"args", {sec(10)}}});
+    for (const char* j : {"spine_01", "upperarm_l", "lowerarm_l"})
+        run("rotate", {{"args", {j}}, {"to", v3(0, 0, 30)}});
+    run("setKeyframe", {{"args", all}});
+    run("currentTime", {{"args", {sec(0)}}});
+    run("select", {{"args", {"spine_01"}}});
+    ModeScope scope("puppeteer.strings.fullBody");
+    std::unique_ptr<ui::Gizmo> gz = ui::gizmos::create("puppeteer.spinner");
+    auto drawn = [&] {
+        std::vector<render::OverlayVertex> tris;
+        ui::OverlayPainter p(tris, 1.0);
+        gz->setView(view());
+        gz->draw(p);
+        return tris.size();
+    };
+    const size_t idle = drawn();
+    const QPointF slider = arcPoint(u(177.0), 90.0);
+    gz->setView(view());
+    gz->hover(slider);
+    REQUIRE(gz->press(slider, Qt::LeftButton, Qt::NoModifier));
+    gz->setView(view());
+    gz->drag(slider + QPointF(100.0, 0.0), Qt::NoModifier);
+    const double spineFull = run("getAttr", {{"args", {"spine_01.rotate"}}})[2].get<double>();
+    const double foreFull = run("getAttr", {{"args", {"lowerarm_l.rotate"}}})[2].get<double>();
+    CHECK(drawn() > idle + 20);
+    gz->setView(view());
+    gz->drag(slider + QPointF(100.0, 100.0), Qt::NoModifier);
+    CHECK(gz->readout().contains("lag"));
+    const double fore = run("getAttr", {{"args", {"lowerarm_l.rotate"}}})[2].get<double>();
+    CHECK(fore < foreFull - 1.0);
+    gz->release();
+    CHECK(spineFull == doctest::Approx(30.0).epsilon(1e-3));
+    CHECK(run("getAttr", {{"args", {"lowerarm_l.rotate"}}})[2].get<double>() == doctest::Approx(fore).epsilon(1e-6));
+    run("undo");
+    CHECK(run("getAttr", {{"args", {"spine_01.rotate"}}})[2].get<double>() == doctest::Approx(0.0).scale(1.0).epsilon(1e-6));
+}

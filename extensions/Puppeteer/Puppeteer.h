@@ -45,6 +45,8 @@ void registerStrings(lila::ext::Context& ctx);
 /** The Strings rules on a character's Attribute Editor and the actions behind its buttons (gizmo/StringsUi.cpp). */
 void registerStringsUi(lila::ext::Context& ctx);
 void registerLineOfActionTool(lila::ext::Context& ctx);
+/** The Breakdown Parts brush (gizmo/BreakdownPartsTool.cpp). */
+void registerBreakdownPartsTool(lila::ext::Context& ctx);
 /** The Strings mode Spinner drags pose in. */
 lila::scene::strings::Mode stringsMode();
 void setStringsMode(lila::scene::strings::Mode m);

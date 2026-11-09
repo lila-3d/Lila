@@ -440,7 +440,7 @@ QString tipFor(Handle h, const Target& t)
         return selectionShowsProxy() ? "Anim proxy shown: click for the real meshes. Right-click: the selected joint's real piece"
                                      : "Real meshes shown: click for the anim proxy. Right-click: the selected joint's real piece";
     case Handle::Breakdown:
-        return "Breakdown: drag left toward the previous key's pose, right toward the next (Shift: the whole character)";
+        return "Breakdown: left toward the previous key, right toward the next; down lags hands, feet and head, up leads (Shift: whole character)";
     case Handle::Plate: return "Drag the rim to move the Spinner (reset in its settings)";
     case Handle::ModeForward: return "Forward: the joint turns, its children follow. U + drag: Strings menu";
     case Handle::ModeBackward: return "Backward: what is pinned below holds and the body swings. U + drag: Strings menu";
@@ -484,6 +484,7 @@ public:
 
         drawRelations(p);
         drawTrail(p, t);
+        drawArcs(p);
         drawChain(p);
         const QPointF c = center();
         const Handle hot = mDrag ? mDrag->handle : mHover;
@@ -802,6 +803,10 @@ private:
         glm::dvec3 trailBy{0.0};
         /** The trail as the drag so far would leave it; empty shows the trail as keyed. */
         std::vector<glm::dvec3> trailLive;
+        /** Breakdown in a Strings mode: how far the hands, feet and head lag (favour), and the arcs they travel along the slider. */
+        double favour = 0.0, arcFavour = 0.0;
+        std::vector<NodeId> arcJoints;
+        std::vector<std::vector<glm::dvec3>> arcs;
         /** IK: bones the wheel set to bend (0 the rules' limb), the limb the last preview bent, and its joints. */
         int chainLength = 0, autoChain = 0;
         std::vector<std::string> chain;
@@ -1427,6 +1432,7 @@ private:
                     d.saved.push_back({j, {{int(Transform::kTranslate), g.value({j, Transform::kTranslate, -1})},
                                            {int(Transform::kRotate), g.value({j, Transform::kRotate, -1})}}});
                 d.strung = true;
+                d.arcJoints = extremities(g, g.find(t.names.front())->id());
             }
             else
                 d.samples = sampleBreakdown(g, breakdownNodes(g, t.names, d.all), g.time());
@@ -1710,10 +1716,19 @@ private:
                                        : QString("Next key %1%").arg(int(std::round(d.weight * 100.0)));
             if (d.strung)
             {
+                // Down lags the hands, feet and head behind the body, up leads them, past a small dead zone.
+                const double dy = d.current.y() - d.start.y();
+                d.favour = std::clamp(math::breakdownWeight(dy, s.breakdownDeadZone, s.breakdownFull), -1.0, 1.0);
+                if (d.favour != 0.0)
+                    d.readout += QString("  %1 %2%").arg(d.favour > 0.0 ? "lag" : "lead").arg(int(std::round(std::abs(d.favour) * 100.0)));
+                if (!commit && (d.arcs.empty() || std::abs(d.favour - d.arcFavour) > 0.04))
+                    sampleArcs(d);
                 restore();
                 if (d.weight == 0.0)
                     return;
-                const json call = {{"args", namesJson(d.target.names)}, {"weight", d.weight}};
+                json call = {{"args", namesJson(d.target.names)}, {"weight", d.weight}};
+                if (d.favour != 0.0)
+                    call["favour"] = d.favour;
                 if (commit)
                     runCommand("stringsBreakdown", call);
                 else if (std::string error = quietly([&] { ops::execute("stringsBreakdown", call, CallSource::Script); }); !error.empty() && !d.warned)
@@ -1794,6 +1809,89 @@ private:
                 d.readout += QString("  from %1").arg(QString::fromStdString(result["anchor"].get<std::string>()).section('|', -1).section(':', -1));
             if (result.contains("fallback"))
                 d.readout += QString("  (%1)").arg(QString::fromStdString(result["fallback"].get<std::string>()));
+        }
+    }
+
+    /** The joints whose arcs a breakdown shows: the ends of the character's lines of action (hands, feet, head) and its contacts. */
+    static std::vector<NodeId> extremities(Graph& g, NodeId joint)
+    {
+        const NodeId character = characterFor(g, joint);
+        if (!character)
+            return {};
+        json rules;
+        try
+        {
+            rules = ops::execute("stringsRules", {{"args", {g.node(character)->path()}}});
+        }
+        catch (const std::exception&)
+        {
+            return {};
+        }
+        std::vector<std::string> names;
+        for (const auto& [name, ends] : rules["lines"].items())
+            if (ends.size() == 2)
+                names.push_back(ends[1].get<std::string>());
+        for (const json& c : rules["contacts"])
+            names.push_back(c.get<std::string>());
+        std::vector<NodeId> out;
+        for (NodeId j : fullBodyJoints(g, joint))
+        {
+            const std::string& n = g.node(j)->name();
+            const std::string bare = n.substr(n.find_last_of("|:") + 1);
+            if (std::find(names.begin(), names.end(), bare) != names.end() && std::find(out.begin(), out.end(), j) == out.end())
+                out.push_back(j);
+        }
+        return out;
+    }
+
+    /** Where each extremity goes as the slider runs from the previous key's pose to the next, at the current favour. */
+    void sampleArcs(Drag& d)
+    {
+        d.arcFavour = d.favour;
+        d.arcs.assign(d.arcJoints.size(), {});
+        if (d.arcJoints.empty())
+            return;
+        Graph& g = graph();
+        constexpr int kSteps = 8;
+        for (int k = -kSteps; k <= kSteps; ++k)
+        {
+            restore();
+            const double w = double(k) / kSteps;
+            json call = {{"args", namesJson(d.target.names)}, {"weight", w}};
+            if (d.favour != 0.0)
+                call["favour"] = d.favour;
+            // A side with no key to blend toward has no arc.
+            if (k != 0 && !quietly([&] { ops::execute("stringsBreakdown", call, CallSource::Script); }).empty())
+                continue;
+            quietly([&] {
+                g.evaluate();
+                for (size_t i = 0; i < d.arcJoints.size(); ++i)
+                    d.arcs[i].push_back(glm::dvec3(worldOf(g, d.arcJoints[i])[3]));
+            });
+        }
+        restore();
+    }
+
+    /** Arcs of the hands, feet and head while the breakdown slider drags: a dim path each, the ends marked, the joint ringed. */
+    void drawArcs(OverlayPainter& p)
+    {
+        if (!mDrag || mDrag->kind != Kind::Breakdown || mDrag->arcs.empty())
+            return;
+        Graph& g = graph();
+        for (size_t i = 0; i < mDrag->arcs.size() && i < mDrag->arcJoints.size(); ++i)
+        {
+            std::vector<QPointF> line;
+            for (const glm::dvec3& pt : mDrag->arcs[i])
+                if (const auto at = mView.project(pt))
+                    line.push_back(*at);
+            if (line.size() < 2)
+                continue;
+            p.polyline(line, 1.5f, gray(0.9f, 0.5f));
+            p.disc(line.front(), 3.0f, gray(0.9f, 0.8f), 12);
+            p.disc(line.back(), 3.0f, gray(0.9f, 0.8f), 12);
+            if (g.node(mDrag->arcJoints[i]))
+                if (const auto at = mView.project(glm::dvec3(worldOf(g, mDrag->arcJoints[i])[3])))
+                    p.disc(*at, 4.5f, gray(1.0f), 16);
         }
     }
 

@@ -1730,13 +1730,69 @@ json lineOfAction(const Args& a)
  * Per-joint breakdown weights: favour lags the extremities behind the body (above 0) or leads with them (below 0), by
  * each joint's depth below the hips; parts names joints whose weight, and their children's, is set outright.
  */
+/** Breakdown parts brushed over the mesh, by joint path: the fraction of the slider's weight that joint and its children take. */
+std::map<std::string, double>& brushedParts()
+{
+    static std::map<std::string, double> parts;
+    return parts;
+}
+
+json brushedJson()
+{
+    json out = json::object();
+    for (const auto& [joint, f] : brushedParts())
+        out[joint] = f;
+    return out;
+}
+
+json stringsBreakdownParts(const Args& a)
+{
+    Graph& g = graph();
+    // The selection may hold the character itself: only joints name parts.
+    std::vector<std::string> joints;
+    for (const std::string& n : objectArgs(a))
+        if (Node* node = g.find(n); node && rig::isJoint(*node))
+            joints.push_back(node->path());
+        else if (a.has("factor"))
+            throw CommandError("stringsBreakdownParts: " + n + " is not a joint");
+    if (a.get<bool>("remove", false))
+    {
+        if (joints.empty())
+            brushedParts().clear();
+        for (const std::string& j : joints)
+            brushedParts().erase(j);
+    }
+    else if (a.has("factor"))
+    {
+        if (joints.empty())
+            throw CommandError("stringsBreakdownParts: give the joints whose part takes the factor");
+        for (const std::string& j : joints)
+            brushedParts()[j] = std::clamp(a.get<double>("factor"), 0.0, 2.0);
+    }
+    std::erase_if(brushedParts(), [&](const auto& e) { return !g.find(e.first); });
+    viewportTools::requestRedraw();
+    return brushedJson();
+}
+
 std::function<double(NodeId, double)> breakdownWeights(Graph& g, NodeId character, const Args& a)
 {
     const double favour = std::clamp(a.get<double>("favour", 0.0), -1.0, 1.0);
-    std::vector<std::pair<NodeId, double>> parts;
+    // {joint, value, scales}: an explicit part takes its value outright, a brushed one that fraction of the weight.
+    struct Part
+    {
+        NodeId joint;
+        double value;
+        bool scales;
+    };
+    std::vector<Part> parts;
     if (a.has("parts"))
         for (const auto& [name, v] : a.flags["parts"].items())
-            parts.push_back({jointNamed(g, name, "stringsBreakdown").id(), v.get<double>()});
+            parts.push_back({jointNamed(g, name, "stringsBreakdown").id(), v.get<double>(), false});
+    if (a.get<bool>("brushed", true))
+        for (const auto& [path, f] : brushedParts())
+            if (Node* n = g.find(path); n && characterFor(g, n->id()) == character &&
+                std::none_of(parts.begin(), parts.end(), [&](const Part& p) { return p.joint == n->id(); }))
+                parts.push_back({n->id(), f, true});
     if (favour == 0.0 && parts.empty())
         return {};
     const NodeId root = characterRoot(g, character);
@@ -1751,11 +1807,11 @@ std::function<double(NodeId, double)> breakdownWeights(Graph& g, NodeId characte
         deepest = std::max(deepest, d);
     }
     // Deeper parts listed later win, so a hand's override beats its arm's.
-    std::sort(parts.begin(), parts.end(), [&](const auto& x, const auto& y) { return depth[x.first] < depth[y.first]; });
+    std::stable_sort(parts.begin(), parts.end(), [&](const Part& x, const Part& y) { return depth[x.joint] < depth[y.joint]; });
     return [&g, favour, parts, depth, deepest](NodeId j, double f) {
         for (auto it = parts.rbegin(); it != parts.rend(); ++it)
-            if (j == it->first || isUnder(g, j, it->first))
-                return it->second;
+            if (j == it->joint || isUnder(g, j, it->joint))
+                return it->scales ? f * it->value : it->value;
         const auto d = depth.find(j);
         return f * std::clamp(1.0 - favour * (d == depth.end() ? 0.0 : double(d->second) / double(deepest)), 0.0, 2.0);
     };
@@ -2183,6 +2239,7 @@ void registerActions(ext::Context& ctx)
                                                  {{"label", "Smooth Poses Over Range"}, {"action", "puppeteer.strings.smooth"}},
                                                  {{"label", "Fill Inbetweens"}, {"action", "puppeteer.strings.fill"}},
                                                  {{"label", "Retime Range"}, {"action", "puppeteer.strings.retime"}},
+                                                 {{"label", "Breakdown Parts"}, {"action", "puppeteer.strings.breakdownParts"}},
                                                  {{"label", "Motion Trail"}, {"action", "puppeteer.strings.trail"}},
                                                  {{"label", "Restore Bone Lengths"}, {"action", "puppeteer.strings.restoreLengths"}},
                                                  {{"separator", true}},
@@ -2408,10 +2465,24 @@ void registerStrings(ext::Context& ctx)
             {"weight", "w", T::Float, 0.0, "-1 the previous key's pose, 0 now, 1 the next key's."},
             {"favour", "fv", T::Float, 0.0, "Above 0 the hands, feet and head lag behind the body; below 0 they lead.", {}, {}, -1.0, 1.0},
             {"parts", "pt", T::Any, nullptr, "{joint: weight}: those joints and their children take that weight instead."},
+            {"brushed", "br", T::Bool, true, "Parts brushed with the Breakdown Parts tool take their fraction of the weight; False ignores them."},
             {"all", "al", T::Bool, true, "The whole character; False only the given joints."},
             nodeFlag({"world", "wo", T::List, nullptr, "Joints that blend in world space; default the character's contacts."}, "joint"),
         },
         .run = stringsBreakdown,
+    });
+    ctx.registerCommand({
+        .name = "stringsBreakdownParts",
+        .doc = "Breakdown parts: joints whose part (the joint and its children) takes a fraction of the breakdown weight, as "
+               "the Breakdown Parts tool brushes them over the mesh. 0 holds the part in its pose, 1 follows the slider, "
+               "between lags it. Kept for the session, never keyed. Returns {joint: factor}.",
+        .positionalDoc = "joints",
+        .flags = {
+            {"factor", "f", T::Float, nullptr, "Set the joints' parts to this fraction of the weight.", {}, {}, 0.0, 2.0},
+            {"remove", "rm", T::Bool, false, "Remove the joints' parts; with no joints, all of them."},
+        },
+        .undoable = false,
+        .run = stringsBreakdownParts,
     });
     ctx.registerCommand({
         .name = "stringsFill",
