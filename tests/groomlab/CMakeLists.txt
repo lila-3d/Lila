@@ -114,3 +114,15 @@ set_target_properties(lila_groomlab_tests PROPERTIES LILA_NO_UNITY ON CXX_STANDA
 add_test(NAME lila_groomlab_tests COMMAND lila_groomlab_tests --gtest_filter=-Budget.*:Performance.*)
 add_test(NAME lila_groomlab_timing COMMAND lila_groomlab_tests --gtest_filter=Budget.*:Performance.*)
 set_tests_properties(lila_groomlab_timing PROPERTIES RUN_SERIAL TRUE)
+
+# The look engine's kernels on Lila's Vulkan compute against the CPU's (upstream's GPU tests, a headless renderer).
+add_executable(lila_groomlab_gpu_tests gpu/main.cpp gpu/test_look_engine.cpp)
+target_link_libraries(lila_groomlab_gpu_tests PRIVATE groomlab_core lila_groom_evaluator lila_groom_look LilaUI GTest::gtest nlohmann_json::nlohmann_json)
+target_include_directories(lila_groomlab_gpu_tests PRIVATE core ${CMAKE_SOURCE_DIR}/src/groom/groomlab/core/src)
+target_compile_definitions(lila_groomlab_gpu_tests PRIVATE "GROOMLAB_TEST_DATA=\"${CMAKE_CURRENT_SOURCE_DIR}/data\""
+    "GROOMLAB_SHIPPED_PRESETS=\"${CMAKE_CURRENT_SOURCE_DIR}/data/shipped_presets\"")
+target_compile_options(lila_groomlab_gpu_tests PRIVATE /wd4456 /wd4457 /wd4267 /wd4005 /wd4189)
+target_compile_definitions(lila_groomlab_gpu_tests PRIVATE _SILENCE_CXX20_U8PATH_DEPRECATION_WARNING)
+set_target_properties(lila_groomlab_gpu_tests PROPERTIES LILA_NO_UNITY ON)
+add_test(NAME lila_groomlab_gpu_tests COMMAND lila_groomlab_gpu_tests --gtest_filter=-*Bench*)
+set_tests_properties(lila_groomlab_gpu_tests PROPERTIES RUN_SERIAL TRUE)

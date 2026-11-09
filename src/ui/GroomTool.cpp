@@ -20,6 +20,7 @@
 #include "ui/Actions.h"
 #include "ui/AttributeEditor.h"
 #include "ui/Controls.h"
+#include "ui/GroomGpu.h"
 #include "ui/Icons.h"
 #include "ui/NodeHandles.h"
 #include "ui/Panels.h"
@@ -1277,6 +1278,7 @@ bool groomKeysShown() { return PrefStore::get().value<bool>("general", kGroomKey
 
 void registerGroomUi()
 {
+    groom::setLookDeviceFactory([] { return makeGpuLookDevice(); });
     panels::add({.id = kGroomPaletteId,
                  .title = "Groom",
                  .create = [](QWidget* parent) -> QWidget* { return gGroomPalette = new GroomPalette(parent); },
