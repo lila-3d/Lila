@@ -82,8 +82,13 @@ int eventKey(QKeyEvent* e)
 #ifdef _WIN32
     const auto mods = e->modifiers();
     if ((mods & Qt::ControlModifier) && !(mods & Qt::ShiftModifier) && hotkeys::unshiftedUsKey(e->key()) != e->key())
-        if (UINT ch = MapVirtualKeyW(e->nativeVirtualKey(), MAPVK_VK_TO_CHAR) & 0x7FFF; ch > 0x20)
+    {
+        UINT vk = e->nativeVirtualKey();
+        if (!vk && e->nativeScanCode())
+            vk = MapVirtualKeyW(e->nativeScanCode(), MAPVK_VSC_TO_VK);
+        if (UINT ch = MapVirtualKeyW(vk, MAPVK_VK_TO_CHAR) & 0x7FFF; ch > 0x20)
             return QChar(char16_t(ch)).toUpper().unicode();
+    }
 #endif
     return e->key();
 }
