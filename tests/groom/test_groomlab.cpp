@@ -134,6 +134,8 @@ TEST_CASE("Hair geometry nodes: one per GroomLab operator, the same strands as t
      "output": "clump"})";
     const curve::Splines grown = groom::growStrands(scalp, {}, graph).strands;
     REQUIRE(grown.size() > 100);
+    // The strands carry the graph's channels under GroomLab's names.
+    CHECK(grown.front().attrs.contains("clumpId"));
     const gn::CurveSet& curves = *made->curves;
     REQUIRE(curves.numCurves() == grown.size());
     size_t differ = 0;

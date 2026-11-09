@@ -97,6 +97,13 @@ Splines toSplines(const groomlab::StrandSet& strands)
     Splines out(strands.strandCount());
     const std::vector<float>& widths = strands.widths();
     const bool hasWidths = widths.size() == strands.pointCount();
+    std::vector<std::pair<std::string, const std::vector<float>*>> pointChannels, strandChannels;
+    for (const std::string& name : strands.pointChannelNames())
+        if (const std::vector<float>* v = strands.pointChannel(name); v && v->size() == strands.pointCount() && !name.starts_with('_'))
+            pointChannels.emplace_back(name, v);
+    for (const std::string& name : strands.strandChannelNames())
+        if (const std::vector<float>* v = strands.strandChannel(name); v && v->size() == strands.strandCount() && !name.starts_with('_'))
+            strandChannels.emplace_back(name, v);
     for (size_t i = 0; i < out.size(); ++i)
     {
         Spline& s = out[i];
@@ -109,6 +116,11 @@ Splines toSplines(const groomlab::StrandSet& strands)
         if (hasWidths)
             s.pointAttrs[std::string(attr::kWidth)].assign(widths.begin() + ptrdiff_t(begin), widths.begin() + ptrdiff_t(begin + n));
         s.attrs[std::string(attr::kId)] = double(strands.ids()[i]);
+        // Every channel under GroomLab's name: what the export maps to Unreal's groom_* attributes.
+        for (const auto& [name, values] : pointChannels)
+            s.pointAttrs[name].assign(values->begin() + ptrdiff_t(begin), values->begin() + ptrdiff_t(begin + n));
+        for (const auto& [name, values] : strandChannels)
+            s.attrs[name] = (*values)[i];
     }
     return out;
 }
