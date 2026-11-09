@@ -488,7 +488,7 @@ void runAction(const char* name, json args)
     actions::run({{"command", name}, {"args", std::move(args)}});
 }
 
-bool attachToMeshes() { return prefs().value<bool>("general", "/measure/attach", true); }
+bool attachToMeshes() { return prefs().value<bool>("general", "/measure/attach", false); }
 
 json parentFor(const Snap& s)
 {
