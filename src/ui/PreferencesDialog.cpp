@@ -940,7 +940,7 @@ void addBuiltIns(Registry<prefPages::Page>& r)
                {{"The main number", "value"}, {"The full report", "report"}, {"Nothing", "off"}}, "value");
         toggleField(measure, "Include units when copying", "/measure/clipboardUnits", false);
         sectionHeader(measure, "Measure Tool");
-        toggleField(measure, "Attach measure points to the object clicked", "/measure/attach", true);
+        toggleField(measure, "Attach measure points to the object clicked", "/measure/attach", false);
         numberField(measure, "Result stays on screen (seconds)", "/measure/hudSeconds", 5.0, 0.5, 60.0, 0.5, 1);
         toggleField(measure, "Show measurements", "/measure/show", true);
     });

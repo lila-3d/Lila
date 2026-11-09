@@ -8,6 +8,7 @@
 #include "curve/CurveNodes.h"
 #include "groom/Attrs.h"
 #include "groom/GroomGraph.h"
+#include "groom/GroomLook.h"
 #include "groom/GroomNodes.h"
 #include "groom/LockOps.h"
 #include "groom/GroomPresets.h"
@@ -20,6 +21,7 @@
 #include "ui/Actions.h"
 #include "ui/AttributeEditor.h"
 #include "ui/Controls.h"
+#include "ui/FileDialog.h"
 #include "ui/GroomGpu.h"
 #include "ui/Icons.h"
 #include "ui/NodeHandles.h"
@@ -1155,6 +1157,129 @@ QWidget* styleFields(const std::string& groomPath, const std::string& node, groo
     return w;
 }
 
+/**
+ * A look node's settings. Dragging a number previews it (previewLook: on the GPU when it can) without an undo step; the
+ * release sets it once, undoable. A typed value or a checkbox sets it straight away.
+ */
+QWidget* lookFields(NodeId groom, const std::string& groomPath, const std::string& node, const json& params, bool enabled)
+{
+    auto* w = new QWidget;
+    auto* form = new QFormLayout(w);
+    form->setContentsMargins(20, 0, 0, 6);
+    form->setSpacing(2);
+    form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    auto commit = [groomPath, node](const std::string& name, const json& value) {
+        runUi("groomLook", {{"args", {groomPath}}, {"edit", "set"}, {"node", node}, {"params", json{{name, value}}.dump()}});
+    };
+    for (const json& p : params)
+    {
+        const std::string name = p.value("name", std::string());
+        const std::string kind = p.value("kind", std::string("f"));
+        QWidget* field = nullptr;
+        if (kind == "b")
+        {
+            auto* box = new QCheckBox(w);
+            box->setChecked(p.value("value", false));
+            QObject::connect(box, &QCheckBox::toggled, box, [commit, name](bool on) { commit(name, on); });
+            field = box;
+        }
+        else
+        {
+            const bool integer = kind == "i";
+            QDoubleSpinBox* box = controls::valueField(p.value("min", -1e6), p.value("max", 1e6), integer ? 0 : 3, {}, w);
+            // Typed values set on Enter; a drag previews on every step.
+            box->setKeyboardTracking(false);
+            box->setValue(p["value"].get<double>());
+            setSpinDefault(box, p["default"].get<double>());
+            auto previewing = std::make_shared<bool>(false);
+            QObject::connect(box, &QDoubleSpinBox::valueChanged, box, [groom, node, name, previewing](double x) {
+                if (QApplication::mouseButtons() == Qt::NoButton)
+                    return;
+                *previewing = true;
+                groom::previewLook(Graph::current(), groom, node, {{name, x}});
+                viewportTools::requestRedraw();
+            });
+            QObject::connect(box, &QDoubleSpinBox::editingFinished, box, [box, groom, commit, name, integer, previewing, start = p["value"]] {
+                if (*previewing)
+                {
+                    *previewing = false;
+                    groom::endPreviewLook(Graph::current(), groom);
+                }
+                const json value = integer ? json(int64_t(std::llround(box->value()))) : json(box->value());
+                if (value != start)
+                    commit(name, value);
+                viewportTools::requestRedraw();
+            });
+            field = box;
+        }
+        field->setToolTip(QString::fromStdString(p.value("doc", std::string())));
+        field->setEnabled(enabled);
+        form->addRow(displayName(name), field);
+    }
+    return w;
+}
+
+/** The groom's look nodes in the Attribute Editor: each with on/off, remove and its settings, and an add menu. */
+QWidget* lookPanel(NodeId id)
+{
+    Graph& g = Graph::current();
+    Node* part = g.node(id);
+    Node* gr = part ? groom::findGroom(g, *part) : nullptr;
+    if (!gr)
+        return nullptr;
+    const std::string path = gr->path();
+    const NodeId groomId = gr->id();
+    json look;
+    try
+    {
+        look = ops::execute("groomLook", {{"args", {path}}});
+    }
+    catch (const std::exception&)
+    {
+        return nullptr;
+    }
+    auto* w = new QWidget;
+    auto* v = new QVBoxLayout(w);
+    v->setContentsMargins(8, 2, 4, 2);
+    if (look.empty())
+    {
+        auto* empty = new QLabel("No look nodes. Add Clump, Noise or Curl below.");
+        controls::setRole(empty, "dim");
+        v->addWidget(empty);
+    }
+    for (const json& n : look)
+    {
+        const std::string node = n["node"];
+        auto* row = new QHBoxLayout;
+        row->setSpacing(2);
+        auto* on = new QCheckBox(QString::fromStdString(n["type"].get<std::string>()));
+        on->setChecked(n.value("enabled", true));
+        on->setToolTip(QString::fromStdString(node) + ": on or off.");
+        QObject::connect(on, &QCheckBox::toggled, on, [path, node](bool) { runUi("groomLook", {{"args", {path}}, {"edit", "toggle"}, {"node", node}}); });
+        row->addWidget(on, 1);
+        auto* remove = new QToolButton;
+        remove->setIcon(icon("trash"));
+        remove->setToolTip("Remove");
+        remove->setAutoRaise(true);
+        QObject::connect(remove, &QToolButton::clicked, remove, [path, node] { runUi("groomLook", {{"args", {path}}, {"edit", "remove"}, {"node", node}}); });
+        row->addWidget(remove);
+        v->addLayout(row);
+        v->addWidget(lookFields(groomId, path, node, n["params"], n.value("enabled", true)));
+    }
+    auto* add = new QComboBox;
+    add->addItem("Add Look...");
+    for (const std::string& type : groom::groomLookTypes())
+        add->addItem(QString::fromStdString(type), QString::fromStdString(type));
+    QObject::connect(add, &QComboBox::activated, add, [add, path](int i) {
+        if (i <= 0)
+            return;
+        const std::string type = add->itemData(i).toString().toStdString();
+        QTimer::singleShot(0, [path, type] { runUi("groomLook", {{"args", {path}}, {"edit", "add"}, {"type", type}}); });
+    });
+    v->addWidget(add);
+    return w;
+}
+
 /** The groom's lock styles in the Attribute Editor: each with on/off, up, down, remove and its settings, and an add menu. */
 QWidget* stackPanel(NodeId id)
 {
@@ -1341,10 +1466,81 @@ void registerGroomUi()
                       .call = {{"style", n}}});
     }
     for (const char* t : {"groom", "curve", "mesh"})
+    {
         attributeEditor::addSection(t, "Groom", [](NodeId id) { return stackPanel(id); });
+        attributeEditor::addSection(t, "Hair Look", [](NodeId id) { return lookPanel(id); });
+    }
     // The Groom section shows the graph's lock styles: rebuilt when the graph changes (an edit, undo, a script).
     attributeEditor::filters().put("lila.groomGraph", {.typeName = "groom", .triggers = {"graph", "lockCount"}});
     registerLockHandles();
     registerGroomBrushTool();
+    actions::add({.id = "groom.export",
+                  .label = "Export Groom...",
+                  .category = "Groom",
+                  .run =
+                      [] {
+                          const QString file = fileDialog::getSaveFileName(QApplication::activeWindow(), "Export Groom", {},
+                                                                           "Unreal groom (*.abc);;USD curves (*.usd *.usda *.usdc);;GroomLab groom (*.groom)");
+                          if (!file.isEmpty())
+                              actions::runWithOptions("exportGroom", {{"path", file.toStdString()}});
+                      },
+                  .doc = "Writes the selected groom's strands for Unreal or Unity (.abc with groom_* attributes and guides), as USD curves, "
+                         "or as a GroomLab .groom file.",
+                  .python = "exportGroom(\"HairGroom\", path=\"hair.abc\", start=1, end=48)",
+                  .keywords = {"alembic", "abc", "unreal", "groom", "usd", "hair", "export"}});
+    actions::add({.id = "groom.import",
+                  .label = "Import Groom...",
+                  .category = "Groom",
+                  .run =
+                      [] {
+                          const QString file = fileDialog::getOpenFileName(QApplication::activeWindow(), "Import Groom", {}, "GroomLab groom (*.groom)");
+                          if (!file.isEmpty())
+                              actions::runWithOptions("importGroom", {{"args", {file.toStdString()}}});
+                      },
+                  .doc = "Reads a GroomLab .groom file into a new groom, on the selected mesh or the file's own scalp.",
+                  .python = "importGroom(\"hair.groom\", mesh=\"Head\")",
+                  .keywords = {"groomlab", "groom", "hair", "import"}});
+    actions::add({.id = "groom.importYeti",
+                  .label = "Import Yeti...",
+                  .category = "Groom",
+                  .run =
+                      [] {
+                          const QString file = fileDialog::getOpenFileName(QApplication::activeWindow(), "Import Yeti", {}, "Maya ASCII (*.ma)");
+                          if (!file.isEmpty())
+                              actions::runWithOptions("importYeti", {{"args", {file.toStdString()}}});
+                      },
+                  .doc = "Reads the Yeti grooms of a Maya ASCII file into grooms, without Maya or Yeti. Import the .ma first so its scalp "
+                         "meshes are in the scene.",
+                  .python = "importYeti(\"scene.ma\")",
+                  .keywords = {"yeti", "peregrine", "maya", "groom", "hair", "fur", "import"}});
+    actions::add({.id = "groom.sendToUnreal",
+                  .label = "Send Groom to Unreal",
+                  .category = "Groom",
+                  .doc = "Sends the selected groom to the connected Unreal editor as a groom asset with its guides and M_LilaHair, built on "
+                         "MF_LilaHair. Sending again reimports the same asset.",
+                  .python = ops::toPython("unrealSendGroom", json::object()),
+                  .command = "unrealSendGroom",
+                  .call = json::object(),
+                  .keywords = {"unreal", "groom", "hair", "send", "lilalink", "alembic"}});
+    actions::add({.id = "groom.cards",
+                  .label = "Hair Cards Preset",
+                  .category = "Groom",
+                  .doc = "Gives the selected groom a Cards node set from a hero, mid or low preset; outCards holds the cards.",
+                  .python = ops::toPython("groomCards", {{"lod", "mid"}}),
+                  .command = "groomCards",
+                  .call = json::object(),
+                  .keywords = {"cards", "lod", "game", "hair cards", "groom"}});
+    actions::add({.id = "groom.bakeCards",
+                  .label = "Bake Hair Cards...",
+                  .category = "Groom",
+                  .run =
+                      [] {
+                          const QString folder = fileDialog::getExistingDirectory(QApplication::activeWindow(), "Bake Hair Cards");
+                          if (!folder.isEmpty())
+                              actions::runWithOptions("groomBakeCards", {{"folder", folder.toStdString()}});
+                      },
+                  .doc = "Bakes the selected groom's cards into texture maps and an atlas in a folder; the cards keep their cells from it.",
+                  .python = ops::toPython("groomBakeCards", {{"folder", "cards"}}),
+                  .keywords = {"cards", "bake", "atlas", "textures", "groom"}});
 }
 } // namespace lila::ui

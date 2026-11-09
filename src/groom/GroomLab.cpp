@@ -8,6 +8,12 @@
 #include "groom/Groom.h"
 #include "geo/ColorSets.h"
 #include "groom/GroomEvaluator.h"
+#include "groom/GroomExport.h"
+#include "groom/GroomLook.h"
+#include "groom/LookDevice.h"
+#include "groom/LookEngineDevice.h"
+
+#include <groomlab/gpu/look_chain.h>
 #include "groom/Locks.h"
 #include "groom/GuideData.h"
 #include "groom/GroomNodes.h"
@@ -64,15 +70,27 @@ std::shared_ptr<const groomlab::ScalpMesh> scalpMesh(const geo::Mesh& mesh, cons
         if (mesh.pointValid(p))
             remap[p] = next++;
     std::vector<groomlab::ScalpMesh::Triangle> triangles;
+    // uv0 per triangle corner: texture maps paint and read through it.
+    const std::span<const glm::vec2> uv = mesh.cornerAttrs().get<glm::vec2>("uv0");
+    std::vector<groomlab::ScalpMesh::UV> uvs;
     for (geo::Index f = 0; f < mesh.faceCapacity(); ++f)
     {
         if (!mesh.faceValid(f))
             continue;
         const std::vector<geo::Index> v = mesh.facePoints(f);
+        const std::vector<geo::Index> c = uv.empty() ? std::vector<geo::Index>() : mesh.faceCorners(f);
         for (size_t i = 1; i + 1 < v.size(); ++i)
+        {
             triangles.push_back({remap[v[0]], remap[v[i]], remap[v[i + 1]]});
+            if (!c.empty())
+                for (geo::Index k : {c[0], c[i], c[i + 1]})
+                    uvs.push_back({uv[k].x, uv[k].y});
+        }
     }
-    return std::make_shared<groomlab::ScalpMesh>(worldPoints(mesh, matrix), std::move(triangles));
+    auto out = std::make_shared<groomlab::ScalpMesh>(worldPoints(mesh, matrix), std::move(triangles));
+    if (!uvs.empty())
+        out->setCornerUVs(std::move(uvs));
+    return out;
 }
 
 groomlab::ScalpMaps colorSetMaps(const geo::Mesh& mesh)
@@ -289,6 +307,15 @@ geo::Mesh cardsMesh(const groomlab::CardMesh& c)
 class GroomNode final : public Node
 {
 public:
+    /** A look preview (previewLook): params over the graph's, shown without being set. */
+    groomlab::gpu::Overrides mPreview;
+    bool mPreviewing = false;
+    PreviewResult mPreviewResult;
+
+    /** Set while an export evaluates the node: strands are made, and kept in mExported. */
+    bool mExport = false;
+    GroomExportFrame mExported;
+
     ~GroomNode() override
     {
         std::lock_guard lock(registry().mutex);
@@ -334,7 +361,7 @@ public:
             Graph& g = Graph::current();
             auto read = [&](const char* a) { return !g.destinations({id(), idx(*this, a), -1}).empty(); };
             const bool locks = read("outMesh") || read("outCurve");
-            const bool strands = read("outStrands");
+            const bool strands = read("outStrands") || mExport;
             const bool cards = read("outCards");
             if (!locks && !strands && !cards)
             {
@@ -345,11 +372,13 @@ public:
                 mEvaluator = std::make_unique<GroomEvaluator>();
             GroomEvaluator& e = *mEvaluator;
             setGraph(e);
+            mPreviewResult = {};
             e.setPartsJson(s(*this, "parts"));
             e.setFlowJson(s(*this, "flow"));
             setScalpMaps(e, warnings);
             e.setSculptsJson(s(*this, "sculpts"));
             e.setCorrectivesJson(s(*this, "correctives"));
+            e.setCardMaps(s(*this, "cardMaps"));
             e.setFramesPerSecond(anim::playback().fps);
             const bool scale = b(*this, "scaleWithScalp");
             e.setScaleWithScalp(scale);
@@ -367,10 +396,26 @@ public:
             e.setScalpHistory(historyAt(ctx.time));
             GroomEvaluator::Request request;
             request.time = b(*this, "useSceneTime") ? ctx.time : f(*this, "time");
-            request.wantCards = cards;
-            if (!strands && !cards)
+            request.wantCards = cards || (mExport && e.hasCardsNode());
+            // A graph from elsewhere (an imported .groom) has no Locks node: no locks from it.
+            const bool lockNode = e.hasNode(groomGraph::kLocks);
+            if (!strands && !cards && lockNode)
                 request.stopAt = groomGraph::kLocks;
-            const GroomEvaluator::Result& result = e.evaluate(request);
+            const GroomEvaluator::Result* resultAt = &e.evaluate(request);
+            // A look preview: the GPU from the strands just grown, else the CPU with the preview's params set.
+            groomlab::StrandsPtr previewStrands;
+            if (mPreviewing && strands)
+            {
+                if (gpuPreview(e, previewStrands, mPreviewResult.why))
+                    mPreviewResult.gpu = true;
+                else
+                {
+                    groomLabBridge::setGraph(e, previewGraph());
+                    resultAt = &e.evaluate(request);
+                    previewStrands = resultAt->strands;
+                }
+            }
+            const GroomEvaluator::Result& result = *resultAt;
             for (const std::string& w : result.errors)
                 warnings.push_back(w);
             for (const auto& [name, note] : e.nodeNotes())
@@ -378,12 +423,24 @@ public:
             mMissedHistory = !historyAt(ctx.time) && e.scalpHistoryFrames() > 0;
             mMissedFeed = first && steppedPast(e);
             mReferenceToStore = scale && !(f(*this, "scaleReference") > 0.0) ? e.scaleReference() : 0.0;
+            if (mExport)
+            {
+                mExported.strands = result.strands;
+                mExported.cardStrands = result.cardStrands;
+                mExported.scalp = mScalp;
+                mExported.guides = groomlab::StrandSet();
+                // The primary guides, what Unreal simulates the hair on.
+                for (const groomlab::HierarchyGuide& gd : posed.guides())
+                    if (gd.parent == groomlab::kNoGuide && gd.points.size() >= 2)
+                        mExported.guides.addStrand(gd.id, gd.points, {}, gd.root);
+            }
             if (strands)
             {
-                if (result.strands != mStrandsFrom || !mStrands)
+                const groomlab::StrandsPtr shown = previewStrands ? previewStrands : result.strands;
+                if (shown != mStrandsFrom || !mStrands)
                 {
-                    mStrands = makeCurveData(result.strands ? groomLabBridge::toSplines(*result.strands) : Splines());
-                    mStrandsFrom = result.strands;
+                    mStrands = makeCurveData(shown ? groomLabBridge::toSplines(*shown) : Splines());
+                    mStrandsFrom = shown;
                 }
                 setOutput(idx(*this, "outStrands"), mStrands);
                 setOutput(idx(*this, "strandCount"), int64_t(result.strands ? result.strands->strandCount() : 0));
@@ -397,7 +454,7 @@ public:
                 }
                 setOutput(idx(*this, "outCards"), MeshPtr(mCards));
             }
-            if (locks)
+            if (locks && lockNode)
             {
                 const groomlab::GuidesPtr made =
                     groomlab::valueAs<groomlab::GuidesPtr>(e.evaluateNode(groomGraph::kLocks, 1.0f, request.time));
@@ -612,6 +669,84 @@ private:
         groomLabBridge::setGraph(e, graph.empty() ? groomGraph::defaultGraph() : graph);
     }
 
+    /** The stored graph with the preview's params set on it: what a preview the GPU can't run evaluates on the CPU. */
+    std::string previewGraph() const
+    {
+        const std::string& stored = s(*this, "graph");
+        nlohmann::json g = nlohmann::json::parse(stored.empty() ? groomGraph::defaultGraph() : stored);
+        for (nlohmann::json& n : g["nodes"])
+            if (const auto it = mPreview.find(n.value("name", std::string())); it != mPreview.end())
+                for (const auto& [param, value] : it->second)
+                    if (const double* d = std::get_if<double>(&value))
+                        n["params"][param] = *d;
+        return g.dump();
+    }
+
+    /**
+     * The preview on the GPU: the look chain from the first overridden node, from the strands the evaluator last grew
+     * there. False with why when it can't (the strands come from the CPU then).
+     */
+    bool gpuPreview(GroomEvaluator& e, groomlab::StrandsPtr& out, std::string& why)
+    {
+        namespace gpu = groomlab::gpu;
+        const groomlab::GraphDocument* doc = e.viewDocument();
+        if (!doc)
+        {
+            why = "the graph didn't load";
+            return false;
+        }
+        if (!gpu::previewableOverrides(*doc, mPreview, &why))
+            return false;
+        gpu::LookChain full;
+        if (!gpu::findLookChain(*doc, &full, &why))
+            return false;
+        const std::size_t first = gpu::firstOverridden(*doc, full, mPreview);
+        if (first == gpu::kNoStage)
+        {
+            why = "the node isn't in the GPU look chain";
+            return false;
+        }
+        const gpu::LookChain chain = gpu::chainFrom(*doc, full, first);
+        gpu::LookRun run;
+        groomlab::StrandsPtr base, output;
+        const GroomEvaluator::Result& last = e.last();
+        if (!gpu::readLookParams(*doc, chain, mPreview, &run.params, &why) || !gpu::lookStrands(*doc, chain, &base, &output, &why) ||
+            !gpu::readLookFields(*doc, chain, last.scalp.get(), &run.fields, &why) || !gpu::lookFieldsHold(*doc, chain, run.fields, &why))
+            return false;
+        if (!mLookInputs)
+            mLookInputs = std::make_unique<gpu::LookInputs>();
+        if (!mLookInputs->read(*doc, chain, run.params, last.parts.get(), &run.inputs, &why, {}, last.scalp.get(), &run.fields, last.scalp))
+            return false;
+        if (!mEngine)
+        {
+            std::shared_ptr<LookDevice> device = makeLookDevice();
+            if (!device)
+            {
+                why = "no GPU device (the UI makes one)";
+                return false;
+            }
+            mEngine = makeDeviceLookEngine(std::move(device));
+        }
+        try
+        {
+            mEngine->setBase(base, last.scalp.get());
+            mEngine->run(run, false);
+            auto strands = std::make_shared<groomlab::StrandSet>(*output);
+            strands->mutablePositions() = mEngine->readPositions();
+            const std::vector<float> widths = mEngine->readWidths();
+            if (widths.size() == strands->pointCount())
+                strands->mutableWidths() = widths;
+            out = std::move(strands);
+            return true;
+        }
+        catch (const std::exception& ex)
+        {
+            why = std::string("the GPU run failed: ") + ex.what();
+            mEngine.reset();
+            return false;
+        }
+    }
+
     /** The hierarchy's guides with their mirror copies when the symmetry is on, then the connected curves. */
     groomlab::GuidesPtr guides(const groomlab::GuideHierarchy& posed, const Splines& curves, const groomlab::ScalpMesh* scalp) const
     {
@@ -698,6 +833,8 @@ private:
     groomlab::GuidesPtr mGuides;
     /** Keeps the graph's results between evaluations, so an edit re-runs only the nodes it reaches. */
     std::unique_ptr<GroomEvaluator> mEvaluator;
+    std::unique_ptr<groomlab::gpu::LookEngine> mEngine;
+    std::unique_ptr<groomlab::gpu::LookInputs> mLookInputs;
     groomlab::ScalpMaps mColorMaps;
     uint64_t mColorMapsVersion = 0, mMapsVersion = 0;
     std::string mMapsText;
@@ -762,6 +899,53 @@ void sampleHistories(Graph& g, bool after)
         g.evaluate();
 }
 } // namespace
+
+PreviewResult previewLook(Graph& g, NodeId groom, const std::string& node, const std::map<std::string, double>& params)
+{
+    auto* n = dynamic_cast<GroomNode*>(g.node(groom));
+    if (!n)
+        return {false, "not a groom"};
+    for (const auto& [param, value] : params)
+        n->mPreview[node][param] = value;
+    n->mPreviewing = true;
+    g.touch(groom);
+    g.evaluateUpstream({groom});
+    return n->mPreviewResult;
+}
+
+void endPreviewLook(Graph& g, NodeId groom)
+{
+    auto* n = dynamic_cast<GroomNode*>(g.node(groom));
+    if (!n || !n->mPreviewing)
+        return;
+    n->mPreview.clear();
+    n->mPreviewing = false;
+    g.touch(groom);
+}
+
+GroomExportFrame groomExportFrame(Graph& g, NodeId groom, double seconds)
+{
+    auto* n = dynamic_cast<GroomNode*>(g.node(groom));
+    if (!n)
+        throw std::invalid_argument("not a groom");
+    n->mExport = true;
+    n->mExported = {};
+    g.setTime(seconds, false);
+    g.touch(groom);
+    try
+    {
+        g.evaluateUpstream({groom});
+    }
+    catch (...)
+    {
+        n->mExport = false;
+        throw;
+    }
+    n->mExport = false;
+    if (!n->mExported.strands)
+        throw std::runtime_error(n->name() + " grew no strands at " + std::to_string(seconds) + " s");
+    return std::move(n->mExported);
+}
 
 std::unique_ptr<scene::Node> makeGroomNode()
 {

@@ -366,6 +366,31 @@ void markWedgeSeams(Mesh& mesh, std::span<const Index> faces, const std::unorder
         seam[e] = on;
 }
 
+/**
+ * Gives every corner of one wedge at a point the same uvs: the bevel places a point from a strip's end on one face and
+ * from the corner patch on the next, two blends that agree only where the cage's uvs are flat across the wedge, and a
+ * crack between them would split the island wherever its layout bends. The lowest corner's values stand for all.
+ */
+void unifyWedges(Mesh& mesh, const std::unordered_map<Index, int>& label)
+{
+    std::vector<std::pair<Index, int>> corners(label.begin(), label.end());
+    std::sort(corners.begin(), corners.end());
+    std::map<std::pair<Index, int>, Index> first;
+    std::vector<std::span<glm::vec2>> layers;
+    for (size_t l = 0; l < mesh.cornerAttrs().layerCount(); ++l)
+        if (mesh.cornerAttrs().layer(l).type() == AttrType::Float2)
+            layers.push_back(mesh.cornerAttrs().get<glm::vec2>(std::string(mesh.cornerAttrs().layer(l).name())));
+    for (const auto& [c, w] : corners)
+    {
+        if (!mesh.cornerValid(c))
+            continue;
+        const auto [it, added] = first.emplace(std::pair{mesh.cornerPoint(c), w}, c);
+        if (!added)
+            for (std::span<glm::vec2> uv : layers)
+                uv[c] = uv[it->second];
+    }
+}
+
 /** Faces with no more area than a square of side tol. */
 size_t flatFaces(const Mesh& mesh, double tol)
 {
@@ -1692,6 +1717,7 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
     for (Index p : welded)
         mesh.removePoint(p);
     mesh.removeLoose(oldEdges, oldPoints);
+    unifyWedges(mesh, cornerLabel);
     markWedgeSeams(mesh, out, cornerLabel);
 
     if (opts.smoothingAngle >= 0.0)

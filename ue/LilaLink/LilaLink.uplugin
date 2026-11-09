@@ -74,6 +74,10 @@
 			"Enabled": true
 		},
 		{
+			"Name": "HairStrands",
+			"Enabled": true
+		},
+		{
 			"Name": "DeformerGraph",
 			"Enabled": true
 		},

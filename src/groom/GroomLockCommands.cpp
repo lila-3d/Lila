@@ -5,10 +5,13 @@
 #include "curve/NodeHelpers.h"
 #include "groom/Attrs.h"
 #include "groom/GroomEdit.h"
+#include "groom/GroomExport.h"
+#include "groom/GroomLook.h"
 #include "groom/GroomGraph.h"
 #include "groom/GroomLabBridge.h"
 #include "groom/GuideData.h"
 #include "groom/GroomPresets.h"
+#include "groom/RodSettle.h"
 #include "groom/Settle.h"
 #include "groom/Shapes.h"
 #include "ops/Command.h"
@@ -217,6 +220,8 @@ int part(Splines& s, const std::vector<D3>& line, double radius, double strength
 
 void registerLockCommands()
 {
+    registerIoCommands();
+    registerLookCommands();
     presets::registerCommands();
     std::vector<std::string> styles, shapes, presets, profiles;
     for (int k = 0; k < int(Style::Count); ++k)
@@ -577,7 +582,7 @@ void registerLockCommands()
             so.lockCollisions = a.get<bool>("lockCollisions", true);
             so.gravity = D3(toLocal * glm::dvec4(vec(a.flags.value("gravity", json()), D3(0, -981, 0)), 0.0));
             SettleStats st;
-            settle(s, radii, scalp.get(), so, &st);
+            settleOnRods(s, radii, scalp.get(), so, &st);
             storeGuides(g, guides, std::move(s));
             return {{"curves", st.curves}, {"contacts", st.contacts}, {"motion", st.lastMotion / scale}, {"penetration", st.maxPenetration / scale}};
         },
@@ -621,10 +626,12 @@ void registerLockCommands()
 
     std::vector<FlagDef> shellFlags = attrFlags("groomShell");
     shellFlags.push_back({"name", "n", T::String, nullptr, "Mesh name; default <groom>Shell."});
+    shellFlags.push_back({"quads", "q", T::Int, 0, "Also quad remesh the shell (quadRemesh) to about this many faces; 0 leaves it as it is.", {}, {}, 0.0, 1000000.0});
     ops::registerCommand({
         .name = "groomShell",
         .doc = "One watertight mesh over a groom's locks, smooth-unioned so they join into a single surface ready for retopology "
-               "(quadRemesh). Live: it follows the groom. Returns [mesh, groomShell].",
+               "(quadRemesh). Live: it follows the groom. With quads, also the quad remeshed shell. Returns [mesh, groomShell] and, "
+               "with quads, quadRemesh's reply last.",
         .positionalDoc = "groom",
         .flags = shellFlags,
         .run = [](const Args& a) -> json {
@@ -644,7 +651,10 @@ void registerLockCommands()
             Node* mesh = g.createNode(*types::find("mesh"), name, kNoNode, true);
             g.connect({op->id(), idx(*op, "outMesh"), -1}, {mesh->id(), MeshNode::kInMesh, -1});
             g.select({mesh->id()});
-            return json::array({mesh->path(), op->path()});
+            json out = json::array({mesh->path(), op->path()});
+            if (const int quads = a.get<int>("quads", 0); quads > 0)
+                out.push_back(ops::execute("quadRemesh", {{"args", {mesh->path()}}, {"targetFaces", quads}}));
+            return out;
         },
     });
 }

@@ -401,7 +401,7 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "group",
-        .doc = "Group objects under a new transform, or create an empty group with empty=True.",
+        .doc = "Group objects under a new transform (under their parent when they all share one), or create an empty group with empty=True.",
         .positionalDoc = "objects",
         .flags = {
             {"name", "n", T::String, nullptr, "Group name."},
@@ -414,6 +414,14 @@ void registerCommands()
             if (!c.has("name"))
                 c.flags["name"] = "Group";
             c.flags["skipSelect"] = true;
+            // Members that share a parent stay under it, inside the new group.
+            if (!c.has("parent") && !members.empty())
+            {
+                Graph& gr = Graph::current();
+                NodeId p = gr.parent(members[0]);
+                if (p != kNoNode && std::all_of(members.begin(), members.end(), [&](NodeId m) { return gr.parent(m) == p; }))
+                    c.flags["parent"] = gr.path(p);
+            }
             std::string name = create("transform", c).get<std::string>();
             NodeId g = Graph::current().find(name)->id();
             for (NodeId m : members)

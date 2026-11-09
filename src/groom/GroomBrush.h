@@ -58,7 +58,7 @@ struct GroomBrushSettings
     // Paint.
     std::string attribute = "clump";
     double value = 1.0;
-    std::string paintKind = "guides"; // guides, vertices
+    std::string paintKind = "guides"; // guides, vertices, texture
     double smoothStrength = 1.0;
     // Part and Flow.
     std::string partName = "part";

@@ -716,13 +716,28 @@ FactorCache& factorCache()
 System systemOf(const Mesh& m, const Islands& is, Index island)
 {
     System s;
-    std::map<Index, Index> unknown, known;
+    // Per group, its row among the unknowns or column among the knowns; reused across islands, cleared after.
+    thread_local std::vector<int> slot;
+    if (slot.size() < is.groupCorners.size())
+        slot.resize(is.groupCorners.size(), -1);
+    struct Clear
+    {
+        System& s;
+        ~Clear()
+        {
+            for (const std::vector<Index>* v : {&s.border, &s.interior})
+                for (Index g : *v)
+                    slot[g] = -1;
+        }
+    } clear{s};
     for (Index f : is.faces[island])
         m.forEachFaceCorner(f, [&](Index c) {
             const Index g = is.groupOfCorner[c];
-            auto& to = is.border[g] ? known : unknown;
-            if (to.emplace(g, Index(to.size())).second)
-                (is.border[g] ? s.border : s.interior).push_back(g);
+            if (slot[g] >= 0)
+                return;
+            std::vector<Index>& to = is.border[g] ? s.border : s.interior;
+            slot[g] = int(to.size());
+            to.push_back(g);
         });
     if (s.interior.empty() || s.border.empty())
         return s;
@@ -730,12 +745,12 @@ System systemOf(const Mesh& m, const Islands& is, Index island)
     auto half = [&](Index g, Index o, double w) {
         if (is.border[g])
             return;
-        const int r = int(unknown[g]);
+        const int r = slot[g];
         ta.emplace_back(r, r, w);
         if (is.border[o])
-            tb.emplace_back(r, int(known[o]), w);
+            tb.emplace_back(r, slot[o], w);
         else
-            ta.emplace_back(r, int(unknown[o]), -w);
+            ta.emplace_back(r, slot[o], -w);
     };
     auto addTri = [&](Index c0, Index c1, Index c2, double tw) {
         const Index cs[3] = {c0, c1, c2};

@@ -529,6 +529,58 @@ TEST_CASE("final mesh: pack measures density on the exported mesh")
     CHECK(std::abs(std::sqrt(d0 / d1) - 1.0) < 0.1);
 }
 
+TEST_CASE("final mesh: a live relax on the export keeps cage uvs it barely reads with their neighbours")
+{
+    geo::Mesh m = lidPlate(0.4, 3);
+    const std::vector<uv::Chart> before = islandsOf(m);
+    std::vector<uv::LiveIsland> islands = uv::liveIslands(m, {}, "uv0");
+    uv::attachFinal(islands, m, "uv0", bevelSubdivStack(0.13, 3, 2));
+    for (uv::LiveIsland& is : islands)
+        is.solve(200);
+    uv::writeLiveIslands(m, islands, "uv0", false);
+    const std::vector<uv::Chart> after = islandsOf(m);
+    REQUIRE(before.size() == after.size());
+    for (size_t i = 0; i < before.size(); ++i)
+    {
+        const glm::dvec2 sb = before[i].uvMax() - before[i].uvMin(), sa = after[i].uvMax() - after[i].uvMin();
+        INFO("island " << i << ", grows " << std::max(sa.x / sb.x, sa.y / sb.y));
+        CHECK(std::max(sa.x / sb.x, sa.y / sb.y) < 1.1);
+    }
+}
+
+TEST_CASE("final mesh: a live relax on the export lowers the export's distortion, fills and rotated corners included")
+{
+    // The live solver reads each fill as a dense block over the chart vertices its border reads, both ways; a wrong
+    // block or transpose would leave the export as distorted as it started.
+    geo::Mesh m = plate(0.4, 2);
+    const uv::Stack stack = bevelSubdivStack(0.13, 3, 2);
+    uv::FinalMap map = uv::buildFinalMap(m, "uv0", stack);
+    REQUIRE(map.active());
+    REQUIRE(!map.fills.empty());
+    REQUIRE(std::ranges::any_of(map.weights, [](const uv::FinalWeight& w) { return std::abs(w.imag()) > 1e-6; }));
+    auto distortion = [&](const geo::Mesh& mesh) {
+        const std::vector<uv::Chart> charts = islandsOf(mesh);
+        const std::vector<uv::FinalIsland> isl = uv::finalIslands(map, mesh, charts, "uv0");
+        double a = 0.0, w = 0.0;
+        for (size_t i = 0; i < charts.size(); ++i)
+            if (!isl[i].tris.empty())
+            {
+                a += isl[i].area3d() * uv::finalStats(isl[i], charts[i]).angle;
+                w += isl[i].area3d();
+            }
+        return a / w;
+    };
+    const double before = distortion(m);
+    std::vector<uv::LiveIsland> islands = uv::liveIslands(m, {}, "uv0");
+    uv::attachFinal(islands, m, "uv0", stack);
+    for (uv::LiveIsland& is : islands)
+        is.solve(100);
+    uv::writeLiveIslands(m, islands, "uv0", false);
+    const double after = distortion(m);
+    INFO("angle distortion " << before << " -> " << after);
+    CHECK(after < 0.8 * before);
+}
+
 TEST_CASE("final mesh: solve time on a big export" * doctest::skip())
 {
     geo::CubeOptions co;
@@ -640,5 +692,57 @@ TEST_CASE("final mesh: the spacing proxy bunches like the uvs under a bevel, sli
         }
         INFO("shape " << shape << ", border edges " << edges.size());
         CHECK(off == 0);
+    }
+}
+
+TEST_CASE("final mesh: a bevel gives one wedge's corners at a point the same uvs, however the layout bends")
+{
+    // Only the lid's top rim bevelled: strip ends meet corner patches, two blends of the same point that agree only where
+    // the layout is flat. A bent layout must not crack the wedge open, or the island splits wherever its layout bends and
+    // a Fit Surface map stops being a fixed blend.
+    geo::Mesh m = lidPlate(0.4, 3);
+    for (glm::vec2& v : m.cornerAttrs().get<glm::vec2>("uv0"))
+        v = glm::vec2(v.x + 0.4f * v.y * v.y, v.y + 0.3f * v.x * v.x);
+    std::vector<Index> edges;
+    for (Index e = 0; e < m.edgeCapacity(); ++e)
+        if (m.edgeValid(e) && uv::dihedralAngle(m, e) > 30.0 && m.position(m.edgePoint(e, 0)).y > 0.0 && m.position(m.edgePoint(e, 1)).y > 0.0)
+            edges.push_back(e);
+    geo::BevelOptions o;
+    o.offset = 0.13;
+    o.segments = 3;
+    geo::bevelEdges(m, edges, o);
+    const std::span<const glm::vec2> uv = m.cornerAttrs().get<glm::vec2>("uv0");
+    const std::span<const bool> seam = m.edgeAttrs().get<bool>(geo::attr::kSeam);
+    auto cornerAt = [&](Index c, Index p) { return m.cornerPoint(c) == p ? c : m.cornerNext(c); };
+    size_t cracks = 0;
+    for (Index e = 0; e < m.edgeCapacity(); ++e)
+    {
+        if (!m.edgeValid(e) || !m.isManifoldEdge(e) || (e < seam.size() && seam[e]))
+            continue;
+        const Index c = m.edgeCorner(e), rc = m.cornerRadial(c);
+        for (int k = 0; k < 2; ++k)
+        {
+            const Index p = m.edgePoint(e, k);
+            cracks += glm::length(uv[cornerAt(c, p)] - uv[cornerAt(rc, p)]) > 1e-6f;
+        }
+    }
+    CHECK(cracks == 0);
+}
+
+TEST_CASE("final mesh: cage uvs the export barely reads stay with their neighbours")
+{
+    // The lid's corner points far from any rim are barely read by the export; free, the solve swings them out as levers
+    // (the island's box grows by a quarter) and they land on whatever is packed beside it.
+    geo::Mesh m = lidPlate(0.4, 3);
+    const std::vector<uv::Chart> before = islandsOf(m);
+    const uv::FinalRefineResult r = uv::refineFinal(m, {}, "uv0", bevelSubdivStack(0.13, 3, 2));
+    const std::vector<uv::Chart> after = islandsOf(m);
+    REQUIRE(before.size() == after.size());
+    CHECK(r.collapsedAfter == 0);
+    for (size_t i = 0; i < before.size(); ++i)
+    {
+        const glm::dvec2 sb = before[i].uvMax() - before[i].uvMin(), sa = after[i].uvMax() - after[i].uvMin();
+        INFO("island " << i << ", grows " << std::max(sa.x / sb.x, sa.y / sb.y));
+        CHECK(std::max(sa.x / sb.x, sa.y / sb.y) < 1.1);
     }
 }

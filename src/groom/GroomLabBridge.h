@@ -26,6 +26,8 @@ std::shared_ptr<const groomlab::ScalpMesh> scalpMesh(const geo::Mesh& mesh, cons
 groomlab::ScalpMaps colorSetMaps(const geo::Mesh& mesh);
 /** The stored maps with the color set maps the stored ones don't already name. */
 groomlab::ScalpMaps withColorSetMaps(const std::string& storedJson, const groomlab::ScalpMaps& colorMaps);
+/** Curves of at least two points as a GroomLab guide set, IDs 1, 2, ... in order, rooted on the scalp. */
+std::shared_ptr<const groomlab::GuideSet> guideSet(const Splines& guides, const groomlab::ScalpMesh& scalp);
 /** GroomLab strands as poly curves, a width per point and an id per curve. */
 Splines toSplines(const groomlab::StrandSet& strands);
 } // namespace lila::groom::groomLabBridge

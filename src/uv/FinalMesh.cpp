@@ -1115,11 +1115,34 @@ detail::FinalOperator::FinalOperator(const FinalIsland& isl, size_t vertexCount,
         f.fill->solve(std::span<const double>(rows.data(), size_t(rows.size())), std::span<double>(d.data(), size_t(d.size())), size_t(m + q));
         b.d = d.leftCols(m);
         b.di = d.rightCols(q);
+        Eigen::MatrixXd ob(nb, 2);
+        for (Eigen::Index k = 0; k < nb; ++k)
+        {
+            ob(k, 0) = isl.offset[f.border[size_t(k)]].x;
+            ob(k, 1) = isl.offset[f.border[size_t(k)]].y;
+        }
+        b.off.resize(ni, 2);
+        f.fill->solve(std::span<const double>(ob.data(), size_t(ob.size())), std::span<double>(b.off.data(), size_t(b.off.size())), 2);
         b.start = f.interiorStart;
         b.corners = f.interiorCorners;
         mBlocks.push_back(std::move(b));
     }
 }
+
+namespace
+{
+/** The u and v of the given chart vertices. */
+void gatherColumns(std::span<const glm::dvec2> x, std::span<const Index> cols, Eigen::VectorXd& u, Eigen::VectorXd& v)
+{
+    u.resize(Eigen::Index(cols.size()));
+    v.resize(Eigen::Index(cols.size()));
+    for (size_t j = 0; j < cols.size(); ++j)
+    {
+        u[Eigen::Index(j)] = x[cols[j]].x;
+        v[Eigen::Index(j)] = x[cols[j]].y;
+    }
+}
+} // namespace
 
 void detail::FinalOperator::apply(std::span<const glm::dvec2> x, std::span<glm::dvec2> y, glm::dvec2 offsetScale) const
 {
@@ -1130,8 +1153,22 @@ void detail::FinalOperator::apply(std::span<const glm::dvec2> x, std::span<glm::
             s += weigh(weight(k), x[mIsl.cols[k]]);
         y[c] = s;
     }
-    // A solve reads far less memory than the dense blocks.
-    applyFills(mIsl.fills, y);
+    Eigen::VectorXd xu, xv, iu, iv, fu, fv;
+    for (const Block& b : mBlocks)
+    {
+        gatherColumns(x, b.cols, xu, xv);
+        gatherColumns(x, b.imCols, iu, iv);
+        fu = b.d * xu + b.off.col(0) * offsetScale.x;
+        fv = b.d * xv + b.off.col(1) * offsetScale.y;
+        if (b.di.cols() > 0)
+        {
+            fu.noalias() -= b.di * iv;
+            fv.noalias() += b.di * iu;
+        }
+        for (size_t g = 0; g + 1 < b.start.size(); ++g)
+            for (Index k = b.start[g]; k < b.start[g + 1]; ++k)
+                y[b.corners[k]] = glm::dvec2(fu[Eigen::Index(g)], fv[Eigen::Index(g)]);
+    }
 }
 
 void detail::FinalOperator::applyTransposed(std::span<const glm::dvec2> g, std::span<glm::dvec2> out) const
@@ -1140,24 +1177,28 @@ void detail::FinalOperator::applyTransposed(std::span<const glm::dvec2> g, std::
     for (size_t c = 0; c < mCorners; ++c)
         for (Index k = mIsl.rowStart[c]; k < mIsl.rowStart[c + 1]; ++k)
             out[mIsl.cols[k]] += weigh(std::conj(weight(k)), g[c]);
-    std::vector<double> gi, gb;
-    for (const FinalFill& f : mIsl.fills)
+    Eigen::VectorXd gu, gv, ru, rv;
+    for (const Block& b : mBlocks)
     {
-        const size_t nb = f.border.size(), ni = f.interiorStart.size() - 1;
-        gi.assign(2 * ni, 0.0);
-        gb.resize(2 * nb);
-        for (size_t q = 0; q < ni; ++q)
-            for (Index k = f.interiorStart[q]; k < f.interiorStart[q + 1]; ++k)
+        const auto ni = Eigen::Index(b.start.size() - 1);
+        gu.setZero(ni);
+        gv.setZero(ni);
+        for (Eigen::Index q = 0; q < ni; ++q)
+            for (Index k = b.start[size_t(q)]; k < b.start[size_t(q) + 1]; ++k)
             {
-                gi[q] += g[f.interiorCorners[k]].x;
-                gi[ni + q] += g[f.interiorCorners[k]].y;
+                gu[q] += g[b.corners[k]].x;
+                gv[q] += g[b.corners[k]].y;
             }
-        f.fill->solveTransposed(gi, gb, 2);
-        for (size_t k = 0; k < nb; ++k)
+        ru.noalias() = b.d.transpose() * gu;
+        rv.noalias() = b.d.transpose() * gv;
+        for (size_t j = 0; j < b.cols.size(); ++j)
+            out[b.cols[j]] += glm::dvec2(ru[Eigen::Index(j)], rv[Eigen::Index(j)]);
+        if (b.di.cols() > 0)
         {
-            const Index c = f.border[k];
-            for (Index e = mIsl.rowStart[c]; e < mIsl.rowStart[c + 1]; ++e)
-                out[mIsl.cols[e]] += weigh(std::conj(weight(e)), glm::dvec2(gb[k], gb[nb + k]));
+            ru.noalias() = b.di.transpose() * gv;
+            rv.noalias() = b.di.transpose() * gu;
+            for (size_t j = 0; j < b.imCols.size(); ++j)
+                out[b.imCols[j]] += glm::dvec2(ru[Eigen::Index(j)], -rv[Eigen::Index(j)]);
         }
     }
 }
@@ -1538,7 +1579,7 @@ ChartStats finalStats(const FinalIsland& isl, const Chart& chart)
 
 namespace
 {
-size_t collapsedOf(const FinalIsland& isl, std::span<const glm::dvec2> y)
+size_t collapsedOf(const FinalIsland& isl, std::span<const glm::dvec2> y, double fraction = kCollapsedFraction)
 {
     double a3 = 0.0, au = 0.0;
     std::vector<double> tri3(isl.tris.size()), triUv(isl.tris.size());
@@ -1555,7 +1596,7 @@ size_t collapsedOf(const FinalIsland& isl, std::span<const glm::dvec2> y)
     const double density = au / a3;
     size_t n = 0;
     for (size_t i = 0; i < isl.tris.size(); ++i)
-        if (tri3[i] > 1e-12 * a3 && triUv[i] < tri3[i] * density * kCollapsedFraction)
+        if (tri3[i] > 1e-12 * a3 && triUv[i] < tri3[i] * density * fraction)
             ++n;
     return n;
 }
@@ -1587,7 +1628,88 @@ void setDensityArea(Chart& chart, const FinalIsland& isl)
     chart.densityArea = std::clamp(ex3 * cageUv / exUv, a3 / 16.0, a3 * 16.0);
 }
 
+namespace detail
+{
+CageHold::CageHold(const Chart& ch, const FinalIsland& isl, std::span<const glm::dvec2> x0)
+{
+    const size_t V = ch.pos.size();
+    std::vector<double> reach(V, 0.0);
+    for (size_t k = 0; k < isl.cols.size(); ++k)
+        if (isl.cols[k] < V)
+            reach[isl.cols[k]] = std::max(reach[isl.cols[k]], std::abs(isl.weights[k]));
+    std::vector<double> weak(V);
+    for (size_t v = 0; v < V; ++v)
+        weak[v] = std::clamp((kHoldReach - reach[v]) / (kHoldReach - kWeakInfluence), 0.0, 1.0);
+    std::map<std::pair<Index, Index>, double> w;
+    for (const auto& t : ch.tris)
+        for (int k = 0; k < 3; ++k)
+        {
+            Index a = t[(k + 1) % 3], b = t[(k + 2) % 3];
+            const double ww = 0.5 * (weak[a] + weak[b]);
+            if (ww <= 0.0)
+                continue;
+            const glm::dvec3 u = ch.pos[a] - ch.pos[t[k]], v = ch.pos[b] - ch.pos[t[k]];
+            const double sn = glm::length(glm::cross(u, v));
+            // Clamped cotan weights, as the uninfluenced fill uses: the cage's own triangles can be poor.
+            const double c = 0.5 * std::max(sn > 1e-300 ? glm::dot(u, v) / sn : 0.0, 0.0) + 1e-3;
+            if (a > b)
+                std::swap(a, b);
+            w[{a, b}] += ww * c;
+        }
+    rest.assign(V, glm::dvec2(0.0));
+    std::vector<double> diag(V, 0.0);
+    for (const auto& [e, we] : w)
+    {
+        const auto [a, b] = e;
+        edges.push_back({a, b});
+        weight.push_back(we);
+        start.push_back(x0[b] - x0[a]);
+        laplacian.emplace_back(int(a), int(a), we);
+        laplacian.emplace_back(int(b), int(b), we);
+        laplacian.emplace_back(int(a), int(b), -we);
+        laplacian.emplace_back(int(b), int(a), -we);
+        rest[a] -= we * (x0[b] - x0[a]);
+        rest[b] += we * (x0[b] - x0[a]);
+        diag[a] += we;
+        diag[b] += we;
+    }
+    size_t held = 0;
+    for (size_t v = 0; v < V; ++v)
+        if (diag[v] > 0.0)
+        {
+            diagMean += diag[v];
+            ++held;
+        }
+    diagMean = held ? diagMean / double(held) : 0.0;
+}
+
+
+double CageHold::energy(std::span<const glm::dvec2> x) const
+{
+    double e = 0.0;
+    for (size_t k = 0; k < edges.size(); ++k)
+    {
+        const glm::dvec2 d = x[edges[k][1]] - x[edges[k][0]] - start[k];
+        e += weight[k] * glm::dot(d, d);
+    }
+    return e;
+}
+} // namespace detail
+
+namespace
+{
+OptimizeResult solveHeld(Chart& ch, const FinalIsland& exact, const FinalSolveOptions& o, double holdShare);
+} // namespace
+
 OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveOptions& o)
+{
+    return solveHeld(ch, exact, o, detail::kCageHold);
+}
+
+namespace
+{
+/** solveFinal with the cage hold at the given share of the export's stiffness (0: none). */
+OptimizeResult solveHeld(Chart& ch, const FinalIsland& exact, const FinalSolveOptions& o, double holdShare)
 {
     LILA_ZONE();
 
@@ -1665,6 +1787,8 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
         offV[Eigen::Index(c)] = off[c].y;
     }
     std::vector<Coupling> kfc;
+    const detail::CageHold hold(ch, isl, x);
+    double holdScale = 0.0;
     auto solver = std::make_unique<UvFactor>();
     auto factor = [&](const std::vector<double>& wt) {
         std::vector<Triplet> trips;
@@ -1703,6 +1827,19 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
                     else
                         kfc.push_back({fr0, int(it.col()), part == 0 ? FinalWeight(it.value(), 0.0) : FinalWeight(0.0, it.value())});
                 }
+        }
+        // The hold is scaled to the export's stiffness once, so it weighs the same against it whatever the island's size.
+        if (holdScale == 0.0)
+            holdScale = hold.scaleFor(holdShare, diag / nFree);
+        for (const Triplet& t : hold.laplacian)
+        {
+            const int fr0 = freeIdx[size_t(t.row())], fc0 = freeIdx[size_t(t.col())];
+            if (fr0 < 0)
+                continue;
+            if (fc0 >= 0)
+                kff.push_back(Triplet(fr0, fc0, holdScale * t.value()));
+            else
+                kfc.push_back({fr0, int(t.col()), FinalWeight(holdScale * t.value(), 0.0)});
         }
         // Chart vertices no exported triangle reaches keep a tiny diagonal so the system stays solvable.
         const double eps = 1e-9 * std::max(diag / nFree, 1e-30);
@@ -1828,7 +1965,7 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
     std::vector<Jac2> target(T);
     // Local/global iterations with the current weights; true when they ran to a settled energy.
     auto iterate = [&](int maxIt, int& ran) {
-        double e0 = energy(y, wt);
+        double e0 = energy(y, wt) + holdScale * hold.energy(x);
         for (int it = 0; it < maxIt; ++it)
         {
             ++ran;
@@ -1858,8 +1995,8 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
             for (size_t v = 0; v < V; ++v)
                 if (freeIdx[v] >= 0)
                 {
-                    bu[freeIdx[v]] = fuv[v].x;
-                    bv[freeIdx[v]] = fuv[v].y;
+                    bu[freeIdx[v]] = fuv[v].x + holdScale * hold.rest[v].x;
+                    bv[freeIdx[v]] = fuv[v].y + holdScale * hold.rest[v].y;
                 }
             for (const Coupling& cp : kfc)
             {
@@ -1881,7 +2018,7 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
                 if (keepArea)
                     restoreArea(trial);
                 exportUv(trial, ty);
-                e1 = energy(ty, wt);
+                e1 = energy(ty, wt) + holdScale * hold.energy(trial);
                 if (e1 <= e0)
                 {
                     accepted = true;
@@ -1939,14 +2076,53 @@ OptimizeResult solveFinal(Chart& ch, const FinalIsland& exact, const FinalSolveO
     r.after = finalStats(exact, ch);
     return r;
 }
+} // namespace
 
 namespace
 {
+/** Re-solves against neighbours' new uvs after the first solve, for islands still left with slivers. */
+constexpr int kNeighbourRounds = 2;
+
+/**
+ * Solves one island against its export and keeps the result when it collapses no more than limit; a move back into its
+ * tile that would cost it slivers is dropped on its own. False when the solve failed.
+ */
+bool solveIsland(Chart& chart, const FinalIsland& isl, const FinalSolveOptions& opts, size_t limit)
+{
+    Chart trial = chart;
+    const glm::ivec2 tile(glm::floor(trial.uvCentroid()));
+    if (!solveFinal(trial, isl, opts).ok)
+        return false;
+    // The hold keeps barely read vertices home; where slivers are left (with the solve's margin, as the written export can
+    // differ a little), the solve without it may open them.
+    auto slivers = [&](const Chart& c) {
+        const std::vector<glm::dvec2> y = isl.uvs(c);
+        return std::pair{collapsedOf(isl, y), collapsedOf(isl, y, kCollapsedFraction * kSolveMargin)};
+    };
+    if (const auto held = slivers(trial); held.second > 0)
+    {
+        Chart loose = chart;
+        if (solveHeld(loose, isl, opts, 0.0).ok && slivers(loose) < held)
+            trial = std::move(loose);
+    }
+    // Moving the island alone shifts it against the uvs its neighbours lend its export: that move goes, not the solve.
+    if (!opts.usePins || std::ranges::none_of(trial.pinned, [](uint8_t p) { return p != 0; }))
+    {
+        Chart moved = trial;
+        keepInTile(moved, tile);
+        if (collapsedTriangles(isl, moved) <= collapsedTriangles(isl, trial))
+            trial = std::move(moved);
+    }
+    if (collapsedTriangles(isl, trial) <= limit)
+        chart = std::move(trial);
+    return true;
+}
+
 /**
  * Solves the islands, all of them or only those whose export collapses now, against the export as the cage's current
- * uvs give it, and writes them back. Each island keeps its solve only when it collapses no more than before; a move back
- * into its tile that would cost it slivers is dropped on its own. The written uvs' export is then measured with one run of
- * the stack, and islands that came out with more slivers than they started with go back.
+ * uvs give it, and writes them back (see solveIsland). The written uvs' export is then measured with one run of the stack:
+ * islands that came out with more slivers than they started with go back, and those still left with slivers solve again
+ * against where their neighbours went.
  */
 FinalRefineResult refineRounds(geo::Mesh& cage, std::span<const Index> faces, std::string_view uvSet, const Stack& stack,
                                const FinalSolveOptions& opts, bool repairOnly)
@@ -2000,21 +2176,7 @@ FinalRefineResult refineRounds(geo::Mesh& cage, std::span<const Index> faces, st
         if (!pick[i])
             return;
         prevUv[i] = charts[i].uv;
-        Chart trial = charts[i];
-        const glm::ivec2 tile(glm::floor(trial.uvCentroid()));
-        ok[i] = solveFinal(trial, islands[i], opts).ok;
-        if (!ok[i])
-            return;
-        // Moving the island alone shifts it against the uvs its neighbours lend its export: that move goes, not the solve.
-        if (!opts.usePins || std::ranges::none_of(trial.pinned, [](uint8_t p) { return p != 0; }))
-        {
-            Chart moved = trial;
-            keepInTile(moved, tile);
-            if (collapsedTriangles(islands[i], moved) <= collapsedTriangles(islands[i], trial))
-                trial = std::move(moved);
-        }
-        if (collapsedTriangles(islands[i], trial) <= now[i])
-            charts[i] = std::move(trial);
+        ok[i] = solveIsland(charts[i], islands[i], opts, now[i]);
     });
     out.failed = size_t(std::ranges::count(ok, uint8_t(0)));
     writeCharts(cage, charts, uvSet);
@@ -2042,6 +2204,44 @@ FinalRefineResult refineRounds(geo::Mesh& cage, std::span<const Index> faces, st
     {
         writeCharts(cage, charts, uvSet);
         measure(after);
+    }
+    // An island's export also reads its neighbours' uvs where a bevel strip crosses their seam, and each island was solved
+    // with its neighbours where they started. Islands that came out with more slivers than their solve expected solve
+    // again against where their neighbours went.
+    std::vector<FinalIsland> current;
+    for (int round = 0; round < kNeighbourRounds; ++round)
+    {
+        const std::vector<FinalIsland>& solvedOn = round == 0 ? islands : current;
+        std::vector<uint8_t> again(n, 0);
+        for (size_t i = 0; i < n; ++i)
+            again[i] = pick[i] && after[i] > collapsedTriangles(solvedOn[i], charts[i]);
+        if (std::ranges::none_of(again, [](uint8_t a) { return a != 0; }))
+            break;
+        std::vector<FinalIsland> moved = finalIslands(map, cage, charts, uvSet);
+        std::vector<std::vector<glm::dvec2>> kept(n);
+        tbb::parallel_for(size_t(0), n, size_t(1), [&](size_t i) {
+            if (!again[i])
+                return;
+            kept[i] = charts[i].uv;
+            solveIsland(charts[i], moved[i], opts, collapsedTriangles(moved[i], charts[i]));
+        });
+        writeCharts(cage, charts, uvSet);
+        std::vector<size_t> next(n, 0);
+        measure(next);
+        bool back = false;
+        for (size_t i = 0; i < n; ++i)
+            if (again[i] && next[i] > after[i])
+            {
+                charts[i].uv = kept[i];
+                back = true;
+            }
+        if (back)
+        {
+            writeCharts(cage, charts, uvSet);
+            measure(next);
+        }
+        after = std::move(next);
+        current = std::move(moved);
     }
     out.collapsedAfter = std::accumulate(after.begin(), after.end(), size_t(0));
     out.distortionAfter = distortion(islands, charts);

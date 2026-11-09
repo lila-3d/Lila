@@ -17,6 +17,7 @@
 #include "ui/MaterialDraw.h"
 #include "ui/OptionBox.h"
 #include "ui/ViewportDisplay.h"
+#include "ui/ViewportTool.h"
 
 #include <QApplication>
 #include <QCursor>
@@ -40,6 +41,12 @@ json& lastRepeatable()
 {
     static json r;
     return r;
+}
+
+std::string& lastTool()
+{
+    static std::string id;
+    return id;
 }
 
 void runCommand(const char* name, const json& call = json::object())
@@ -270,8 +277,17 @@ bool runTarget(const json& target)
             return false;
         // A copy, since running it may remove the action (an extension unloading itself).
         std::function<void()> fn = a->run;
+        ViewportTool* toolBefore = viewportTools::active();
+        static unsigned toolRecords = 0;
+        const unsigned recordsBefore = toolRecords;
         if (fn)
             fn();
+        // The innermost action that started the tool, not one that ran it (Repeat Last Tool, a key's release).
+        if (ViewportTool* t = viewportTools::active(); t && t != toolBefore && toolRecords == recordsBefore)
+        {
+            lastTool() = target.get<std::string>();
+            ++toolRecords;
+        }
         remember(target);
         return true;
     }
@@ -364,10 +380,20 @@ std::optional<json> repeatTarget()
     return lastRepeatable();
 }
 
+std::optional<std::string> lastToolAction()
+{
+    if (lastTool().empty() || !find(lastTool()))
+        return std::nullopt;
+    return lastTool();
+}
+
 std::string displayLabel(const std::string& id)
 {
     if (id == "edit.repeatLast")
         if (auto t = repeatTarget())
+            return "Repeat " + labelFor(*t);
+    if (id == "tool.repeatLast")
+        if (auto t = lastToolAction())
             return "Repeat " + labelFor(*t);
     const Action* a = find(id);
     return a ? a->label : id;

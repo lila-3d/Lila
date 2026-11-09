@@ -670,6 +670,7 @@ bool Manipulator::press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifier
     const bool clone = tools::cloneDrag() && !mComponents && !tools::pivotEdit() && !surfaceSlide;
     if (clone)
     {
+        tools::markCloneDragUsed();
         cloneCall = ops::options::callWith("duplicate", json::object());
         try
         {
@@ -1092,6 +1093,8 @@ std::optional<glm::dvec3> Manipulator::snapTarget(QPointF px, unsigned snaps) co
                                    d.components ? scene::components::selected(id, scene::components::mode()) : scene::components::Ids{});
             continue;
         }
+        if (geometrySnap::addPointObject(nearest, g, id, snaps))
+            continue;
         if (!n->type().isA("mesh") || !scene::effectivelyVisible(g, id) || !isolate::shows(scene::isolation::active(), id))
             continue;
         scene::MeshPtr mesh = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);

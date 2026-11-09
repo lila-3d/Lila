@@ -150,7 +150,7 @@
       "R": { "press": "tool.scale", "LMB": { "markingMenu": "scaleTool" } },
       "Tab": { "RMB": { "markingMenu": "viewportTabCreate" } },
       "D": { "press": "tool.pivotEditOn", "release": "tool.pivotEditOff" },
-      "Y": { "press": "tool.cloneDragOn", "release": "tool.cloneDragOff" },
+      "Y": { "press": "tool.cloneKeyDown", "release": "tool.cloneKeyUp" },
       "Insert": "tool.pivotEditToggle",
       "X": { "press": "snap.gridOn", "release": "snap.gridOff" },
       "C": { "press": "snap.edgeOn", "release": "snap.edgeOff" },
