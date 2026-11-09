@@ -63,7 +63,8 @@ std::map<std::string, double> partsNow()
     std::map<std::string, double> out;
     try
     {
-        for (const auto& [joint, f] : ops::execute("stringsBreakdownParts", json::object()).items())
+        const json parts = ops::execute("stringsBreakdownParts", json::object());
+        for (const auto& [joint, f] : parts.items())
             out[joint] = f.get<double>();
     }
     catch (const std::exception&)
