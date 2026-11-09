@@ -322,7 +322,7 @@ void ModifierNode::compute(const EvalContext&)
     }
     try
     {
-        setOutput(outAttr, MeshPtr(std::make_shared<geo::Mesh>(apply(*in, *this))));
+        setOutput(outAttr, MeshPtr(std::make_shared<geo::Mesh>(apply(*modifiers::stackInput(*this, in), *this))));
     }
     catch (const std::exception& e)
     {
@@ -369,6 +369,45 @@ std::vector<NodeId> stack(Graph& g, NodeId mesh)
         plug = {up->id(), mod->inAttr, -1};
     }
     return out;
+}
+
+namespace
+{
+bool isSubdivision(const Node& n)
+{
+    return n.type().name == "subdivisionModifier";
+}
+} // namespace
+
+bool feedsSubdivision(const ModifierNode& mod)
+{
+    const Graph* g = mod.graph();
+    if (!g)
+        return false;
+    std::vector<PlugRef> todo = g->destinations({mod.id(), mod.outAttr, -1});
+    std::unordered_set<NodeId> seen;
+    while (!todo.empty())
+    {
+        const PlugRef p = todo.back();
+        todo.pop_back();
+        const ModifierNode* next = asModifier(g->node(p.node));
+        if (!next || p.attr != next->inAttr || !seen.insert(next->id()).second)
+            continue;
+        if (isSubdivision(*next))
+            return true;
+        for (const PlugRef& d : g->destinations({next->id(), next->outAttr, -1}))
+            todo.push_back(d);
+    }
+    return false;
+}
+
+MeshPtr stackInput(const ModifierNode& mod, const MeshPtr& in)
+{
+    if (!in || isSubdivision(mod) || geo::hasFitSpacing(*in) || !feedsSubdivision(mod))
+        return in;
+    auto m = std::make_shared<geo::Mesh>(*in);
+    geo::addFitSpacing(*m);
+    return m;
 }
 
 namespace
@@ -619,6 +658,10 @@ void registerCommands()
                 g.connect({source->id(), MeshSourceNode::kOutMesh, -1}, {mod->id(), mn->inAttr, -1});
             }
             g.connect({mod->id(), mn->outAttr, -1}, top);
+            // The modifiers below rerun to carry the spacing layers their first one adds for a subdivision.
+            if (isSubdivision(*mod))
+                for (NodeId id : stack(g, mesh.id()))
+                    g.touch(id);
             if (a.has("params"))
                 for (auto& [k, val] : a.flags["params"].items())
                 {

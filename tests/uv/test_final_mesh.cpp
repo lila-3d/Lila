@@ -93,7 +93,7 @@ uv::Stack bevelSubdivStack(double offset = 0.13, int segments = 1, int levels = 
                      o.levels = levels;
                      o.uvs = uvs;
                      return geo::subdivide(in, o);
-                 }});
+                 }, true});
     return s;
 }
 
@@ -307,19 +307,18 @@ TEST_CASE("final mesh: respaced borders ease into the spacing beside them")
 TEST_CASE("final mesh: a map stays exact after the cage's uvs are rewritten")
 {
     // A tool solves against the map of the layout it starts from; respacing and rebuilt corners must not move with the
-    // layout it writes. A slit's tip (the lid's corner seams, a cut into the top) is respaced by its own uvs, so windows
-    // reaching one follow the layout a little.
-    for (int shape = 0; shape < 4; ++shape)
+    // layout it writes, a bent one or one stretched 2.5 times along v.
+    for (int shape = 0; shape < 8; ++shape)
     {
-        const int grid = shape == 0 ? 3 : 6;
-        const bool slits = shape >= 2;
-        geo::Mesh m = slits ? lidPlate(0.4, grid, shape == 3) : plate(0.4, grid);
+        const int grid = shape % 4 == 0 ? 3 : 6;
+        const bool slits = shape % 4 >= 2;
+        geo::Mesh m = slits ? lidPlate(0.4, grid, shape % 4 == 3) : plate(0.4, grid);
         const uv::Stack stack = bevelSubdivStack(0.13, 3, 2);
         const uv::FinalMap map = uv::buildFinalMap(m, "uv0", stack);
         REQUIRE(map.active());
         std::span<glm::vec2> uv = m.cornerAttrs().get<glm::vec2>("uv0");
         for (glm::vec2& v : uv)
-            v = glm::vec2(1.7f * v.x + 0.3f * v.y * v.y, v.y + 0.2f * v.x * v.x);
+            v = shape < 4 ? glm::vec2(1.7f * v.x + 0.3f * v.y * v.y, v.y + 0.2f * v.x * v.x) : glm::vec2(v.x, 2.5f * v.y);
         const std::vector<glm::dvec2> predicted = uv::exportedUvs(map, m, "uv0");
         const geo::Mesh exported = uv::runStack(m, stack);
         const std::span<const glm::vec2> actual = exported.cornerAttrs().get<glm::vec2>("uv0");
@@ -329,7 +328,7 @@ TEST_CASE("final mesh: a map stays exact after the cage's uvs are rewritten")
             if (exported.faceValid(f))
                 exported.forEachFaceCorner(f, [&](Index c) { worst = std::max(worst, glm::length(predicted[c] - glm::dvec2(actual[c]))); });
         INFO("shape " << shape << ", worst " << worst);
-        CHECK(worst < (slits ? 1e-2 : 1e-5));
+        CHECK(worst < 1e-5);
     }
 }
 
@@ -383,7 +382,7 @@ TEST_CASE("final mesh: a fill the stack changes after the subdivision is probed 
 {
     geo::Mesh m = plate(0.4, 6);
     uv::Stack stack = bevelSubdivStack(0.13, 1, 1);
-    stack.push_back({"smooth", [](const geo::Mesh& in) { return geo::subdivide(in, {.levels = 1, .uvs = geo::SubdivideUvs::Blend}); }});
+    stack.push_back({"smooth", [](const geo::Mesh& in) { return geo::subdivide(in, {.levels = 1, .uvs = geo::SubdivideUvs::Blend}); }, true});
     const uv::FinalMap map = uv::buildFinalMap(m, "uv0", stack);
     INFO(map.warning);
     REQUIRE(map.active());
@@ -404,7 +403,7 @@ TEST_CASE("final mesh: refine reports the slivers the written uvs leave, and rep
         if (ch.pos[v].y < 0.0)
             for (size_t t = 0; t < ch.pos.size(); ++t)
                 if (ch.pos[t].y > 0.0 && glm::length(glm::dvec2(ch.pos[t].x - ch.pos[v].x, ch.pos[t].z - ch.pos[v].z)) < 1e-6)
-                    ch.uv[v] = glm::mix(ch.uv[t], ch.uv[v], 0.01);
+                    ch.uv[v] = glm::mix(ch.uv[t], ch.uv[v], 0.001);
     uv::writeCharts(m, charts, "uv0");
     const std::vector<glm::dvec2> other = islandsOf(m)[1 - lid].uv;
     REQUIRE(exportState(m, stack).collapsed > 0);
@@ -601,4 +600,45 @@ TEST_CASE("final mesh: fit surface cost on a 50k face export" * doctest::skip())
     const uv::FinalMap map = uv::buildFinalMap(m, "uv0", bevelSubdivStack());
     MESSAGE("probe s " << std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() << ", runs " << map.runs << ", entries "
                        << map.cols.size() << ", active " << map.active() << " " << map.warning);
+}
+
+TEST_CASE("final mesh: the spacing proxy bunches like the uvs under a bevel, slit tips and box corners included")
+{
+    // Built at the cage from the surface alone, the proxy's border spacing after the bevel matches the uvs' up to the
+    // island's density, where a bevel strip spans a slit's opening as much as anywhere else.
+    for (int shape = 0; shape < 3; ++shape)
+    {
+        geo::Mesh m = shape == 0 ? plate(0.4, 2) : lidPlate(0.4, shape == 1 ? 2 : 6, shape == 2);
+        geo::addFitSpacing(m);
+        const geo::Mesh b = bevelSubdivStack(0.13, 3, 2).front().apply(m);
+        const auto uv = b.cornerAttrs().get<glm::vec2>("uv0");
+        const auto px = b.cornerAttrs().get<glm::vec2>("__fitSpacing@uv0");
+        REQUIRE(!px.empty());
+        auto cornerAt = [&](Index c, Index p) { return b.cornerPoint(c) == p ? c : b.cornerNext(c); };
+        auto same = [&](Index a, Index c) { return glm::length(uv[a] - uv[c]) < 1e-6f; };
+        std::vector<std::pair<double, double>> edges;
+        double su = 0.0, sp = 0.0;
+        for (Index f = 0; f < b.faceCapacity(); ++f)
+            if (b.faceValid(f))
+                b.forEachFaceCorner(f, [&](Index c) {
+                    const Index cn = b.cornerNext(c), e = b.cornerEdge(c);
+                    if (b.isManifoldEdge(e))
+                    {
+                        const Index ec = b.edgeCorner(e), rc = b.cornerFace(ec) == f ? b.cornerRadial(ec) : ec;
+                        if (same(cornerAt(rc, b.cornerPoint(c)), c) && same(cornerAt(rc, b.cornerPoint(cn)), cn))
+                            return;
+                    }
+                    edges.push_back({glm::length(glm::dvec2(uv[cn]) - glm::dvec2(uv[c])), glm::length(glm::dvec2(px[cn]) - glm::dvec2(px[c]))});
+                    su += edges.back().first;
+                    sp += edges.back().second;
+                });
+        size_t off = 0;
+        for (auto [lu, lp] : edges)
+        {
+            const double q = (lp * su / sp + 1e-9) / (lu + 1e-9);
+            off += (q > 2.0 || q < 0.5) && std::max(lu, lp * su / sp) > 1e-4;
+        }
+        INFO("shape " << shape << ", border edges " << edges.size());
+        CHECK(off == 0);
+    }
 }

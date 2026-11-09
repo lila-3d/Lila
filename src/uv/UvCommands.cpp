@@ -548,13 +548,14 @@ Stack exportStack(Node& n)
         if (!mod || !scene::modifiers::exportEnabled(*mod))
             continue;
         std::string name = mod->name();
+        const bool subdivides = mod->type().name == "subdivisionModifier";
         if (!mod->apply)
-            out.push_back({name, [name](const geo::Mesh&) -> geo::Mesh { throw std::runtime_error(name + " can't be re-run"); }});
+            out.push_back({name, [name](const geo::Mesh&) -> geo::Mesh { throw std::runtime_error(name + " can't be re-run"); }, subdivides});
         else
             out.push_back({name, [mod](const geo::Mesh& in) {
                                scene::deformEval::CpuOnly cpu;
                                return mod->apply(in, *mod);
-                           }});
+                           }, subdivides});
     }
     return out;
 }
