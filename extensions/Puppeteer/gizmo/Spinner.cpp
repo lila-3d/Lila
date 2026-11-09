@@ -11,6 +11,7 @@
 #include "rig/Rig.h"
 
 #include <lila/Anim.h>
+#include <lila/Ghosts.h>
 #include <lila/Gizmo.h>
 #include <lila/Prefs.h>
 #include <lila/UI.h>
@@ -716,6 +717,7 @@ public:
             return;
         apply(true);
         mDrag.reset();
+        lila::scene::ghosts::cache().clearPreview();
     }
 
     void cancel() override
@@ -724,6 +726,7 @@ public:
             return;
         restore();
         mDrag.reset();
+        lila::scene::ghosts::cache().clearPreview();
     }
 
     /** IK drags: the wheel lengthens or shortens the chain that bends, shown live. */
@@ -797,6 +800,8 @@ private:
         int trailFrame = -1;
         bool strung = false; // a breakdown through stringsBreakdown
         glm::dvec3 trailBy{0.0};
+        /** The trail as the drag so far would leave it; empty shows the trail as keyed. */
+        std::vector<glm::dvec3> trailLive;
         /** IK: bones the wheel set to bend (0 the rules' limb), the limb the last preview bent, and its joints. */
         int chainLength = 0, autoChain = 0;
         std::vector<std::string> chain;
@@ -1047,14 +1052,15 @@ private:
             return;
         const double now = graph().time();
         const int hot = mDrag && mDrag->kind == Kind::Trail ? mDrag->trailFrame : mHover == Handle::Trail ? mTrailHover : -1;
+        const std::vector<glm::dvec3>& points = mDrag && mDrag->trailLive.size() == mTrail.points.size() ? mDrag->trailLive : mTrail.points;
         std::vector<QPointF> line;
-        for (const glm::dvec3& pt : mTrail.points)
+        for (const glm::dvec3& pt : points)
             if (const auto at = mView.project(pt))
                 line.push_back(*at);
         p.polyline(line, 1.5f, gray(0.9f, 0.45f));
-        for (size_t i = 0; i < mTrail.points.size(); ++i)
+        for (size_t i = 0; i < points.size(); ++i)
         {
-            const auto at = mView.project(mTrail.points[i]);
+            const auto at = mView.project(points[i]);
             if (!at)
                 continue;
             const bool current = std::abs(mTrail.times[i] - now) < 1e-6;
@@ -1086,7 +1092,7 @@ private:
         mDrag = std::move(d);
     }
 
-    /** A trail frame dragged: shown while dragging, posed on release at that frame, easing out across the falloff. */
+    /** A trail frame dragged: previewed across its frames while dragging, posed on release, easing out across the falloff. */
     void applyTrail(bool commit)
     {
         Drag& d = *mDrag;
@@ -1094,8 +1100,12 @@ private:
         d.trailBy = screenDelta(d.start, d.current, at);
         const double frame = lila::scene::anim::frameOf(mTrail.times[size_t(d.trailFrame)]);
         d.readout = QString("Frame %1  %2 cm").arg(frame).arg(glm::length(d.trailBy), 0, 'f', 2);
-        if (!commit || glm::length(d.trailBy) < 1e-9)
+        if (glm::length(d.trailBy) < 1e-9)
+        {
+            d.trailLive.clear();
+            lila::scene::ghosts::cache().clearPreview();
             return;
+        }
         // Forward has nothing that bends to put a joint somewhere: the trail drags in IK there.
         const strings::Mode mode = stringsMode() == strings::Mode::Forward ? strings::Mode::Ik : stringsMode();
         const lila::scene::anim::TimeSelection& sel = lila::scene::anim::timeSelection();
@@ -1116,9 +1126,53 @@ private:
         }
         // Keyed animation moves its keys; a frame between keys, or dense motion, moves every frame.
         call["dense"] = !mTrail.keyed[size_t(d.trailFrame)];
+        if (!commit)
+        {
+            previewAcross(call);
+            return;
+        }
         runCommand("stringsPose", call);
         mTrail.version = 0;
     }
+
+    /**
+     * A drag across frames shown live: every frame solved without keying, the ghosts showing the result and the trail
+     * following when it is the dragged joint's. Nothing is left changed, so the frame's own preview comes after.
+     */
+    void previewAcross(json call)
+    {
+        Drag& d = *mDrag;
+        call["preview"] = true;
+        const bool trailed = mTrail.joint != kNoNode && !call["args"].empty() && graph().find(call["args"][0].get<std::string>()) &&
+                             graph().find(call["args"][0].get<std::string>())->id() == mTrail.joint;
+        if (trailed)
+            call["show"] = mTrail.times;
+        json result;
+        if (std::string error = quietly([&] { result = ops::execute("stringsPose", call, CallSource::Script); }); !error.empty())
+        {
+            if (!d.warned)
+                log::write(LogLevel::Warning, "Spinner: " + error);
+            d.warned = true;
+            return;
+        }
+        if (!trailed || !result.is_array())
+            return;
+        d.trailLive = mTrail.points;
+        for (const json& f : result)
+            if (f.contains("at") && !f["at"].empty())
+                if (const int i = trailIndex(f["time"].get<double>()); i >= 0)
+                    d.trailLive[size_t(i)] = jsonVec(f["at"][0]);
+    }
+
+    int trailIndex(double t) const
+    {
+        for (size_t i = 0; i < mTrail.times.size(); ++i)
+            if (std::abs(mTrail.times[i] - t) < 1e-6)
+                return int(i);
+        return -1;
+    }
+
+    static glm::dvec3 jsonVec(const json& v) { return {v[0].get<double>(), v[1].get<double>(), v[2].get<double>()}; }
 
     /** The Strings modes show on joints being animated; controllers and rigging have their own behaviour. */
     bool modeArc(const Target& t) const { return modes::current() != kRigMode && !t.rig && !t.chain && t.character; }
@@ -1710,6 +1764,13 @@ private:
             runCommand(name, call);
             return;
         }
+        if (range.active && std::string_view(name) == "stringsPose")
+        {
+            json across = call;
+            across["range"] = json::array({range.start, range.end});
+            across["falloff"] = range.falloff;
+            previewAcross(across);
+        }
         // A failing preview says why once per drag rather than doing nothing silently.
         json result;
         if (std::string error = quietly([&] { result = ops::execute(name, call, CallSource::Script); }); !error.empty() && !d.warned)
@@ -1717,6 +1778,7 @@ private:
             d.warned = true;
             log::write(LogLevel::Warning, "Spinner: " + error);
         }
+        livePointNow(d);
         if (result.is_array() && result.size() == 1)
             result = result[0];
         if (result.is_object() && result.contains("chain"))
@@ -1733,6 +1795,20 @@ private:
             if (result.contains("fallback"))
                 d.readout += QString("  (%1)").arg(QString::fromStdString(result["fallback"].get<std::string>()));
         }
+    }
+
+    /** The trail's current frame follows the joint as the drag poses it. */
+    void livePointNow(Drag& d)
+    {
+        if (mTrail.joint == kNoNode || !graph().node(mTrail.joint))
+            return;
+        const int i = trailIndex(graph().time());
+        if (i < 0)
+            return;
+        if (d.trailLive.size() != mTrail.points.size())
+            d.trailLive = mTrail.points;
+        graph().evaluateUpstream({mTrail.joint});
+        d.trailLive[size_t(i)] = glm::dvec3(worldOf(graph(), mTrail.joint)[3]);
     }
 
     ViewInfo mView;

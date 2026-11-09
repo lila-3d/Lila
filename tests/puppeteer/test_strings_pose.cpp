@@ -18,6 +18,7 @@
 #include <map>
 
 #include "scene/Anim.h"
+#include "scene/Ghosts.h"
 #include <QImage>
 
 #include <glm/gtx/quaternion.hpp>
@@ -927,4 +928,88 @@ TEST_CASE("Line of Action tool: Shift + drag picks a path between two joints, Ct
     QWheelEvent w(QPointF(400, 300), QPointF(400, 300), QPoint(), QPoint(0, 120), Qt::NoButton, Qt::ControlModifier, Qt::NoScrollPhase, false);
     CHECK(tool->wheel(&w, v));
     ui::viewportTools::set(nullptr);
+}
+
+TEST_CASE("stringsPose preview: ghosts and positions follow the drag across a range, nothing is keyed or left changed")
+{
+    loadPuppeteer();
+    keyedBiped();
+    run("puppeteerPin", {{"args", {"foot_l", "foot_r"}}, {"pin", true}});
+    run("ghosting", {{"enable", true}, {"mode", "keys"}, {"before", 1}, {"after", 1}, {"show", "skeleton"}});
+    run("select", {{"args", {"hips"}}});
+    std::map<int, glm::dvec3> hips;
+    for (int f : {10, 20, 30})
+    {
+        run("currentTime", {{"args", {sec(f)}}});
+        hips[f] = pos("hips");
+    }
+    run("currentTime", {{"args", {sec(20)}}});
+    const glm::dvec3 spine = pos("spine_02");
+    auto ghostHips = [](double t) {
+        for (const ghosts::Ghost& g : ghosts::cache().ghosts(ghosts::Settings::fromPrefs()))
+            if (std::abs(g.frame->time - t) < 1e-6 && !g.frame->bones.empty())
+                return g.frame->bones.front().first;
+        return glm::dvec3(1e9);
+    };
+    CHECK(near(ghostHips(sec(10)), hips[10], 1e-6));
+
+    const json r = run("stringsPose", {{"args", {"hips"}}, {"mode", "ik"}, {"by", v3(0, -10, 0)}, {"range", {sec(10), sec(30)}}, {"preview", true},
+                                       {"show", {sec(15)}}});
+    std::map<int, glm::dvec3> at;
+    for (const json& f : r)
+        at[int(std::lround(f["time"].get<double>() * 30.0))] = {f["at"][0][0].get<double>(), f["at"][0][1].get<double>(), f["at"][0][2].get<double>()};
+    REQUIRE(at.contains(15));
+    CHECK(near(at[10], hips[10] + glm::dvec3(0, -10, 0), 1e-3));
+    CHECK(near(at[30], hips[30] + glm::dvec3(0, -10, 0), 1e-3));
+    CHECK(ghosts::cache().previewing());
+    CHECK(near(ghostHips(sec(10)), hips[10] + glm::dvec3(0, -10, 0), 1e-3));
+    // Nothing changed: the frame, the unkeyed spine, the keys.
+    CHECK(near(pos("hips"), hips[20], 1e-9));
+    CHECK(near(pos("spine_02"), spine, 1e-9));
+    run("currentTime", {{"args", {sec(10)}}});
+    CHECK(near(pos("hips"), hips[10], 1e-9));
+    run("currentTime", {{"args", {sec(20)}}});
+    ghosts::cache().clearPreview();
+    CHECK(near(ghostHips(sec(10)), hips[10], 1e-6));
+    run("ghosting", {{"enable", false}});
+}
+
+TEST_CASE("spinner: a range drag previews on the ghosts while dragging and keys every frame on release")
+{
+    loadPuppeteer();
+    keyedBiped();
+    run("puppeteerPin", {{"args", {"foot_l", "foot_r"}}, {"pin", true}});
+    run("ghosting", {{"enable", true}, {"mode", "keys"}, {"before", 1}, {"after", 1}, {"show", "skeleton"}});
+    run("select", {{"args", {"hips"}}});
+    ModeScope scope("puppeteer.strings.ik");
+    run("currentTime", {{"args", {sec(10)}}});
+    const glm::dvec3 hips10 = pos("hips");
+    run("currentTime", {{"args", {sec(20)}}});
+    run("timeRange", {{"start", sec(10)}, {"end", sec(30)}});
+    ghosts::cache().ghosts(ghosts::Settings::fromPrefs());
+    std::unique_ptr<ui::Gizmo> gz = ui::gizmos::create("puppeteer.spinner");
+    ui::actions::run("puppeteer.spinner.move");
+    const QPointF zone = arcPoint(u(110.0), -90.0);
+    gz->setView(view());
+    gz->hover(zone);
+    REQUIRE(gz->press(zone, Qt::LeftButton, Qt::NoModifier));
+    for (int i = 1; i <= 3; ++i)
+    {
+        gz->setView(view());
+        gz->drag(zone + QPointF(0.0, 15.0 * i), Qt::NoModifier);
+    }
+    CHECK(ghosts::cache().previewing());
+    glm::dvec3 ghost(1e9);
+    for (const ghosts::Ghost& g : ghosts::cache().ghosts(ghosts::Settings::fromPrefs()))
+        if (std::abs(g.frame->time - sec(10)) < 1e-6)
+            ghost = g.frame->bones.front().first;
+    CHECK(glm::length(ghost - hips10) > 1.0);
+    CHECK(glm::length(ghost - hips10) < 100.0);
+    gz->release();
+    CHECK_FALSE(ghosts::cache().previewing());
+    run("currentTime", {{"args", {sec(10)}}});
+    CHECK(near(pos("hips"), ghost, 1e-4));
+    run("timeRange", {{"clear", true}});
+    run("ghosting", {{"enable", false}});
+    ui::actions::run("puppeteer.spinner.rotate");
 }

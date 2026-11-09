@@ -6,6 +6,7 @@
 
 #include <lila/Prefs.h>
 #include <lila/Curves.h>
+#include <lila/Ghosts.h>
 #include <lila/SplineChain.h>
 #include <lila/Strings.h>
 #include <lila/UI.h>
@@ -777,6 +778,52 @@ struct LayerScope
     LayerScope& operator=(const LayerScope&) = delete;
 };
 
+/** A transform's translate and rotate as they were, to put back what a preview wrote into channels no curve drives. */
+struct PoseValues
+{
+    NodeId id;
+    PlugValue translate, rotate;
+};
+
+/** Every transform a pose of nodes can write: their characters' joints, what is glued or attached to them, themselves. */
+std::vector<PoseValues> savePoseValues(Graph& g, const std::vector<NodeId>& nodes)
+{
+    std::vector<NodeId> ids(nodes.begin(), nodes.end());
+    for (NodeId n : nodes)
+        if (characterFor(g, n))
+            for (NodeId j : fullBodyJoints(g, n))
+                ids.push_back(j);
+    for (const Relation& r : relations())
+        for (NodeId m : membersOf(g, r))
+        {
+            ids.push_back(m);
+            if (characterFor(g, m))
+                for (NodeId j : fullBodyJoints(g, m))
+                    ids.push_back(j);
+        }
+    std::sort(ids.begin(), ids.end());
+    ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+    std::vector<PoseValues> out;
+    for (NodeId id : ids)
+        if (Node* n = g.node(id); n && n->type().isA("transform"))
+            out.push_back({id, g.value({id, Transform::kTranslate, -1}), g.value({id, Transform::kRotate, -1})});
+    return out;
+}
+
+void restorePoseValues(Graph& g, const std::vector<PoseValues>& saved)
+{
+    for (const PoseValues& s : saved)
+    {
+        if (!g.node(s.id))
+            continue;
+        if (g.value({s.id, Transform::kTranslate, -1}) != s.translate)
+            g.setValue({s.id, Transform::kTranslate, -1}, s.translate);
+        if (g.value({s.id, Transform::kRotate, -1}) != s.rotate)
+            g.setValue({s.id, Transform::kRotate, -1}, s.rotate);
+    }
+    g.evaluate();
+}
+
 /**
  * The same pose at every frame of a set, each solved on that frame's own pose so holds and contacts keep per frame, and
  * keyed there. Relative offsets each frame by the drag (in space), scaled by the falloff weight; absolute brings each
@@ -825,6 +872,19 @@ json poseAcrossFrames(Graph& g, const std::vector<NodeId>& nodes, const Args& a,
         sel.start = *std::min_element(times.begin(), times.end());
         sel.end = *std::max_element(times.begin(), times.end());
     }
+    // A preview also solves the frames the ghosts and a trail show, so they follow the drag; between keys that is
+    // the solve of the interpolated pose, close to what the keys will give.
+    const bool preview = a.get<bool>("preview", false);
+    std::vector<double> ghostTimes;
+    if (preview)
+    {
+        for (const auto& [t, offset] : ghosts::cache().shownTimes(ghosts::Settings::fromPrefs()))
+            ghostTimes.push_back(t);
+        times.insert(times.end(), ghostTimes.begin(), ghostTimes.end());
+        if (a.has("show"))
+            for (const json& t : a.flags["show"])
+                times.push_back(t.get<double>());
+    }
     std::sort(times.begin(), times.end());
     times.erase(std::unique(times.begin(), times.end(), [](double x, double y) { return std::abs(x - y) < 1e-9; }), times.end());
     if (times.empty())
@@ -842,6 +902,8 @@ json poseAcrossFrames(Graph& g, const std::vector<NodeId>& nodes, const Args& a,
     std::map<NodeId, Start> start;
     for (NodeId n : nodes)
         start[n] = {worldOf(g, n), spaceAt(g, n, space)};
+    const std::vector<PoseValues> unkeyed = preview ? savePoseValues(g, nodes) : std::vector<PoseValues>{};
+    std::vector<std::shared_ptr<const ghosts::Frame>> ghostFrames;
 
     // Every frame is solved on its pose as it was, so nothing is keyed until all are solved: a key set early would move
     // the frames interpolated after it. Auto key would key each value as it is set.
@@ -898,6 +960,17 @@ json poseAcrossFrames(Graph& g, const std::vector<NodeId>& nodes, const Args& a,
                 }
                 frame.push_back(poseOne(n, p));
             }
+            if (preview)
+            {
+                g.evaluate();
+                json at = json::array();
+                for (NodeId n : nodes)
+                    at.push_back(vecJson(glm::dvec3(worldOf(g, n)[3])));
+                out.push_back({{"time", t}, {"weight", w}, {"at", at}});
+                if (std::any_of(ghostTimes.begin(), ghostTimes.end(), [&](double x) { return std::abs(x - t) < 1e-9; }))
+                    ghostFrames.push_back(ghosts::cache().captureNow(t));
+                continue;
+            }
             std::sort(plugs.begin(), plugs.end());
             plugs.erase(std::unique(plugs.begin(), plugs.end()), plugs.end());
             Solved here{t, {}};
@@ -915,7 +988,16 @@ json poseAcrossFrames(Graph& g, const std::vector<NodeId>& nodes, const Args& a,
     catch (...)
     {
         finish();
+        if (preview)
+            restorePoseValues(g, unkeyed);
         throw;
+    }
+    if (preview)
+    {
+        finish();
+        restorePoseValues(g, unkeyed);
+        ghosts::cache().setPreview(std::move(ghostFrames));
+        return out;
     }
     // Dense: the frames just past the edit keep their pose, so the frames beyond them don't change.
     if (a.get<bool>("dense", false) && !solved.empty())
@@ -2033,6 +2115,8 @@ void registerStrings(ext::Context& ctx)
             {"frames", "fr", T::List, nullptr, "Seconds to pose at, keying each, instead of a range."},
             {"dense", "dn", T::Bool, false, "With range: every frame, not only the keyed ones."},
             {"falloff", "fo", T::Float, 0.0, "With range: frames either side the pose eases out over."},
+            {"preview", "pv", T::Bool, false, "With range or frames: solve without keying, for a drag in progress. Ghosts show the result; returns each frame's joint positions."},
+            {"show", "sw", T::List, nullptr, "With preview: more seconds to solve, such as a motion trail's frames."},
             {"relative", "rel", T::Bool, true, "Across frames: offset each frame by the drag. False brings each to where the drag put it now."},
             {"space", "sp", T::String, "world", "Across frames, relative: what the offset follows: world, parent, or a node (move a hand in head space)."},
         },
