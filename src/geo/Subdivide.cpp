@@ -927,7 +927,8 @@ std::vector<BorderBlend> respaceBorder(const Mesh& m, const Islands& is, Index i
             const size_t i = at(k);
             const glm::dvec2 a = proxyAt(i + n - 1) - proxyAt(i), b = proxyAt(i + 1) - proxyAt(i);
             const double la = glm::length(a), lb = glm::length(b);
-            return la > 0.0 && lb > 0.0 && glm::dot(a, b) > std::cos(kClosedTip) * la * lb;
+            // A bunched edge has no direction to fold back along.
+            return !bad((i + n - 1) % n) && !bad(i) && glm::dot(a, b) > std::cos(kClosedTip) * la * lb;
         };
         std::vector<uint8_t> covered(n, 0);
         covered[0] = 1;
@@ -959,7 +960,11 @@ std::vector<BorderBlend> respaceBorder(const Mesh& m, const Islands& is, Index i
             }
             for (size_t j = lo; j <= hi; ++j)
                 covered[j] = 1;
-            windows.push_back({lo, hi});
+            // A window touching the last one would pin the point between them where Blend left it.
+            if (!windows.empty() && windows.back().second + 1 == lo && !tip(lo))
+                windows.back().second = hi;
+            else
+                windows.push_back({lo, hi});
         }
         std::sort(windows.begin(), windows.end());
         std::vector<double> share, targets, param;

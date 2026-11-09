@@ -524,6 +524,17 @@ TEST_CASE("final mesh: a turn a bevel moved along a respaced border stays at the
     CHECK(collapsedOn(geo::subdivide(m, {.levels = 2, .uvs = geo::SubdivideUvs::FitSurface})) == 0);
 }
 
+TEST_CASE("final mesh: a border point between two bunched runs is respaced with them")
+{
+    // A bevel's corner patch left the island's border points round a reflex corner on two cage uvs, so two bunched runs
+    // meet at one point. Respaced as two windows, that point stays where Blend left it, on the corner, and the cells
+    // beside it can't open.
+    using Bunch = std::vector<std::pair<glm::ivec2, glm::ivec2>>;
+    const geo::Mesh m = bunchedSheet(5, 4, [](int x, int z) { return z >= 2 || x >= 3 ? 0 : 1; },
+                                     Bunch{{{1, 2}, {2, 1}}, {{2, 2}, {2, 1}}, {{3, 2}, {2, 1}}, {{3, 1}, {2, 1}}, {{3, 0}, {2, 0}}}, {}, {}, true);
+    CHECK(collapsedOn(geo::subdivide(m, {.levels = 2, .uvs = geo::SubdivideUvs::FitSurface})) == 0);
+}
+
 TEST_CASE("final mesh: islands whose export reads a neighbour that moved solve again")
 {
     // A sheet in two islands split down x = 0 with a hair's gap between them; the stack bends it and welds the seam, so
