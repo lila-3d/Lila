@@ -1159,7 +1159,7 @@ def bevelClearOverrides(*objects: Any) -> Any:
     """
 
 def bevelEdgeInfo(*objects: Any) -> Any:
-    """The edges an autoBevel modifier picks on its input mesh: {edges, count, lost, editing}.
+    """The edges an autoBevel modifier picks on its input mesh: {edges, count, lost, editing, offset, applied, limiting}. applied is the offset after the clamp; limiting lists the edges holding it there.
 
     Args:
         objects: modifier or mesh.
@@ -8059,7 +8059,7 @@ def sceneGraphDisconnect(*objects: Any, source: str | None = None) -> Any:
 def sceneGraphInfo(*objects: Any, depth: int | None = None, all: bool | None = None) -> Any:
     """A view of the scene's nodes for the node editor: the nodes with their plugs as sockets and values, the connections between them as links, and each node's canvas position.
 
-    Views: Selection (the selection and what is wired straight into and out of it), Hierarchy (the selection's parents and children), Upstream and Downstream (depth steps from the selection). Views look through anim curves and unit conversions unless all is on.
+    Views: Selection (the selection and what is wired straight into and out of it), History (each selected mesh's whole modifier stack and its source), Hierarchy (the selection's parents and children), Upstream and Downstream (depth steps from the selection). Views look through anim curves and unit conversions unless all is on.
 
     Args:
         objects: view.

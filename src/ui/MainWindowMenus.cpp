@@ -158,7 +158,7 @@ void MainWindow::buildMenus()
     menus::addActions("Mesh", {"#Tessellation", "mesh.triangulate", "mesh.quadrangulate", "mesh.subdivide", "#Edge Weights",
                                "mesh.crease", "mesh.uncrease", "mesh.bevelWeight", "#Attributes",
                                "mesh.transferAttributes"});
-    menus::addActions("Mesh", {"#Cleanup", "mesh.repair", "mesh.selectIssues", "#Nodes", "window.nodeEditor"});
+    menus::addActions("Mesh", {"#Cleanup", "mesh.repair", "mesh.selectIssues", "#Nodes", "window.nodeEditor", "nodeEditor.showHistory"});
 
     menu("Topology", "Topology", Area::MenuBar, syncChecks, "topology", {"Model", "Sculpt"});
     menus::addActions("Topology", {"#Session", "retopo.setReference", "window.topologyToolkit", "#Draw", "retopo.draw", "topo.pencil", "topo.patch",

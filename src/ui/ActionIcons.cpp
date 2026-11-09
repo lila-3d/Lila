@@ -182,6 +182,7 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"mesh.repair", "first-aid-kit"},
     {"mesh.selectIssues", "alert-triangle"},
     {"window.nodeEditor", "schema"},
+    {"nodeEditor.showHistory", "schema"},
     {"foliageBlades.extrudeBlades", "leaf"},
     {"foliageBlades.randomizeExtrude", "dice"},
     {"foliageBlades.resetExtrude", "restore"},
