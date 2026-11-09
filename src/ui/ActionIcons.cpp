@@ -458,6 +458,7 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"rig.pin", "pin"},
     {"rig.bakePin", "pin"},
     {"rig.bendBones", "vector-bezier-2"},
+    {"rig.softNet", "topology-ring"},
     {"rig.splineChain", "vector-spline"},
     {"rig.bendBoneCV", "point"},
     {"rig.mirrorBoneCVs", "flip-horizontal"},

@@ -493,6 +493,14 @@ void registerRigActions()
         "Moves the other side's bone CVs to mirror the selected ones.");
     add("rig.bakeBendBones", "Bake Bend Bones", [] { command("bakeBendBones"); }, "bakeBendBones()",
         "Bakes the selected mesh's bend bones to segment joints and a fitted skin for Unreal, checked against Unreal's transforms.");
+    actions::add({.id = "rig.softNet",
+                  .label = "Soft Net",
+                  .category = "Rig",
+                  .run = [] { command("softNet"); },
+                  .doc = "Turns the selected mesh's Panel Layout lines into a net of curves that shapes the surface after the skin: "
+                         "every junction gets a knot control to move, turn or scale.",
+                  .python = "softNet()",
+                  .keywords = {"curvenet", "curve net", "profile curves", "face rig", "shaping", "knot", "surface curves"}});
     actions::add({.id = "rig.editSkeleton", .label = "Edit Skeleton", .category = "Rig", .run = [] { command("editSkeleton"); },
                   .doc = "Toggles skeleton editing: the skinned skeleton goes to bind pose so joints can be moved and reoriented "
                          "without deforming the mesh; turning it off rebinds and keeps the animation.",
