@@ -302,6 +302,32 @@ TEST_CASE("final mesh: respaced borders ease into the spacing beside them")
     }
 }
 
+TEST_CASE("final mesh: a map stays exact after the cage's uvs are rewritten")
+{
+    // A tool solves against the map of the layout it starts from; respacing must not move with the layout it writes.
+    for (int grid : {3, 6})
+    {
+        geo::Mesh m = plate(0.4, grid);
+        const uv::Stack stack = bevelSubdivStack(0.13, 3, 2);
+        const uv::FinalMap map = uv::buildFinalMap(m, "uv0", stack);
+        REQUIRE(map.active());
+        std::span<glm::vec2> uv = m.cornerAttrs().get<glm::vec2>("uv0");
+        for (glm::vec2& v : uv)
+            v = glm::vec2(1.7f * v.x + 0.3f * v.y * v.y, v.y + 0.2f * v.x * v.x);
+        const std::vector<glm::dvec2> predicted = uv::exportedUvs(map, m, "uv0");
+        const geo::Mesh exported = uv::runStack(m, stack);
+        const std::span<const glm::vec2> actual = exported.cornerAttrs().get<glm::vec2>("uv0");
+        REQUIRE(actual.size() == predicted.size());
+        double worst = 0.0;
+        for (Index f = 0; f < exported.faceCapacity(); ++f)
+            if (exported.faceValid(f))
+                exported.forEachFaceCorner(f, [&](Index c) { worst = std::max(worst, glm::length(predicted[c] - glm::dvec2(actual[c]))); });
+        INFO("grid " << grid << ", worst " << worst);
+        // Island corners rebuilt from their quad still weigh it by the layout, so the export moves a little there.
+        CHECK(worst < 2e-3);
+    }
+}
+
 TEST_CASE("final mesh: a fit surface map reaches across whole islands")
 {
     // Islands far wider than the probe rings: every interior uv of the export reads the whole island border, through the

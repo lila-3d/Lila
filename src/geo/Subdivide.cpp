@@ -15,7 +15,10 @@
 #include <mutex>
 #include <numbers>
 #include <optional>
+#include <set>
+#include <limits>
 #include <unordered_map>
+#include <unordered_set>
 #include <string>
 #include <utility>
 
@@ -788,58 +791,72 @@ struct BorderBlend
     double t;
 };
 
-/** Border edges shorter in uv than this share of their length on the surface at the island's density are bunched. */
+/** Border edges whose spacing proxy is shorter than this share of their surface length are bunched. */
 constexpr double kBunched = 0.2;
-/** A bunched run takes in its neighbours until it has this share of its surface length in uv. */
+/** A bunched run takes in its neighbours until the run is at most 1 - this share of the window's surface length. */
 constexpr double kRespaced = 0.6;
 /** Margin edges per window edge over which a respaced window eases into the spacing beside it. */
 constexpr double kRespaceTaper = 1.0;
+/** Border edges on each side of a slit's tip that are spaced by their own uv length. */
+constexpr size_t kSlitTipReach = 4;
 
 /**
  * Where an island's border bunches up in uv (a bevel's corner points all carry the one cage uv of the corner they
- * replaced), the run and enough of its neighbours spread along the same uv polyline by their length on the surface.
- * The polyline and so the blends come from the island layer; every layer using it is blended alike, so uvs stay linear
- * in the cage's.
+ * replaced, and subdivision keeps uv corners while it rounds the surface), the run and enough of its neighbours spread
+ * along the same uv polyline by their length on the surface. Runs, windows and where each point lands on the polyline
+ * are measured in the spacing proxy (see addSpacingProxies), so the blends are the same for any layout of the cage
+ * (except next to a slit's tip) and a uv tool's map of the export stays exact after it writes. Every layer using the
+ * island layer is blended alike.
  */
-std::vector<BorderBlend> respaceBorder(const Mesh& m, const Islands& is, Index island, std::span<const glm::vec2> set)
+std::vector<BorderBlend> respaceBorder(const Mesh& m, const Islands& is, Index island, std::span<const glm::vec2> proxy,
+                                       std::span<const glm::vec2> set)
 {
     std::vector<BorderBlend> out;
     auto cornerAt = [&](Index c, Index p) { return m.cornerPoint(c) == p ? c : m.cornerNext(c); };
     std::unordered_map<Index, Index> next;
-    double a3 = 0.0, auv = 0.0;
+    std::unordered_map<Index, double> spacingFrom;
+    std::unordered_set<Index> slitFrom;
     std::vector<Index> fc;
+    double a3 = 0.0, auv = 0.0;
     for (Index f : is.faces[island])
     {
         fc = m.faceCorners(f);
-        for (size_t i = 1; i + 1 < fc.size(); ++i)
+        const glm::dvec3 p0 = m.position(m.cornerPoint(fc[0]));
+        const glm::dvec2 u0 = set[fc[0]];
+        for (size_t k = 1; k + 1 < fc.size(); ++k)
         {
-            const glm::dvec3 p0 = m.position(m.cornerPoint(fc[0]));
-            a3 += 0.5 * glm::length(glm::cross(m.position(m.cornerPoint(fc[i])) - p0, m.position(m.cornerPoint(fc[i + 1])) - p0));
-            const glm::dvec2 u0 = set[fc[0]], u1 = glm::dvec2(set[fc[i]]) - u0, u2 = glm::dvec2(set[fc[i + 1]]) - u0;
+            a3 += 0.5 * glm::length(glm::cross(m.position(m.cornerPoint(fc[k])) - p0, m.position(m.cornerPoint(fc[k + 1])) - p0));
+            const glm::dvec2 u1 = glm::dvec2(set[fc[k]]) - u0, u2 = glm::dvec2(set[fc[k + 1]]) - u0;
             auv += 0.5 * (u1.x * u2.y - u1.y * u2.x);
         }
         for (Index c : fc)
         {
             const Index e = m.cornerEdge(c), cn = m.cornerNext(c);
-            bool joined = false;
+            bool joined = false, slit = false;
             if (m.isManifoldEdge(e))
             {
                 const Index ec = m.edgeCorner(e), rc = m.cornerFace(ec) == f ? m.cornerRadial(ec) : ec;
                 joined = is.groupOfCorner[cornerAt(rc, m.cornerPoint(c))] == is.groupOfCorner[c] &&
                          is.groupOfCorner[cornerAt(rc, m.cornerPoint(cn))] == is.groupOfCorner[cn];
+                slit = is.islandOfGroup[is.groupOfCorner[rc]] == island;
             }
+            if (joined)
+                continue;
+            if (slit)
+                slitFrom.insert(is.groupOfCorner[c]);
             // A group with two borders leaving it pinches the island; its loops are left alone.
-            if (!joined && !next.emplace(is.groupOfCorner[c], is.groupOfCorner[cn]).second)
+            if (!next.emplace(is.groupOfCorner[c], is.groupOfCorner[cn]).second)
                 return out;
+            spacingFrom[is.groupOfCorner[c]] = glm::length(glm::dvec2(proxy[cn]) - glm::dvec2(proxy[c]));
         }
     }
-    const double s = std::sqrt(std::abs(auv) / std::max(a3, 1e-300));
-    if (!(s > 0.0))
-        return out;
+    const double density = std::sqrt(std::abs(auv) / std::max(a3, 1e-300));
     auto pos = [&](Index g) { return m.position(m.cornerPoint(is.groupCorners[g].front())); };
     std::unordered_map<Index, uint8_t> seen;
     std::vector<Index> loop;
-    std::vector<double> l, u;
+    std::vector<double> l, u, r;
+    std::vector<uint8_t> slit, ownSpacing;
+    std::vector<size_t> dist;
     for (const auto& [first, unused] : next)
     {
         if (seen.count(first))
@@ -859,19 +876,44 @@ std::vector<BorderBlend> respaceBorder(const Mesh& m, const Islands& is, Index i
             continue;
         l.resize(n);
         u.resize(n);
+        r.resize(n);
+        slit.resize(n);
+        bool known = true;
         for (size_t i = 0; i < n; ++i)
         {
             const Index a = loop[i], b = loop[(i + 1) % n];
-            l[i] = glm::length(pos(b) - pos(a)) * s;
-            u[i] = glm::length(groupValue(set, is.groupCorners[b]) - groupValue(set, is.groupCorners[a]));
+            l[i] = glm::length(pos(b) - pos(a));
+            u[i] = spacingFrom[a];
+            known = known && std::isfinite(u[i]);
+            r[i] = glm::length(groupValue(set, is.groupCorners[b]) - groupValue(set, is.groupCorners[a]));
+            slit[i] = slitFrom.count(a) != 0;
+        }
+        if (!known)
+            continue;
+        // A slit's tip (a cut ending inside the island) opens as the layout has it; next to it spacing follows the uvs.
+        ownSpacing.assign(n, 0);
+        for (size_t i = 0; i < n; ++i)
+        {
+            const size_t ip = (i + n - 1) % n, in = (i + 1) % n;
+            if (slit[ip] && slit[i] && m.cornerPoint(is.groupCorners[loop[ip]].front()) == m.cornerPoint(is.groupCorners[loop[in]].front()))
+                for (size_t k = 0; k < 2 * kSlitTipReach; ++k)
+                    ownSpacing[(i + n - kSlitTipReach + k) % n] = 1;
         }
         auto bad = [&](size_t i) { return u[i] < kBunched * l[i]; };
-        // Start after the best spaced edge, so no window wraps past the scan's start.
+        // Start on the edge farthest from any run, so no window wraps past the scan's start.
+        const size_t far = n + 1;
+        dist.assign(n, far);
+        for (int pass = 0; pass < 2; ++pass)
+            for (size_t k = 0; k < 2 * n; ++k)
+            {
+                const size_t i = pass == 0 ? k % n : (2 * n - 1 - k) % n, j = pass == 0 ? (i + n - 1) % n : (i + 1) % n;
+                dist[i] = bad(i) ? 0 : std::min(dist[i], dist[j] == far ? far : dist[j] + 1);
+            }
         size_t start = 0;
         for (size_t i = 1; i < n; ++i)
-            if (u[i] / std::max(l[i], 1e-300) > u[start] / std::max(l[start], 1e-300))
+            if (dist[i] > dist[start])
                 start = i;
-        if (bad(start))
+        if (dist[start] == 0 || dist[start] == far)
             continue;
         // Edges are counted from start from here on.
         auto at = [&](size_t k) { return (start + k) % n; };
@@ -908,7 +950,7 @@ std::vector<BorderBlend> respaceBorder(const Mesh& m, const Islands& is, Index i
             windows.push_back({lo, hi});
         }
         std::sort(windows.begin(), windows.end());
-        std::vector<double> share, targets;
+        std::vector<double> share, targets, param;
         for (size_t w = 0; w < windows.size(); ++w)
         {
             // Offsets shifted by n, so margins can run back past the start edge (the window before is the last one).
@@ -926,11 +968,14 @@ std::vector<BorderBlend> respaceBorder(const Mesh& m, const Islands& is, Index i
             for (size_t q = 0; q < mR; ++q)
                 share[b - a - q] = ease(double(q + 1) / double(mR + 1));
             // The window's edges and each margin edge's share take one spacing p; the rest keep their own spacing.
+            param.resize(b - a + 1);
+            for (size_t j = a; j <= b; ++j)
+                param[j - a] = ownSpacing[at(j)] ? r[at(j)] : density * u[at(j)];
             double U = 0.0, kept = 0.0, eased = 0.0;
             for (size_t j = a; j <= b; ++j)
             {
-                U += u[at(j)];
-                kept += (1.0 - share[j - a]) * u[at(j)];
+                U += param[j - a];
+                kept += (1.0 - share[j - a]) * param[j - a];
                 eased += share[j - a] * l[at(j)];
             }
             if (U <= 0.0 || eased <= 0.0)
@@ -941,7 +986,7 @@ std::vector<BorderBlend> respaceBorder(const Mesh& m, const Islands& is, Index i
             for (size_t v = a + 1; v <= b; ++v)
             {
                 const double s = share[v - 1 - a];
-                targets[v - a] = targets[v - 1 - a] + (1.0 - s) * u[at(v - 1)] + s * p * l[at(v - 1)];
+                targets[v - a] = targets[v - 1 - a] + (1.0 - s) * param[v - 1 - a] + s * p * l[at(v - 1)];
             }
             targets[b + 1 - a] = U;
             double segStart = 0.0;
@@ -949,12 +994,12 @@ std::vector<BorderBlend> respaceBorder(const Mesh& m, const Islands& is, Index i
             for (size_t v = a + 1; v <= b; ++v)
             {
                 const double target = targets[v - a];
-                while (seg < b && segStart + u[at(seg)] < target)
+                while (seg < b && segStart + param[seg - a] < target)
                 {
-                    segStart += u[at(seg)];
+                    segStart += param[seg - a];
                     ++seg;
                 }
-                const double len = u[at(seg)];
+                const double len = param[seg - a];
                 const double t = len > 0.0 ? std::clamp((target - segStart) / len, 0.0, 1.0) : 0.0;
                 out.push_back({loop[at(v)], loop[at(seg)], loop[at(seg + 1)], t});
             }
@@ -1107,11 +1152,146 @@ FitIslandRecord recordIsland(const Islands& is, std::span<const BorderBlend> ble
     return r;
 }
 
+/** Cage border edges with less uv than this share of their surface length at the island's density count by their uv. */
+constexpr double kCageThin = 0.5;
+
+/** Per island, uv length per surface length: the square root of its uv area over its surface area. */
+std::vector<double> islandDensities(const Mesh& m, const Islands& is, std::span<const glm::vec2> uv)
+{
+    std::vector<double> out(is.faces.size(), 0.0);
+    std::vector<Index> fc;
+    for (size_t i = 0; i < is.faces.size(); ++i)
+    {
+        double a3 = 0.0, auv = 0.0;
+        for (Index f : is.faces[i])
+        {
+            fc = m.faceCorners(f);
+            const glm::dvec3 p0 = m.position(m.cornerPoint(fc[0]));
+            const glm::dvec2 u0 = uv[fc[0]];
+            for (size_t k = 1; k + 1 < fc.size(); ++k)
+            {
+                a3 += 0.5 * glm::length(glm::cross(m.position(m.cornerPoint(fc[k])) - p0, m.position(m.cornerPoint(fc[k + 1])) - p0));
+                const glm::dvec2 u1 = glm::dvec2(uv[fc[k]]) - u0, u2 = glm::dvec2(uv[fc[k + 1]]) - u0;
+                auv += 0.5 * (u1.x * u2.y - u1.y * u2.x);
+            }
+        }
+        out[i] = std::sqrt(std::abs(auv) / std::max(a3, 1e-300));
+    }
+    return out;
+}
+
+/** Prefix of the layers that carry each uv island border's surface length through the subdivision. */
+constexpr std::string_view kSpacingProxy = "__fitSpacing@";
+
+/**
+ * Adds, per island layer, a layer that puts each island border loop's points on a circle as long as the loop is on the
+ * surface, at their distance along it (thin cage edges by their uv). Subdivided within the same islands by the same rules,
+ * its spacing along the border is the island layer's for an even layout, so respacing finds where the border bunches
+ * without reading how the cage is laid out.
+ */
+void addSpacingProxies(Mesh& m)
+{
+    std::set<std::string> islandLayers;
+    for (size_t l = 0; l < m.cornerAttrs().layerCount(); ++l)
+        if (const Attribute& a = m.cornerAttrs().layer(l); a.type() == AttrType::Float2)
+            islandLayers.insert(islandLayer(m, a).name());
+    auto cornerAt = [&](Index c, Index p) { return m.cornerPoint(c) == p ? c : m.cornerNext(c); };
+    for (const std::string& name : islandLayers)
+    {
+        const Islands is = islandsOf(m, *m.cornerAttrs().find(name));
+        const std::span<const glm::vec2> keyValues = m.cornerAttrs().find(name)->values<glm::vec2>();
+        const std::vector<glm::vec2> key(keyValues.begin(), keyValues.end());
+        const std::vector<double> density = islandDensities(m, is, key);
+        std::span<glm::vec2> proxy = m.cornerAttrs().getOrAdd<glm::vec2>(std::string(kSpacingProxy) + name);
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        for (Index g = 0; g < is.groupCorners.size(); ++g)
+            for (Index c : is.groupCorners[g])
+                proxy[c] = is.border[g] ? glm::vec2(nan) : glm::vec2(0.0f);
+        std::unordered_map<Index, Index> next;
+        std::unordered_set<Index> pinched;
+        for (Index f = 0; f < m.faceCapacity(); ++f)
+            if (m.faceValid(f))
+                m.forEachFaceCorner(f, [&](Index c) {
+                    const Index e = m.cornerEdge(c), cn = m.cornerNext(c);
+                    if (m.isManifoldEdge(e))
+                    {
+                        const Index ec = m.edgeCorner(e), rc = m.cornerFace(ec) == f ? m.cornerRadial(ec) : ec;
+                        if (is.groupOfCorner[cornerAt(rc, m.cornerPoint(c))] == is.groupOfCorner[c] &&
+                            is.groupOfCorner[cornerAt(rc, m.cornerPoint(cn))] == is.groupOfCorner[cn])
+                            return;
+                    }
+                    if (!next.emplace(is.groupOfCorner[c], is.groupOfCorner[cn]).second)
+                        pinched.insert(is.groupOfCorner[c]);
+                });
+        auto pos = [&](Index g) { return m.position(m.cornerPoint(is.groupCorners[g].front())); };
+        std::unordered_set<Index> seen;
+        std::vector<Index> loop;
+        std::vector<double> at, ll, lu;
+        for (const auto& [first, unused] : next)
+        {
+            if (seen.count(first))
+                continue;
+            loop.clear();
+            bool closed = false, clean = true;
+            for (Index g = first;;)
+            {
+                seen.insert(g);
+                loop.push_back(g);
+                clean = clean && !pinched.count(g);
+                const auto it = next.find(g);
+                if (it == next.end())
+                    break;
+                g = it->second;
+                closed = g == first;
+                if (closed || seen.count(g))
+                    break;
+            }
+            if (!closed || !clean || loop.size() < 3)
+                continue;
+            double total = 0.0;
+            const size_t nl = loop.size();
+            at.resize(nl);
+            ll.resize(nl);
+            lu.resize(nl);
+            for (size_t i = 0; i < nl; ++i)
+            {
+                const Index a = loop[i], b = loop[(i + 1) % nl];
+                ll[i] = glm::length(pos(b) - pos(a));
+                lu[i] = glm::length(glm::dvec2(key[is.groupCorners[b].front()]) - glm::dvec2(key[is.groupCorners[a].front()]));
+            }
+            for (size_t i = 0; i < nl; ++i)
+            {
+                at[i] = total;
+                // A thin edge (a bevel's corner points share their corner's uv) is bunched before subdividing too.
+                total += std::min(ll[i], lu[i] / (kCageThin * density[is.islandOfGroup[loop[i]]]));
+            }
+            if (!(total > 0.0))
+                continue;
+            const double r = total / (2.0 * std::numbers::pi);
+            for (size_t i = 0; i < loop.size(); ++i)
+            {
+                const double a = 2.0 * std::numbers::pi * at[i] / total;
+                for (Index c : is.groupCorners[loop[i]])
+                    proxy[c] = glm::vec2(float(r * std::cos(a)), float(r * std::sin(a)));
+            }
+        }
+    }
+}
+
 /** Replaces each uv island's interior with the harmonic fill of its border, in every layer using those islands. */
 void fitSurface(Mesh& m)
 {
     LILA_ZONE();
 
+    std::map<std::string, std::vector<glm::vec2>> proxies;
+    for (size_t l = 0; l < m.cornerAttrs().layerCount(); ++l)
+        if (const Attribute& a = m.cornerAttrs().layer(l); a.name().starts_with(kSpacingProxy))
+        {
+            const std::span<const glm::vec2> v = a.values<glm::vec2>();
+            proxies[a.name().substr(kSpacingProxy.size())].assign(v.begin(), v.end());
+        }
+    for (const auto& [name, unused] : proxies)
+        m.cornerAttrs().remove(std::string(kSpacingProxy) + name);
     std::map<std::string, std::vector<std::string>> byIslands;
     for (size_t l = 0; l < m.cornerAttrs().layerCount(); ++l)
         if (const Attribute& a = m.cornerAttrs().layer(l); a.type() == AttrType::Float2)
@@ -1123,6 +1303,10 @@ void fitSurface(Mesh& m)
         for (const std::string& l : layers)
             spans.push_back(m.cornerAttrs().get<glm::vec2>(l));
         const std::span<const glm::vec2> set = m.cornerAttrs().find(islandName)->values<glm::vec2>();
+        const auto proxyIt = proxies.find(islandName);
+        if (proxyIt == proxies.end())
+            continue;
+        const std::vector<glm::vec2>& proxy = proxyIt->second;
         FitRecord* record = nullptr;
         if (tRecorder)
         {
@@ -1133,7 +1317,7 @@ void fitSurface(Mesh& m)
         }
         // Islands share no corners, so each writes only its own groups while the others read theirs.
         tbb::parallel_for(Index(0), Index(is.faces.size()), [&](Index island) {
-            const std::vector<BorderBlend> blends = respaceBorder(m, is, island, set);
+            const std::vector<BorderBlend> blends = respaceBorder(m, is, island, proxy, set);
             std::vector<glm::vec2> moved(blends.size());
             // Recording leaves the uvs alone, so corners are found on a respaced copy of the island layer.
             std::vector<glm::vec2> respacedSet;
@@ -1255,7 +1439,10 @@ Mesh subdivide(const Mesh& mesh, const SubdivideOptions& opts, SubdivideMap* map
 {
     LILA_ZONE();
 
+    const bool fitting = opts.uvs == SubdivideUvs::FitSurface && opts.levels > 0;
     Mesh cur = mesh;
+    if (fitting)
+        fit::addSpacingProxies(cur);
     for (int i = 0; i < opts.levels; ++i)
     {
         if (!map)
@@ -1286,7 +1473,7 @@ Mesh subdivide(const Mesh& mesh, const SubdivideOptions& opts, SubdivideMap* map
         map->edges = std::move(once.edges);
         map->faces = std::move(once.faces);
     }
-    if (opts.uvs == SubdivideUvs::FitSurface && opts.levels > 0)
+    if (fitting)
         fit::fitSurface(cur);
     if (!opts.keepHardEdges && opts.levels > 0)
     {
