@@ -22,6 +22,7 @@
 #include "ui/LocateFlash.h"
 #include "ui/SceneDialogs.h"
 #include "ui/MenuSets.h"
+#include "ui/SceneLayout.h"
 #include "ui/Theme.h"
 #include "ui/LodDisplay.h"
 #include "ui/RigViewport.h"
@@ -710,6 +711,7 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         toggleField(ui, "Show menu bar (the hotbox still has the menus)", "/ui/showMenuBar", true);
         toggleField(ui, "Show shelf (` still opens the floating shelf)", "/ui/showShelf", false);
         toggleField(ui, "Show all menus (otherwise the menu bar follows what you are doing)", menuSets::kAllMenusPref, false);
+        toggleField(ui, "Open scenes in the mode and layout they were saved in", sceneLayout::kRestorePref, true);
         toggleField(ui, "Flash windows as they open", kLocateFlashPref, true);
         numberField(ui, "Flash pulses", kLocateFlashPulsesPref, 1.0, 1.0, 10.0, 1.0, 0);
         numberField(ui, "Flash pulse length (s)", kLocateFlashPulseSecondsPref, 0.4, 0.1, 5.0, 0.1, 2);

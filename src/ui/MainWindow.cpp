@@ -58,6 +58,7 @@ MainWindow::MainWindow()
     restoreLayout();
     applyChromePrefs();
     modes::restore();
+    sceneLayout::install();
     connect(shelf, &QDockWidget::visibilityChanged, this, [this, shelf](bool visible) {
         // Layouts and Reset Layout reopen the shelf; the pref keeps it closed.
         if (visible && !mShelfShown)
