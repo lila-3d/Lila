@@ -7,6 +7,7 @@
 #include "scene/Graph.h"
 #include "scene/Ik.h"
 #include "scene/Rig.h"
+#include "scene/RigElements.h"
 #include "ui/Actions.h"
 #include "ui/AnimProxyUi.h"
 #include "ui/CursorBadges.h"
@@ -258,9 +259,19 @@ void drawJoints(render::FrameState& s, OverlayPainter&, const ViewInfo&)
     }
 }
 
+/** A handle inside a rig element's IK chain: the chain's own controller is what gets drawn and picked instead. */
+bool rigElementHandle(scene::Graph& g, NodeId id)
+{
+    for (NodeId chain : scene::rigel::chains(g))
+        if (scene::rigel::handleOf(g, chain) == id)
+            return true;
+    return false;
+}
+
 bool isIkHandle(const scene::Node& n)
 {
-    return n.type().isA("ikHandle") && scene::effectivelyVisible(scene::Graph::current(), n.id());
+    scene::Graph& g = scene::Graph::current();
+    return n.type().isA("ikHandle") && scene::effectivelyVisible(g, n.id()) && !rigElementHandle(g, n.id());
 }
 
 /** IK handles: a cross at the target, a line from the chain's start to it, and the pole vector from the start. */
