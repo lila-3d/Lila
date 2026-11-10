@@ -58,7 +58,7 @@ struct Window
 
     explicit Window(bool show = true)
     {
-        win.setDockOptions(QMainWindow::AnimatedDocks | QMainWindow::AllowNestedDocks | QMainWindow::AllowTabbedDocks);
+        win.setDockOptions(QMainWindow::AnimatedDocks | QMainWindow::AllowNestedDocks | QMainWindow::AllowTabbedDocks | QMainWindow::GroupedDragging);
         central = new QWidget;
         win.setCentralWidget(central);
         sidebars = new DockSidebars(&win);
@@ -716,4 +716,39 @@ TEST_CASE("a tab hidden behind another doesn't hold its group wider; shown, it g
     settle();
     CHECK(attrs->width() >= 420);
     CHECK(attrs->widget()->minimumWidth() == 420);
+}
+
+TEST_CASE("dragging a tab out of its group keeps the tab bar carrying the drag")
+{
+    Window w;
+    QDockWidget* attrs = w.docks["attributeEditor"];
+    QTabBar* bar = w.tabBarFor(attrs);
+    REQUIRE(bar);
+    int tab = -1;
+    for (int i = 0; i < bar->count(); ++i)
+        if (bar->tabText(i) == attrs->windowTitle())
+            tab = i;
+    REQUIRE(tab >= 0);
+    auto send = [&](QEvent::Type type, QPoint at, Qt::MouseButton button, Qt::MouseButtons held) {
+        QMouseEvent e(type, QPointF(at), QPointF(bar->mapToGlobal(at)), button, held, Qt::NoModifier);
+        QApplication::sendEvent(bar, &e);
+    };
+    QPoint at = bar->tabRect(tab).center();
+    send(QEvent::MouseButtonPress, at, Qt::LeftButton, Qt::LeftButton);
+    for (int step = 1; step <= 8; ++step)
+    {
+        send(QEvent::MouseMove, at + QPoint(-step * 20, step * 40), Qt::NoButton, Qt::LeftButton);
+        settle();
+    }
+    CHECK(attrs->isFloating());
+    CHECK(bar->isVisible());
+    send(QEvent::MouseButtonRelease, at + QPoint(-160, 320), Qt::LeftButton, Qt::NoButton);
+    settle();
+    CHECK(attrs->isFloating());
+
+    // A layout restore after the drag must find the main window's layout whole.
+    QByteArray state = w.win.saveState();
+    w.win.restoreState(state);
+    settle();
+    CHECK(w.docks["channelBox"]->isVisible());
 }

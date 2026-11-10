@@ -802,7 +802,7 @@ void DockSidebars::hideStaleTabBars()
     QWidget* central = mWindow->centralWidget();
     for (QTabBar* bar : mWindow->findChildren<QTabBar*>(Qt::FindDirectChildrenOnly))
     {
-        if (!bar->isVisible())
+        if (!bar->isVisible() || bar == mPressedTabBar)
             continue;
         // A live bar sits right on top of the shown dock of its group (tabs are North everywhere).
         bool live = false;
@@ -864,6 +864,13 @@ bool DockSidebars::eventFilter(QObject* obj, QEvent* e)
         return false;
     if (auto* bar = qobject_cast<QTabBar*>(obj))
     {
+        if (mouse->button() == Qt::LeftButton && e->type() == QEvent::MouseButtonPress)
+            mPressedTabBar = bar;
+        else if (mouse->button() == Qt::LeftButton && e->type() == QEvent::MouseButtonRelease && mPressedTabBar)
+        {
+            mPressedTabBar = nullptr;
+            QTimer::singleShot(0, this, &DockSidebars::hideStaleTabBars);
+        }
         int index = bar->tabAt(mouse->position().toPoint());
         if (mouse->button() == Qt::RightButton)
         {
