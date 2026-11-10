@@ -63,10 +63,25 @@ std::vector<std::string> selectedDetail()
     catch (const std::exception&)
     {
     }
+    // Meshes mapped onto a sheet are its users, not detail modelled on its high.
+    auto mapped = [&](scene::NodeId id) {
+        for (scene::NodeId at : {id, g.parent(id)})
+            if (scene::Node* n = g.node(at))
+                try
+                {
+                    const scene::PlugValue v = g.value(g.plug(n->path() + "." + kNodeSheet));
+                    if (const std::string* p = std::get_if<std::string>(&v); p && !p->empty())
+                        return true;
+                }
+                catch (const std::exception&)
+                {
+                }
+        return false;
+    };
     std::vector<std::string> out;
     auto add = [&](scene::NodeId id) {
         scene::Node* n = g.node(id);
-        if (!n || !n->type().isA("mesh") || n->name() == sheet + "_High" || n->name() == sheet + "_Low")
+        if (!n || !n->type().isA("mesh") || n->name() == sheet + "_High" || n->name() == sheet + "_Low" || mapped(id))
             return;
         if (std::ranges::find(out, n->path()) == out.end())
             out.push_back(n->path());
@@ -365,7 +380,8 @@ void registerUi(ext::Context& ctx)
                                const std::vector<std::string> detail = selectedDetail();
                                if (detail.empty())
                                {
-                                   log::write(LogLevel::Warning, "Select the meshes you modelled on the sheet's high poly.");
+                                   log::write(LogLevel::Warning, "Select the meshes you modelled on the sheet's high poly (Show Sheet High/Low); meshes "
+                                                                 "mapped onto the sheet don't count.");
                                    return;
                                }
                                run("trimSheetBake", {{"high", detail}});
