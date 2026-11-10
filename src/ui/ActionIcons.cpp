@@ -791,7 +791,7 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"puppeteer.spinner.inheritRotate", "rotate"},
     {"puppeteer.spinner.toonScale", "arrows-diagonal"},
     {"puppeteer.spinner.autoPose", "wand"},
-    {"puppeteer.graphFullScreen", "chart-line"},
+    {"puppeteer.curveOverlay", "chart-line"},
     {"edit.checkNames", "text-spellcheck"},
     {"naming.toggleEnforce", "text-spellcheck"},
     {"outliner.toggleSets", "box-multiple"},

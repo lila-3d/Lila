@@ -1,6 +1,6 @@
 // Puppeteer's two modes. Rig mode builds characters (joints, IK chains, feet, lookers, spaces); Animate mode poses the
-// joints directly: clicking the mesh picks the joint under it, the Spinner moves it, and a Space tap swaps the window to
-// a full-screen graph editor while a Space hold is still the hotbox.
+// joints directly: clicking the mesh picks the joint under it, the Spinner moves it, and a Space tap opens the Curve
+// Overlay over the viewport while a Space hold is still the hotbox.
 
 #include "Puppeteer.h"
 #include "rig/Rig.h"
@@ -9,10 +9,7 @@
 #include <lila/UI.h>
 #include <lila/Viewport.h>
 
-#include <QApplication>
-#include <QDockWidget>
-#include <QMainWindow>
-#include <QPointer>
+#include <QTimer>
 
 using namespace lila;
 using namespace lila::scene;
@@ -25,69 +22,7 @@ namespace
 constexpr const char* kRigLayout = "Puppeteer Rig";
 constexpr const char* kAnimateLayout = "Puppeteer Animate";
 constexpr const char* kShelf = "Puppeteer";
-constexpr const char* kGraphDock = "graphEditor";
-constexpr const char* kTimeSliderDock = "timeSlider";
 constexpr const char* kBaseSelection = "lila.dominantInfluence";
-
-// Graph editor swap -------------------------------------------------------------------------------------------------
-
-struct GraphSwap
-{
-    QPointer<QMainWindow> window;
-    QByteArray state;
-    bool on = false;
-};
-
-GraphSwap& graphSwap()
-{
-    static GraphSwap s;
-    return s;
-}
-
-QMainWindow* mainWindow()
-{
-    for (QWidget* w : QApplication::topLevelWidgets())
-        if (auto* m = qobject_cast<QMainWindow*>(w); m && m->isVisible())
-            return m;
-    return nullptr;
-}
-
-/** The window becomes the graph editor (and time slider) alone; off puts back exactly what was there. */
-void setGraphFullScreen(bool on)
-{
-    GraphSwap& s = graphSwap();
-    if (on == s.on)
-        return;
-    if (!on)
-    {
-        s.on = false;
-        if (QMainWindow* w = s.window.data())
-        {
-            if (QWidget* c = w->centralWidget())
-                c->show();
-            w->restoreState(s.state);
-        }
-        return;
-    }
-    QMainWindow* w = mainWindow();
-    if (!w)
-        return;
-    s.window = w;
-    s.state = w->saveState();
-    s.on = true;
-    panels::show(kGraphDock);
-    for (QDockWidget* d : w->findChildren<QDockWidget*>())
-        if (d->parentWidget() == w && !d->isFloating() && d->objectName() != kGraphDock && d->objectName() != kTimeSliderDock)
-            d->hide();
-    // With the viewports hidden the docks share the whole window.
-    if (QWidget* c = w->centralWidget())
-        c->hide();
-    if (QDockWidget* g = w->findChild<QDockWidget*>(kGraphDock))
-    {
-        g->show();
-        g->raise();
-    }
-}
 
 // Selection -----------------------------------------------------------------------------------------------------------
 
@@ -203,9 +138,6 @@ void registerModeActions(ext::Context& ctx)
     actions::add(ctx, {.id = "puppeteer.anim.alignFoot", .label = "Align Foot Level", .category = animCat,
                        .doc = "Level the selected reverse feet, keeping the pose in roll, twist and bank.",
                        .command = "puppeteerSnapReverseFoot", .call = {{"align", true}}});
-    actions::add(ctx, {.id = "puppeteer.graphFullScreen", .label = "Full-Screen Graph Editor", .category = animCat,
-                       .run = [] { setGraphFullScreen(!graphSwap().on); },
-                       .doc = "Swap the window to the graph editor alone, and back. Space tap in Animate mode."});
 }
 
 void registerMenus(ext::Context& ctx)
@@ -222,7 +154,7 @@ void registerMenus(ext::Context& ctx)
     menus::addItem(ctx, {.menu = "Puppeteer", .kind = menus::Kind::Separator});
     for (const char* a : {"puppeteer.anim.lock", "puppeteer.anim.pin", "puppeteer.anim.matchControllers", "puppeteer.anim.snapFoot",
                           "puppeteer.anim.alignFoot", "puppeteer.spinner.inheritRotate", "puppeteer.spinner.toonScale",
-                          "puppeteer.spinner.autoPose", "puppeteer.graphFullScreen"})
+                          "puppeteer.spinner.autoPose", "puppeteer.curveOverlay"})
         menus::addItem(ctx, {.menu = "Puppeteer", .action = a});
     menus::addItem(ctx, {.menu = "Puppeteer", .kind = menus::Kind::Submenu, .label = "Strings"});
     for (const char* a : {"puppeteer.strings.forward", "puppeteer.strings.backward", "puppeteer.strings.ik", "puppeteer.strings.fullBody",
@@ -285,8 +217,14 @@ void registerModeBundles(ext::Context& ctx)
     rigKeys["viewport"]["J"] = {{"press", "puppeteer.joint.create"}};
     rigKeys["viewport"]["Shift+J"] = {{"press", "puppeteer.joint.orient"}};
     rigKeys["viewport"]["Alt+M"] = {{"press", "puppeteer.joint.mirror"}};
-    json animKeys = {{"viewport", common}, {"graphEditor", {{"Space", {{"press", "puppeteer.graphFullScreen"}}}}}};
-    animKeys["viewport"]["Space"] = {{"press", "puppeteer.graphFullScreen"}};
+    json animKeys = {{"viewport", common}};
+    animKeys["viewport"]["Space"] = {{"press", "puppeteer.curveOverlay"}};
+    // Curve Overlay keys; each does its usual job while the overlay is closed or has nothing to act on.
+    animKeys["viewport"]["Shift+F"] = "puppeteer.curveOverlay.frameSelected";
+    animKeys["viewport"]["Shift+A"] = "puppeteer.curveOverlay.frameAll";
+    animKeys["viewport"]["Delete"] = "puppeteer.curveOverlay.delete";
+    animKeys["viewport"]["Backspace"] = "puppeteer.curveOverlay.delete";
+    animKeys["viewport"]["Esc"] = "puppeteer.curveOverlay.escape";
     animKeys["viewport"]["Shift+L"] = {{"press", "puppeteer.anim.lock"}};
     animKeys["viewport"]["Shift+P"] = {{"press", "puppeteer.anim.pin"}};
     animKeys["viewport"]["U"] = {{"LMB", {{"markingMenu", "puppeteerStrings"}}}};
@@ -316,7 +254,7 @@ void registerModeBundles(ext::Context& ctx)
                              if (actions::find("tool.rotate"))
                                  actions::run("tool.rotate");
                          },
-                     .onExit = [] { setGraphFullScreen(false); }});
+                     .onExit = [] { closeCurveOverlay(); }});
 }
 } // namespace
 
@@ -326,7 +264,5 @@ void registerModes(ext::Context& ctx)
     registerMenus(ctx);
     registerModeBundles(ctx);
     registerShelf(ctx);
-    // Unloading while swapped must give the window its viewports back.
-    ctx.track("puppeteer:graphSwap", [] { setGraphFullScreen(false); });
 }
 } // namespace puppeteer

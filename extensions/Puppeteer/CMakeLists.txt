@@ -5,7 +5,7 @@ set(PUPPETEER_RIG_SOURCES
     gizmo/Spinner.h gizmo/Spinner.cpp gizmo/SpinnerOps.cpp gizmo/StringsUi.cpp gizmo/LineOfActionTool.cpp gizmo/BreakdownPartsTool.cpp gizmo/RulesEditor.cpp gizmo/ControllerDraw.h gizmo/ControllerDraw.cpp)
 # Animate-mode panels (Stacker, Mixer, Anim Bank, Cycle Maker, Poses): list their sources here.
 set(PUPPETEER_ANIM_SOURCES
-    anim/AnimPanels.cpp anim/AnimCommands.cpp anim/AnimCommands.h anim/AnimOps.cpp anim/AnimOps.h anim/KeyMath.h anim/WalkCycle.h anim/PanelModels.h)
+    anim/AnimPanels.cpp anim/CurveOverlay.cpp anim/AnimCommands.cpp anim/AnimCommands.h anim/AnimOps.cpp anim/AnimOps.h anim/KeyMath.h anim/WalkCycle.h anim/PanelModels.h)
 lila_add_extension(lila_puppeteer_extension ID Puppeteer MANIFEST extension.json UI
     SOURCES ${PUPPETEER_RIG_SOURCES} ${PUPPETEER_ANIM_SOURCES})
 target_include_directories(lila_puppeteer_extension PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
