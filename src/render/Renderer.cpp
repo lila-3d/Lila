@@ -673,6 +673,8 @@ struct Renderer::Impl
     VkPipeline overlayTrisPipeline = VK_NULL_HANDLE;
     VkPipelineLayout meshLayout = VK_NULL_HANDLE, wireLayout = VK_NULL_HANDLE;
     VkPipeline meshPipeline = VK_NULL_HANDLE, wirePipeline = VK_NULL_HANDLE, wireXrayPipeline = VK_NULL_HANDLE;
+    /** Depth only, in the frame pass: marks the wires' empty-background pixels so behind image planes leave them. */
+    VkPipeline wireCoverPipeline = VK_NULL_HANDLE;
     std::unordered_map<uint64_t, GpuMesh> meshCache; // render thread only
     std::unordered_map<uint64_t, GpuPoints> pointCache; // render thread only
     std::unordered_map<uint64_t, GpuStrands> strandCache; // render thread only
@@ -4219,6 +4221,9 @@ struct Renderer::Impl
                                          false, false, true);
             wireXrayPipeline = buildPipeline(wireLayout, wire, "wireVS", "wirePS", sceneFormat, VK_PRIMITIVE_TOPOLOGY_LINE_LIST, wvin, false, true, false,
                                              0.0f, false, false, true);
+            VkPipelineColorBlendAttachmentState noColor{};
+            wireCoverPipeline = buildPipeline(wireLayout, wire, "wireVS", "wirePS", format, VK_PRIMITIVE_TOPOLOGY_LINE_LIST, wvin, true, false, true,
+                                              0.0f, false, false, true, &noColor);
             vkDestroyShaderModule(vk.device, wire, nullptr);
         }
 
@@ -4275,7 +4280,7 @@ struct Renderer::Impl
     {
         for (VkPipeline* p : {&gridPipeline, &linesPipeline, &overlayPipeline, &overlayTrisPipeline, &meshPipeline, &meshBlendPipeline, &meshWirePipeline,
                               &meshWireBlendPipeline, &meshLeanPipeline, &meshWireLeanPipeline, &aoApplyPipeline, &pointsPipeline, &wirePipeline,
-                              &wireXrayPipeline, &backgroundPipeline, &linesOnTopPipeline, &tris3dPipeline, &linesOverPipeline, &contactPipeline, &prepassPipeline, &gtaoPipeline, &pointsNearestPipeline, &pointsKeepPipeline,
+                              &wireXrayPipeline, &wireCoverPipeline, &backgroundPipeline, &linesOnTopPipeline, &tris3dPipeline, &linesOverPipeline, &contactPipeline, &prepassPipeline, &gtaoPipeline, &pointsNearestPipeline, &pointsKeepPipeline,
                               &denoisePipeline, &imageOverPipeline, &imageDepthPipeline, &imageBlendPipeline, &imageBehindPipeline, &gridFramePipeline, &externalDepthPipeline, &heightfields.shaded,
                               &heightfields.wire, &heightfields.prepass, &heightfields.shadow,
                               &composeOverPipeline, &postPipeline, &externalPipeline,
@@ -5505,7 +5510,10 @@ struct Renderer::Impl
     void drawOverScene(VkCommandBuffer cmd, const FrameState& s, const glm::mat4& viewProj)
     {
         if (!s.externalScene)
+        {
+            drawWireCover(cmd, viewProj);
             drawImagePlanes(cmd, s, viewProj, ImagePlaneDraw::Depth::Behind, false);
+        }
         // Opaque planes in the scene write depth; see-through ones blend over them afterwards.
         drawImagePlanes(cmd, s, viewProj, ImagePlaneDraw::Depth::Scene, false);
         drawImagePlanes(cmd, s, viewProj, ImagePlaneDraw::Depth::Scene, true);
@@ -6084,34 +6092,56 @@ struct Renderer::Impl
         }
         evictTextures();
 
-        if (!wirePipeline || !frameInstanceAddress)
+        if (wirePipeline && frameInstanceAddress)
+            for (const DrawBatch& b : frameBatches.wire)
+            {
+                const MeshDraw& d = *b.draw;
+                WirePush p;
+                p.viewProj = viewProj;
+                bool shaded = d.flags & (DrawShaded | DrawWireDepth);
+                if (shaded)
+                    p.depthPull = depthPull(s.proj, heightPx, kLinePullPixels + 0.5 * lineWidth(d.wireWidth));
+                p.depthPull.z = s.gamma;
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shaded ? wirePipeline : wireXrayPipeline);
+                drawWireBatch(cmd, b, p);
+            }
+        evictMeshes();
+    }
+
+    void drawWireBatch(VkCommandBuffer cmd, const DrawBatch& b, WirePush& p)
+    {
+        GpuMesh* g = gpuMesh(b.draw->mesh);
+        p.instances = frameInstanceAddress;
+        p.firstInstance = b.first;
+        vkCmdSetLineWidth(cmd, lineWidth(b.draw->wireWidth));
+        vkCmdPushConstants(cmd, wireLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
+        VkDeviceSize offset = 0;
+        vkCmdBindVertexBuffers(cmd, 0, 1, &g->edges.buffer, &offset);
+        if (g->edgeIndexCount)
+        {
+            vkCmdBindIndexBuffer(cmd, g->edgeIndices.buffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd, g->edgeIndexCount, b.count, 0, 0, 0);
+        }
+        else
+            vkCmdDraw(cmd, g->edgePointCount, b.count, 0, 0);
+    }
+
+    /**
+     * Wire pixels that landed on empty background get a depth just off the far plane, so behind image planes, which take
+     * only what nothing covers, leave them showing.
+     */
+    void drawWireCover(VkCommandBuffer cmd, const glm::mat4& viewProj)
+    {
+        if (!wireCoverPipeline || !frameInstanceAddress || frameBatches.wire.empty())
             return;
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, wireCoverPipeline);
         for (const DrawBatch& b : frameBatches.wire)
         {
-            const MeshDraw& d = *b.draw;
-            GpuMesh* g = gpuMesh(d.mesh);
             WirePush p;
             p.viewProj = viewProj;
-            p.instances = frameInstanceAddress;
-            p.firstInstance = b.first;
-            bool shaded = d.flags & (DrawShaded | DrawWireDepth);
-            if (shaded)
-                p.depthPull = depthPull(s.proj, heightPx, kLinePullPixels + 0.5 * lineWidth(d.wireWidth));
-            p.depthPull.z = s.gamma;
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shaded ? wirePipeline : wireXrayPipeline);
-            vkCmdSetLineWidth(cmd, lineWidth(d.wireWidth));
-            vkCmdPushConstants(cmd, wireLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
-            VkDeviceSize offset = 0;
-            vkCmdBindVertexBuffers(cmd, 0, 1, &g->edges.buffer, &offset);
-            if (g->edgeIndexCount)
-            {
-                vkCmdBindIndexBuffer(cmd, g->edgeIndices.buffer, 0, VK_INDEX_TYPE_UINT32);
-                vkCmdDrawIndexed(cmd, g->edgeIndexCount, b.count, 0, 0, 0);
-            }
-            else
-                vkCmdDraw(cmd, g->edgePointCount, b.count, 0, 0);
+            p.depthPull = glm::vec4(0.0f, 1e-6f, 0.0f, 0.0f);
+            drawWireBatch(cmd, b, p);
         }
-        evictMeshes();
     }
 
     /**
