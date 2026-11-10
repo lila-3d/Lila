@@ -7834,7 +7834,7 @@ def rotate(*objects: Any, by: Sequence[float] | None = None, to: Sequence[float]
         x: Local X rotation, degrees; on components, a turn about world X.
         y: Local Y rotation, degrees.
         z: Local Z rotation, degrees.
-        space: 'world', 'object' or 'parent' for `by`. Default 'world'.
+        space: 'world', 'object' or 'parent' for `by`, or 'gimbal' to add `by` to the rotate channels. Default 'world'.
     """
 
 def rotateComponents(by: Sequence[float] | None = None, pivot: Sequence[float] | None = None) -> Any:
