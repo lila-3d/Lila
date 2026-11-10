@@ -261,12 +261,11 @@ std::vector<std::string> builtInNames()
 
 std::optional<json> builtIn(const std::string& name)
 {
-    // An extension's layout of the same name (Puppeteer's Animate) replaces Lila's while it is loaded.
-    if (const json* layout = contributed().find(name))
-        return std::optional<json>(std::in_place, *layout);
     for (auto& [n, layout] : presets())
         if (n == name)
             return std::optional<json>(std::in_place, layout);
+    if (const json* layout = contributed().find(name))
+        return std::optional<json>(std::in_place, *layout);
     return std::nullopt;
 }
 

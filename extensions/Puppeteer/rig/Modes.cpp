@@ -21,9 +21,9 @@ namespace puppeteer
 {
 namespace
 {
-// Puppeteer's modes are the Rig and Animate workspaces: their layouts replace Lila's, and switching to either enters the mode.
-constexpr const char* kRigLayout = "Rig";
-constexpr const char* kAnimateLayout = "Animate";
+// Each mode and its layout are bound: entering the mode shows the layout, and picking the layout enters the mode.
+constexpr const char* kRigLayout = "Puppeteer Rig";
+constexpr const char* kAnimateLayout = "Puppeteer";
 constexpr const char* kShelf = "Puppeteer";
 constexpr const char* kBaseSelection = "lila.dominantInfluence";
 
@@ -391,7 +391,7 @@ void registerModes(ext::Context& ctx)
         markingMenus::add(ctx, std::string(kAnimateMode) + "/" + name, keysMenu);
     const events::SubscriptionId sub =
         events::subscribe(events::Event::SelectionChanged, [](const events::EventData&) { QTimer::singleShot(0, [] { ensureCharacter(); }); }, "Puppeteer");
-    // The Animate and Rig workspace tabs enter the matching mode; any other workspace leaves Puppeteer.
+    // Picking a Puppeteer layout enters its mode; any other layout leaves Puppeteer.
     const events::SubscriptionId layoutSub = events::subscribe(
         events::Event::LayoutChanged,
         [](const events::EventData& e) {
