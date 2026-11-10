@@ -53,6 +53,9 @@ private:
         int keep;                             // higher keeps its place longer as the row narrows; separators ignore it
         std::function<void(QMenu*)> overflow; // the item's controls as chevron menu entries; null for separators
         std::vector<QToolButton*> labelled;   // buttons whose labels drop to icons alone when the row is short
+        /** Widths last measured labelled [0] and icon-only [1], valid while the label text width stays labelText. */
+        int measured[2] = {0, 0};
+        int labelText = 0;
     };
 
     void add(QWidget* w, bool right, int keep, std::function<void(QMenu*)> overflow, std::vector<QToolButton*> labelled = {});

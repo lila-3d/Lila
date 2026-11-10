@@ -1494,11 +1494,11 @@ QSize ViewportHeader::minimumSizeHint() const
 void ViewportHeader::layoutItems()
 {
     const size_t n = mItems.size();
-    // The width each item's labels add beside their icons, as QToolButton sizes TextBesideIcon.
-    auto labelWidth = [this](const Item& item) {
+    // The width each item's labels add beside their icons, as QToolButton sizes TextBesideIcon (it pads the text by two spaces).
+    auto labelWidth = [](const Item& item) {
         int w = 0;
         for (QToolButton* b : item.labelled)
-            w += 4 + b->fontMetrics().size(Qt::TextShowMnemonic, b->text()).width();
+            w += 4 + b->fontMetrics().size(Qt::TextShowMnemonic, b->text()).width() + 2 * b->fontMetrics().horizontalAdvance(QLatin1Char(' '));
         return w;
     };
     auto isCompact = [](const Item& item) { return !item.labelled.empty() && item.labelled.front()->toolButtonStyle() == Qt::ToolButtonIconOnly; };
@@ -1506,10 +1506,16 @@ void ViewportHeader::layoutItems()
     std::vector<int> full(n), compact(n);
     for (size_t i = 0; i < n; ++i)
     {
-        const int now = mItems[i].widget->sizeHint().width();
-        const int extra = labelWidth(mItems[i]);
-        full[i] = isCompact(mItems[i]) ? now + extra : now;
-        compact[i] = isCompact(mItems[i]) || mItems[i].labelled.empty() ? now : now - extra;
+        Item& item = mItems[i];
+        const int now = item.widget->sizeHint().width();
+        const int extra = labelWidth(item);
+        if (item.labelText != extra)
+            item.measured[0] = item.measured[1] = 0;
+        item.labelText = extra;
+        // Estimates are only a first guess: a wrong one flips the row between labelled and icon-only every pass.
+        item.measured[isCompact(item) ? 1 : 0] = now;
+        full[i] = item.measured[0] ? item.measured[0] : now + extra;
+        compact[i] = item.labelled.empty() ? now : item.measured[1] ? item.measured[1] : std::max(0, now - extra);
     }
 
     std::vector<bool> kept(n, true);

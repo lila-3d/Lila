@@ -200,3 +200,34 @@ TEST_CASE("view switcher: segments under the cube, a second click flips to the o
     view.switchView("persp");
     CHECK(view.viewName() == "persp");
 }
+
+TEST_CASE("viewport header settles at every width instead of flipping labels on each layout pass")
+{
+    ViewportWidget view;
+    ViewportHeader header(&view);
+    header.resize(2000, header.sizeHint().height());
+    header.show();
+    auto styles = [&] {
+        std::vector<int> out;
+        for (QToolButton* b : header.findChildren<QToolButton*>())
+            out.push_back(b->isVisibleTo(&header) ? int(b->toolButtonStyle()) : -1);
+        return out;
+    };
+    int labelSwaps = 0;
+    auto before = styles();
+    for (int w = 2000; w >= 200; --w)
+    {
+        header.resize(w, header.height());
+        QCoreApplication::sendPostedEvents();
+        const auto settled = styles();
+        labelSwaps += settled != before;
+        before = settled;
+        for (int pass = 0; pass < 3; ++pass)
+        {
+            QCoreApplication::postEvent(&header, new QEvent(QEvent::LayoutRequest));
+            QCoreApplication::sendPostedEvents();
+        }
+        CHECK_MESSAGE(styles() == settled, "width " << w);
+    }
+    CHECK(labelSwaps > 0);
+}
