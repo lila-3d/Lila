@@ -1714,6 +1714,13 @@ def clearLoopKey(*objects: Any, attribute: Any | None = None, at: Any | None = N
         attribute: Attribute name or list of names. Short form at.
     """
 
+def clearMaterialTextures(*objects: Any) -> Any:
+    """Clear every texture map on the materials, keeping their values and sampling settings. Returns the channels cleared.
+
+    Args:
+        objects: material...
+    """
+
 def clearRecoveredScenes() -> Any:
     """Delete every recovered scene kept for File > Recovered Scenes. Returns how many were deleted."""
 
