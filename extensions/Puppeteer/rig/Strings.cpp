@@ -727,14 +727,14 @@ json stringsRules(const Args& a)
     return rulesJson(rulesOf(g, character));
 }
 
-/** Lila space to Unreal space as a 3x3 map on vectors (left-handed, so its determinant is -1). */
+/** Lila space to a character's Unreal space as a 3x3 map on vectors (left-handed, so its determinant is -1). */
 glm::dmat3 unrealBasis()
 {
     glm::dmat3 b(0.0);
     for (int c = 0; c < 3; ++c)
     {
         lila::math::Vector e(c == 0 ? 1.0 : 0.0, c == 1 ? 1.0 : 0.0, c == 2 ? 1.0 : 0.0);
-        const lila::math::Vector u = lila::math::toUnreal(e);
+        const lila::math::Vector u = lila::math::characterToUnreal(e);
         b[c] = glm::dvec3(u.x, u.y, u.z);
     }
     return b;

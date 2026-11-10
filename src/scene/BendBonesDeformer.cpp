@@ -420,7 +420,7 @@ std::string bareName(const std::string& path) { return path.substr(path.find_las
 
 json toUnrealJson(const glm::dvec3& v)
 {
-    const math::Vector u = math::toUnreal(math::Vector(v.x, v.y, v.z));
+    const math::Vector u = math::characterToUnreal(math::Vector(v.x, v.y, v.z));
     return {u.x, u.y, u.z};
 }
 

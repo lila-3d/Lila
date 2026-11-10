@@ -28,5 +28,14 @@ LILA_FOUNDATION_API Transform fromUnreal(const Transform& t);
 LILA_FOUNDATION_API Matrix toUnreal(const Matrix& m);
 LILA_FOUNDATION_API Matrix fromUnreal(const Matrix& m);
 LILA_FOUNDATION_API Box toUnreal(const Box& b);
+/**
+ * Characters (skeletal meshes, their skeletons and animation) as the FBX export writes them for Unreal: also turned a
+ * quarter turn about up, so a character facing Lila's forward faces Unreal's +Y as Unreal builds skeletal meshes. Lila
+ * forward/right/up become Unreal +Y/-X/+Z.
+ */
+LILA_FOUNDATION_API Vector characterToUnreal(const Vector& v);
+LILA_FOUNDATION_API Vector characterFromUnreal(const Vector& v);
+LILA_FOUNDATION_API Quat characterToUnreal(const Quat& q);
+LILA_FOUNDATION_API Quat characterFromUnreal(const Quat& q);
 LILA_FOUNDATION_API Box fromUnreal(const Box& b);
 } // namespace lila::math

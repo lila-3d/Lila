@@ -167,6 +167,27 @@ Quat fromUnreal(const Quat& q)
     return {-axis.x, -axis.y, -axis.z, q.w};
 }
 
+Vector characterToUnreal(const Vector& v)
+{
+    const AxisBasis& b = axisBasis();
+    const glm::dvec3 g = v.toGlm();
+    return {-glm::dot(g, b.right), glm::dot(g, b.forward), glm::dot(g, b.up)};
+}
+
+Vector characterFromUnreal(const Vector& v) { return Vector(-axisBasis().right * v.x + axisBasis().forward * v.y + axisBasis().up * v.z); }
+
+Quat characterToUnreal(const Quat& q)
+{
+    const Vector axis = characterToUnreal(Vector(q.x, q.y, q.z));
+    return {-axis.x, -axis.y, -axis.z, q.w};
+}
+
+Quat characterFromUnreal(const Quat& q)
+{
+    const Vector axis = characterFromUnreal(Vector(q.x, q.y, q.z));
+    return {-axis.x, -axis.y, -axis.z, q.w};
+}
+
 Transform toUnreal(const Transform& t)
 {
     return Transform(toUnreal(t.rotation), toUnreal(t.translation), scaleToUnreal(t.scale3d));
