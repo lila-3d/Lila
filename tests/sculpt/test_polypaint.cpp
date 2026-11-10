@@ -62,6 +62,61 @@ const geo::Mesh& storedPaintMesh(const std::string& name)
 }
 } // namespace
 
+TEST_CASE("blurring paint and mask softens them without moving anything")
+{
+    const geo::Mesh proxy = denseCube();
+    sculpt::SculptMesh s(proxy);
+    s.setSymmetry(geo::axisPlane(0), 1e-4);
+    // A hard red/white edge and a hard mask edge, both across y = 0.
+    std::vector<glm::vec4> colors(proxy.pointCapacity(), glm::vec4(1.0f));
+    std::vector<float> mask(proxy.pointCapacity(), 0.0f);
+    for (Index p = 0; p < proxy.pointCapacity(); ++p)
+        if (proxy.position(p).y > 0.0)
+        {
+            colors[p] = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
+            mask[p] = 1.0f;
+        }
+    s.setColors(colors);
+    const std::vector<glm::dvec3> held(s.mesh().positions().begin(), s.mesh().positions().end());
+    auto softened = [&](auto value) {
+        size_t n = 0;
+        for (Index p = 0; p < proxy.pointCapacity(); ++p)
+            n += value(p) > 0.01f && value(p) < 0.99f;
+        return n;
+    };
+    CHECK(softened([&](Index p) { return s.colors()[p].g; }) == 0);
+
+    sculpt::BrushSettings b;
+    b.brush = sculpt::Brush::Paint;
+    b.color = glm::vec3(0.0f, 0.0f, 1.0f);
+    b.strength = 1.0;
+    b.blur = true;
+    s.beginStroke(b);
+    for (int i = 0; i < 6; ++i)
+        s.dab(frontDab(s, -20.0 + i * 8.0, 15.0));
+    sculpt::StrokeRecord rec = s.endStroke();
+    REQUIRE(!rec.empty());
+    CHECK(softened([&](Index p) { return s.colors()[p].g; }) > 0);
+    for (const glm::vec4& c : s.colors())
+        CHECK(c.b == doctest::Approx(c.g));
+    CHECK(std::equal(held.begin(), held.end(), s.mesh().positions().begin()));
+    s.apply(rec, true);
+    CHECK(std::equal(colors.begin(), colors.end(), s.colors().begin()));
+
+    s.setMask(mask);
+    b.brush = sculpt::Brush::Mask;
+    s.beginStroke(b);
+    for (int i = 0; i < 6; ++i)
+        s.dab(frontDab(s, -20.0 + i * 8.0, 15.0));
+    s.endStroke();
+    CHECK(softened([&](Index p) { return s.mask()[p]; }) > 0);
+    CHECK(std::equal(held.begin(), held.end(), s.mesh().positions().begin()));
+    // Blurring leaves untouched what was already even.
+    for (Index p = 0; p < proxy.pointCapacity(); ++p)
+        if (std::abs(proxy.position(p).y) > 40.0)
+            CHECK(s.mask()[p] == mask[p]);
+}
+
 TEST_CASE("the paint brush colors without moving, honours the mask and symmetry, and undoes")
 {
     const geo::Mesh proxy = denseCube();

@@ -151,7 +151,7 @@ TEST_CASE("stringsPose says when it falls back to Forward, and refuses joints ou
     CHECK_THROWS(run("stringsPose", {{"args", {"pelvis"}}, {"mode", "sideways"}, {"by", v3(0, 1, 0)}}));
 }
 
-TEST_CASE("strings modes: the actions are one exclusive choice and the marking menu holds them")
+TEST_CASE("strings modes: the actions are one exclusive choice, and the marking menu leaves them to the Spinner")
 {
     loadPuppeteer();
     ModeScope scope("puppeteer.strings.backward");
@@ -160,10 +160,12 @@ TEST_CASE("strings modes: the actions are one exclusive choice and the marking m
     ui::actions::run("puppeteer.strings.next");
     CHECK(checked("puppeteer.strings.ik"));
     const json menu = ui::markingMenus::resolve("puppeteerStrings");
-    CHECK(menu["N"]["action"] == "puppeteer.strings.forward");
-    CHECK(menu["W"]["action"] == "puppeteer.strings.backward");
-    CHECK(menu["E"]["action"] == "puppeteer.strings.ik");
-    CHECK(menu["S"]["action"] == "puppeteer.strings.fullBody");
+    // The modes are on the Spinner's arc; the menu holds what changes how a drag poses.
+    CHECK(menu["N"]["action"] == "puppeteer.anim.pin");
+    CHECK(menu["W"]["action"] == "puppeteer.strings.contacts");
+    CHECK(menu["E"]["action"] == "puppeteer.strings.stretch");
+    CHECK(menu["S"]["action"] == "puppeteer.strings.zero");
+    CHECK(menu.dump().find("puppeteer.strings.forward") == std::string::npos);
 }
 
 TEST_CASE("spinner: the mode arc picks the Strings mode and drags pose in it")

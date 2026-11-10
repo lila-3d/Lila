@@ -268,6 +268,8 @@ std::vector<NodeId> characters(Graph& g)
     return out;
 }
 
+std::vector<std::string> skeletonMeshes(Graph& g, NodeId root) { return skinnedMeshes(g, root); }
+
 NodeId characterFor(Graph& g, NodeId node)
 {
     if (!node)

@@ -67,8 +67,11 @@ void registerJointTools(lila::ext::Context& ctx);
 void registerSpinnerOps(lila::ext::Context& ctx);
 /** The Spinner gizmo provider, its overlay icons and actions. */
 void registerSpinner(lila::ext::Context& ctx);
-/** Rig and Animate modes: layouts, hotkey layers, selection handlers, menus, the graph editor swap. */
+/** Rig and Animate modes: layouts, hotkey layers, selection handlers, menus. */
 void registerModes(lila::ext::Context& ctx);
+/** The Curve Overlay: its viewport layer, actions and curveOverlay command (anim/CurveOverlay.cpp). */
+void registerCurveOverlay(lila::ext::Context& ctx);
+void closeCurveOverlay();
 /** Anim proxies: the prefs page, actions, and showing proxies with the modes (rig/AnimProxy.cpp). */
 void registerAnimProxy(lila::ext::Context& ctx);
 /** Animate-mode panels (anim/). */

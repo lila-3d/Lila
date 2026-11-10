@@ -10,6 +10,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <QtCore/qnamespace.h>
 
 namespace lila::ui
 {
@@ -74,6 +75,15 @@ LILA_UI_API void selectSculptBrush(sculpt::Brush brush, const std::string& custo
 LILA_UI_API bool selectSculptPreset(const std::string& id);
 /** The materials sculpt mode can draw with, as (id, label), the mesh's own first. */
 LILA_UI_API std::vector<std::pair<std::string, std::string>> sculptMaterials();
+/**
+ * Whether a smoothing stroke started with mods keeps volume: Smooth's own Keep Volume, flipped by Ctrl, and by Shift
+ * when the Smooth brush itself is picked. Only asked when the stroke smooths.
+ */
+LILA_UI_API bool smoothStrokeKeepsVolume(const SculptSettings& st, Qt::KeyboardModifiers mods);
+/** Material ids starting with this are matcaps; kMatcapFileId is the user's own image at kMatcapFilePref. */
+inline constexpr const char* kMatcapPrefix = "matcap.";
+inline constexpr const char* kMatcapFileId = "matcap.file";
+inline constexpr const char* kMatcapFilePref = "/sculpt/matcapFile";
 
 /**
  * The sculpt viewport tool, on the open sculpt session:

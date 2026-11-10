@@ -215,7 +215,7 @@ void MainWindow::buildMenus()
                                   "viewport.vertexColors.unlit", "viewport.toggleBackfaceCulling"});
 
     menu("Sculpt", "Sculpt", Area::MenuBar, {}, "", {"Sculpt"});
-    menus::addActions("Sculpt", {"#Sculpt", "sculpt.tool", "sculpt.enter", "sculpt.exit", "sculpt.cancel", "sculpt.toggleSeeThrough", "window.sculpt", "#Levels",
+    menus::addActions("Sculpt", {"#Sculpt", "sculpt.tool", "sculpt.enter", "sculpt.exit", "sculpt.cancel", "sculpt.toggleSeeThrough", "viewport.toggleSculptLighting", "window.sculpt", "#Levels",
                                  "sculpt.levelUp", "sculpt.levelDown", "sculpt.addLevel", "sculpt.reconstruct", "sculpt.deleteLower", "sculpt.deleteHigher",
                                  "sculpt.deleteLevels", "#Duplicate", "sculpt.duplicate", "sculpt.duplicateHide", "#Shape", "sculpt.remesh",
                                  "mesh.relaxKeepForm", "mesh.reproject", "mesh.transferShape", "#Hard Surface", "layout.pencil", "layout.plates", "layout.fasteners", "layout.patterns"});
@@ -306,7 +306,7 @@ void MainWindow::buildMenus()
                            "viewport.greyBaseColor",
                            "viewport.toggleXray", "viewport.toggleBackfaceCulling", "#Lighting and Effects"});
     addSubmenu("Display", "Lighting", syncChecks);
-    menus::addActions("Display/Lighting", {"viewport.lighting.environment", "viewport.lighting.studio", "viewport.lighting.flat"});
+    menus::addActions("Display/Lighting", {"viewport.lighting.environment", "viewport.lighting.studio", "viewport.lighting.sculpt", "viewport.lighting.flat", "viewport.resetLight"});
     addSubmenu("Display", "Vertex Colors", syncChecks);
     menus::addActions("Display/Vertex Colors", {"viewport.vertexColors.off", "viewport.vertexColors.shaded", "viewport.vertexColors.unlit", "",
                                          "viewport.colorChannel.rgb", "viewport.colorChannel.r", "viewport.colorChannel.g",
@@ -378,7 +378,7 @@ void MainWindow::buildMenus()
     menu("Help", "Help");
     menus::addActions("Help", {"#Learn", "help.docs"});
     addSubmenu("Help", "Docs Topics", [](QMenu* m) { docs::attachTopicsMenu(m); });
-    menus::addActions("Help", {"help.hotkeyCheatSheet", "help.updateDocs", "#Search", "window.searchMenus", "window.searchScene", "window.searchTearOffs",
+    menus::addActions("Help", {"help.hotkeyCheatSheet", "viewport.toggleKeys", "help.updateDocs", "#Search", "window.searchMenus", "window.searchScene", "window.searchTearOffs",
                                "#Problems", "help.reportIssue", "help.myReports", "help.perfTrace", "help.supportBundle", "help.copyLastCrash",
                                "help.crashReports", "#Setup", "help.agentSetup", "help.telemetry", "help.checkUpdates", "help.prefsFolder", "",
                                "help.licenses", "help.credits", "help.about"});

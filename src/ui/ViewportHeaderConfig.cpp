@@ -76,6 +76,7 @@ const std::vector<Builtin>& builtins()
     static const std::vector<Builtin> all = {
         {"componentMode", "Component Mode", "cube", "Object, Vertex, Edge and Face as one strip."},
         {"shading", "Shading", "sphere", "Wireframe, Shaded and Textured as one strip."},
+        {"lighting", "Lighting", "sun", "Lighting mode, environment, light rotation, shadows and exposure."},
         {"symmetry", "Symmetry", "brackets-contain", "Toggles symmetry; its arrow picks the plane."},
         {"softSelect", "Soft Select", "ripple", "Toggles soft select; its arrow sets radius and falloff."},
         {"selectionMasks", "Selection Masks", "filter", "What clicks can select: meshes, curves, joints, lights, locators, other."},
@@ -100,7 +101,7 @@ json defaultConfig()
 {
     return {
         {"left",
-         {"componentMode", "shading", kSeparator, "symmetry", "softSelect", kSeparator, "selectionMasks",
+         {"componentMode", "shading", "lighting", kSeparator, "symmetry", "softSelect", kSeparator, "selectionMasks",
           {{"action", "viewport.toggleHighlightSelection"}}, {{"action", "viewport.togglePreselectObjects"}}, kSeparator,
           {{"menu", "Display"}, {"icon", "adjustments-horizontal"}, {"items",
             {"viewport.wireOnShaded", "viewport.defaultMaterial", "viewport.greyBaseColor", kSeparator,

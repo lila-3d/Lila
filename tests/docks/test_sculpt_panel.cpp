@@ -54,7 +54,7 @@ TEST_CASE("sculpt panel: level row follows the session and its buttons step leve
     pump();
     auto* status = panelChild<QLabel>(&panel, "sculptStatus");
     auto* row = panelChild<QWidget>(&panel, "sculptLevels");
-    CHECK(status->text() == "Rock");
+    CHECK(status->text() == QString::fromUtf8("Rock  ·  not sculpting"));
     CHECK_FALSE(row->isVisible());
 
     ops::execute("sculptEnter", {{"args", {"Rock"}}, {"levels", 2}});
@@ -74,5 +74,24 @@ TEST_CASE("sculpt panel: level row follows the session and its buttons step leve
     ops::execute("sculptExit", json::object());
     pump();
     CHECK_FALSE(row->isVisible());
-    CHECK(status->text() == QString::fromUtf8("Rock  \u00b7  level 3 of 3"));
+    CHECK(status->text() == QString::fromUtf8("Rock  \u00b7  level 3 of 3  ·  not sculpting"));
+}
+
+TEST_CASE("smoothing strokes: Ctrl flips Keep Volume, and so does Shift with the Smooth brush picked")
+{
+    ui::SculptSettings st;
+    st.brush = sculpt::Brush::Smooth;
+    CHECK(ui::smoothStrokeKeepsVolume(st, Qt::NoModifier));
+    CHECK_FALSE(ui::smoothStrokeKeepsVolume(st, Qt::ShiftModifier));
+    CHECK_FALSE(ui::smoothStrokeKeepsVolume(st, Qt::ControlModifier));
+    st.stroke.params["keepVolume"] = 0.0;
+    CHECK_FALSE(ui::smoothStrokeKeepsVolume(st, Qt::NoModifier));
+    CHECK(ui::smoothStrokeKeepsVolume(st, Qt::ShiftModifier));
+
+    // Shift-smoothing from another brush: Smooth's own setting, flipped by Ctrl only.
+    st.brush = sculpt::Brush::Draw;
+    st.stroke.params.clear();
+    st.perBrush["smooth"].params["keepVolume"] = 1.0;
+    CHECK(ui::smoothStrokeKeepsVolume(st, Qt::ShiftModifier));
+    CHECK_FALSE(ui::smoothStrokeKeepsVolume(st, Qt::ShiftModifier | Qt::ControlModifier));
 }

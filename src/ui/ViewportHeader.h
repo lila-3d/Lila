@@ -26,7 +26,7 @@ class Segmented;
 
 /**
  * The one row along the top of a viewport panel. Left: component mode and shading as segmented controls, then Symmetry
- * and Soft Select as toggles whose arrow opens their settings. Right: the Snap and Overlays popovers, the camera menu,
+ * and Soft Select as toggles whose arrow opens their settings. Lighting as a popover beside shading. Right: the Snap and Overlays popovers, the camera menu,
  * framing and the view layout. As the panel narrows, labels drop to icons first, then whole items fold into a chevron
  * menu, rarest first.
  */
@@ -81,6 +81,9 @@ private:
     void fillSoftSelectMenu(QMenu* m, bool withToggle);
     void fillSnapMenu(QMenu* m);
     void fillOverlaysMenu(QMenu* m);
+    void fillLightingMenu(QMenu* m);
+    /** A menu row running action id in this view, checkable when the action has a state. */
+    QAction* actionRow(QMenu* m, const std::string& id, bool enabled = true);
     void fillCameraMenu(QMenu* m);
 
     /** Makes this panel's view the active one, so actions that target "the viewport" act on it. */

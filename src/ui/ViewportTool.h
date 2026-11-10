@@ -128,8 +128,27 @@ LILA_UI_API void flushToolMessages(OverlayPainter& p, const ViewInfo& view, cons
 LILA_UI_API double keyListHeight(size_t rows);
 /** The width of the widest key, for laying the list out. */
 LILA_UI_API double keyListWidth(const std::vector<KeyHint>& hints);
-/** Keys in the accent colour with what they do beside them, one per line, ending just above bottomLeft. */
+/** Keys in the accent colour with what they do beside them, one per line, ending just above bottomLeft. Nothing while keys are hidden. */
 LILA_UI_API void drawKeyList(OverlayPainter& p, QPointF bottomLeft, const std::vector<KeyHint>& hints, float alpha = 1.0f);
+
+/** Key hints on screen (tool readouts and the corner key lists); the Keys toggle in Overlays and Help. */
+inline constexpr const char* kShowKeysPref = "/viewport/showKeys";
+LILA_UI_API bool keysShown();
+
+/**
+ * Key hints for a layout, listed in the viewport's bottom-left corner while it is current and the active tool lists none
+ * of its own. Extensions add theirs for their own layouts the same way.
+ */
+namespace viewportKeys
+{
+using Provider = std::function<std::vector<KeyHint>()>;
+LILA_UI_API void add(const std::string& layout, Provider provider);
+LILA_UI_API std::vector<KeyHint> forLayout(const std::string& layout);
+/** Appends the action's current hotkey and what, or nothing when the action has no key bound. */
+LILA_UI_API void addAction(std::vector<KeyHint>& out, const std::string& actionId, const QString& what);
+/** Lila's own layouts' keys. */
+LILA_UI_API void registerBuiltins();
+} // namespace viewportKeys
 
 namespace viewportTools
 {

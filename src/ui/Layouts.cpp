@@ -99,9 +99,7 @@ const std::vector<std::pair<std::string, json>>& presets()
         // The UV editor takes its own full-height column beside the viewport; the data column stays whole beyond it.
         {"UV", preset(with({"uvEditor", "modifierStack"}), {"uvEditor", "channelBox"}, "UV", {{"uvEditor", {{"width", 580}}}}, {},
                       json::array({{"uvEditor"}, {"outliner", "channelBox"}}))},
-        // The sculpt panel takes its own full-height column beside the viewport, like the UV editor.
-        {"Sculpt", preset(with({"sculptPanel"}), {"sculptPanel", "channelBox"}, "Sculpt", {{"sculptPanel", {{"width", 600}}}}, {},
-                          json::array({{"sculptPanel"}, {"outliner", "channelBox"}}))},
+        {"Sculpt", preset(with({"sculptPanel"}), {"sculptPanel", "channelBox"}, "Sculpt", {{"sculptPanel", {{"width", 600}}}})},
         {"Texture", preset(with({"textureSets", "baker", "materialEditor"}), {"textureSets", "materialEditor"}, "Texture")},
         {"Bake", preset(with({"baker", "textureSets", "materialEditor"}), {"baker", "channelBox"}, "Texture", {{"baker", {{"width", 375}}}})},
         {"Rig", preset(with({"timeSlider"}), {"channelBox"}, "Rig", {{"outliner", {{"height", 0.5}}}})},
@@ -263,11 +261,12 @@ std::vector<std::string> builtInNames()
 
 std::optional<json> builtIn(const std::string& name)
 {
+    // An extension's layout of the same name (Puppeteer's Animate) replaces Lila's while it is loaded.
+    if (const json* layout = contributed().find(name))
+        return std::optional<json>(std::in_place, *layout);
     for (auto& [n, layout] : presets())
         if (n == name)
             return std::optional<json>(std::in_place, layout);
-    if (const json* layout = contributed().find(name))
-        return std::optional<json>(std::in_place, *layout);
     return std::nullopt;
 }
 

@@ -21,6 +21,11 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
         updateCursor();
         return;
     }
+    if (e->button() == Qt::LeftButton && !(e->modifiers() & Qt::AltModifier) && viewSwitcherClick(e->position()))
+    {
+        mSwallowRelease = true;
+        return;
+    }
     // The view cube moves the camera like Alt with the same button, each button switchable in the prefs.
     if (!(e->modifiers() & Qt::AltModifier) && hud::shown(mHudPanel, "viewCube") && hud::viewCubeRect(width()).contains(e->position()))
     {
@@ -188,6 +193,13 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
             mLasso.push_back({mPressPos.x(), mPressPos.y()});
         return;
     }
+    if ((e->modifiers() & Qt::AltModifier) && (e->modifiers() & Qt::ShiftModifier) && e->button() == Qt::RightButton)
+    {
+        mLightDrag = true;
+        mLightDragged = false;
+        mPressPos = e->position();
+        return;
+    }
     if (e->modifiers() & Qt::AltModifier)
     {
         startNav(e->button() == Qt::LeftButton     ? Nav::Tumble
@@ -241,6 +253,16 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
     {
         mTabStroke.paint(viewInfo(), mLastPos - d, e->position(), paintSelect::tabRadius(scene::components::mode()));
         submit();
+        return;
+    }
+    if (mLightDrag)
+    {
+        mLightDragged = mLightDragged || (e->position() - mPressPos).manhattanLength() > QApplication::startDragDistance();
+        if (!mLightDragged)
+            return;
+        viewportDisplay::turnLight(d.x() * 0.5);
+        viewportDisplay::tiltLight(d.y() * 0.3);
+        requestFrame();
         return;
     }
     if (mSoftDrag)
@@ -385,6 +407,17 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* e)
     {
         mSoftDrag = false;
         requestFrame();
+        return;
+    }
+    if (mLightDrag && e->button() == Qt::RightButton)
+    {
+        mLightDrag = false;
+        // A click without a drag puts the light back.
+        if (!mLightDragged)
+        {
+            viewportDisplay::resetLight();
+            requestFrame();
+        }
         return;
     }
     if (ViewportTool* tool = viewportTools::active(); tool && mToolDrag)

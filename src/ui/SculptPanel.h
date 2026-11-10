@@ -12,6 +12,7 @@ class QCheckBox;
 class QComboBox;
 class QDragEnterEvent;
 class QDropEvent;
+class QFormLayout;
 class QFileSystemWatcher;
 class QPoint;
 class QDoubleSpinBox;
@@ -55,6 +56,7 @@ private:
     void refreshSession();
     QToolButton* brushButton(const QIcon& icon, const QString& label, const QString& doc, QLayout* flow = nullptr);
     void rebuildCustomBrushes();
+    void fillMaterials();
     void rebuildPresets();
     void savePreset();
     void importPresets();
@@ -103,6 +105,12 @@ private:
     QToolButton* mDuplicate = nullptr;
     QToolButton* mDuplicateHide = nullptr;
     QCheckBox* mSymmetryLine = nullptr;
+    QCheckBox* mSculptLighting = nullptr;
+    QCheckBox* mKeepVolume = nullptr;
+    controls::SliderField* mPinchDepth = nullptr;
+    QFormLayout* mBrushForm = nullptr;
+    controls::SliderField* mLightAngle = nullptr;
+    int mPrefListener = 0;
     controls::Segmented* mSymmetry = nullptr;
     brush::ui::StrokeOptions* mStrokeOptions = nullptr;
     QLabel* mStatus = nullptr;
@@ -119,4 +127,7 @@ private:
  * sculpt.mask*, sculpt.freezeClear, mesh.relaxKeepForm, mesh.reproject, mesh.transferShape), the sculptBrush command and the viewport drawer.
  */
 LILA_UI_API void registerSculptUi();
+LILA_UI_API bool sculptPanelOpen();
+/** A mesh is among the selection, so Enter Sculpt has something to sculpt. */
+LILA_UI_API bool meshSelected();
 } // namespace lila::ui

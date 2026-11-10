@@ -2417,29 +2417,20 @@ void registerActions(ext::Context& ctx)
                        .call = {{"remove", true}},
                        .icon = "link-off"});
 
+    // The modes live on the Spinner's arc; this menu holds what changes how a drag poses.
     markingMenus::add(ctx, "puppeteerStrings",
-                      {{"N", {{"label", "Forward"}, {"action", "puppeteer.strings.forward"}}},
-                       {"E", {{"label", "IK"}, {"action", "puppeteer.strings.ik"}}},
-                       {"S", {{"label", "Full Body"}, {"action", "puppeteer.strings.fullBody"}}},
-                       {"W", {{"label", "Backward"}, {"action", "puppeteer.strings.backward"}}},
-                       {"NE", {{"label", "Pin or Unpin"}, {"action", "puppeteer.anim.pin"}}},
-                       {"SE", {{"label", "Stretch"}, {"action", "puppeteer.strings.stretch"}}},
-                       {"NW", {{"label", "Glue"}, {"action", "puppeteer.strings.glue"}}},
-                       {"SW", {{"label", "Attach to Last"}, {"action", "puppeteer.strings.attach"}}},
-                       {"overflow", json::array({{{"label", "Contacts Hold"}, {"action", "puppeteer.strings.contacts"}},
-                                                 {{"label", "Range Edits on a Layer"}, {"action", "puppeteer.strings.onLayer"}},
-                                                 {{"label", "Zero Pose"}, {"action", "puppeteer.strings.zero"}},
-                                                 {{"label", "Zero Relative to Last"}, {"action", "puppeteer.strings.zeroRelative"}},
-                                                 {{"label", "Line of Action"}, {"action", "puppeteer.strings.lineOfAction"}},
-                                                 {{"label", "Overshoot"}, {"action", "puppeteer.strings.overshoot"}},
-                                                 {{"label", "Smooth Poses Over Range"}, {"action", "puppeteer.strings.smooth"}},
-                                                 {{"label", "Fill Inbetweens"}, {"action", "puppeteer.strings.fill"}},
-                                                 {{"label", "Retime Range"}, {"action", "puppeteer.strings.retime"}},
-                                                 {{"label", "Breakdown Parts"}, {"action", "puppeteer.strings.breakdownParts"}},
-                                                 {{"label", "Motion Trail"}, {"action", "puppeteer.strings.trail"}},
-                                                 {{"label", "Restore Bone Lengths"}, {"action", "puppeteer.strings.restoreLengths"}},
+                      {{"N", {{"label", "Pin or Unpin"}, {"action", "puppeteer.anim.pin"}}},
+                       {"W", {{"label", "Contacts Hold"}, {"action", "puppeteer.strings.contacts"}}},
+                       {"E", {{"label", "Stretch"}, {"action", "puppeteer.strings.stretch"}}},
+                       {"S", {{"label", "Zero Pose"}, {"action", "puppeteer.strings.zero"}}},
+                       {"overflow", json::array({{{"label", "Glue"}, {"action", "puppeteer.strings.glue"}},
+                                                 {{"label", "Attach to Last Selected"}, {"action", "puppeteer.strings.attach"}},
+                                                 {{"label", "Unglue"}, {"action", "puppeteer.strings.unglue"}},
                                                  {{"separator", true}},
-                                                 {{"label", "Unglue"}, {"action", "puppeteer.strings.unglue"}}})}});
+                                                 {{"label", "Motion Trail"}, {"action", "puppeteer.strings.trail"}},
+                                                 {{"label", "Line of Action"}, {"action", "puppeteer.strings.lineOfAction"}},
+                                                 {{"label", "Breakdown Parts"}, {"action", "puppeteer.strings.breakdownParts"}},
+                                                 {{"label", "Restore Bone Lengths"}, {"action", "puppeteer.strings.restoreLengths"}}})}});
 }
 } // namespace
 

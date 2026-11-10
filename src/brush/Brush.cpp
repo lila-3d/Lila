@@ -19,7 +19,7 @@ constexpr const char* kPrefs = "general";
 constexpr std::string_view kKeys[] = {"radiusUnit", "radius", "worldRadius", "strength", "flow", "spacing", "falloff",
                                       "pressureSize", "pressureOpacity", "pressureFlow", "pressureCurve", "jitter",
                                       "angle", "followStroke", "roundness", "alpha", "strokeMode", "lazyRadius",
-                                      "smoothing", "mirror", "radial", "seed"};
+                                      "smoothing", "mirror", "radial", "seed", "params"};
 
 json curveJson(const PressureCurve& c) { return {{"floor", c.floor}, {"exponent", c.exponent}}; }
 
@@ -185,7 +185,8 @@ json BrushSettings::toJson() const
             {"smoothing", smoothing},
             {"mirror", mirror},
             {"radial", {{"count", radial.count}, {"axis", radial.axis}}},
-            {"seed", seed}};
+            {"seed", seed},
+            {"params", params}};
 }
 
 BrushSettings BrushSettings::fromJson(const json& j, const BrushSettings& defaults)
@@ -233,6 +234,10 @@ BrushSettings BrushSettings::fromJson(const json& j, const BrushSettings& defaul
     s.mode = mode == "line" ? StrokeMode::Line : mode == "curve" ? StrokeMode::Curve : StrokeMode::Freehand;
     read(j, "lazyRadius", s.lazyRadius);
     read(j, "smoothing", s.smoothing);
+    if (auto it = j.find("params"); it != j.end() && it->is_object())
+        for (const auto& [k, v] : it->items())
+            if (v.is_number())
+                s.params[k] = v.get<double>();
     read(j, "mirror", s.mirror);
     if (auto it = j.find("radial"); it != j.end() && it->is_object())
     {

@@ -8267,7 +8267,7 @@ def sculptRemesh(resolution: int | None = None) -> Any:
 def sculptState() -> Any:
     """The open sculpt session: {active, mesh, level, levels, points, faces, symmetry, masked, frozen, painted}."""
 
-def sculptStroke(brush: str | None = None, paint: bool | None = None, color: Sequence[Any] | None = None, falloff: str | None = None, strength: float | None = None, invert: bool | None = None, frontFacesOnly: bool | None = None, radialCount: int | None = None, radialAxis: str | None = None, dabs: Sequence[Any] | None = None, live: int | None = None) -> Any:
+def sculptStroke(brush: str | None = None, paint: bool | None = None, color: Sequence[Any] | None = None, falloff: str | None = None, strength: float | None = None, invert: bool | None = None, blur: bool | None = None, keepVolume: bool | None = None, pinchDepth: float | None = None, frontFacesOnly: bool | None = None, radialCount: int | None = None, radialAxis: str | None = None, dabs: Sequence[Any] | None = None, live: int | None = None) -> Any:
     """One brush stroke on the sculpt: dabs is a list of {center, normal, radius, pressure, opacity, flow, view, delta, direction} in world space (only center is required; opacity defaults to pressure). Honours the mask, frozen points and the mesh's symmetry, mirrored exactly. Returns {points} changed.
 
     Args:
@@ -8276,7 +8276,10 @@ def sculptStroke(brush: str | None = None, paint: bool | None = None, color: Seq
         color: Paint color, linear [r, g, b]. Default [1.0, 1.0, 1.0].
         falloff: Falloff: smooth, sphere, root, sharp, linear, constant, bell, or a soft select preset name. Default 'smooth'.
         strength: 0 to 1. Default 0.5.
-        invert: Dig, unmask, unfreeze or magnify instead. Default False.
+        invert: Dig, unmask, unfreeze or magnify instead; grab moves only along the surface normal. Default False.
+        blur: Paint and mask: blur the color or mask under the brush instead of laying it down. Default False.
+        keepVolume: Smooth: keep the form's volume; off averages points, which also flattens it. Default True.
+        pinchDepth: Pinch: how far it presses the surface in, 0 for none. Default 1.0.
         frontFacesOnly: Leave points facing away from the view. Default False.
         radialCount: Copies of every dab turned evenly about an object axis; 1 is off. Default 1.
         radialAxis: The object axis radial copies turn about. One of 'x', 'y', 'z'. Default 'y'.

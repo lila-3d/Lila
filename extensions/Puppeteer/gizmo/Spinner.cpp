@@ -11,6 +11,7 @@
 #include "rig/Rig.h"
 
 #include <lila/Anim.h>
+#include <lila/Events.h>
 #include <lila/Ghosts.h>
 #include <lila/Gizmo.h>
 #include <lila/Prefs.h>
@@ -232,48 +233,90 @@ int axisOf(Handle h) { return h == Handle::AxisX ? 0 : h == Handle::AxisY ? 1 : 
 
 /** Where the Spinner sits by default: right of the view's centre, logical pixels. */
 constexpr double kDefaultOffsetX = 250.0;
-/** The layout is measured on a 424 px canvas centred at 212: everything scales by radius() / 212. */
-constexpr double kCanvas = 212.0;
-constexpr double kZoneOuter = 143.0;
-constexpr double kRingInner = 66.0;
-constexpr double kCenterDisc = 59.0;
-constexpr double kFreeDot = 24.0;
-constexpr double kButtonRing = 177.0;
-constexpr double kButtonSize = 22.0;
+// The zones scale with the size setting; the band of buttons around them is a fixed width in logical pixels.
+constexpr double kZoneRadius = 72.0;
+constexpr double kMinZoneRadius = 48.0;
+constexpr double kHub = 10.0;
+constexpr double kBandHalf = 12.0; // segments and wells reach this far either side of the button ring
+constexpr double kWell = 12.0;
+constexpr double kTabWell = 10.0;
+constexpr double kTabSpacing = 24.0;
+constexpr double kSegmentGap = 2.0;
+constexpr double kIcon = 16.0;
+constexpr double kToolIcon = 20.0;
 // The zones in screen degrees (y down): red X on top, green Y lower left, blue Z lower right.
 constexpr double kZoneX[2] = {-150.0, -30.0};
 constexpr double kZoneY[2] = {90.0, 210.0};
 constexpr double kZoneZ[2] = {-30.0, 90.0};
-constexpr double kPlate = 202.0;
-constexpr double kTabRadius = 226.0;
+// Move, Rotate and Scale: one strip across the top of the band.
+constexpr double kToolFrom = -135.0;
+constexpr double kToolTo = -45.0;
+constexpr double kTabCenter = -26.0;
 // Screen angles in degrees: 0 to the right, 90 straight down.
 constexpr double kBreakdownFrom = 48.0;
 constexpr double kBreakdownTo = 133.0;
-constexpr double kBreakdownInner = 155.0;
-constexpr double kBreakdownOuter = 199.0;
 constexpr double kGizmoPixels = 70.0;
 // The Strings mode arc, left of the zones on the breakdown slider's radius, between the context and move buttons.
 constexpr double kModeFrom = 162.0;
 constexpr double kModeTo = 228.0;
-constexpr double kModeGap = 1.5;
 
 struct Button
 {
     Handle handle;
-    double angle;
-    double radius = kButtonRing;
+    double angle; // on the band; tab buttons use their slot instead
+    int tabSlot = -1;
 };
 
 constexpr Button kButtons[] = {
-    {Handle::Move, -120.0},      {Handle::Rotate, -90.0},       {Handle::Scale, -60.0},     {Handle::Space, 0.0},
-    {Handle::Discrete, 30.0},    {Handle::Pivot, 180.0},        {Handle::Context, 150.0},   {Handle::Sticky2nd, 120.0},
-    {Handle::KeepDirection, 96.0}, {Handle::Settings, -40.0, kTabRadius}, {Handle::Help, -26.0, kTabRadius},
-    {Handle::Proxy, -12.0, kTabRadius},
+    {Handle::Space, 0.0},          {Handle::Discrete, 30.0},  {Handle::Pivot, 180.0},  {Handle::Context, 150.0},
+    {Handle::Sticky2nd, 120.0},    {Handle::KeepDirection, 96.0},
+    {Handle::Settings, 0.0, 0},    {Handle::Help, 0.0, 1},    {Handle::Proxy, 0.0, 2},
 };
+
+constexpr Handle kTools[] = {Handle::Move, Handle::Rotate, Handle::Scale};
 
 glm::vec4 gray(float v, float a = 1.0f) { return {v, v, v, a}; }
 const glm::vec4 kOrange{0.93f, 0.55f, 0.13f, 1.0f};
 const glm::vec4 kYellow{0.92f, 0.78f, 0.22f, 1.0f};
+
+/** Every neutral the Spinner draws with, in one place. */
+struct Palette
+{
+    glm::vec4 plate = gray(0.10f);     // behind the zones, seen in their gaps
+    glm::vec4 bezel = gray(0.165f);    // the band holding the buttons
+    glm::vec4 bezelEdge = gray(1.0f, 0.10f);  // light top edge
+    glm::vec4 bezelInner = gray(0.0f, 0.45f); // dark line where the band meets the zones
+    glm::vec4 well = gray(0.25f);
+    glm::vec4 wellHot = gray(0.33f);
+    glm::vec4 ring = gray(0.86f);              // the on toggle's ring
+    glm::vec4 segment = gray(0.22f);
+    glm::vec4 segmentHot = gray(0.30f);
+    glm::vec4 segmentOn = gray(0.70f);
+    glm::vec4 icon = gray(0.66f);
+    glm::vec4 iconHot = gray(0.95f);
+    glm::vec4 iconOn = gray(0.97f);
+    glm::vec4 iconOnSegment = gray(0.08f);
+    glm::vec4 groove = gray(0.07f);
+    glm::vec4 grooveFill = gray(0.62f);
+    glm::vec4 tick = gray(0.45f);
+    glm::vec4 thumb = gray(0.88f);
+    glm::vec4 thumbHot = gray(1.0f);
+    glm::vec4 disabled = gray(0.30f);
+    glm::vec4 letter = gray(0.0f, 0.5f);
+};
+const Palette kPal;
+
+/** Hold ` (or its rebound key): the Spinner follows the cursor in the view it is over. */
+struct Summon
+{
+    bool held = false;
+    uint64_t hoverTick = 0; // bumped by every hover, so only the view last under the cursor follows
+};
+Summon& summon()
+{
+    static Summon s;
+    return s;
+}
 
 std::vector<std::string> selectedTransforms()
 {
@@ -442,10 +485,10 @@ QString tipFor(Handle h, const Target& t)
     case Handle::Breakdown:
         return "Breakdown: left toward the previous key, right toward the next; down lags hands, feet and head, up leads (Shift: whole character)";
     case Handle::Plate: return "Drag the rim to move the Spinner (reset in its settings)";
-    case Handle::ModeForward: return "Forward: the joint turns, its children follow. U + drag: Strings menu";
-    case Handle::ModeBackward: return "Backward: what is pinned below holds and the body swings. U + drag: Strings menu";
-    case Handle::ModeIk: return "IK: the limb bends to put the joint where you drag. U + drag: Strings menu";
-    case Handle::ModeFullBody: return "Full Body: the whole body moves, pins holding. U + drag: Strings menu";
+    case Handle::ModeForward: return "Forward: the joint turns, its children follow";
+    case Handle::ModeBackward: return "Backward: what is pinned below holds and the body swings";
+    case Handle::ModeIk: return "IK: the limb bends to put the joint where you drag";
+    case Handle::ModeFullBody: return "Full Body: the whole body moves, pins holding";
     case Handle::Trail: return "Drag a frame of the trail: the joint goes there on that frame, easing out either side";
     default: return {};
     }
@@ -488,54 +531,78 @@ public:
         drawChain(p);
         const QPointF c = center();
         const Handle hot = mDrag ? mDrag->handle : mHover;
-        p.disc(c, float(u(kPlate)), gray(0.14f, 0.92f), 72);
+        const Geo g = geo();
+        if (summon().held && mHoverTick == summon().hoverTick && !mDrag)
+            followCursor();
+
+        // Plate: shadow, the band, its edges, then the dark field the zones sit in.
+        p.softShadow(c + QPointF(0.0, 3.0), g.plate, 12.0, 0.32f);
+        const bool proxyTab = shown(Handle::Proxy, t);
+        drawTab(p, c, g, proxyTab ? 3 : 2);
+        p.smoothDisc(c, g.plate, kPal.bezel);
+        p.arc(c, g.plate - 0.75, -165.0, -15.0, 1.0f, kPal.bezelEdge);
+        p.smoothDisc(c, g.bandIn, kPal.plate);
+        p.arc(c, g.bandIn, 0.0, 360.0, 1.5f, kPal.bezelInner);
 
         // Zones.
         const bool color = viewportDisplay::accentColors(viewportDisplay::kManipulatorAxisColors);
         const bool rings = ringLayout(t);
         const bool footChannel = mDrag && mDrag->kind == Kind::FootChannel;
         const double zones[3][2] = {{kZoneX[0], kZoneX[1]}, {kZoneY[0], kZoneY[1]}, {kZoneZ[0], kZoneZ[1]}};
-        const double inner = rings ? u(kRingInner) : 0.0;
+        const double inner = rings ? g.ringInner : 0.0;
         for (int axis = 0; axis < 3; ++axis)
         {
             glm::vec4 col = color ? glm::vec4(viewportDisplay::axisColor(axis), 1.0f) : gray(0.62f - 0.1f * float(axis));
             if (footChannel)
                 col = color ? kOrange : gray(0.7f);
             const Handle h = axis == 0 ? Handle::AxisX : axis == 1 ? Handle::AxisY : Handle::AxisZ;
-            if (hot == h)
-                col = glm::mix(col, glm::vec4(1.0f), 0.35f);
-            if (disabled)
-                col = gray(0.32f);
-            fillZone(p, c, inner, u(kZoneOuter), zones[axis][0], zones[axis][1], col);
-            if (footChannel)
+            const bool lit = hot == h;
+            double outer = g.zone;
+            if (lit)
             {
-                const double mid = math::radians((zones[axis][0] + zones[axis][1]) * 0.5);
-                const double r = (inner + u(kZoneOuter)) * 0.5;
-                iconAt(p, QPointF(c.x() + r * std::cos(mid), c.y() + r * std::sin(mid)), u(34.0), "puppeteer.foot", gray(0.1f));
+                col = glm::mix(col, glm::vec4(1.0f), mDrag ? 0.22f : 0.12f);
+                outer += 3.0;
+            }
+            if (disabled)
+                col = gray(0.30f, 0.6f);
+            const glm::vec4 deep = glm::vec4(glm::vec3(col) * 0.70f, col.a);
+            p.sector(c, inner, outer, zones[axis][0], zones[axis][1], deep, col, 5.0);
+            if (!disabled)
+                p.arc(c, outer - 1.5, zones[axis][0] + 3.0, zones[axis][1] - 3.0, 1.5f, gray(1.0f, lit ? 0.35f : 0.18f), true);
+            const double mid = (zones[axis][0] + zones[axis][1]) * 0.5;
+            if (footChannel)
+                iconAt(p, at(c, (inner + g.zone) * 0.5, mid), kToolIcon, "puppeteer.foot", gray(0.1f));
+            else if (!rings)
+            {
+                static const char* letters[] = {"X", "Y", "Z"};
+                const QPointF lp = at(c, g.zone - 14.0, mid);
+                p.text(lp + QPointF(0.0, 4.5), letters[axis], disabled ? gray(0.0f, 0.25f) : kPal.letter, OverlayPainter::Center);
             }
         }
         for (double a : {-150.0, -30.0, 90.0})
-            p.line(at(c, inner, a), at(c, u(kZoneOuter) + 1.0, a), float(u(5.0)), gray(0.14f));
+            p.smoothLine(at(c, inner, a), at(c, g.zone + 4.0, a), 3.0f, glm::vec4(glm::vec3(kPal.plate), 1.0f));
 
-        // Centre: the IK/foot pole disc, the uniform scale disc, or Lila's small free-drag dot.
+        // Centre: the IK/foot pole disc, the uniform scale disc, or the free-drag hub.
         if (rings)
         {
             glm::vec4 col = !color ? gray(0.78f) : s.tool == Tool::Scale ? kYellow : kOrange;
             if (hot == Handle::Center)
-                col = glm::mix(col, glm::vec4(1.0f), 0.3f);
+                col = glm::mix(col, glm::vec4(1.0f), 0.2f);
             if (disabled)
-                col = gray(0.32f);
-            p.disc(c, float(u(kCenterDisc)), col, 40);
-            iconAt(p, c, u(60.0), s.tool == Tool::Scale ? "puppeteer.local" : "puppeteer.pole", gray(0.1f));
+                col = gray(0.30f, 0.6f);
+            p.smoothDisc(c, g.centerDisc + 2.0, kPal.plate);
+            p.sector(c, 0.0, g.centerDisc, 0.0, 360.0, glm::vec4(glm::vec3(col) * 1.05f, col.a), glm::vec4(glm::vec3(col) * 0.78f, col.a));
+            p.arc(c, g.centerDisc - 1.0, -160.0, -20.0, 1.5f, gray(1.0f, 0.25f), true);
+            iconAt(p, c, std::min(28.0, g.centerDisc * 1.1), s.tool == Tool::Scale ? "puppeteer.local" : "puppeteer.pole", gray(0.08f));
         }
         else
         {
-            p.disc(c, float(u(kFreeDot)), disabled ? gray(0.32f) : hot == Handle::Center ? gray(0.98f) : gray(0.8f), 24);
+            p.smoothDisc(c, kHub + 2.0, kPal.plate);
+            p.smoothDisc(c, kHub, disabled ? kPal.disabled : hot == Handle::Center ? gray(0.98f) : gray(0.80f));
+            p.smoothDisc(c, 3.0, gray(0.1f, 0.6f));
         }
 
-        // Settings and help sit on a tab outside the rim, which grows to hold the anim proxy toggle.
-        const bool proxyTab = shown(Handle::Proxy, t);
-        p.disc(at(c, u(kTabRadius), proxyTab ? -26.0 : -33.0), float(u(proxyTab ? 44.0 : 30.0)), gray(0.14f, 0.92f), 24);
+        drawTools(p, c, g, t, hot, disabled);
         for (const Button& b : kButtons)
             if (shown(b.handle, t))
                 drawButton(p, b, t);
@@ -545,16 +612,24 @@ public:
         if (modeArc(t))
             drawModes(p, c, hot);
 
+        const QPointF tipAt(c.x() - g.plate, c.y() - g.plate - 12.0);
         if (mDrag && !mDrag->readout.isEmpty())
-            p.label(QPointF(c.x() - u(kPlate), c.y() - u(kPlate) - 10.0), mDrag->readout);
-        else if (!mDrag && mHover != Handle::None)
-            p.label(QPointF(std::max(8.0, c.x() - u(kPlate) - 160.0), c.y() - u(kPlate) - 10.0), tipFor(mHover, t));
+            p.label(tipAt, mDrag->readout);
+        else if (!mDrag && !summon().held && mHover != Handle::None)
+            p.label(QPointF(std::max(8.0, tipAt.x() - 160.0), tipAt.y()), tipFor(mHover, t));
         if (s.help && !mDrag)
             drawHelp(p, c);
     }
 
     bool hover(QPointF px) override
     {
+        mCursor = px;
+        mHoverTick = ++summon().hoverTick;
+        if (summon().held)
+        {
+            mHover = Handle::None;
+            return true;
+        }
         const Handle h = visible() ? hit(px, currentTarget()) : Handle::None;
         if (h == Handle::Trail)
         {
@@ -814,8 +889,56 @@ private:
         bool warned = false;
     };
 
-    double u(double canvas) const { return canvas * radius() / kCanvas; }
-    double radius() const { return 120.0 * settings().size; }
+    /** Radii in logical pixels: the zones from the size setting, the band around them fixed. */
+    struct Geo
+    {
+        double zone, ringInner, centerDisc, bandIn, ring, plate, tab;
+    };
+    static Geo geo()
+    {
+        Geo g;
+        g.zone = std::max(kMinZoneRadius, kZoneRadius * settings().size);
+        g.ringInner = g.zone * 0.46;
+        g.centerDisc = g.zone * 0.40;
+        g.bandIn = g.zone + 5.0;
+        g.ring = g.bandIn + 3.0 + kBandHalf;
+        g.plate = g.ring + kBandHalf + 3.0;
+        g.tab = g.plate + 9.0;
+        return g;
+    }
+    /** Degrees spanned by px of arc at radius r. */
+    static double degreesFor(double px, double r) { return r > 1e-6 ? px / r * 180.0 / math::kPi : 0.0; }
+
+    /** Where a tab button sits: its slot, centred on kTabCenter, on the tab outside the rim. */
+    static double tabAngle(int slot, int count)
+    {
+        return kTabCenter + (slot - (count - 1) * 0.5) * degreesFor(kTabSpacing, geo().tab);
+    }
+    QPointF buttonPos(const Button& b, const Target& t) const
+    {
+        const Geo g = geo();
+        if (b.tabSlot >= 0)
+            return at(center(), g.tab, tabAngle(b.tabSlot, shown(Handle::Proxy, t) ? 3 : 2));
+        return at(center(), g.ring, b.angle);
+    }
+    static std::pair<double, double> toolSpan(int i)
+    {
+        const double step = (kToolTo - kToolFrom) / 3.0, gap = degreesFor(kSegmentGap, geo().ring) * 0.5;
+        return {kToolFrom + step * i + gap, kToolFrom + step * (i + 1) - gap};
+    }
+
+    /** While the summon key is held: the Spinner centres on the cursor. */
+    void followCursor()
+    {
+        const QPointF want = mCursor - QPointF(mView.width * 0.5, mView.height * 0.5);
+        auto& o = settings().offsets[mView.camera];
+        const QPointF before = o;
+        o = want;
+        // Kept where center() clamps it, as a rim drag is.
+        o = center() - QPointF(mView.width * 0.5, mView.height * 0.5);
+        if (o != before)
+            viewportTools::requestRedraw();
+    }
 
     bool ringLayout(const Target& t) const
     {
@@ -835,7 +958,7 @@ private:
     /** Kept wholly inside the view however small it gets. */
     QPointF center() const
     {
-        const double r = u(kTabRadius + 20.0);
+        const double r = geo().tab + 14.0;
         const QPointF c = QPointF(mView.width * 0.5, mView.height * 0.5) + offset();
         return {std::clamp(c.x(), r, std::max(r, mView.width - r)), std::clamp(c.y(), r, std::max(r, mView.height - r))};
     }
@@ -849,20 +972,6 @@ private:
     static void iconAt(OverlayPainter& p, QPointF c, double size, const char* name, const glm::vec4& color)
     {
         p.icon(QRectF(c.x() - size * 0.5, c.y() - size * 0.5, size, size), name, color);
-    }
-
-    static void fillZone(OverlayPainter& p, QPointF c, double inner, double outer, double from, double to, const glm::vec4& col)
-    {
-        // Convex pieces: thin wedges or ring segments.
-        constexpr int kSteps = 24;
-        for (int k = 0; k < kSteps; ++k)
-        {
-            const double a0 = from + (to - from) * k / kSteps, a1 = from + (to - from) * (k + 1) / kSteps;
-            if (inner <= 0.0)
-                p.fill({c, at(c, outer, a0), at(c, outer, a1)}, col);
-            else
-                p.fill({at(c, inner, a0), at(c, outer, a0), at(c, outer, a1), at(c, inner, a1)}, col);
-        }
     }
 
     bool shown(Handle h, const Target& t) const
@@ -925,37 +1034,71 @@ private:
         }
     }
 
+    /** The small corner triangle marking a control with an alternative on the right button. */
+    static void cornerMark(OverlayPainter& p, QPointF corner, double size, const glm::vec4& col)
+    {
+        p.triangle(corner, corner - QPointF(size, 0.0), corner - QPointF(0.0, size), col);
+    }
+
+    /** A toggle or action in a round well; on is a bright ring, not a filled disc. */
     void drawButton(OverlayPainter& p, const Button& b, const Target& t)
     {
-        const QPointF pos = at(center(), u(b.radius), b.angle);
-        const double br = u(kButtonSize);
+        const QPointF pos = buttonPos(b, t);
+        const double r = b.tabSlot >= 0 ? kTabWell : kWell;
         const bool on = active(b.handle);
         const bool hot = mHover == b.handle;
+        p.smoothDisc(pos, r, hot ? kPal.wellHot : kPal.well);
         if (on)
-            p.disc(pos, float(br), gray(0.88f), 20);
-        else if (hot)
-            p.disc(pos, float(br), gray(0.32f), 20);
-        iconAt(p, pos, br * 1.7, iconFor(b.handle, t), on ? gray(0.1f) : hot ? gray(1.0f) : gray(0.8f));
+            p.arc(pos, r - 1.0, 0.0, 360.0, 2.0f, kPal.ring);
+        iconAt(p, pos, kIcon, iconFor(b.handle, t), on ? kPal.iconOn : hot ? kPal.iconHot : kPal.icon);
         if (hasAlternative(b.handle))
+            cornerMark(p, pos + QPointF(r * 0.72, r * 0.72), r * 0.42, on || hot ? kPal.iconHot : kPal.icon);
+    }
+
+    /** The tab outside the rim holding Settings, Help and the anim proxy toggle. */
+    void drawTab(OverlayPainter& p, QPointF c, const Geo& g, int count) const
+    {
+        const double half = degreesFor(kTabSpacing * (count - 1) * 0.5 + kTabWell + 5.0, g.tab);
+        p.softShadow(at(c, g.tab, kTabCenter) + QPointF(0.0, 2.0), kTabWell + 4.0, 6.0, 0.2f);
+        p.sector(c, g.plate - 8.0, g.tab + kTabWell + 4.0, kTabCenter - half, kTabCenter + half, kPal.bezel, kPal.bezel, kTabWell + 2.0);
+    }
+
+    /** Move, Rotate and Scale as one strip across the top of the band; the current tool is the bright segment. */
+    void drawTools(OverlayPainter& p, QPointF c, const Geo& g, const Target& t, Handle hot, bool disabled) const
+    {
+        for (int i = 0; i < 3; ++i)
         {
-            const double k = br * 0.28;
-            const QPointF corner = pos + QPointF(br * 0.62, -br * 0.62);
-            p.rect(QRectF(corner.x() - k * 0.5, corner.y() - k * 0.5, k, k), on ? gray(0.1f) : gray(0.72f));
+            const Handle h = kTools[i];
+            const auto [from, to] = toolSpan(i);
+            const bool on = active(h), lit = hot == h;
+            const glm::vec4 fill = on ? (disabled ? kPal.disabled : kPal.segmentOn) : lit ? kPal.segmentHot : kPal.segment;
+            p.sector(c, g.ring - kBandHalf, g.ring + kBandHalf, from, to, fill, fill, 4.0);
+            const glm::vec4 ink = on ? kPal.iconOnSegment : lit ? kPal.iconHot : kPal.icon;
+            const double mid = (from + to) * 0.5;
+            const double room = (to - from) * math::kPi / 180.0 * g.ring - 8.0;
+            iconAt(p, at(c, g.ring, mid), std::clamp(room, kIcon, kToolIcon), iconFor(h, t), ink);
+            if (hasAlternative(h))
+                cornerMark(p, at(c, g.ring + kBandHalf - 3.0, to - degreesFor(3.0, g.ring + kBandHalf)), 5.0, ink);
         }
     }
 
+    /** A recessed groove from the previous key to the next, ticks at both keys and now, filled toward the thumb. */
     void drawBreakdown(OverlayPainter& p, QPointF c, Handle hot, bool disabled)
     {
-        const double r = u((kBreakdownInner + kBreakdownOuter) * 0.5);
-        std::vector<QPointF> arc;
-        for (int k = 0; k <= 32; ++k)
-            arc.push_back(at(c, r, kBreakdownFrom + (kBreakdownTo - kBreakdownFrom) * k / 32.0));
-        p.polyline(arc, float(u(6.0)), gray(disabled ? 0.25f : 0.42f));
-        // The dot follows the drag along the arc, back to the middle once released.
+        const Geo g = geo();
+        p.arc(c, g.ring, kBreakdownFrom, kBreakdownTo, 5.0f, kPal.groove, true);
+        p.arc(c, g.ring + 3.0, kBreakdownFrom + 2.0, kBreakdownTo - 2.0, 1.0f, gray(1.0f, 0.06f));
+        for (double a : {kBreakdownFrom, 90.0, kBreakdownTo})
+            p.smoothLine(at(c, g.ring - 8.0, a), at(c, g.ring - (a == 90.0 ? 4.0 : 5.0), a), 1.5f, disabled ? kPal.disabled : kPal.tick);
+        // The thumb follows the drag along the groove, back to the middle once released.
         double dot = 90.0;
         if (mDrag && mDrag->kind == Kind::Breakdown)
-            dot = std::clamp(90.0 - (mDrag->current.x() - mDrag->start.x()) / u(kBreakdownOuter) * 45.0, kBreakdownFrom, kBreakdownTo);
-        p.disc(at(c, r, dot), float(u(12.0)), disabled ? gray(0.35f) : hot == Handle::Breakdown ? gray(1.0f) : gray(0.85f), 20);
+            dot = std::clamp(90.0 - (mDrag->current.x() - mDrag->start.x()) / g.plate * 45.0, kBreakdownFrom, kBreakdownTo);
+        if (std::abs(dot - 90.0) > 0.5 && !disabled)
+            p.arc(c, g.ring, std::min(dot, 90.0), std::max(dot, 90.0), 3.0f, kPal.grooveFill);
+        const QPointF thumb = at(c, g.ring, dot);
+        p.smoothDisc(thumb, 7.5, gray(0.0f, 0.5f));
+        p.smoothDisc(thumb, 6.5, disabled ? kPal.disabled : hot == Handle::Breakdown ? kPal.thumbHot : kPal.thumb);
     }
 
     /** The motion trail of the first selected joint: its frames, positions and keyed frames, sampled when the scene changes. */
@@ -1185,24 +1328,32 @@ private:
     static std::pair<double, double> modeSpan(strings::Mode m)
     {
         // Forward on top, down to Full Body, in the order the modes widen.
-        const double step = (kModeTo - kModeFrom) / 4.0;
+        const double step = (kModeTo - kModeFrom) / 4.0, gap = degreesFor(kSegmentGap, geo().ring) * 0.5;
         const double from = kModeTo - step * (int(m) + 1);
-        return {from + kModeGap * 0.5, from + step - kModeGap * 0.5};
+        return {from + gap, from + step - gap};
     }
 
-    /** One joined strip of four segments; the current mode is the bright one. */
+    /** One joined strip of four segments, styled as the tool strip; the current mode is the bright one. */
     void drawModes(OverlayPainter& p, QPointF c, Handle hot)
     {
         static const char* icons[] = {"puppeteer.forward", "puppeteer.backward", "puppeteer.ik", "puppeteer.fullBody"};
+        const Geo g = geo();
         const strings::Mode current = stringsMode();
         for (strings::Mode m : {strings::Mode::Forward, strings::Mode::Backward, strings::Mode::Ik, strings::Mode::FullBody})
         {
             const auto [from, to] = modeSpan(m);
             const bool on = m == current, lit = hot == handleOf(m);
-            fillZone(p, c, u(kBreakdownInner), u(kBreakdownOuter), from, to, on ? gray(0.88f) : lit ? gray(0.34f) : gray(0.22f));
-            iconAt(p, at(c, u((kBreakdownInner + kBreakdownOuter) * 0.5), (from + to) * 0.5), u(28.0), icons[int(m)],
-                   on ? gray(0.1f) : lit ? gray(1.0f) : gray(0.78f));
+            const glm::vec4 fill = on ? kPal.segmentOn : lit ? kPal.segmentHot : kPal.segment;
+            p.sector(c, g.ring - kBandHalf, g.ring + kBandHalf, from, to, fill, fill, 4.0);
+            iconAt(p, at(c, g.ring, (from + to) * 0.5), kIcon, icons[int(m)], on ? kPal.iconOnSegment : lit ? kPal.iconHot : kPal.icon);
         }
+        // The current mode by name beside the arc, so it reads without learning the icons.
+        static const char* names[] = {"Forward", "Backward", "IK", "Full Body"};
+        const auto [from, to] = modeSpan(current);
+        const QPointF tag = at(c, g.plate + 8.0, (from + to) * 0.5);
+        p.setShadow(true);
+        p.text(QPointF(tag.x(), tag.y() + 4.5), names[int(current)], gray(0.92f), OverlayPainter::Right);
+        p.setShadow(false);
     }
 
     void drawHelp(OverlayPainter& p, QPointF c)
@@ -1212,13 +1363,15 @@ private:
                                    "Controller centre: pole (right: pole and controller)",
                                    "Reverse foot, right drag a ring: roll, twist, bank",
                                    "Right-click a controller in the view: lock its key",
-                                   "Right-click a button with a corner box: its alternative",
-                                   "Left arc: Strings mode (U + drag: its marking menu)",
-                                   "Drag the rim: move the Spinner"};
-        double y = c.y() + u(kPlate) + 18.0;
+                                   "Right-click a button with a corner mark: its alternative",
+                                   "Left arc: Strings mode. U + drag: pin, contacts, stretch, zero",
+                                   "Drag the rim: move the Spinner",
+                                   "Hold `: bring the Spinner to the cursor"};
+        const double plate = geo().plate;
+        double y = c.y() + plate + 18.0;
         for (const QString& l : lines)
         {
-            p.label(QPointF(c.x() - u(kPlate), y), l);
+            p.label(QPointF(c.x() - plate, y), l);
             y += 18.0;
         }
     }
@@ -1260,38 +1413,77 @@ private:
         {
             if (auto at = mView.project(pivot))
             {
-                p.disc(*at, float(kGizmoPixels), gray(0.85f, 0.16f), 48);
-                std::vector<QPointF> ring;
-                for (int k = 0; k <= 48; ++k)
-                    ring.push_back(*at + QPointF(kGizmoPixels * std::cos(2.0 * math::kPi * k / 48.0), kGizmoPixels * std::sin(2.0 * math::kPi * k / 48.0)));
-                p.polyline(ring, 1.5f, gray(0.9f, 0.6f));
+                p.smoothDisc(*at, kGizmoPixels, gray(0.85f, 0.14f));
+                p.arc(*at, kGizmoPixels, 0.0, 360.0, 2.0f, gray(0.92f, 0.7f));
             }
             return;
         }
+        const glm::dvec3 toCamera = glm::normalize(glm::dvec3(glm::inverse(glm::dmat4(mView.view))[2]));
+        static const char* letters[] = {"X", "Y", "Z"};
+        p.setShadow(true);
         for (int axis = 0; axis < 3; ++axis)
         {
             const bool lit = isAxis(hot) && axisOf(hot) == axis;
             if (mDrag && mDrag->kind == Kind::Transform && !lit)
                 continue;
-            const glm::vec4 col = lit ? gray(1.0f) : color ? glm::vec4(viewportDisplay::axisColor(axis), 0.9f) : gray(0.6f);
-            std::vector<QPointF> pts;
+            const glm::vec4 col = lit ? gray(1.0f) : color ? glm::vec4(viewportDisplay::axisColor(axis), 0.95f) : gray(0.85f - 0.15f * float(axis));
+            const float width = lit ? 3.0f : 2.0f;
             if (settings().tool == Tool::Rotate)
             {
+                // The far half of each ring dims, so the rings read as circles in depth.
                 const glm::dvec3 a = axes[(axis + 1) % 3], b = axes[(axis + 2) % 3];
-                for (int k = 0; k <= 48; ++k)
+                std::vector<QPointF> run;
+                bool front = true;
+                auto flush = [&] {
+                    if (run.size() > 1)
+                        p.polyline(run, front ? width : width * 0.75f, front ? col : glm::vec4(glm::vec3(col), col.a * 0.35f));
+                    run.clear();
+                };
+                for (int k = 0; k <= 64; ++k)
                 {
-                    const double ang = 2.0 * math::kPi * k / 48.0;
-                    if (auto s = mView.project(pivot + (a * std::cos(ang) + b * std::sin(ang)) * len))
-                        pts.push_back(*s);
+                    const double ang = 2.0 * math::kPi * k / 64.0;
+                    const glm::dvec3 dir = a * std::cos(ang) + b * std::sin(ang);
+                    const bool f = glm::dot(dir, toCamera) >= -0.05;
+                    const auto pt = mView.project(pivot + dir * len);
+                    if (!pt)
+                        continue;
+                    if (f != front && !run.empty())
+                    {
+                        const QPointF last = run.back();
+                        flush();
+                        run.push_back(last);
+                    }
+                    front = f;
+                    run.push_back(*pt);
                 }
+                flush();
+                continue;
+            }
+            const auto base = mView.project(pivot), tip = mView.project(pivot + axes[axis] * len);
+            if (!base || !tip)
+                continue;
+            const QPointF d = *tip - *base;
+            const double l = std::hypot(d.x(), d.y());
+            // Seen end on, an axis would be a dot: let it fade instead of flickering.
+            const float fade = float(std::clamp((l - 6.0) / 14.0, 0.0, 1.0));
+            if (fade <= 0.0f)
+                continue;
+            glm::vec4 c = col;
+            c.a *= fade;
+            const QPointF u = d / l, side(-u.y(), u.x());
+            if (settings().tool == Tool::Move)
+            {
+                p.line(*base, *tip - u * 7.0, width, c);
+                p.triangle(*tip + u * 4.0, *tip - u * 8.0 + side * 5.0, *tip - u * 8.0 - side * 5.0, c);
             }
             else
-                for (double f : {0.0, 1.0})
-                    if (auto s = mView.project(pivot + axes[axis] * len * f))
-                        pts.push_back(*s);
-            if (pts.size() > 1)
-                p.polyline(pts, lit ? 2.5f : 1.5f, col);
+            {
+                p.line(*base, *tip - u * 4.0, width, c);
+                p.rect(QRectF(tip->x() - 4.5, tip->y() - 4.5, 9.0, 9.0), c);
+            }
+            p.text(*tip + u * 16.0 + QPointF(0.0, 4.5), letters[axis], glm::vec4(glm::vec3(lit ? gray(1.0f) : col), c.a), OverlayPainter::Center);
         }
+        p.setShadow(false);
     }
 
     glm::dmat3 axesFor(Graph& g, NodeId first) const
@@ -1308,35 +1500,39 @@ private:
     Handle hit(QPointF px, const Target& t) const
     {
         const QPointF c = center();
+        const Geo g = geo();
         const double dx = px.x() - c.x(), dy = px.y() - c.y();
         const double d = std::hypot(dx, dy);
+        // Wells take a few pixels more than they draw, so the small ones are easy to hit.
         for (const Button& b : kButtons)
             if (shown(b.handle, t))
             {
-                const QPointF bp = at(c, u(b.radius), b.angle);
-                if (std::hypot(px.x() - bp.x(), px.y() - bp.y()) <= u(kButtonSize) * 1.15)
+                const QPointF bp = buttonPos(b, t);
+                if (std::hypot(px.x() - bp.x(), px.y() - bp.y()) <= (b.tabSlot >= 0 ? kTabWell : kWell) + 3.0)
                     return b.handle;
             }
-        if (d > u(kPlate))
+        if (d > g.plate)
             return trailAt(px) >= 0 ? Handle::Trail : Handle::None;
         const double a = std::atan2(dy, dx) * 180.0 / math::kPi;
         const bool rings = ringLayout(t);
-        if (rings ? d <= u(kCenterDisc) : d <= u(kFreeDot))
+        if (rings ? d <= g.centerDisc : d <= kHub + 3.0)
             return Handle::Center;
-        if (d <= u(kZoneOuter))
+        if (d <= g.zone + 2.0)
         {
-            if (rings && d < u(kRingInner))
+            if (rings && d < g.ringInner)
                 return Handle::Plate;
             return a >= kZoneX[0] && a <= kZoneX[1] ? Handle::AxisX : a > kZoneZ[0] && a <= kZoneZ[1] ? Handle::AxisZ : Handle::AxisY;
         }
-        if (modeArc(t) && d >= u(kBreakdownInner) && d <= u(kBreakdownOuter))
+        const bool inBand = d >= g.ring - kBandHalf - 2.0;
+        if (inBand && a >= kToolFrom && a <= kToolTo)
+            return kTools[std::clamp(int((a - kToolFrom) / ((kToolTo - kToolFrom) / 3.0)), 0, 2)];
+        if (modeArc(t) && inBand)
         {
             const double around = a < 0.0 ? a + 360.0 : a;
             if (around >= kModeFrom && around <= kModeTo)
                 return handleOf(strings::Mode(std::clamp(int((kModeTo - around) / ((kModeTo - kModeFrom) / 4.0)), 0, 3)));
         }
-        if (!t.rig && modes::current() != kRigMode && a >= kBreakdownFrom && a <= kBreakdownTo && d >= u(kBreakdownInner) &&
-            d <= u(kBreakdownOuter))
+        if (!t.rig && modes::current() != kRigMode && inBand && a >= kBreakdownFrom && a <= kBreakdownTo)
             return Handle::Breakdown;
         return Handle::Plate;
     }
@@ -1915,6 +2111,8 @@ private:
     Trail mTrail;
     int mTrailHover = -1;
     mutable std::string mLastMode;
+    QPointF mCursor;
+    uint64_t mHoverTick = 0;
 };
 
 void registerIcons(ext::Context& ctx)
@@ -1984,6 +2182,20 @@ void registerSpinnerActions(ext::Context& ctx)
                                changed();
                            },
                        .doc = "The Spinner's axes: local, world, screen."});
+    actions::add(ctx, {.id = "puppeteer.spinner.summonDown", .label = "Summon Spinner", .category = cat,
+                       .run =
+                           [] {
+                               summon().held = true;
+                               viewportTools::requestRedraw();
+                           },
+                       .doc = "While held, the Spinner follows the cursor; it stays where the key is let go."});
+    actions::add(ctx, {.id = "puppeteer.spinner.summonUp", .label = "Summon Spinner Release", .category = cat,
+                       .run =
+                           [] {
+                               summon().held = false;
+                               changed();
+                           },
+                       .doc = "Ends Summon Spinner: the Spinner stays where it is."});
     flag("puppeteer.spinner.discrete", "Discrete Steps", &Settings::discrete, "Spinner drags move, turn and scale in fixed steps.");
     flag("puppeteer.spinner.stickyAim", "Sticky Aim", &Settings::stickyAim, "Rigging: orients follow the bones as joints move.");
     flag("puppeteer.spinner.pivot", "Pivot", &Settings::pivot, "Rigging: the Spinner moves joints without their children.");
@@ -1999,5 +2211,16 @@ void registerSpinner(ext::Context& ctx)
     registerIcons(ctx);
     registerSpinnerActions(ctx);
     gizmos::add(ctx, {.id = kSpinnerGizmo, .label = "Spinner", .create = [] { return std::make_unique<SpinnerGizmo>(); }});
+    // Puppeteer's modes show the View Switcher unless a viewport has chosen otherwise.
+    auto modeViews = [] {
+        const std::string& m = modes::current();
+        viewportDisplay::setViewSwitcherDefault(m == kRigMode || m == kAnimateMode);
+    };
+    modeViews();
+    const events::SubscriptionId sub = events::subscribe(events::Event::ModeChanged, [modeViews](const events::EventData&) { modeViews(); }, "Puppeteer");
+    ctx.track("puppeteer:viewSwitcher", [sub] {
+        events::unsubscribe(sub);
+        viewportDisplay::setViewSwitcherDefault(false);
+    });
 }
 } // namespace puppeteer
