@@ -307,13 +307,41 @@ void Hotkeys::setMode(const std::string& mode)
     reload();
 }
 
+namespace
+{
+/**
+ * With several keys on one action, the one hints name: a letter, digit or function key before punctuation, which sits
+ * under the right hand while it holds the mouse and moves between keyboard layouts.
+ */
+int hintRank(const QString& keyText)
+{
+    const QString key = keyText.section('+', -1);
+    if (key.size() == 1)
+        return key[0].isLetterOrNumber() ? 1 : 0;
+    return key.startsWith('F') ? 1 : 0;
+}
+
+/** The best-ranked key in keys, the first of its rank winning. */
+QString bestHint(const std::vector<QString>& keys)
+{
+    QString best;
+    for (const QString& k : keys)
+        if (best.isEmpty() || hintRank(k) > hintRank(best))
+            best = k;
+    return best;
+}
+} // namespace
+
 QString Hotkeys::keyFor(const std::string& actionId) const
 {
+    std::vector<QString> found;
     for (const char* ctx : {"global", "viewport"})
         if (auto it = mModeContexts.find(ctx); it != mModeContexts.end())
             for (auto& [chord, over] : it->second)
                 if (hotkeys::Slots s = hotkeys::overlaySlots({}, over.value); s.press.is_string() && s.press.get<std::string>() == actionId)
-                    return over.keyText;
+                    found.push_back(over.keyText);
+    if (!found.empty())
+        return bestHint(found);
     for (const char* ctx : {"global", "viewport"})
     {
         auto it = mContexts.find(ctx);
@@ -321,14 +349,16 @@ QString Hotkeys::keyFor(const std::string& actionId) const
             continue;
         for (auto& [chord, b] : it->second)
             if (b.targets.press.is_string() && b.targets.press.get<std::string>() == actionId)
-                return b.keyText;
+                found.push_back(b.keyText);
     }
+    if (!found.empty())
+        return bestHint(found);
     // Panel contexts last (graph editor, UV editor...), so a panel's own keys show in its tooltips.
     for (auto& [ctx, bindings] : mContexts)
         for (auto& [chord, b] : bindings)
             if (b.targets.press.is_string() && b.targets.press.get<std::string>() == actionId)
-                return b.keyText;
-    return {};
+                found.push_back(b.keyText);
+    return bestHint(found);
 }
 
 bool Hotkeys::chordMatches(const Chord& chord, QKeyEvent* e)
