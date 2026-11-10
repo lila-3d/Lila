@@ -25,6 +25,18 @@
         "CMAKE_CXX_COMPILER": "cl",
         "Python_ROOT_DIR": "$env{LILA_PYTHON_DIR}"
       }
+    },
+    {
+      "name": "linux",
+      "inherits": "base",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+      "environment": {
+        "VCPKG_KEEP_ENV_VARS": "LILA_PYTHON_DIR"
+      },
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-linux-dynamic",
+        "Python_ROOT_DIR": "$env{LILA_PYTHON_DIR}"
+      }
     }
   ],
   "buildPresets": [

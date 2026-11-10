@@ -33,6 +33,14 @@ scripts\installer\build.cmd            # writes build-installer\Lila-<version>-S
 
 Tests: `scripts\t.cmd build RelWithDebInfo -LE slow`. `-L slow` runs the slow suites (every shipped material evaluated and linted, about 20 minutes).
 
+### Linux (untested)
+
+Experimental: nobody has built Lila on Linux yet, and Ubuntu LTS is the only supported distro. Needs CMake 3.28+, Ninja, a C++20 compiler and a [vcpkg](https://github.com/microsoft/vcpkg) clone after its `bootstrap-vcpkg.sh`. Qt comes from vcpkg and Python 3.14 is downloaded into `.deps`, so the distro's Qt and Python aren't used. USD is off.
+
+```
+VCPKG_ROOT=<vcpkg clone> bash build.sh       # or: bash build.sh <dir> <config>
+```
+
 ### Unreal
 
 1. Copy `ue/LilaLink` into `<Project>/Plugins/LilaLink` and build the project.
