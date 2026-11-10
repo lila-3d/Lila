@@ -181,10 +181,14 @@ void ensureCharacter()
 
 // Registration --------------------------------------------------------------------------------------------------------
 
-json preset(std::vector<std::string> open, std::vector<std::string> raise, std::string menuSet, json size = json::object())
+json preset(std::vector<std::string> open, std::vector<std::string> raise, std::string menuSet, json size = json::object(),
+            json columns = json::array())
 {
+    json p{{"open", open}, {"raise", raise}, {"size", std::move(size)}};
+    if (!columns.empty())
+        p["columns"] = std::move(columns);
     return {{"version", 1},
-            {"preset", {{"open", open}, {"raise", raise}, {"size", std::move(size)}}},
+            {"preset", std::move(p)},
             {"menuSet", std::move(menuSet)},
             {"viewport", {{"quad", false}, {"camera", "persp"}}}};
 }
@@ -295,9 +299,16 @@ void registerModeBundles(ext::Context& ctx)
 {
     layouts::add(ctx, kRigLayout,
                  preset({"outliner", "channelBox", "attributeEditor", "displayLayers", "timeSlider"}, {"channelBox"}, "Rig"));
+    // Curves are the Space overlay. Clips, poses, timing and layers stack down the left; the scene and its values stay right.
     layouts::add(ctx, kAnimateLayout,
-                 preset({"outliner", "channelBox", "attributeEditor", "displayLayers", "graphEditor", "timeSlider"}, {"graphEditor", "channelBox"}, "Animate",
-                        {{"graphEditor", {{"height", 0.3}}}}));
+                 preset({"outliner", "channelBox", "attributeEditor", "displayLayers", "puppeteerAnimBank", "poseLibrary", "puppeteerStacker",
+                         "puppeteerMixer", "timeSlider"},
+                        {"channelBox"}, "Animate",
+                        {{"puppeteerAnimBank", {{"width", 300}, {"height", 0.15}}},
+                         {"poseLibrary", {{"height", 0.3}}},
+                         {"puppeteerStacker", {{"height", 0.3}}},
+                         {"outliner", {{"height", 0.55}}}},
+                        json::array({{"puppeteerAnimBank", "poseLibrary", "puppeteerStacker", "puppeteerMixer"}})));
 
     selectionHandlers::add(ctx, {.id = kRigSelection, .label = "Puppeteer Rig: joint under mesh", .redirect = baseRedirect, .hover = baseHover,
                                  .candidates = baseCandidates});
