@@ -14,7 +14,10 @@
 #include "scene/MeshNodes.h"
 #include "sculpt/SculptSession.h"
 #include "ui/Actions.h"
+#include "core/Paths.h"
 #include "ui/MeshCache.h"
+#include "ui/TextureCache.h"
+#include "ui/SculptPanel.h"
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportToast.h"
 #include "ui/ViewportTool.h"
@@ -178,13 +181,35 @@ const std::vector<SculptMaterial>& materialPresets()
     return presets;
 }
 
+/** Lila's matcaps in resources/matcaps, by file stem and label. */
+constexpr std::pair<const char*, const char*> kMatcaps[] = {{"clay", "Clay"},   {"redWax", "Red Wax"}, {"skin", "Skin"},
+                                                            {"chalk", "Chalk"}, {"gloss", "Gloss"},    {"cavity", "Cavity"}};
+
+std::string matcapPath(const std::string& id)
+{
+    if (id == kMatcapFileId)
+        return PrefStore::get().value<std::string>("general", kMatcapFilePref, "");
+    return paths::toUtf8(paths::resourcesDir() / "matcaps" / (id.substr(std::string_view(kMatcapPrefix).size()) + ".png"));
+}
+
 /** The preset to draw with, or null for the mesh's own materials. */
 const render::Material* sculptMaterial(const std::string& id)
 {
     for (const SculptMaterial& m : materialPresets())
         if (id == m.id)
             return &m.material;
-    return nullptr;
+    if (!id.starts_with(kMatcapPrefix))
+        return nullptr;
+    static std::map<std::string, render::Material> matcaps;
+    render::Material& m = matcaps[id];
+    m.style.model = render::ShadingModel::Matcap;
+    m.baseColor = glm::vec3(1.0f);
+    // Null while the image loads; the viewport redraws when it arrives.
+    m.baseColorMap = textures::get(matcapPath(id), true);
+    if (m.baseColorMap)
+        m.flags |= render::MatBaseColorMap;
+    m.sampling = 0x5; // clamp U and V, so the sphere's rim never wraps to the far side
+    return &m;
 }
 
 glm::dvec3 xformPoint(const glm::dmat4& m, const glm::dvec3& p) { return glm::dvec3(m * glm::dvec4(p, 1.0)); }
@@ -315,10 +340,13 @@ public:
         // Shift smooths and Ctrl inverts the next stroke, so the message names the brush that stroke would use.
         const Qt::KeyboardModifiers mods = QApplication::keyboardModifiers();
         sculpt::BrushSettings shown = mSettings;
+        const bool blurs = blursWithShift(mStroking ? mSettings.brush : st.brush);
         if (!mStroking)
         {
-            shown.brush = (mods & Qt::ShiftModifier) ? sculpt::Brush::Smooth : st.brush;
+            shown.brush = (mods & Qt::ShiftModifier) && !blurs ? sculpt::Brush::Smooth : st.brush;
+            shown.keepVolume = smoothStrokeKeepsVolume(st, mods);
             shown.custom = st.custom;
+            shown.blur = blurs && (mods & Qt::ShiftModifier);
         }
         const bool invert = mStroking ? mSettings.invert : (mods & Qt::ControlModifier) != 0;
         QString name = QString::fromStdString(sculpt::brushId(shown));
@@ -329,9 +357,17 @@ public:
             status.fields.push_back({"level", QString("%1/%2").arg(s->level).arg(s->stack->top())});
         status.fields.push_back({"radius", QString("%1 px").arg(int(std::lround(st.stroke.radius)))});
         status.fields.push_back({"strength", QString::number(st.stroke.strength, 'f', 2)});
-        status.flags = {{"invert", invert}};
+        const bool smoothing = shown.brush == sculpt::Brush::Smooth;
+        // Ctrl does nothing else to Smooth, so its flag reads as the flatten it gives.
+        status.flags = {smoothing ? ToolFlag{"flatten", !shown.keepVolume} : ToolFlag{"invert", invert}};
+        if (blurs)
+            status.flags.push_back({"blur", shown.blur});
         status.symmetry = ToolSymmetry{s->sculpt.symmetric()};
-        status.keys = {{"Shift", "smooth"}, {"Ctrl", "invert"}, {"B-drag", "radius"}, {"M-drag", "strength"}};
+        const QString flip = smoothStrokeKeepsVolume(st, {}) ? "flatten" : "keep volume";
+        status.keys = {{"Shift", blurs ? "blur" : st.brush == sculpt::Brush::Smooth ? flip : "smooth"},
+                       {"Ctrl", smoothing ? flip : shown.brush == sculpt::Brush::Grab ? "along normal" : "invert"},
+                       {"B-drag", "radius"},
+                       {"M-drag", "strength"}};
         drawToolStatus(p, view, status);
 
         const QPointF at = mControls.anchor(brush::ui::ringPosition(mStroke, mHover));
@@ -376,14 +412,19 @@ private:
         return true;
     }
 
+    /** Shift on these blurs what they lay down (colour, mask) instead of smoothing the shape. */
+    static bool blursWithShift(sculpt::Brush b) { return b == sculpt::Brush::Paint || b == sculpt::Brush::Mask; }
+
     void beginStroke(sculpt::Session& s, const QMouseEvent* e, const ViewInfo& view)
     {
         const Qt::KeyboardModifiers mods = e->modifiers();
         const SculptSettings& st = sculptSettings();
         mSession = sculpt::active();
         sculpt::syncSymmetry(s);
-        const bool smoothing = (mods & Qt::ShiftModifier) && st.brush != sculpt::Brush::Smooth;
+        const bool blurring = (mods & Qt::ShiftModifier) && blursWithShift(st.brush);
+        const bool smoothing = (mods & Qt::ShiftModifier) && st.brush != sculpt::Brush::Smooth && !blurring;
         mSettings.brush = smoothing ? sculpt::Brush::Smooth : st.brush;
+        mSettings.blur = blurring;
         mSettings.custom = st.custom;
         mSettings.paint = st.paint;
         mSettings.cavityPaint = st.cavityPaint;
@@ -397,6 +438,10 @@ private:
         mSettings.invert = (mods & Qt::ControlModifier) != 0;
         mSettings.frontFacesOnly = st.frontFacesOnly;
         mSettings.radial = st.stroke.radial;
+        auto smoothStroke = st.perBrush.find("smooth");
+        const brush::BrushSettings& own = smoothing && smoothStroke != st.perBrush.end() ? smoothStroke->second : st.stroke;
+        mSettings.keepVolume = smoothStrokeKeepsVolume(st, mods);
+        mSettings.pinchDepth = own.param("pinchDepth", 1.0);
         s.sculpt.beginStroke(mSettings);
         mPivotBefore = viewportTools::orbitPoint();
         mDabs = json::array();
@@ -490,6 +535,12 @@ private:
             d.normal = glm::dvec3(0.0, 1.0, 0.0);
             d.viewDir = glm::normalize(xformDir(inv, axis));
             d.delta = local - mGrabLocal;
+            if (mSettings.brush == sculpt::Brush::Grab && mSettings.invert)
+            {
+                // Ctrl-grab moves along the normal the stroke began on: dragging up the screen pulls out, down pushes in.
+                const glm::dvec3 up = glm::normalize(xformDir(inv, glm::dvec3(glm::inverse(view.view)[1])));
+                d.delta = glm::normalize(mGrab.normal) * glm::dot(d.delta, up);
+            }
             d.direction = local - mLastLocal;
             mLastLocal = local;
             send(d);
@@ -523,6 +574,9 @@ private:
                      {"falloff", mFalloffName},
                      {"strength", mSettings.strength},
                      {"invert", mSettings.invert},
+                     {"blur", mSettings.blur},
+                     {"keepVolume", mSettings.keepVolume},
+                     {"pinchDepth", mSettings.pinchDepth},
                      {"frontFacesOnly", mSettings.frontFacesOnly},
                      {"radialCount", mSettings.radial.count},
                      {"radialAxis", std::string(1, "xyz"[std::clamp(mSettings.radial.axis, 0, 2)])},
@@ -560,11 +614,14 @@ private:
 class SculptDrawer
 {
 public:
-    void draw(render::FrameState& s, OverlayPainter&, const ViewInfo&)
+    void draw(render::FrameState& s, OverlayPainter& p, const ViewInfo& view)
     {
         LILA_ZONE();
 
         auto session = sculpt::active();
+        // The panel is open but nothing is being sculpted: say so where the user is trying to draw.
+        if (!session && !sculptToolActive() && sculptPanelOpen())
+            drawToolStatus(p, view, {.tool = "Sculpt", .prompt = meshSelected() ? "not sculpting: pick a brush or Enter" : "not sculpting: select a mesh"});
         scene::Graph& g = scene::Graph::current();
         scene::Node* n = session ? g.node(session->node) : nullptr;
         if (!n || !scene::effectivelyVisible(g, session->node))
@@ -756,11 +813,29 @@ bool selectSculptPreset(const std::string& id)
     return true;
 }
 
+bool smoothStrokeKeepsVolume(const SculptSettings& st, Qt::KeyboardModifiers mods)
+{
+    const bool smoothBrush = st.brush == sculpt::Brush::Smooth;
+    const bool own = [&] {
+        if (smoothBrush)
+            return st.stroke.param("keepVolume", 1.0) != 0.0;
+        auto it = st.perBrush.find("smooth");
+        return it == st.perBrush.end() || it->second.param("keepVolume", 1.0) != 0.0;
+    }();
+    // Shift on the Smooth brush has nothing else to do, so it flips too.
+    const bool flip = (mods & Qt::ControlModifier) || (smoothBrush && (mods & Qt::ShiftModifier));
+    return own != flip;
+}
+
 std::vector<std::pair<std::string, std::string>> sculptMaterials()
 {
     std::vector<std::pair<std::string, std::string>> out{{"mesh", "Mesh Material"}};
     for (const SculptMaterial& m : materialPresets())
         out.emplace_back(m.id, m.label);
+    for (const auto& [stem, label] : kMatcaps)
+        out.emplace_back(std::string(kMatcapPrefix) + stem, std::string("Matcap: ") + label);
+    if (const std::string file = PrefStore::get().value<std::string>("general", kMatcapFilePref, ""); !file.empty())
+        out.emplace_back(kMatcapFileId, "Matcap: " + paths::toUtf8(paths::fromUtf8(file).stem()));
     return out;
 }
 

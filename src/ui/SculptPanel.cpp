@@ -13,9 +13,11 @@
 #include "ui/ColorPopup.h"
 #include "ui/Controls.h"
 #include "ui/ReferenceOverlay.h"
+#include "core/PrefStore.h"
 #include "ui/Actions.h"
 #include "ui/LocateFlash.h"
 #include "ui/DockSidebar.h"
+#include "ui/ModelingToolkit.h"
 #include "ui/FileDialog.h"
 #include "ui/FixedRowLayout.h"
 #include "ui/FlowLayout.h"
@@ -28,6 +30,7 @@
 #include "ui/UiCommon.h"
 #include "ui/ViewportTool.h"
 #include "ui/ViewportToast.h"
+#include "ui/ViewportDisplay.h"
 
 #include <QApplication>
 #include <QButtonGroup>
@@ -67,6 +70,8 @@ namespace lila::ui
 {
 namespace
 {
+/** The Material list's entry that asks for a matcap image instead of picking a material. */
+constexpr const char* kMatcapBrowse = "matcap.browse";
 struct BrushInfo
 {
     sculpt::Brush brush;
@@ -83,16 +88,17 @@ constexpr std::array<BrushInfo, std::size_t(sculpt::Brush::Count)> kBrushes = {{
     {sculpt::Brush::Inflate, "balloon", "Inflate", "Swell each point along its own normal; Ctrl deflates."},
     {sculpt::Brush::Blob, "circles", "Blob", "Swell a rounded ball; Ctrl sucks one in."},
     {sculpt::Brush::Layer, "stack", "Layer", "Raise a plateau to one height however often you pass; Ctrl sinks one."},
-    {sculpt::Brush::Grab, "hand-grab", "Grab", "Drag a patch of surface with the cursor."},
+    {sculpt::Brush::Grab, "hand-grab", "Grab", "Drag a patch of surface with the cursor; Ctrl pulls it out along its normal as you drag up, pushes it in as you drag down."},
     {sculpt::Brush::ElasticGrab, "hand-move", "Elastic Grab", "Grab with a soft, wide reach that keeps the form's volume."},
     {sculpt::Brush::SnakeHook, "route", "Snake Hook", "Pull the surface out after the cursor, thinning as it goes: horns, spikes, tendrils."},
-    {sculpt::Brush::Smooth, "droplet", "Smooth", "Average out bumps and noise. Shift gives this brush for one stroke."},
+    {sculpt::Brush::Smooth, "droplet", "Smooth", "Smooth away bumps and noise, keeping the form's volume. Shift gives this brush for one stroke. Ctrl flattens as it smooths, "
+                                                    "and so does Shift while Smooth is picked."},
     {sculpt::Brush::Relax, "wave-sine", "Relax", "Even out the point spacing, sliding along the surface so the form stays."},
     {sculpt::Brush::Flatten, "ironing", "Flatten", "Press toward the average plane under the brush; Ctrl raises contrast."},
     {sculpt::Brush::Planar, "box-align-bottom", "Planar", "Flatten onto the plane where the stroke began, for hard planes."},
     {sculpt::Brush::Fill, "bucket", "Fill", "Raise dips up to the average plane; Ctrl scrapes."},
     {sculpt::Brush::Scrape, "shovel", "Scrape", "Shave off what sticks out of the average plane; Ctrl fills dips."},
-    {sculpt::Brush::Pinch, "arrows-minimize", "Pinch", "Pull points toward the brush centre to sharpen edges; Ctrl spreads them."},
+    {sculpt::Brush::Pinch, "arrows-minimize", "Pinch", "Pull points toward the brush centre and press them in to sharpen creases; Ctrl spreads and lifts them."},
     {sculpt::Brush::Magnify, "arrows-maximize", "Magnify", "Push points away from the brush centre; Ctrl pinches."},
     {sculpt::Brush::Crease, "chisel", "Crease", "Cut a sharp groove; Ctrl raises a sharp ridge."},
     {sculpt::Brush::DamStandard, "slash", "Dam Standard", "Cut a narrow V groove that pinches its edges in, for wrinkles and seams; Ctrl raises a sharp ridge."},
@@ -104,9 +110,9 @@ constexpr std::array<BrushInfo, std::size_t(sculpt::Brush::Count)> kBrushes = {{
     {sculpt::Brush::Rotate, "rotate-clockwise", "Rotate", "Twist the patch under the brush: drag out, then circle around where you clicked."},
     {sculpt::Brush::Pose, "walk", "Pose", "Click on a part with the brush covering it and drag: it bends at the ring where the brush meets the rest."},
     {sculpt::Brush::Boundary, "border-outer", "Boundary", "Drag the open borders under the brush and the points just inside them."},
-    {sculpt::Brush::Mask, "mask", "Mask", "Paint the mask, which shields points from every brush; Ctrl erases it."},
+    {sculpt::Brush::Mask, "mask", "Mask", "Paint the mask, which shields points from every brush; Ctrl erases it, Shift blurs it."},
     {sculpt::Brush::Freeze, "snowflake", "Freeze", "Pin points so no brush moves them; Ctrl unfreezes."},
-    {sculpt::Brush::Paint, "paint", "Paint", "Paint polypaint in the Polypaint color without moving anything. The mask shields points."},
+    {sculpt::Brush::Paint, "paint", "Paint", "Paint polypaint in the Polypaint color without moving anything; Shift blurs the color. The mask shields points."},
 }};
 
 /** Brush button ids past the built-ins pick a registered brush, and past those a preset. */
@@ -169,8 +175,10 @@ QDockWidget* sculptDock(bool create)
     scroll->setWidget(new SculptPanel(scroll));
     dock->setWidget(scroll);
     setDockDocs(dock, "sculpting");
-    keepOwnColumn(dock);
-    mw->addDockWidget(Qt::RightDockWidgetArea, dock);
+    // A tool panel: the left column, tabbed with the toolkits.
+    mw->addDockWidget(Qt::LeftDockWidgetArea, dock);
+    if (auto* tools = mw->findChild<QDockWidget*>(kModelingToolkitDock); tools && mw->dockWidgetArea(tools) == Qt::LeftDockWidgetArea)
+        mw->tabifyDockWidget(tools, dock);
     // Wide enough for five brush columns with their labels and the session rows; its own column opens at this width.
     dock->setProperty(kDefaultTabExtent, std::max(dock->sizeHint().width(), dock->fontMetrics().averageCharWidth() * 88));
     return dock;
@@ -415,6 +423,26 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     mSpacing->setToolTip("Spacing: distance between dabs along a stroke, in brush radii.");
     setSpinDefault(mSpacing, defaults.stroke.spacing);
     bform->addRow("Spacing", mSpacing);
+    // Settings only one brush has, shown while it is picked.
+    mKeepVolume = new QCheckBox("Keep Volume", settingsBox);
+    mKeepVolume->setToolTip("Keep Volume: Smooth removes bumps but keeps the form. Off averages points, which also flattens it. "
+                          "Ctrl, or Shift with Smooth picked, gives the other one for a stroke.");
+    setCheckDefault(mKeepVolume, true);
+    bform->addRow("", mKeepVolume);
+    mPinchDepth = sculptSlider(settingsBox, 0.0, 4.0, 2);
+    mPinchDepth->setSingleStep(0.1);
+    mPinchDepth->setToolTip("Depth: how far Pinch presses the surface in as it draws it together. 0 pinches without pressing in.");
+    setSpinDefault(mPinchDepth, 1.0);
+    bform->addRow("Depth", mPinchDepth);
+    mBrushForm = bform;
+    connect(mKeepVolume, &QCheckBox::toggled, this, [](bool on) {
+        sculptSettings().stroke.params["keepVolume"] = on ? 1.0 : 0.0;
+        sculptSettingsChanged();
+    });
+    connect(mPinchDepth, &QDoubleSpinBox::valueChanged, this, [](double v) {
+        sculptSettings().stroke.params["pinchDepth"] = v;
+        sculptSettingsChanged();
+    });
     mSymmetry = new controls::Segmented(settingsBox);
     // Segment ids are the mesh's symmetry values: off, x, y, z, radial.
     mSymmetry->add("Off", {}, "No symmetry", 0);
@@ -519,11 +547,34 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     auto* displayBox = new QWidget(this);
     auto* dform = sculptForm(displayBox);
     mMaterial = new QComboBox(displayBox);
-    for (const auto& [id, label] : sculptMaterials())
-        mMaterial->addItem(QString::fromStdString(label), QString::fromStdString(id));
-    mMaterial->setToolTip("Material: what the sculpt is drawn with while sculpting. Mesh Material uses the mesh's own.");
+    fillMaterials();
+    mMaterial->setToolTip("Material: what the sculpt is drawn with while sculpting. Mesh Material uses the mesh's own. "
+                          "Matcaps light the sculpt from a lit-sphere image; Matcap from File uses your own.");
     setComboDefault(mMaterial, std::max(0, mMaterial->findData(QString::fromStdString(SculptSettings{}.material))));
     dform->addRow("Material", mMaterial);
+    mSculptLighting = new QCheckBox("Sculpt Lighting", displayBox);
+    mSculptLighting->setToolTip("Sculpt Lighting: one key light at an angle to your view, so surface form reads. "
+                                "Off goes back to the lighting you had. Shift+Alt+right-drag in the viewport moves the light.");
+    dform->addRow("", mSculptLighting);
+    mLightAngle = sculptSlider(displayBox, 0, 90, 0, QString(QChar(0x00B0)));
+    mLightAngle->setToolTip("Light Angle: how far the key light sits off your view. 0 lights from the camera, 90 grazes.");
+    setSpinDefault(mLightAngle, viewportDisplay::kDefaultRigTilt);
+    dform->addRow("Light Angle", mLightAngle);
+    connect(mSculptLighting, &QCheckBox::clicked, this, [] { actions::run(json("viewport.toggleSculptLighting")); });
+    connect(mLightAngle, &QDoubleSpinBox::valueChanged, this, [](double v) { PrefStore::get().set("general", viewportDisplay::kRigTilt, v); });
+    auto syncLighting = [this] {
+        const PrefStore& p = PrefStore::get();
+        const bool on = p.value<std::string>("general", viewportDisplay::kLighting, "environment") == "sculpt";
+        QSignalBlocker a(mSculptLighting), b(mLightAngle);
+        mSculptLighting->setChecked(on);
+        mLightAngle->setValue(p.value<double>("general", viewportDisplay::kRigTilt, viewportDisplay::kDefaultRigTilt));
+        mLightAngle->setEnabled(on);
+    };
+    syncLighting();
+    mPrefListener = PrefStore::get().onChanged([syncLighting](const std::string& file) {
+        if (file == "general")
+            syncLighting();
+    });
     mWireframe = new QCheckBox("Wireframe", displayBox);
     mWireframe->setToolTip("Wireframe: the sculpt mesh's wireframe (Shift+F in the viewport)");
     setCheckDefault(mWireframe, SculptSettings{}.wireframe);
@@ -563,8 +614,13 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
             selectSculptBrush(sculpt::Brush::Custom, mCustomBrushes[size_t(id - kCustomBrushId)]);
         else
             selectSculptBrush(sculpt::Brush(id));
+        // Picking a brush means sculpting, so it starts the session too.
         if (sculpt::active())
             startSculptTool();
+        else if (!selectedMeshes().empty())
+            enterSculpt();
+        else
+            viewportToast::show("Select a mesh to sculpt");
     });
     connect(mRadius, &QDoubleSpinBox::valueChanged, this, [changed](double v) { sculptSettings().stroke.radius = v; changed(); });
     connect(mStrength, &QDoubleSpinBox::valueChanged, this, [changed](double v) { sculptSettings().stroke.strength = v; changed(); });
@@ -584,6 +640,21 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     connect(mSeeThrough, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().seeThrough = on; changed(); });
     connect(mOpacity, &QDoubleSpinBox::valueChanged, this, [changed](double v) { sculptSettings().seeThroughOpacity = v / 100.0; changed(); });
     connect(mMaterial, &QComboBox::currentIndexChanged, this, [this, changed](int) {
+        if (mMaterial->currentData().toString() == kMatcapBrowse)
+        {
+            const QString file = fileDialog::getOpenFileName(this, "Choose Matcap", QString(), "Images (*.png *.jpg *.jpeg *.tga *.exr)");
+            if (!file.isEmpty())
+            {
+                PrefStore::get().set("general", kMatcapFilePref, file.toStdString());
+                sculptSettings().material = kMatcapFileId;
+                changed();
+            }
+            QTimer::singleShot(0, this, [this] {
+                fillMaterials();
+                syncFromSettings();
+            });
+            return;
+        }
         sculptSettings().material = mMaterial->currentData().toString().toStdString();
         changed();
     });
@@ -651,6 +722,7 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
 
 SculptPanel::~SculptPanel()
 {
+    PrefStore::get().removeOnChanged(mPrefListener);
     sculpt::brushRegistry().removeListener(mBrushRegistryListener);
     brush::presets::removeListener(mPresetListener);
     removeSculptSettingsListener(mSettingsListener);
@@ -832,7 +904,11 @@ void SculptPanel::syncFromSettings()
 {
     const SculptSettings& s = sculptSettings();
     QSignalBlocker b1(mRadius), b2(mStrength), b3(mSpacing), b4(mFalloff), b5(mFrontFaces), b20(mSymmetryLine), b12(mPaint), b13(mShareRadius), b14(mShareStrength), b15(mShareStroke),
-        b16(mWireframe), b17(mMaterial), b18(mWireOpacity), b22(mSeeThrough), b23(mOpacity);
+        b16(mWireframe), b17(mMaterial), b18(mWireOpacity), b22(mSeeThrough), b23(mOpacity), b24(mKeepVolume), b25(mPinchDepth);
+    mKeepVolume->setChecked(s.stroke.param("keepVolume", 1.0) != 0.0);
+    mPinchDepth->setValue(s.stroke.param("pinchDepth", 1.0));
+    mBrushForm->setRowVisible(mKeepVolume, s.brush == sculpt::Brush::Smooth);
+    mBrushForm->setRowVisible(mPinchDepth, s.brush == sculpt::Brush::Pinch);
     mShareRadius->setChecked(s.shareRadius);
     mShareStrength->setChecked(s.shareStrength);
     mShareStroke->setChecked(s.shareStroke);
@@ -889,9 +965,9 @@ void SculptPanel::refreshSession()
         if (!m)
             mStatus->setText("No mesh selected");
         else if (stored && stored->fits)
-            mStatus->setText(QString("%1  ·  level %2 of %3").arg(QString::fromStdString(m->name())).arg(stored->level).arg(stored->levels));
+            mStatus->setText(QString("%1  ·  level %2 of %3  ·  not sculpting").arg(QString::fromStdString(m->name())).arg(stored->level).arg(stored->levels));
         else
-            mStatus->setText(QString::fromStdString(m->name()));
+            mStatus->setText(QString("%1  ·  not sculpting").arg(QString::fromStdString(m->name())));
     }
     mLevelsBox->setVisible(n != nullptr);
     if (n)
@@ -918,8 +994,33 @@ void SculptPanel::refreshSession()
     mSymmetry->setCurrent(sym ? int(std::clamp<int64_t>(sym->as<int64_t>(scene::MeshNode::kSymmetry), 0, scene::kSymmetryRadial)) : 0);
 }
 
+bool sculptPanelOpen() { return dockOpen(); }
+
+void SculptPanel::fillMaterials()
+{
+    QSignalBlocker block(mMaterial);
+    mMaterial->clear();
+    for (const auto& [id, label] : sculptMaterials())
+    {
+        // Matcaps after the lit materials, set apart.
+        if (id.starts_with(kMatcapPrefix) && mMaterial->findData(QString(kMatcapPrefix), Qt::UserRole, Qt::MatchStartsWith) < 0)
+            mMaterial->insertSeparator(mMaterial->count());
+        mMaterial->addItem(QString::fromStdString(label), QString::fromStdString(id));
+    }
+    mMaterial->addItem("Matcap from File...", QString(kMatcapBrowse));
+}
+
+bool meshSelected() { return !selectedMeshes().empty(); }
+
 void registerSculptUi()
 {
+    viewportKeys::add("Sculpt", [] {
+        std::vector<KeyHint> keys = {{"Shift+Alt+right-drag", "Move the light"}, {"Shift+Alt+right-click", "Reset the light"}};
+        viewportKeys::addAction(keys, "sculpt.levelUp", "Finer level");
+        viewportKeys::addAction(keys, "sculpt.levelDown", "Coarser level");
+        viewportKeys::addAction(keys, "window.searchMenus", "Search");
+        return keys;
+    });
     installSculptDrawer();
     sculpt::setLevelsBrokenHandler([](const std::vector<scene::NodeId>& ids, std::string_view command) {
         QTimer::singleShot(0, QCoreApplication::instance(), [ids, command = std::string(command)] { askAboutBrokenLevels(ids, command); });

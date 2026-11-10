@@ -234,6 +234,9 @@ BrushSettings settingsFrom(const Args& a)
     s.radial = {std::clamp(a.get<int>("radialCount", 1), 1, 64), axis == "x" ? 0 : axis == "z" ? 2 : 1};
     s.strength = std::clamp(a.get<double>("strength", 0.5), 0.0, 1.0);
     s.invert = a.get<bool>("invert");
+    s.blur = a.get<bool>("blur");
+    s.keepVolume = a.get<bool>("keepVolume", true);
+    s.pinchDepth = std::clamp(a.get<double>("pinchDepth", 1.0), 0.0, 4.0);
     s.frontFacesOnly = a.get<bool>("frontFacesOnly");
     return s;
 }
@@ -833,7 +836,10 @@ void registerCommands()
                   {"color", "", T::List, json::array({1.0, 1.0, 1.0}), "Paint color, linear [r, g, b]."},
                   {"falloff", "", T::String, "smooth", "Falloff: smooth, sphere, root, sharp, linear, constant, bell, or a soft select preset name."},
                   {"strength", "", T::Float, 0.5, "0 to 1.", {}, {}, 0.0, 1.0},
-                  {"invert", "", T::Bool, false, "Dig, unmask, unfreeze or magnify instead."},
+                  {"invert", "", T::Bool, false, "Dig, unmask, unfreeze or magnify instead; grab moves only along the surface normal."},
+                  {"blur", "", T::Bool, false, "Paint and mask: blur the color or mask under the brush instead of laying it down."},
+                  {"keepVolume", "", T::Bool, true, "Smooth: keep the form's volume; off averages points, which also flattens it."},
+                  {"pinchDepth", "", T::Float, 1.0, "Pinch: how far it presses the surface in, 0 for none."},
                   {"frontFacesOnly", "", T::Bool, false, "Leave points facing away from the view."},
                   {"radialCount", "", T::Int, 1, "Copies of every dab turned evenly about an object axis; 1 is off.", {}, {}, 1.0, 64.0},
                   {"radialAxis", "", T::String, "y", "The object axis radial copies turn about.", {"x", "y", "z"}},
