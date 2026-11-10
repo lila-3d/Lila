@@ -62,7 +62,7 @@ lila_module(lila_ui UI
     GnViewerDraw.cpp GnViewerDraw.h
     GnSpreadsheet.cpp GnSpreadsheet.h
     GraphEditor.cpp GraphEditor.h GraphEditorCommon.h
-    GraphCurveView.cpp GraphCurveView.h
+    GraphCurveView.cpp GraphCurveView.h GraphModel.cpp GraphModel.h
     GraphMotion.cpp GraphMotion.h
     PoseLibrary.cpp PoseLibrary.h
     ControlPicker.cpp ControlPicker.h
