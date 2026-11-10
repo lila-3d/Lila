@@ -225,6 +225,13 @@ void registerActions()
                          "their own axes.",
                   .python = "lila.prefs.set(\"general\", \"/manipulator/rotateSpace\", \"component\")",
                   .checked = spaceIs("/manipulator/rotateSpace", "component")});
+    actions::add({.id = "manip.rotate.gimbal", .label = "Gimbal", .category = "Tools",
+                  .run = [] { PrefStore::get().set("general", "/manipulator/rotateSpace", "gimbal"); },
+                  .doc = "Each ring turns one rotate channel about its own Euler axis, in the object's rotate order. Two rings "
+                         "lining up shows gimbal lock.",
+                  .python = "lila.prefs.set(\"general\", \"/manipulator/rotateSpace\", \"gimbal\")",
+                  .checked = spaceIs("/manipulator/rotateSpace", "gimbal"),
+                  .keywords = {"euler", "gimbal lock", "local"}});
     actions::add({.id = "manip.move.component", .label = "Component", .category = "Tools",
                   .run = [] { PrefStore::get().set("general", "/manipulator/moveSpace", "component"); },
                   .doc = "Moves components together along their average normal and tangent (on a curve, its tangent frame). Objects move "
