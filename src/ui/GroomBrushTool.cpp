@@ -186,7 +186,6 @@ public:
 
     void activate() override
     {
-        Graph& g = Graph::current();
         Node* gr = groomForSelection();
         mBrush.setGroom(gr ? gr->id() : scene::kNoNode);
         gActiveBrush = &mBrush;
