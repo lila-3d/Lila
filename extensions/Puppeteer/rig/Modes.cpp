@@ -279,7 +279,8 @@ void registerModeBundles(ext::Context& ctx)
                          {"Shift+O", {{"press", "puppeteer.spinner.inheritRotate"}}},
                          {"8", {{"press", "puppeteer.spinner.local"}}},
                          {"9", {{"press", "puppeteer.spinner.world"}}},
-                         {"0", {{"press", "puppeteer.spinner.screen"}}}};
+                         {"0", {{"press", "puppeteer.spinner.screen"}}},
+                         {"`", {{"press", "puppeteer.spinner.summonDown"}, {"release", "puppeteer.spinner.summonUp"}}}};
     json rigKeys = {{"viewport", common}};
     rigKeys["viewport"]["J"] = {{"press", "puppeteer.joint.create"}};
     rigKeys["viewport"]["Shift+J"] = {{"press", "puppeteer.joint.orient"}};
