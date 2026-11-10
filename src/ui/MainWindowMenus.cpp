@@ -9,6 +9,7 @@
 #include "ui/LicensesDialog.h"
 #include "ui/MenuSets.h"
 #include "ui/Shelf.h"
+#include "ui/TearOffLogic.h"
 
 #include <QToolBar>
 
@@ -420,7 +421,7 @@ void MainWindow::buildMenus()
 void MainWindow::raiseToolsFor(const std::string& set)
 {
     // The tools column follows the work too: its tab for the set comes forward when that panel is open.
-    static const std::map<std::string, const char*> kTools = {{"Model", kModelingToolkitDock}, {"Level", kLevelToolkitDock}, {"Texture", "textureSets"}};
+    static const std::map<std::string, const char*> kTools = {{"Model", kModelingToolkitDock}, {"Level", kLevelToolkitDock}, {"Texture", "textureSets"}, {"Cloth", "tailorToolkit"}};
     auto it = kTools.find(set);
     if (it == kTools.end())
         return;
@@ -461,7 +462,12 @@ void MainWindow::fillEditorsMenu(QMenu* menu)
     };
     menu->clear();
     const QList<QDockWidget*> found = findChildren<QDockWidget*>();
-    std::vector<QDockWidget*> docks(found.begin(), found.end());
+    // Torn-off menus carry their menu's title, so listing them here doubles the panels they share a name with; Ctrl+T's
+    // Tear-offs tab lists them.
+    std::vector<QDockWidget*> docks;
+    for (QDockWidget* d : found)
+        if (!tearoff::parseDockName(d->objectName().toStdString()))
+            docks.push_back(d);
     std::sort(docks.begin(), docks.end(), [](QDockWidget* a, QDockWidget* b) {
         return QString::localeAwareCompare(a->windowTitle(), b->windowTitle()) < 0;
     });
