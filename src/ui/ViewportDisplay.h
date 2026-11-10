@@ -148,6 +148,9 @@ inline void applyCurveWidths(render::FrameState& s, double dpr)
 inline bool accentColors(bool monotone, bool selective) { return selective && !monotone; }
 /** Whether the display behind one of the accent toggles above draws in colour right now. */
 LILA_UI_API bool accentColors(const char* key);
+/** Whether views show the View Switcher where a viewport has made no choice of its own; Puppeteer's modes turn it on. */
+LILA_UI_API void setViewSwitcherDefault(bool on);
+LILA_UI_API bool viewSwitcherDefault();
 /** A display layer's linear colour, as a grey of the same luminance under Monotone. */
 LILA_UI_API glm::vec3 layerTint(const glm::vec3& linear);
 /** The theme's X, Y and Z colours (Monotone: muted red, green and blue that read on the dark UI greys). sRGB 0..1. */

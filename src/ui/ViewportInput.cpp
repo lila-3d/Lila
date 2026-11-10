@@ -21,6 +21,11 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
         updateCursor();
         return;
     }
+    if (e->button() == Qt::LeftButton && !(e->modifiers() & Qt::AltModifier) && viewSwitcherClick(e->position()))
+    {
+        mSwallowRelease = true;
+        return;
+    }
     // The view cube moves the camera like Alt with the same button, each button switchable in the prefs.
     if (!(e->modifiers() & Qt::AltModifier) && hud::shown(mHudPanel, "viewCube") && hud::viewCubeRect(width()).contains(e->position()))
     {

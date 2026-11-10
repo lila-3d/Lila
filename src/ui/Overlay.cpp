@@ -33,7 +33,7 @@ struct Glyph
 };
 
 /** The Tabler icons Lila's own cursor badges draw. */
-constexpr const char* kBuiltInIcons[] = {"grid-pattern", "line", "point", "angle", "target", "circle-dotted", "feather", "perspective"};
+constexpr const char* kBuiltInIcons[] = {"grid-pattern", "line", "point", "angle", "target", "circle-dotted", "feather", "perspective", "camera"};
 constexpr double kIconPx = 16.0; // logical size they are baked for
 } // namespace
 

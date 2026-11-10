@@ -11,6 +11,7 @@
 #include "rig/Rig.h"
 
 #include <lila/Anim.h>
+#include <lila/Events.h>
 #include <lila/Ghosts.h>
 #include <lila/Gizmo.h>
 #include <lila/Prefs.h>
@@ -2210,5 +2211,16 @@ void registerSpinner(ext::Context& ctx)
     registerIcons(ctx);
     registerSpinnerActions(ctx);
     gizmos::add(ctx, {.id = kSpinnerGizmo, .label = "Spinner", .create = [] { return std::make_unique<SpinnerGizmo>(); }});
+    // Puppeteer's modes show the View Switcher unless a viewport has chosen otherwise.
+    auto modeViews = [] {
+        const std::string& m = modes::current();
+        viewportDisplay::setViewSwitcherDefault(m == kRigMode || m == kAnimateMode);
+    };
+    modeViews();
+    const events::SubscriptionId sub = events::subscribe(events::Event::ModeChanged, [modeViews](const events::EventData&) { modeViews(); }, "Puppeteer");
+    ctx.track("puppeteer:viewSwitcher", [sub] {
+        events::unsubscribe(sub);
+        viewportDisplay::setViewSwitcherDefault(false);
+    });
 }
 } // namespace puppeteer

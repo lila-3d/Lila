@@ -5,6 +5,7 @@
 #include "ui/ViewportDisplay.h"
 #include "ui/ViewportHeader.h"
 #include "ui/ViewportHeaderConfig.h"
+#include "ui/ViewportHud.h"
 #include "ui/ViewportTool.h"
 #include "ui/ViewportWidget.h"
 
@@ -171,4 +172,31 @@ TEST_CASE("layout keys: registered per layout, unbound actions left out; Reset L
     CHECK(p.value<double>("general", "/viewport/env/rotation", -1.0) == doctest::Approx(0.0));
     for (const char* key : {"/viewport/lighting", "/viewport/rigRotation", "/viewport/rigTilt", "/viewport/env/rotation"})
         p.remove("general", key);
+}
+
+TEST_CASE("view switcher: segments under the cube, a second click flips to the opposite side")
+{
+    using namespace lila::ui;
+    const auto segs = hud::viewSwitcherSegments(1000.0, 700.0, true);
+    REQUIRE(segs.size() == 5);
+    CHECK(std::string(segs[0].view) == "persp");
+    CHECK(std::string(segs[4].view) == "camera");
+    CHECK(segs[0].rect.top() > hud::viewCubeRect(1000.0).bottom());
+    CHECK(segs[4].rect.right() <= 1000.0);
+    for (size_t i = 1; i < segs.size(); ++i)
+        CHECK(segs[i].rect.left() > segs[i - 1].rect.right());
+    // Too small a pane drops it rather than squeezing it.
+    CHECK(hud::viewSwitcherSegments(240.0, 700.0, true).empty());
+
+    ViewportWidget view;
+    view.switchView("front");
+    CHECK(view.viewName() == "front");
+    view.switchView("front");
+    CHECK(view.viewName() == "back");
+    view.switchView("front");
+    CHECK(view.viewName() == "front");
+    view.switchView("right");
+    CHECK(view.viewName() == "right");
+    view.switchView("persp");
+    CHECK(view.viewName() == "persp");
 }

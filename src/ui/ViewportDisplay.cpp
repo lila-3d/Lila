@@ -17,6 +17,7 @@
 #include "ui/Theme.h"
 #include "scene/SceneIndex.h"
 
+#include <atomic>
 #include <QGuiApplication>
 #include <QScreen>
 
@@ -485,5 +486,20 @@ Quality recommendedQuality()
     if (!gpu.discrete || gpu.vramBytes < 4 * kGiB)
         return Quality::Fastest;
     return gpu.vramBytes < 8 * kGiB ? Quality::Balanced : Quality::Best;
+}
+
+namespace
+{
+std::atomic<bool> gViewSwitcherDefault{false};
+}
+
+void setViewSwitcherDefault(bool on)
+{
+    gViewSwitcherDefault = on;
+}
+
+bool viewSwitcherDefault()
+{
+    return gViewSwitcherDefault;
 }
 } // namespace lila::ui::viewportDisplay
