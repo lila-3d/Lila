@@ -12,6 +12,8 @@ namespace puppeteer
 {
 /** The character a node belongs to: the one whose skeleton root is the node or above it, or whose node holds it. */
 NodeId characterFor(Graph& g, NodeId node);
+/** Meshes skinned to the skeleton at or below root. */
+std::vector<std::string> skeletonMeshes(Graph& g, NodeId root);
 /** Every character node, in creation order. */
 std::vector<NodeId> characters(Graph& g);
 /** The pose library group of a character: its template id, else its root joint's name. */

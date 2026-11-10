@@ -6,6 +6,8 @@
 #include "rig/Rig.h"
 
 #include <lila/Events.h>
+#include <lila/Poses.h>
+#include <lila/Undo.h>
 #include <lila/UI.h>
 #include <lila/Viewport.h>
 
@@ -78,6 +80,103 @@ std::optional<std::vector<std::string>> animateRedirect(const selectionHandlers:
     for (std::string& n : names)
         n = animateTarget(g, n);
     return names;
+}
+
+/**
+ * Saves the skeleton's skinned bind pose as the scene's "bind" pose, so it wins over a template's, which only matches
+ * skeletons built from that template. The joints go back to how they were; nothing lands on the undo stack.
+ */
+void captureBindPose(Graph& g, NodeId top, const std::vector<std::string>& meshes)
+{
+    const std::vector<NodeId> nodes = poses::characterOf(g, top).nodes;
+    if (nodes.empty())
+        return;
+    UndoStack& undo = UndoStack::get();
+    const bool was = undo.enabled();
+    undo.setEnabled(false);
+    const poses::Pose now = poses::capture(g, nodes);
+    bool bound = false;
+    for (const std::string& mesh : meshes)
+    {
+        try
+        {
+            ops::execute("goToBindPose", {{"args", {mesh}}}, CallSource::Script);
+            bound = true;
+        }
+        catch (const std::exception&)
+        {
+        }
+    }
+    if (bound)
+    {
+        g.evaluate();
+        try
+        {
+            ops::execute("savePose", {{"args", {"bind"}}, {"tier", "scene"}, {"nodes", {g.node(top)->path()}}, {"hierarchy", true}},
+                         CallSource::Script);
+        }
+        catch (const std::exception& e)
+        {
+            log::write(LogLevel::Warning, std::string("Bind pose not saved: ") + e.what());
+        }
+    }
+    poses::ApplyOptions back;
+    back.scope = nodes;
+    poses::apply(g, now, back);
+    g.evaluate();
+    undo.setEnabled(was);
+}
+
+/**
+ * A skeleton being animated becomes a Puppeteer character the first time one of its joints is selected in Animate mode,
+ * with its helper joints redirected to their limbs, so Strings, poses and mesh picking work without a Rig step.
+ */
+void ensureCharacter()
+{
+    if (modes::current() != kAnimateMode)
+        return;
+    Graph& g = Graph::current();
+    for (NodeId id : g.selection())
+    {
+        Node* n = g.node(id);
+        if (!n || !rig::isJoint(*n) || characterFor(g, id))
+            continue;
+        NodeId top = id;
+        for (NodeId p = g.parent(top); p && g.node(p) && rig::isJoint(*g.node(p)); p = g.parent(p))
+            top = p;
+        // Only a skeleton that deforms a mesh is something to animate; a lone joint stays a plain joint.
+        const std::vector<std::string> meshes = skeletonMeshes(g, top);
+        if (meshes.empty())
+            return;
+        const std::string root = g.node(top)->path();
+        // Named after the group holding the skeleton (an imported SKM_Manny) when there is one, else the root joint.
+        const NodeId holder = g.parent(top);
+        const std::string name = holder && g.node(holder) ? g.node(holder)->name() : g.node(top)->name();
+        json selected = json::array();
+        for (NodeId s : g.selection())
+            if (g.node(s))
+                selected.push_back(g.node(s)->path());
+        // Hand and foot controllers from the matching rig template, so limbs have something to grab, lock and pin.
+        if (ops::find("rigFromTemplate"))
+        {
+            try
+            {
+                ops::execute("rigFromTemplate", {{"args", {root}}}, CallSource::UI);
+            }
+            catch (const std::exception& e)
+            {
+                log::write(LogLevel::Info, std::string("No template rig for ") + root + ": " + e.what());
+            }
+        }
+        const json made = runCommand("puppeteerCharacter", {{"args", {root}}, {"name", name + "Character"}});
+        if (!made.is_string())
+            return;
+        runCommand("autoSelectAs", {{"args", {root}}});
+        captureBindPose(g, top, meshes);
+        runCommand("select", {{"args", selected}});
+        viewportToast::show(QString("%1 is now a Puppeteer character").arg(QString::fromStdString(name)));
+        return;
+    }
 }
 
 // Registration --------------------------------------------------------------------------------------------------------
@@ -253,6 +352,7 @@ void registerModeBundles(ext::Context& ctx)
                          [] {
                              if (actions::find("tool.rotate"))
                                  actions::run("tool.rotate");
+                             ensureCharacter();
                          },
                      .onExit = [] { closeCurveOverlay(); }});
 }
@@ -260,6 +360,9 @@ void registerModeBundles(ext::Context& ctx)
 
 void registerModes(ext::Context& ctx)
 {
+    const events::SubscriptionId sub =
+        events::subscribe(events::Event::SelectionChanged, [](const events::EventData&) { QTimer::singleShot(0, [] { ensureCharacter(); }); }, "Puppeteer");
+    ctx.track("puppeteer:autoCharacter", [sub] { events::unsubscribe(sub); });
     registerModeActions(ctx);
     registerMenus(ctx);
     registerModeBundles(ctx);
