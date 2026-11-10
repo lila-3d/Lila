@@ -51,6 +51,10 @@ struct FLilaSoftNetLod
 	/** (degree of freedom as uint bits, weight). */
 	UPROPERTY()
 	TArray<FVector2f> Entries;
+
+	/** Per entry, its weight's gradient along the surface at rest: how the net's moves turn normals and tangents. */
+	UPROPERTY()
+	TArray<FVector3f> Gradients;
 };
 
 /**
@@ -86,8 +90,9 @@ class LILALINKDEFORMER_API ULilaSoftNetLibrary : public UBlueprintFunctionLibrar
 public:
 	/**
 	 * Binds every LOD of the mesh to a Soft Net from Lila: Json is unrealSoftNet's payload (knots {frame, control},
-	 * tangents {bone, rest}, dofs, points {p, i}). Each vertex takes the entries of the Lila point at its place (LODs 1 and
-	 * up the nearest point's). Returns a JSON report: vertices, matched, lods, warnings, errors. Editor only.
+	 * tangents {bone, rest}, dofs, points {p, i}, tris). Each vertex takes the entries of the Lila point at its place; a
+	 * vertex with none there (LODs 1 and up) takes the blend of the entries at the nearest place on Lila's surface.
+	 * Returns a JSON report: vertices, matched, lods, warnings, errors. Editor only.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Lila|Soft Net")
 	static FString BindSoftNet(USkeletalMesh* Mesh, const FString& Json);

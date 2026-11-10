@@ -126,7 +126,7 @@ public:
 	static UObject* MakeBendBonesDeformer(const FString& AssetPath, FString& OutError);
 
 	/**
-	 * Writes the component's deformed positions (component space, of the LOD it renders) to File as JSON {lod, positions}
+	 * Writes the component's deformed positions (component space, of the LOD it renders) to File as JSON {lod, positions, normals}
 	 * once the GPU has them, to compare with Lila. Returns false when its deformer can't read back. Editor only.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Lila|Bend Bones")

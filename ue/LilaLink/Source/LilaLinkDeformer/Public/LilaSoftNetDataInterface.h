@@ -13,8 +13,9 @@ class ULilaSoftNetData;
 
 /**
  * Lila Soft Net in a Deformer Graph: each vertex's offset from the net, the sum of its precomputed influence entries
- * times the moves of the net's knots and tangent handles (read from their bones each frame). Pin: Net Offset
- * (component space), added to the skinned position.
+ * times the moves of the net's knots and tangent handles (read from their bones each frame). Pins: Net Offset
+ * (component space), added to the skinned position, and Net Jacobian X, Y and Z, the columns of the offset's derivative
+ * over the rest position, added to the skin's matrix to turn normals and tangents.
  */
 UCLASS(Category = ComputeFramework)
 class LILALINKDEFORMER_API ULilaSoftNetDataInterface : public UOptimusComputeDataInterface
@@ -45,8 +46,10 @@ struct FLilaSoftNetGpuLod
 	int32 VertexCount = 0;
 	TArray<uint32> Offsets;
 	TArray<FVector2f> Entries;
+	TArray<FVector3f> Gradients;
 	TRefCountPtr<FRDGPooledBuffer> PooledOffsets;
 	TRefCountPtr<FRDGPooledBuffer> PooledEntries;
+	TRefCountPtr<FRDGPooledBuffer> PooledGradients;
 };
 
 /** The binding uploaded once per mesh revision, shared by the provider and its render proxies. */

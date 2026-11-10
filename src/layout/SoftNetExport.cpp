@@ -464,11 +464,6 @@ json bake(Graph& g, NodeId mesh, const Args& a)
             {"disabled", fit.value("disabled", json::array())},
             {"unrealCheck", {{"worst", c.report.worst}, {"frames", c.report.frames}, {"mismatches", mismatches}, {"error", c.error}}}};
 }
-json toUnrealJson(const glm::dvec3& v)
-{
-    const math::Vector u = math::toUnreal(math::Vector(v.x, v.y, v.z));
-    return {u.x, u.y, u.z};
-}
 
 std::string bareName(const std::string& path) { return path.substr(path.find_last_of("|:") + 1); }
 
@@ -505,16 +500,36 @@ json unrealPayload(Graph& g, NodeId mesh, const NetJoints& joints, const std::st
         tangents.push_back({{"bone", bareName(g.node(it->second.first)->name())}, {"rest", bareName(g.node(it->second.second)->name())}});
     }
     const glm::dmat4 toWorld = skin != kNoNode ? g.node(skin)->as<glm::dmat4>(SkinClusterNode::kGeomMatrix) : worldOf(*g.node(mesh));
-    json points = json::array();
     const std::span<const glm::dvec3> pos = rest->positions();
+    std::vector<glm::dvec3> ue(pos.size());
+    for (size_t i = 0; i < pos.size(); ++i)
+    {
+        const glm::dvec3 w(toWorld * glm::dvec4(pos[i], 1.0));
+        const math::Vector u = math::characterToUnreal(math::Vector(w.x, w.y, w.z));
+        ue[i] = {u.x, u.y, u.z};
+    }
+    // In Unreal's space, so the kernel turns its rest normals and tangents by them directly.
+    const std::vector<glm::dvec3> grads = deform::softnet::entryGradients(table, *rest, ue);
+    json points = json::array();
     for (size_t i = 0; i < table.points() && i < pos.size(); ++i)
     {
         json e = json::array();
         for (uint32_t k = table.offsets[i]; k < table.offsets[i + 1]; ++k)
-            e.push_back({table.entries[k].dof, table.entries[k].weight});
-        points.push_back({{"p", toUnrealJson(glm::dvec3(toWorld * glm::dvec4(pos[i], 1.0)))}, {"i", e}});
+            e.push_back({table.entries[k].dof, table.entries[k].weight, grads[k].x, grads[k].y, grads[k].z});
+        points.push_back({{"p", {ue[i].x, ue[i].y, ue[i].z}}, {"i", e}});
     }
-    return {{"skeletalMesh", skeletalMesh}, {"deformer", deformerPath}, {"knots", knots}, {"tangents", tangents}, {"dofs", table.dofs}, {"points", points}};
+    json tris = json::array();
+    for (geo::Index f = 0; f < rest->faceCapacity(); ++f)
+    {
+        if (!rest->faceValid(f))
+            continue;
+        std::vector<uint32_t> c;
+        rest->forEachFaceCorner(f, [&](geo::Index k) { c.push_back(uint32_t(rest->cornerPoint(k))); });
+        for (size_t i = 1; i + 1 < c.size(); ++i)
+            tris.insert(tris.end(), {c[0], c[i], c[i + 1]});
+    }
+    return {{"skeletalMesh", skeletalMesh}, {"deformer", deformerPath}, {"knots", knots}, {"tangents", tangents}, {"dofs", table.dofs},
+            {"points", points},         {"tris", tris}};
 }
 
 std::string mappedSkeletalMesh(Graph& g, NodeId mesh)

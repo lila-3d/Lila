@@ -16,7 +16,7 @@ def setup(p):
     # The net's offsets ride on the skin, so its weights keep their full precision rather than 8 bits.
     precise = []
     sub = unreal.get_editor_subsystem(unreal.SkeletalMeshEditorSubsystem)
-    for lod in range(mesh.get_lod_num() if hasattr(mesh, "get_lod_num") else 1):
+    for lod in range(sub.get_lod_count(mesh)):
         settings = sub.get_lod_build_settings(mesh, lod)
         if not settings.get_editor_property("use_high_precision_skin_weights"):
             settings.set_editor_property("use_high_precision_skin_weights", True)

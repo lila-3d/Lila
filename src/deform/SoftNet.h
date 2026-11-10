@@ -91,6 +91,13 @@ struct LILA_SCENE_API InfluenceTable
 LILA_SCENE_API InfluenceTable buildInfluence(const geo::Mesh& topology, std::span<const Sample> samples, std::span<const Run> runs, size_t knots,
                                              size_t tangents, double edgeLength, double reach, double stiffness, double cutoff = 1e-6);
 
+/**
+ * Per entry of table, the gradient along the surface of its weight at its point, over points (the rest positions in
+ * whatever space the gradients are wanted): what turns normals and tangents with the net. A point's deformation
+ * gradient is the skin's plus the sum over its entries of the dof's move times the entry's gradient transposed.
+ */
+LILA_SCENE_API std::vector<glm::dvec3> entryGradients(const InfluenceTable& table, const geo::Mesh& topology, std::span<const glm::dvec3> points);
+
 /** Each sample's delta for the degrees of freedom's moves: what the influence table is fitted to. */
 LILA_SCENE_API std::vector<glm::dvec3> sampleDeltas(std::span<const Sample> samples, std::span<const Run> runs, size_t knots,
                                                     std::span<const glm::dvec3> moves);

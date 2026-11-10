@@ -214,6 +214,78 @@ InfluenceTable buildInfluence(const geo::Mesh& topology, std::span<const Sample>
     return table;
 }
 
+std::vector<glm::dvec3> entryGradients(const InfluenceTable& table, const geo::Mesh& topology, std::span<const glm::dvec3> points)
+{
+    LILA_ZONE();
+    const size_t n = std::min(table.points(), points.size());
+    std::vector<glm::dvec3> out(table.entries.size(), glm::dvec3(0.0));
+    std::vector<std::vector<uint32_t>> ring(n);
+    for (geo::Index e = 0; e < topology.edgeCapacity(); ++e)
+    {
+        if (!topology.edgeValid(e))
+            continue;
+        const geo::Index a = topology.edgePoint(e, 0), b = topology.edgePoint(e, 1);
+        if (a < n && b < n && a != b)
+        {
+            ring[a].push_back(uint32_t(b));
+            ring[b].push_back(uint32_t(a));
+        }
+    }
+    std::vector<glm::dvec3> normal(n, glm::dvec3(0.0));
+    for (geo::Index f = 0; f < topology.faceCapacity(); ++f)
+    {
+        if (!topology.faceValid(f))
+            continue;
+        std::vector<uint32_t> c;
+        topology.forEachFaceCorner(f, [&](geo::Index k) { c.push_back(uint32_t(topology.cornerPoint(k))); });
+        for (size_t i = 1; i + 1 < c.size(); ++i)
+            if (c[0] < n && c[i] < n && c[i + 1] < n)
+            {
+                const glm::dvec3 a = glm::cross(points[c[i]] - points[c[0]], points[c[i + 1]] - points[c[0]]);
+                normal[c[0]] += a;
+                normal[c[i]] += a;
+                normal[c[i + 1]] += a;
+            }
+    }
+    auto weightOf = [&](uint32_t p, uint32_t dof) {
+        for (uint32_t e = table.offsets[p]; e < table.offsets[p + 1]; ++e)
+            if (table.entries[e].dof == dof)
+                return double(table.entries[e].weight);
+        return 0.0;
+    };
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, n, 1024), [&](const tbb::blocked_range<size_t>& r) {
+        for (size_t i = r.begin(); i < r.end(); ++i)
+        {
+            if (ring[i].empty() || table.offsets[i] == table.offsets[i + 1])
+                continue;
+            // Least squares over the edges to the ring, held to the tangent plane by a term on the normal.
+            glm::dmat3 a(0.0);
+            double scale = 0.0;
+            for (uint32_t k : ring[i])
+            {
+                const glm::dvec3 e = points[k] - points[i];
+                a += glm::outerProduct(e, e);
+                scale += glm::dot(e, e);
+            }
+            const double len = glm::length(normal[i]);
+            const glm::dvec3 nrm = len > 1e-300 ? normal[i] / len : glm::dvec3(0.0);
+            a += glm::outerProduct(nrm, nrm) * (scale / double(ring[i].size()));
+            if (std::abs(glm::determinant(a)) < 1e-300)
+                continue;
+            const glm::dmat3 inv = glm::inverse(a);
+            for (uint32_t e = table.offsets[i]; e < table.offsets[i + 1]; ++e)
+            {
+                const double w = table.entries[e].weight;
+                glm::dvec3 rhs(0.0);
+                for (uint32_t k : ring[i])
+                    rhs += (points[k] - points[i]) * (weightOf(k, table.entries[e].dof) - w);
+                out[e] = inv * rhs;
+            }
+        }
+    });
+    return out;
+}
+
 glm::dvec3 normalAt(const SurfacePoint& s, std::span<const glm::dvec3> points)
 {
     const glm::dvec3 a = points[s.points[0]], b = points[s.points[1]], c = points[s.points[2]];

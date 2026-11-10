@@ -25,15 +25,18 @@ BEGIN_SHADER_PARAMETER_STRUCT(FLilaSoftNetParameters, )
 	SHADER_PARAMETER(uint32, NumVertices)
 	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, Offsets)
 	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float2>, Entries)
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4>, Gradients)
 	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4>, Moves)
 END_SHADER_PARAMETER_STRUCT()
 
 // Lila src/deform/SoftNet.cpp InfluenceTable::apply: a vertex's offset is the sum over its entries of weight times its
-// degree of freedom's move (knots first, then tangent handles).
+// degree of freedom's move (knots first, then tangent handles). Its derivative over the rest position is the sum of
+// each move times its entry's gradient; ReadNetJacobian returns one column of it.
 const TCHAR* const SoftNetHlsl = TEXT(R"(
 uint {DataInterfaceName}_NumVertices;
 StructuredBuffer<uint> {DataInterfaceName}_Offsets;
 StructuredBuffer<float2> {DataInterfaceName}_Entries;
+StructuredBuffer<float4> {DataInterfaceName}_Gradients;
 StructuredBuffer<float4> {DataInterfaceName}_Moves;
 
 uint ReadNumVertices_{DataInterfaceName}()
@@ -52,6 +55,33 @@ float3 ReadNetOffset_{DataInterfaceName}(uint VertexIndex)
 	}
 	return D;
 }
+
+float3 ReadNetJacobian_{DataInterfaceName}(uint VertexIndex, uint Column)
+{
+	float3 J = 0;
+	const uint End = {DataInterfaceName}_Offsets[VertexIndex + 1];
+	for (uint E = {DataInterfaceName}_Offsets[VertexIndex]; E < End; ++E)
+	{
+		const float2 Entry = {DataInterfaceName}_Entries[E];
+		J += {DataInterfaceName}_Gradients[E][Column] * {DataInterfaceName}_Moves[asuint(Entry.x)].xyz;
+	}
+	return J;
+}
+
+float3 ReadNetJacobianX_{DataInterfaceName}(uint VertexIndex)
+{
+	return ReadNetJacobian_{DataInterfaceName}(VertexIndex, 0);
+}
+
+float3 ReadNetJacobianY_{DataInterfaceName}(uint VertexIndex)
+{
+	return ReadNetJacobian_{DataInterfaceName}(VertexIndex, 1);
+}
+
+float3 ReadNetJacobianZ_{DataInterfaceName}(uint VertexIndex)
+{
+	return ReadNetJacobian_{DataInterfaceName}(VertexIndex, 2);
+}
 )");
 
 class FLilaSoftNetProxy final : public FComputeDataProviderRenderProxy
@@ -66,7 +96,7 @@ public:
 	TSharedPtr<FLilaSoftNetGpuBinding, ESPMode::ThreadSafe> Binding;
 	TArray<FVector4f> Moves;
 
-	FRDGBufferSRVRef OffsetsSRV = nullptr, EntriesSRV = nullptr, MovesSRV = nullptr;
+	FRDGBufferSRVRef OffsetsSRV = nullptr, EntriesSRV = nullptr, GradientsSRV = nullptr, MovesSRV = nullptr;
 
 	bool IsValid(FValidationData const& InValidationData) const override
 	{
@@ -90,21 +120,32 @@ public:
 		TRACE_CPUPROFILER_EVENT_SCOPE(LilaSoftNetProxy::AllocateResources);
 
 		FLilaSoftNetGpuLod& Bound = Binding->Lods[Lod];
-		FRDGBufferRef Offsets, Entries;
-		if (Bound.PooledOffsets.IsValid() && Bound.PooledEntries.IsValid())
+		FRDGBufferRef Offsets, Entries, Gradients;
+		if (Bound.PooledOffsets.IsValid() && Bound.PooledEntries.IsValid() && Bound.PooledGradients.IsValid())
 		{
 			Offsets = GraphBuilder.RegisterExternalBuffer(Bound.PooledOffsets);
 			Entries = GraphBuilder.RegisterExternalBuffer(Bound.PooledEntries);
+			Gradients = GraphBuilder.RegisterExternalBuffer(Bound.PooledGradients);
 		}
 		else
 		{
+			// float4 per entry: a structured buffer of float3 doesn't pack the same on every RHI.
+			TArray<FVector4f> Padded;
+			Padded.SetNumZeroed(Bound.Entries.Num());
+			for (int32 I = 0; I < Bound.Gradients.Num() && I < Padded.Num(); ++I)
+			{
+				Padded[I] = FVector4f(Bound.Gradients[I], 0.0f);
+			}
 			Offsets = CreateStructuredBuffer(GraphBuilder, TEXT("LilaSoftNet.Offsets"), Bound.Offsets);
 			Entries = CreateStructuredBuffer(GraphBuilder, TEXT("LilaSoftNet.Entries"), Bound.Entries);
+			Gradients = CreateStructuredBuffer(GraphBuilder, TEXT("LilaSoftNet.Gradients"), Padded);
 			Bound.PooledOffsets = GraphBuilder.ConvertToExternalBuffer(Offsets);
 			Bound.PooledEntries = GraphBuilder.ConvertToExternalBuffer(Entries);
+			Bound.PooledGradients = GraphBuilder.ConvertToExternalBuffer(Gradients);
 		}
 		OffsetsSRV = GraphBuilder.CreateSRV(Offsets);
 		EntriesSRV = GraphBuilder.CreateSRV(Entries);
+		GradientsSRV = GraphBuilder.CreateSRV(Gradients);
 		MovesSRV = GraphBuilder.CreateSRV(CreateStructuredBuffer(GraphBuilder, TEXT("LilaSoftNet.Moves"), Moves));
 	}
 
@@ -117,6 +158,7 @@ public:
 			P.NumVertices = uint32(Binding->Lods[Lod].VertexCount);
 			P.Offsets = OffsetsSRV;
 			P.Entries = EntriesSRV;
+			P.Gradients = GradientsSRV;
 			P.Moves = MovesSRV;
 		}
 	}
@@ -133,6 +175,9 @@ TArray<FOptimusCDIPinDefinition> ULilaSoftNetDataInterface::GetPinDefinitions() 
 	TArray<FOptimusCDIPinDefinition> Defs;
 	Defs.Add({"NumVertices", "ReadNumVertices", false});
 	Defs.Add({"NetOffset", "ReadNetOffset", Optimus::DomainName::Vertex, "ReadNumVertices"});
+	Defs.Add({"NetJacobianX", "ReadNetJacobianX", Optimus::DomainName::Vertex, "ReadNumVertices"});
+	Defs.Add({"NetJacobianY", "ReadNetJacobianY", Optimus::DomainName::Vertex, "ReadNumVertices"});
+	Defs.Add({"NetJacobianZ", "ReadNetJacobianZ", Optimus::DomainName::Vertex, "ReadNumVertices"});
 	return Defs;
 }
 
@@ -144,7 +189,10 @@ TSubclassOf<UActorComponent> ULilaSoftNetDataInterface::GetRequiredComponentClas
 void ULilaSoftNetDataInterface::GetSupportedInputs(TArray<FShaderFunctionDefinition>& OutFunctions) const
 {
 	OutFunctions.AddDefaulted_GetRef().SetName(TEXT("ReadNumVertices")).AddReturnType(EShaderFundamentalType::Uint);
-	OutFunctions.AddDefaulted_GetRef().SetName(TEXT("ReadNetOffset")).AddReturnType(EShaderFundamentalType::Float, 3).AddParam(EShaderFundamentalType::Uint);
+	for (const TCHAR* Name : {TEXT("ReadNetOffset"), TEXT("ReadNetJacobianX"), TEXT("ReadNetJacobianY"), TEXT("ReadNetJacobianZ")})
+	{
+		OutFunctions.AddDefaulted_GetRef().SetName(Name).AddReturnType(EShaderFundamentalType::Float, 3).AddParam(EShaderFundamentalType::Uint);
+	}
 }
 
 void ULilaSoftNetDataInterface::GetShaderParameters(TCHAR const* UID, FShaderParametersMetadataBuilder& InOutBuilder, FShaderParametersMetadataAllocations& InOutAllocations) const
@@ -214,7 +262,7 @@ FComputeDataProviderRenderProxy* ULilaSoftNetDataProvider::GetRenderProxy()
 		Binding->Revision = Data->Revision;
 		for (const FLilaSoftNetLod& L : Data->Lods)
 		{
-			Binding->Lods.Add({L.VertexCount, L.Offsets, L.Entries, nullptr, nullptr});
+			Binding->Lods.Add({L.VertexCount, L.Offsets, L.Entries, L.Gradients, nullptr, nullptr, nullptr});
 		}
 	}
 

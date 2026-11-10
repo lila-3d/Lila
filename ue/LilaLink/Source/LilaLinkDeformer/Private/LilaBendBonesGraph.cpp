@@ -142,6 +142,11 @@ bool ULilaBendBonesLibrary::WriteDeformedPositions(USkinnedMeshComponent* Compon
 		{
 			Out += FString::Printf(TEXT("%s[%.5f, %.5f, %.5f]"), I ? TEXT(", ") : TEXT(""), Data.Positions[I].X, Data.Positions[I].Y, Data.Positions[I].Z);
 		}
+		Out += TEXT("], \"normals\": [");
+		for (int32 I = 0; I < Data.Normals.Num(); ++I)
+		{
+			Out += FString::Printf(TEXT("%s[%.6f, %.6f, %.6f]"), I ? TEXT(", ") : TEXT(""), Data.Normals[I].X, Data.Normals[I].Y, Data.Normals[I].Z);
+		}
 		Out += TEXT("]}");
 		FFileHelper::SaveStringToFile(Out, *File);
 	};

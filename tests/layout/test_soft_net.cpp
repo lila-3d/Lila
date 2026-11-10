@@ -529,3 +529,61 @@ TEST_CASE("bakeSoftNet: knot joints as fixed bones, helpers and correctives beat
     CHECK(baked["unrealCheck"]["mismatches"].empty());
     CHECK(baked["frameError"].size() == 21);
 }
+
+TEST_CASE("softNet entry gradients turn normals as the net bends the surface")
+{
+    namespace sn = deform::softnet;
+    scene::Graph::current().clear();
+    const std::string plane = softnettest::run("polyPlane", {{"name", "Grad"}, {"width", 100.0}, {"depth", 100.0}, {"subdivisionsX", 40}, {"subdivisionsZ", 40}})[0];
+    const scene::MeshPtr m = softnettest::outMesh(plane);
+    const std::vector<glm::dvec3> rest(m->positions().begin(), m->positions().end());
+    uint32_t centre = 0;
+    for (uint32_t i = 0; i < rest.size(); ++i)
+        if (glm::length(rest[i]) < glm::length(rest[centre]))
+            centre = i;
+    const std::vector<sn::Sample> samples = {{.at = {.points = {centre, centre, centre}, .bary = {1.0, 0.0, 0.0}}, .run = -1, .knot = 0}};
+    const sn::InfluenceTable table = sn::buildInfluence(*m, samples, {}, 1, 0, 2.5, 20.0, 1.0);
+    REQUIRE(table.points() == rest.size());
+    const std::vector<glm::dvec3> grads = sn::entryGradients(table, *m, rest);
+    const std::vector<glm::dvec3> moves = {{3.0, 8.0, -2.0}};
+    std::vector<glm::dvec3> off(rest.size());
+    table.apply(moves, off);
+    std::vector<glm::dvec3> posed(rest.size());
+    for (size_t i = 0; i < rest.size(); ++i)
+        posed[i] = rest[i] + off[i];
+
+    // Area-weighted normals, as Lila rebuilds them after a deformer.
+    auto normals = [&](const std::vector<glm::dvec3>& pts) {
+        std::vector<glm::dvec3> out(pts.size(), glm::dvec3(0.0));
+        for (geo::Index f = 0; f < m->faceCapacity(); ++f)
+        {
+            if (!m->faceValid(f))
+                continue;
+            std::vector<uint32_t> c;
+            m->forEachFaceCorner(f, [&](geo::Index k) { c.push_back(uint32_t(m->cornerPoint(k))); });
+            for (size_t i = 1; i + 1 < c.size(); ++i)
+            {
+                const glm::dvec3 a = glm::cross(pts[c[i]] - pts[c[0]], pts[c[i + 1]] - pts[c[0]]);
+                for (uint32_t p : {c[0], c[i], c[i + 1]})
+                    out[p] += a;
+            }
+        }
+        return out;
+    };
+    const std::vector<glm::dvec3> restNormal = normals(rest), rebuilt = normals(posed);
+    double worst = 0.0, worstUnturned = 0.0;
+    for (size_t i = 0; i < rest.size(); ++i)
+    {
+        glm::dmat3 f(1.0);
+        for (uint32_t e = table.offsets[i]; e < table.offsets[i + 1]; ++e)
+            f += glm::outerProduct(moves[table.entries[e].dof], grads[e]);
+        const glm::dvec3 n0 = glm::normalize(restNormal[i]);
+        const glm::dvec3 turned = glm::normalize(glm::cross(f[1], f[2]) * n0.x + glm::cross(f[2], f[0]) * n0.y + glm::cross(f[0], f[1]) * n0.z);
+        const glm::dvec3 want = glm::normalize(rebuilt[i]);
+        worst = std::max(worst, glm::degrees(std::acos(std::clamp(glm::dot(turned, want), -1.0, 1.0))));
+        worstUnturned = std::max(worstUnturned, glm::degrees(std::acos(std::clamp(glm::dot(n0, want), -1.0, 1.0))));
+    }
+    MESSAGE("normal error turned by gradients ", worst, " deg, unturned ", worstUnturned, " deg");
+    CHECK(worstUnturned > 10.0);
+    CHECK(worst < 0.1 * worstUnturned);
+}
