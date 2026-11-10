@@ -637,7 +637,8 @@ void registerSoftNetExportCommands()
                 throw CommandError("unrealSoftNet: " + r.value("error", std::string("Unreal didn't answer")));
             json result;
             std::string text;
-            for (const json& line : r.value("result", json::object()).value("log", json::array()))
+            const json unrealLog = r.value("result", json::object()).value("log", json::array());
+            for (const json& line : unrealLog)
             {
                 const std::string l = line.value("text", "");
                 if (l.rfind("LILA_RESULT:", 0) == 0)
@@ -649,7 +650,8 @@ void registerSoftNetExportCommands()
                 throw CommandError("unrealSoftNet: Unreal didn't bind the mesh" + (text.empty() ? std::string() : ":\n" + text));
             if (const json errors = result.value("errors", json::array()); !errors.empty())
                 throw CommandError("unrealSoftNet: " + errors[0].get<std::string>());
-            for (const json& w : result.value("warnings", json::array()))
+            const json warnings = result.value("warnings", json::array());
+            for (const json& w : warnings)
                 log::write(LogLevel::Warning, "unrealSoftNet: " + w.get<std::string>());
             return {{"skeletalMesh", sm}, {"deformer", payload["deformer"]}, {"joints", names}, {"unreal", result}};
         },
