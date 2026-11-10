@@ -809,7 +809,8 @@ void registerBuiltins()
         actions::add({.id = id, .label = label, .category = "Display",
                       .run = [k, fallback] { PrefStore::get().set("general", k, !PrefStore::get().value<bool>("general", k, fallback)); },
                       .doc = doc,
-                      .python = "lila.prefs.set(\"general\", \"" + k + "\", not lila.prefs.get(\"general\", \"" + k + "\", " + fb + "))"});
+                      .python = "lila.prefs.set(\"general\", \"" + k + "\", not lila.prefs.get(\"general\", \"" + k + "\", " + fb + "))",
+                      .checked = [k, fallback] { return PrefStore::get().value<bool>("general", k, fallback); }});
     };
     togglePref("viewport.toggleAA", "Antialiasing", vd::kAaEnabled, true, "Multisample antialiasing in every viewport.");
     togglePref("viewport.toggleRtShadows", "Ray-Traced Shadows", vd::kRtShadows, true,
