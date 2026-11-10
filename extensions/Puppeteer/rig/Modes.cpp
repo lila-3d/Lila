@@ -21,8 +21,9 @@ namespace puppeteer
 {
 namespace
 {
-constexpr const char* kRigLayout = "Puppeteer Rig";
-constexpr const char* kAnimateLayout = "Puppeteer Animate";
+// Puppeteer's modes are the Rig and Animate workspaces: their layouts replace Lila's, and switching to either enters the mode.
+constexpr const char* kRigLayout = "Rig";
+constexpr const char* kAnimateLayout = "Animate";
 constexpr const char* kShelf = "Puppeteer";
 constexpr const char* kBaseSelection = "lila.dominantInfluence";
 
@@ -390,7 +391,22 @@ void registerModes(ext::Context& ctx)
         markingMenus::add(ctx, std::string(kAnimateMode) + "/" + name, keysMenu);
     const events::SubscriptionId sub =
         events::subscribe(events::Event::SelectionChanged, [](const events::EventData&) { QTimer::singleShot(0, [] { ensureCharacter(); }); }, "Puppeteer");
-    ctx.track("puppeteer:autoCharacter", [sub] { events::unsubscribe(sub); });
+    // The Animate and Rig workspace tabs enter the matching mode; any other workspace leaves Puppeteer.
+    const events::SubscriptionId layoutSub = events::subscribe(
+        events::Event::LayoutChanged,
+        [](const events::EventData& e) {
+            const std::string want = e.name == kAnimateLayout ? kAnimateMode : e.name == kRigLayout ? kRigMode : std::string();
+            const std::string& now = modes::current();
+            if (!want.empty() && now != want)
+                QTimer::singleShot(0, [want] { modes::activate(want); });
+            else if (want.empty() && (now == kAnimateMode || now == kRigMode))
+                QTimer::singleShot(0, [] { modes::activate(modes::kDefaultMode); });
+        },
+        "Puppeteer");
+    ctx.track("puppeteer:autoCharacter", [sub, layoutSub] {
+        events::unsubscribe(sub);
+        events::unsubscribe(layoutSub);
+    });
     registerModeActions(ctx);
     registerMenus(ctx);
     registerModeBundles(ctx);
