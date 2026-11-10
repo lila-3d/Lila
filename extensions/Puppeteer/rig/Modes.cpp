@@ -344,6 +344,7 @@ void registerModeBundles(ext::Context& ctx)
                      .icon = "walk",
                      .layout = kAnimateLayout,
                      .hotkeys = animKeys,
+                     .markingMenuSet = kAnimateMode,
                      .shelf = kShelf,
                      .gizmoProvider = kSpinnerGizmo,
                      .selectionHandler = kAnimateSelection,
@@ -360,6 +361,22 @@ void registerModeBundles(ext::Context& ctx)
 
 void registerModes(ext::Context& ctx)
 {
+    // Shift+right-click while animating: keys and poses rather than modelling tools.
+    const json keysMenu = {{"N", {{"label", "Set Key"}, {"action", "anim.setKey"}}},
+                           {"S", {{"label", "Delete Keys"}, {"action", "anim.deleteKeys"}}},
+                           {"E", {{"label", "Next Key"}, {"action", "anim.nextKey"}}},
+                           {"W", {{"label", "Previous Key"}, {"action", "anim.prevKey"}}},
+                           {"NE", {{"label", "Mirror Pose"}, {"action", "pose.mirror"}}},
+                           {"NW", {{"label", "Zero Pose"}, {"action", "puppeteer.strings.zero"}}},
+                           {"SE", {{"label", "Pin or Unpin"}, {"action", "puppeteer.anim.pin"}}},
+                           {"SW", {{"label", "Curve Overlay"}, {"action", "puppeteer.curveOverlay"}}},
+                           {"overflow", json::array({{{"label", "Key Translate"}, {"action", "anim.setKeyTranslate"}},
+                                                     {{"label", "Key Rotate"}, {"action", "anim.setKeyRotate"}},
+                                                     {{"label", "Key Scale"}, {"action", "anim.setKeyScale"}},
+                                                     {{"separator", true}},
+                                                     {{"label", "Lock Key"}, {"action", "puppeteer.anim.lock"}}})}};
+    for (const char* name : {"viewportShift", "viewportShiftObject"})
+        markingMenus::add(ctx, std::string(kAnimateMode) + "/" + name, keysMenu);
     const events::SubscriptionId sub =
         events::subscribe(events::Event::SelectionChanged, [](const events::EventData&) { QTimer::singleShot(0, [] { ensureCharacter(); }); }, "Puppeteer");
     ctx.track("puppeteer:autoCharacter", [sub] { events::unsubscribe(sub); });
