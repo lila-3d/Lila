@@ -258,8 +258,10 @@ public:
         Hit hit;
         const brush::StrokeMode mode = sculptSettings().stroke.mode;
         const bool line = (mode == brush::StrokeMode::Line || mode == brush::StrokeMode::Curve) && !sculpt::dragsCursor(sculptSettings().brush);
-        if (!surfaceHit(*s, e->position(), view, hit) && !line)
-            return false;
+        // A press off the mesh never selects while sculpting: the stroke starts and takes effect once it reaches the
+        // surface. Brushes that hold the point under the cursor have nothing to hold, so the press does nothing.
+        if (!surfaceHit(*s, e->position(), view, hit) && !line && sculpt::dragsCursor(sculptSettings().brush))
+            return true;
         beginStroke(*s, e, view);
         return true;
     }
