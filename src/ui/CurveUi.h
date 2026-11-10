@@ -5,6 +5,8 @@
 #include "core/Export.h"
 #include "ui/ViewportTool.h"
 
+#include <QPointF>
+
 #include <vector>
 
 namespace lila::ui
@@ -74,6 +76,12 @@ std::vector<KeyHint> groomBrushKeys();
 QWidget* makeGroomBrushPage(QWidget* parent);
 void syncGroomBrushPage(QWidget* page);
 void hideGroomPalette();
+/** A mesh or clay under `at` that hair can grow from, or kNoNode; hovered meshes are highlighted for the groom tools. */
+scene::NodeId groomScalpUnder(const ViewInfo& view, QPointF at);
+/** Starts a groom on a mesh, or on a clay object baked to a mesh first (the log says so); null when it can't. */
+scene::Node* startGroomOn(scene::NodeId scalp);
+/** The groom the groom tools work on: the selection's, else one started on the selected mesh or clay, else the scene's only groom. */
+scene::Node* groomForSelection();
 void syncGroomPalette();
 /** Groom strands on a curve node drawn as hair into a frame (captures; the viewport draws them itself). False: not strands. */
 bool drawStrandsFor(render::FrameState& frame, const scene::Node& n, const glm::dmat4& world, const ViewInfo& view);

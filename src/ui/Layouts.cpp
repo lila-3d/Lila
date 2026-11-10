@@ -108,7 +108,7 @@ const std::vector<std::pair<std::string, json>>& presets()
         {"Level", preset(with({"levelToolkit", "stagehand.library", "modelingToolkit"}), {"levelToolkit", "channelBox"}, "Level",
                          {{"stagehand.library", {{"height", 0.4}}}}, {"stagehand.library"})},
         {"Effects", preset(with({"timeSlider"}), {"channelBox"}, "Effects")},
-        {"Groom", preset(with({}), {"channelBox"}, "Groom")},
+        {"Groom", preset(with({"groomPalette"}), {"groomPalette", "channelBox"}, "Groom", {{"groomPalette", {{"width", 300}}}})},
         {"Print", preset(with({"modelingToolkit"}), {"modelingToolkit", "channelBox"}, "Print")},
         {"Script", preset(with({"scriptEditor", "scriptOutput"}), {"scriptEditor", "channelBox"}, "Script", {{"scriptEditor", {{"height", 0.45}}}})},
     };

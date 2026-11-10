@@ -25,6 +25,7 @@
 #include "ui/GroomGpu.h"
 #include "ui/Icons.h"
 #include "ui/NodeHandles.h"
+#include "ui/PaintSelect.h"
 #include "ui/Panels.h"
 #include "ui/SpinScrub.h"
 #include "ui/Tools.h"
@@ -279,6 +280,16 @@ public:
             return b;
         };
 
+        mPages = new controls::Segmented(this);
+        mPages->add("Draw", {}, "Draw: stylized hair as locks, braids, ropes, ringlets, ponytails, buns and bangs, then shaped with the lock brushes",
+                    int(GroomPalettePage::Draw));
+        mPages->add("Strands", {}, "Strands: guides placed and combed one by one, for realistic hair and fur", int(GroomPalettePage::Groom));
+        connect(mPages, &controls::Segmented::picked, this, [](int page) {
+            viewportTools::activate(page == int(GroomPalettePage::Draw) ? "groom.drawHair" : "groom.brushes");
+        });
+        v->addWidget(mPages);
+        v->addSpacing(4);
+
         mDraw = new QWidget;
         auto* dv = new QVBoxLayout(mDraw);
         dv->setContentsMargins(0, 0, 0, 0);
@@ -286,7 +297,11 @@ public:
         std::vector<QWidget*> modeTiles;
         for (size_t i = 0; i < kModeButtons.size(); ++i)
         {
-            mModes[i] = tileButton(kModeButtons[i], [i] { setDrawHairMode(HairMode(i)); });
+            mModes[i] = tileButton(kModeButtons[i], [i] {
+                setDrawHairMode(HairMode(i));
+                if (!viewportTools::active() || std::string_view(viewportTools::active()->name()) != "Draw Hair")
+                    viewportTools::activate("groom.drawHair");
+            });
             modeTiles.push_back(mModes[i]);
         }
         dv->addWidget(controls::section("Mode", controls::grid(modeTiles, 4, mDraw), mDraw, kSections));
@@ -363,7 +378,7 @@ public:
         setCheckDefault(mMirror, false);
         connect(mMirror, &QCheckBox::toggled, this, [](bool on) {
             Graph& g = Graph::current();
-            if (Node* guides = groomPaletteGuides(); guides && on != (curve::symmetryAxis(*guides) != 0))
+            if (Node* guides = groomPaletteGuides(); guides && on != (curve::symmetryAxis(*guides) == 0))
             {
                 // A groom's guides mirror as the groom does.
                 Node* gr = groom::groomOf(g, *guides);
@@ -405,7 +420,7 @@ public:
         });
         options->addWidget(reset);
         v->addWidget(controls::section("Options", optionsBox, this, kSections));
-        v->addStretch();
+        v->addStretch(1);
 
         mRefresh = new QTimer(this);
         mRefresh->setSingleShot(true);
@@ -425,6 +440,10 @@ public:
 
     void sync()
     {
+        // Plain curves have one page; a groom switches between drawing locks and placing strands.
+        mPages->setVisible(mPage != GroomPalettePage::Sculpt);
+        if (mPage != GroomPalettePage::Sculpt)
+            mPages->setCurrent(int(mPage));
         mDraw->setVisible(mPage == GroomPalettePage::Draw);
         mSculpt->setVisible(mPage == GroomPalettePage::Sculpt);
         mGroom->setVisible(mPage == GroomPalettePage::Groom);
@@ -470,6 +489,7 @@ public:
 
 private:
     GroomPalettePage mPage = GroomPalettePage::Draw;
+    controls::Segmented* mPages = nullptr;
     QWidget *mDraw = nullptr, *mSculpt = nullptr, *mGroom = nullptr;
     std::array<QToolButton*, kModeButtons.size()> mModes{};
     std::array<QToolButton*, kBrushButtons.size()> mBrushes{};
@@ -504,31 +524,17 @@ public:
 
     void activate() override
     {
-        Graph& g = Graph::current();
-        Node* gr = selectedGroom(g);
-        if (!gr)
-        {
-            // A mesh selected on its own becomes the scalp of a new groom.
-            for (NodeId id : g.selection())
-                if (Node* n = g.node(id); n && n->type().isA("mesh"))
-                {
-                    const json made = runUi("createGroom", argsCall({n->path()}));
-                    if (made.is_object())
-                        gr = g.find(made.value("groom", std::string()));
-                    break;
-                }
-        }
+        Node* gr = groomForSelection();
         mGroom = gr ? gr->id() : scene::kNoNode;
         mControls.activate();
         showGroomPalette(GroomPalettePage::Draw);
-        if (!gr)
-            log::warn("Draw Hair: select a groom, or the mesh hair grows from");
     }
 
     void deactivate() override
     {
         mControls.deactivate();
         hideGroomPalette();
+        viewportTools::setHoverHighlight(scene::kNoNode);
         mStroke.clear();
         mPressure.clear();
         viewportTools::requestRedraw();
@@ -550,7 +556,10 @@ public:
             return false;
         if (!groomNode())
         {
-            log::warn("Draw Hair: select a groom, or the mesh hair grows from");
+            // No groom yet: the click picks the mesh it grows from.
+            if (Node* gr = startGroomOn(groomScalpUnder(view, e->position())))
+                mGroom = gr->id();
+            viewportTools::requestRedraw();
             return true;
         }
         mStroke.clear();
@@ -577,6 +586,11 @@ public:
             setSizingSecond(mSizeStart.second * std::pow(2.0, dy / 120.0));
             saveDrawHair();
             return true;
+        }
+        if (!groomNode())
+        {
+            groomScalpUnder(view, e->position());
+            viewportTools::requestRedraw();
         }
         if (!mStroking)
             return false;
@@ -647,7 +661,7 @@ public:
                         .subject = gr ? QString::fromStdString(gr->name()) : QString(),
                         .mode = kModeLabels[size_t(s.mode)],
                         .fields = {{"width", QString::number(s.width, 'f', 2)}},
-                        .prompt = gr ? QString() : QString("select a groom or a scalp mesh"),
+                        .prompt = gr ? QString() : QString("click the mesh hair grows from"),
                         .symmetry = mirrored ? std::optional<ToolSymmetry>(ToolSymmetry{true, QString("XYZ").mid(curve::symmetryAxis(*guides), 1)}) : std::nullopt});
         if (mSizing)
             drawSizing(p, gr);
@@ -1389,6 +1403,9 @@ QWidget* stackPanel(NodeId id)
 
 void showGroomPalette(GroomPalettePage page)
 {
+    // A layout that closed the docked toolkit gets the floating palette back when a groom tool starts.
+    if (QDockWidget* d = groomPaletteDock(); d && d->isHidden() && !d->isFloating())
+        d->setFloating(true);
     panels::show(kGroomPaletteId);
     if (gGroomPalette)
         gGroomPalette->setPage(page);
@@ -1397,8 +1414,71 @@ void showGroomPalette(GroomPalettePage page)
 
 void hideGroomPalette()
 {
-    if (QDockWidget* d = groomPaletteDock())
+    // Docked, it is a toolkit the layout keeps; only the floating palette follows the tool.
+    if (QDockWidget* d = groomPaletteDock(); d && d->isFloating())
         d->hide();
+}
+
+namespace
+{
+/** A clay node, or the mesh a clay surface feeds: live geometry hair cannot bind to. */
+bool isClay(Graph& g, const Node& n)
+{
+    if (n.type().name.starts_with("clay"))
+        return true;
+    if (!n.type().isA("mesh"))
+        return false;
+    const std::optional<scene::PlugRef> src = g.source({n.id(), scene::MeshNode::kInMesh, -1});
+    const Node* from = src ? g.node(src->node) : nullptr;
+    return from && from->type().isA("claySurface");
+}
+
+bool canGrowHair(Graph& g, const Node& n) { return n.type().isA("mesh") || isClay(g, n); }
+} // namespace
+
+NodeId groomScalpUnder(const ViewInfo& view, QPointF at)
+{
+    Graph& g = Graph::current();
+    NodeId hit = scene::kNoNode;
+    for (NodeId id : paintSelect::objectsUnder(view, at, 0.0))
+        if (Node* n = g.node(id); n && canGrowHair(g, *n))
+            hit = id;
+    viewportTools::setHoverHighlight(hit);
+    return hit;
+}
+
+Node* startGroomOn(NodeId scalp)
+{
+    Graph& g = Graph::current();
+    Node* n = g.node(scalp);
+    if (!n || !canGrowHair(g, *n))
+        return nullptr;
+    viewportTools::setHoverHighlight(scene::kNoNode);
+    std::string mesh = n->path();
+    if (isClay(g, *n))
+    {
+        // Roots bind to faces, which a live clay surface rebuilds on every edit: hair grows from a baked copy.
+        const json baked = runUi("convertClayToMesh", argsCall({mesh}));
+        if (!baked.is_string())
+            return nullptr;
+        log::info("Hair grows on a mesh: baked {} to {}; the clay is kept, hidden", n->name(), baked.get<std::string>());
+        mesh = baked.get<std::string>();
+    }
+    const json made = runUi("createGroom", argsCall({mesh}));
+    return made.is_object() ? g.find(made.value("groom", std::string())) : nullptr;
+}
+
+Node* groomForSelection()
+{
+    Graph& g = Graph::current();
+    for (NodeId id : g.selection())
+        if (Node* n = g.node(id))
+            if (Node* gr = groom::findGroom(g, *n))
+                return gr;
+    for (NodeId id : g.selection())
+        if (Node* n = g.node(id); n && canGrowHair(g, *n))
+            return startGroomOn(id);
+    return selectedGroom(g);
 }
 
 void syncGroomPalette()

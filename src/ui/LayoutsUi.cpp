@@ -8,6 +8,7 @@
 #include "ui/Actions.h"
 #include "ui/Deletion.h"
 #include "ui/DockSidebar.h"
+#include "ui/MenuSearch.h"
 #include "ui/Panels.h"
 #include "ui/Icons.h"
 #include "ui/Layouts.h"
@@ -130,6 +131,7 @@ LayoutController::LayoutController(QMainWindow* window, DockSidebars* sidebars, 
 
     mMenu = new QMenu("Layouts", window);
     mMenu->setIcon(icon("layout"));
+    mMenu->setProperty(menuSearch::kSearchSuffixProperty, " Layout");
     connect(mMenu, &QMenu::aboutToShow, this, &LayoutController::fillMenu);
     fillMenu();
 
@@ -470,6 +472,17 @@ void LayoutController::applyPreset(const json& preset)
             open.insert(n.get<std::string>());
             ensureDock(n.get<std::string>());
         }
+    // A tool palette the layout opens is its toolkit: docked in its area, not floating with the tool.
+    for (const std::string& name : open)
+    {
+        const panels::Panel* p = panels::registry().find(name);
+        QDockWidget* d = p && p->toolPalette ? dock(QString::fromStdString(name)) : nullptr;
+        if (!d || !d->isFloating())
+            continue;
+        d->hide();
+        d->setFloating(false);
+        mWindow->addDockWidget(p->area, d);
+    }
     for (QDockWidget* d : mWindow->findChildren<QDockWidget*>())
         if (d->parentWidget() == mWindow && !d->objectName().isEmpty())
             d->setVisible(open.count(d->objectName().toStdString()) > 0);
