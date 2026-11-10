@@ -1154,7 +1154,7 @@ void ViewportHeader::fillSnapMenu(QMenu* m)
         row->addWidget(hdrPresetButton(holder, angle, {}, true, QString(QChar(0x00B0))));
 
         const scene::Node* ref = scene::Graph::current().node(tool->reference());
-        QAction* surface = m->addAction(icon("target"), "Surface: " + (ref ? QString::fromStdString(ref->name()) : QString("None")));
+        QAction* surface = m->addAction(icon("target"), "Reference: " + (ref ? QString::fromStdString(ref->name()) : QString("None")));
         surface->setToolTip(hdrTip("retopo.setReference"));
         connect(surface, &QAction::triggered, this, [this] {
             activateView();

@@ -117,8 +117,6 @@ std::vector<std::vector<Run>> hintLines(const ToolStatus& s, double maxWidth)
     };
     if (!s.prompt.isEmpty())
         place({{s.prompt, kStatusPrompt}});
-    for (const KeyHint& k : keysShown() ? s.keys : std::vector<KeyHint>())
-        place({{k.keys, kStatusValue}, {k.what, kStatusLabel, kStatusPairGap}});
     if (lines.back().empty())
         lines.pop_back();
     return lines;
@@ -280,8 +278,15 @@ void flushToolMessages(OverlayPainter& p, const ViewInfo& view, const std::vecto
     gSelectionSymmetry.reset();
     if (sym)
         top = drawSymmetry(p, view, *sym, top, occupied) + 4.0;
+    // The corner key list follows what is active: the running tool's keys, which change with the modifiers held.
+    std::vector<KeyHint> toolKeys;
     for (const ToolStatus& s : gStatuses)
+    {
         top = drawStatus(p, view, s, top, occupied) + 4.0;
+        if (toolKeys.empty())
+            toolKeys = s.keys;
+    }
+    const bool toolActive = !gStatuses.empty();
     gStatuses.clear();
     double y = top + 16.0;
     for (const QueuedMessage& m : gMessages)
@@ -304,7 +309,7 @@ void flushToolMessages(OverlayPainter& p, const ViewInfo& view, const std::vecto
     }
     gMessages.clear();
     if (!gCornerKeysDrawn && keysShown())
-        if (const std::vector<KeyHint> keys = viewportKeys::forLayout(layouts::current()); !keys.empty())
+        if (const std::vector<KeyHint> keys = toolActive ? toolKeys : viewportKeys::forLayout(layouts::current()); !keys.empty())
             drawKeyList(p, QPointF(16.0, view.height - 84.0), keys);
     gCornerKeysDrawn = false;
 }

@@ -111,6 +111,7 @@ struct ToolStatus
     std::vector<ToolFlag> flags;
     /** What to do next, in a few words: "select a mesh", "click the start, then the end". */
     QString prompt;
+    /** Shown in the corner key list while the tool runs; list what the keys held now do, so it follows context. */
     std::vector<KeyHint> keys;
     /** Set by tools that mirror their edits; shown above the readout, not in it. */
     std::optional<ToolSymmetry> symmetry;

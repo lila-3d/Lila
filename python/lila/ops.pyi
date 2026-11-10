@@ -7665,12 +7665,13 @@ def retopoDrawSetDots(mesh: str | None = None, dots: Sequence[Any] | None = None
         create: Create the mesh if it doesn't exist (taking the reference's symmetry). Default False.
     """
 
-def retopoDrawSetReference(mesh: str | None = None, reference: str | None = None) -> Any:
+def retopoDrawSetReference(mesh: str | None = None, reference: str | None = None, create: bool | None = None) -> Any:
     """Retopo Draw: connect a different reference mesh to the retopo mesh, so drawing continues on that surface and resumes on it later. Returns the mesh name.
 
     Args:
         mesh: Retopo mesh.
         reference: The new reference mesh.
+        create: Create the mesh if it doesn't exist (taking the reference's symmetry). Default False.
     """
 
 def retopoPoles(*objects: Any, preset: str | None = None, method: str | None = None, targetFaces: int | None = None, countTolerance: float | None = None, timeout: float | None = None, targetEdgeLength: float | None = None, adaptivity: float | None = None, useHardEdges: bool | None = None, sharpAngle: float | None = None, symmetry: str | None = None, guides: Sequence[Any] | None = None, guidePoints: Sequence[Any] | None = None, featureGuides: Sequence[Any] | None = None, featureGuidePoints: Sequence[Any] | None = None, densityHandles: Sequence[Any] | None = None, pureQuads: bool | None = None, jointDensity: float | None = None, jointDensityReach: float | None = None, jointPoleAvoidance: float | None = None, edgesAround: int | None = None, resolveGaps: bool | None = None, poles: Sequence[Any] | None = None) -> Any:

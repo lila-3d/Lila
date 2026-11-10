@@ -203,6 +203,7 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"topo.cylinder", "cylinder"},
     {"topo.handles", "grip-vertical"},
     {"topo.relax", "wave-sine"},
+    {"topo.cap", "grid-pattern"},
     {"topo.settle", "arrow-down-to-arc"},
     {"mesh.relax", "wave-sine"},
     {"topo.region", "marquee"},
