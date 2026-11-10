@@ -80,7 +80,7 @@ struct SectionRecord
 struct RecordKey
 {
     glm::vec4 params{0.0f}, env{0.0f}, backTint{0.0f};
-    float gamma = 0.0f, saturation = 0.0f;
+    float gamma = 0.0f, saturation = 0.0f, keyTilt = 0.0f;
     uint32_t lightCount = 0;
     bool bevel = false, grey = false, twoSided = false, xray = false, table = false, instances = false, bindless = false, wire = false;
     uint64_t uploads = 0, evictions = 0;
@@ -5439,6 +5439,18 @@ struct Renderer::Impl
         destroyViewport(v);
     }
 
+    /** mesh.slang's params.w: 0 studio rig, 1 environment, 2 flat, 3 sculpt rig. */
+    float lightingParam(const FrameState& s) const
+    {
+        switch (s.lighting)
+        {
+        case FrameState::Lighting::Flat: return 2.0f;
+        case FrameState::Lighting::Sculpt: return 3.0f;
+        case FrameState::Lighting::Environment: return envLoaded ? 1.0f : 0.0f;
+        default: return 0.0f;
+        }
+    }
+
     glm::vec4 envParams(const FrameState& s) const
     {
         float r = glm::radians(s.envRotation);
@@ -5680,11 +5692,11 @@ struct Renderer::Impl
     {
         LILA_ZONE();
         RecordKey key;
-        const float lighting = s.lighting == FrameState::Lighting::Flat ? 2.0f : s.lighting == FrameState::Lighting::Environment && envLoaded ? 1.0f : 0.0f;
-        key.params = glm::vec4(s.exposure, s.zUp ? 1.0f : 0.0f, 0.0f, lighting);
+        key.params = glm::vec4(s.exposure, s.zUp ? 1.0f : 0.0f, s.rigRotation, lightingParam(s));
         key.env = envParams(s);
         key.backTint = s.backfaceTint;
         key.gamma = s.gamma;
+        key.keyTilt = s.rigTilt;
         key.saturation = s.envLightSaturation;
         key.lightCount = frameLightCount;
         key.bevel = frameBevel;
@@ -5763,10 +5775,8 @@ struct Renderer::Impl
         p.instances = frameInstanceAddress;
         p.firstInstance = b.first;
         p.eye = glm::vec4(glm::vec3(s.eye), 1.0f);
-        float lighting = s.lighting == FrameState::Lighting::Flat ? 2.0f
-                         : s.lighting == FrameState::Lighting::Environment && envLoaded ? 1.0f
-                                                                                        : 0.0f;
-        p.params = glm::vec4(s.exposure, s.zUp ? 1.0f : 0.0f, 0.0f, lighting);
+        p.params = glm::vec4(s.exposure, s.zUp ? 1.0f : 0.0f, 0.0f, lightingParam(s));
+        p.keyTilt = glm::radians(s.rigTilt);
         p.env = envParams(s);
         p.gamma = s.gamma;
         p.lights = frameLightAddress;
@@ -5774,7 +5784,7 @@ struct Renderer::Impl
         p.lightPad = d.lightingChannels;
         if (mat)
         {
-            p.extra = glm::vec4(mat->bevelRadius, frameBevel ? 1.0f : 0.0f, 0.0f, 0.0f);
+            p.extra = glm::vec4(mat->bevelRadius, frameBevel ? 1.0f : 0.0f, 0.0f, glm::radians(s.rigRotation));
             p.base = glm::vec4(mat->baseColor, mat->roughness);
             p.surface = glm::vec4(mat->metallic, mat->specular, mat->opacity, mat->opacityClip);
             p.emissive = mat->emissive;

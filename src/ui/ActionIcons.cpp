@@ -590,6 +590,8 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"viewport.toggleBackfaceCulling", "eye-off"},
     {"viewport.lighting.environment", "world"},
     {"viewport.lighting.studio", "bulb"},
+    {"viewport.lighting.sculpt", "sphere"},
+    {"viewport.toggleSculptLighting", "sphere"},
     {"viewport.lighting.flat", "bulb-off"},
     {"viewport.toggleLighting", "bulb"},
     {"viewport.vertexColors.off", "palette-off"},

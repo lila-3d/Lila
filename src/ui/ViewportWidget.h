@@ -345,6 +345,9 @@ private:
     bool mChannelDrag = false; // middle drag driving the channel box's highlighted channels
     bool mToolDrag = false;
     bool mSoftDrag = false;
+    /** Shift+Alt+right-drag: turning the view's light (viewportDisplay::turnLight). */
+    bool mLightDrag = false;
+    bool mLightDragged = false;
     double mSoftStartRadius = 0.0;
     scene::componentPick::Hover mPreselect;
     std::vector<uint32_t> mPreselectIsland; // in uv island select, the hovered face's island

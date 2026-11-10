@@ -452,6 +452,7 @@ std::string pythonFor(const json& target)
 
 void registerBuiltins()
 {
+    viewportKeys::registerBuiltins();
     auto cmd = [](std::string id, std::string label, std::string category, const char* command, json call, std::string doc) {
         std::string py = ops::toPython(command, call);
         add({.id = std::move(id), .label = std::move(label), .category = std::move(category), .doc = std::move(doc), .python = py,
@@ -830,6 +831,8 @@ void registerBuiltins()
     togglePref("viewport.toggleOutline", "Outlines", vd::kOutline, false,
                "Draws dark lines where depth or surface direction jumps, like inked edges. Viewport preview only.");
     togglePref("viewport.toggleShadows", "Shadows", vd::kShadows, true, "The soft ground shadow under meshes.");
+    togglePref("viewport.toggleKeys", "Keys", kShowKeysPref, true,
+               "Key hints on screen: the active tool's keys in its readout and corner list, and the layout's keys in the corner.");
     togglePref("viewport.smoothSubdivisions", "Show Smooth Subdivisions", vd::kSmoothSubdivisions, false,
                "Smooth preview draws the edges of every subdivided face, not just the edges of the mesh.");
     togglePref("viewport.defaultMaterial", "Use Default Material", vd::kDefaultMaterial, false, "Shades every mesh with the plain default material.");
@@ -870,6 +873,8 @@ void registerBuiltins()
                   .python = "lila.prefs.set(\"general\", \"/viewport/aa/mode\", \"temporal\")"});
     for (auto [mode, label, doc] : {std::tuple{"environment", "Environment Lighting", "Lights the scene with the HDRI environment."},
                                     {"studio", "Studio Lighting", "Lights the scene with a fixed studio rig, whatever the HDRI."},
+                                    {"sculpt", "Sculpt Lighting",
+                                     "One grazing key light over little fill, so surface detail reads while sculpting. Shift+Alt+right-drag turns it."},
                                     {"flat", "Flat Lighting", "Unlit base colors, for checking textures and silhouettes."}})
     {
         std::string m = mode;
@@ -878,6 +883,24 @@ void registerBuiltins()
                       .doc = doc,
                       .python = "lila.prefs.set(\"general\", \"/viewport/lighting\", \"" + m + "\")"});
     }
+    actions::add({.id = "viewport.resetLight", .label = "Reset Light", .category = "Display", .run = [] { vd::resetLight(); },
+                  .doc = "Puts the light back where it starts for the lighting mode in use: the HDRI unturned, or the studio or sculpt rig "
+                         "at its default rotation and angle. Shift+Alt+right-click in the viewport does the same.",
+                  .python = "lila.ui.run_action(\"viewport.resetLight\")"});
+    actions::add({.id = "viewport.toggleSculptLighting", .label = "Sculpt Lighting", .category = "Display", .run = [] {
+                      PrefStore& p = PrefStore::get();
+                      const std::string mode = p.value<std::string>("general", vd::kLighting, "environment");
+                      if (mode == "sculpt")
+                          p.set("general", vd::kLighting, p.value<std::string>("general", vd::kLightingBeforeSculpt, "environment"));
+                      else
+                      {
+                          p.set("general", vd::kLightingBeforeSculpt, mode);
+                          p.set("general", vd::kLighting, std::string("sculpt"));
+                      }
+                  },
+                  .doc = "Switches the viewport to sculpt lighting, or back to the lighting it had before.",
+                  .python = "lila.ui.run_action(\"viewport.toggleSculptLighting\")",
+                  .checked = [] { return PrefStore::get().value<std::string>("general", vd::kLighting, "environment") == "sculpt"; }});
     actions::add({.id = "viewport.toggleLighting", .label = "Scene Lights", .category = "Display", .run = [] {
                       PrefStore& p = PrefStore::get();
                       p.set("general", vd::kSceneLights, !p.value<bool>("general", vd::kSceneLights, true));

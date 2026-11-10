@@ -357,14 +357,22 @@ struct FrameState
     bool xray = false;            // shaded meshes see-through
     /** Materials shade with a 50% grey base colour; their maps' alpha, normals, ORM, emission and shading models still apply. */
     bool greyBaseColor = false;
-    /** Shaded lighting: the environment (falls back to the studio rig while none is loaded), the studio rig, or flat. */
+    /**
+     * Shaded lighting: the environment (falls back to the studio rig while none is loaded), the studio rig, flat, or the
+     * sculpt rig (one grazing key and little ambient, so surface form reads).
+     */
     enum class Lighting
     {
         Environment,
         Studio,
-        Flat
+        Flat,
+        Sculpt
     };
     Lighting lighting = Lighting::Environment;
+    /** Degrees the camera-relative studio and sculpt rigs turn around the view axis; 0 keys from above left. */
+    float rigRotation = 0.0f;
+    /** Degrees the sculpt rig's key sits off the view direction: 0 lights from the camera, 90 grazes. */
+    float rigTilt = 45.0f;
 
     // Image-based lighting. An empty path is the built-in neutral studio; changing it loads the new HDRI off-thread.
     std::string envPath;
