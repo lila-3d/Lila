@@ -340,7 +340,7 @@ void registerModeBundles(ext::Context& ctx)
     modes::add(ctx, {.id = kAnimateMode,
                      .label = "Puppeteer Animate",
                      .doc = "Pose the joints directly: click the mesh to pick the joint under it, turn it with the Spinner. "
-                            "U + left drag: Strings modes. Space tap: full-screen graph editor; Space hold: the hotbox.",
+                            "U + left drag: pin, contacts, stretch and zero. Space tap: the Curve Overlay (hold Shift to edit its keys); Space hold: the hotbox.",
                      .icon = "walk",
                      .layout = kAnimateLayout,
                      .hotkeys = animKeys,
