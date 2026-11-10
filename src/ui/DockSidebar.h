@@ -32,7 +32,7 @@ LILA_UI_API void arrangeBottomDocks(QMainWindow* window, const QList<QDockWidget
  */
 LILA_UI_API void revealDock(QDockWidget* dock);
 
-/** Dynamic property on a dock: its width (or height) as a tab when it has no size of its own remembered yet. */
+/** Dynamic property on a dock: its width when it opens in a column of its own and has no width remembered yet. */
 inline constexpr const char* kDefaultTabExtent = "lilaDefaultTabExtent";
 /** Dynamic property on a dock: shown, it takes the narrowest width its column allows, whatever it was before. */
 inline constexpr const char* kHugTabExtent = "lilaHugTabExtent";
