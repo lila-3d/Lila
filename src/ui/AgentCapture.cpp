@@ -17,6 +17,7 @@
 #include "scene/Transform.h"
 #include "ui/Camera.h"
 #include "ui/DebugDrawUi.h"
+#include "ui/DrawOverrides.h"
 #include "ui/HeightfieldDisplay.h"
 #include "ui/Environments.h"
 #include "ui/ImagePlaneUi.h"
@@ -26,7 +27,9 @@
 #include "ui/Overlay.h"
 #include "ui/TexLive.h"
 #include "ui/TextureCache.h"
+#include "ui/Theme.h"
 #include "ui/ViewportDisplay.h"
+#include "ui/ViewportHooks.h"
 #include "ui/ViewportRenderers.h"
 #include "ui/ViewportWidget.h"
 
@@ -176,6 +179,40 @@ void addSelection(render::FrameState& s, scene::NodeId id)
                 s.linesOnTop.push_back({wp(p) - d, hot});
                 s.linesOnTop.push_back({wp(p) + d, hot});
             }
+}
+
+/** The viewport's draw overrides (selected last, as it draws them) and extension drawers, into a capture's frame. */
+void drawOverlays(render::FrameState& s, const ViewInfo& view, scene::Graph& g)
+{
+    OverlayPainter painter(s.overlayTris, 1.0);
+    auto underSelected = [&](scene::NodeId id) {
+        for (scene::NodeId p = g.parent(id); p != scene::kNoNode; p = g.parent(p))
+            if (g.isSelected(p))
+                return true;
+        return false;
+    };
+    using HL = drawOverrides::Highlight;
+    for (int pass = 0; pass < 3; ++pass)
+        for (scene::NodeId id : g.nodes())
+        {
+            scene::Node* n = g.node(id);
+            const drawOverrides::DrawOverride* ov = n ? drawOverrides::forType(n->type()) : nullptr;
+            if (!ov || !ov->draw || !scene::effectivelyVisible(g, id))
+                continue;
+            const int rank = g.isSelected(id) ? 2 : underSelected(id) ? 1 : 0;
+            if (rank != pass)
+                continue;
+            drawOverrides::DrawContext dc{.frame = s, .painter = painter, .view = view, .node = *n};
+            dc.world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+            dc.highlight = rank == 2 ? HL::Selected : rank == 1 ? HL::UnderSelected : HL::None;
+            dc.color = rank == 2 ? themeLinear("wireSelected", glm::vec4(0.25f, 1.0f, 0.4f, 1.0f))
+                       : rank == 1 ? themeLinear("wireUnderSelected", glm::vec4(0.1f, 0.5f, 0.2f, 1.0f))
+                                   : themeLinear("wireframe", glm::vec4(0.02f, 0.02f, 0.02f, 1.0f));
+            ov->draw(dc);
+        }
+    for (const viewportHooks::Drawer& d : viewportHooks::drawers())
+        d(s, painter, view);
+    s.atlas = overlayAtlas();
 }
 
 void applyDisplayPrefs(render::FrameState& s, bool ortho)
@@ -424,6 +461,8 @@ QImage render(const Options& o, Timing* timing, int repeat)
         textures::waitForLoads(30.0);
         s.imagePlanes.clear();
         imagePlanes::drawInto(s, view);
+        if (o.overlays && qobject_cast<QGuiApplication*>(QCoreApplication::instance()))
+            drawOverlays(s, view, g);
     }
     if (o.label && qobject_cast<QGuiApplication*>(QCoreApplication::instance()))
     {
@@ -529,6 +568,7 @@ std::vector<FlagDef> optionFlags()
         {"showSelection", "", T::Bool, true, "Tint selected components, and outline selected terrains drawn from their heights."},
         {"samples", "", T::Int, 1, "Jittered frames averaged into the image: 16 or more gives a supersampled still.", {}, {}, 1.0, 1024.0},
         {"label", "", T::Bool, true, "Write the view's name in the top-left corner."},
+        {"overlays", "ov", T::Bool, false, "Draw what the viewport draws over the scene too: locators, curves' draw overrides, Soft Net lines and knots, extension drawers."},
     };
 }
 
@@ -568,6 +608,7 @@ Options optionsFrom(const json& j)
     flag({"grid"}, o.grid);
     flag({"showSelection", "show_selection"}, o.showSelection);
     flag({"label"}, o.label);
+    flag({"overlays"}, o.overlays);
     return o;
 }
 

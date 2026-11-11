@@ -31,6 +31,7 @@ struct Options
     bool grid = true;            // ground grid, perspective views only
     bool showSelection = true;   // tint selected faces, edges and vertices
     bool label = true;           // view name in the corner (GUI only: text needs the font system)
+    bool overlays = false;       // what the viewport draws over the scene: locators, net lines and knots, extension drawers (GUI only)
     std::optional<bool> ambientOcclusion; // overrides the viewport's ambient occlusion pref
     int samples = 1; // jittered frames averaged into the image (temporal antialiasing), for supersampled stills
 };
