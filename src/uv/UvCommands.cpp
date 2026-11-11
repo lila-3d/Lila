@@ -1397,6 +1397,43 @@ void registerCommands()
     });
 
     ops::registerCommand({
+        .name = "uvSeamViewOverride",
+        .doc = "Make a camera, locator or plane the seam view override: uvAuto, uvAutoSeams and uvHose then hide seams from it alone, "
+               "whatever seam views their options or flags name, and say so in their result and a toast. A perspective camera sees "
+               "from its eye, an orthographic one along its axis. With no node, clears the override. Returns the override's name, or "
+               "an empty string when cleared.",
+        .positionalDoc = "node",
+        .run = [](const Args& a) -> json {
+            Graph& g = graph();
+            Node* target = nullptr;
+            if (!a.positional.empty() && a.positional[0].is_string() && !a.positional[0].get<std::string>().empty())
+            {
+                const std::string name = a.positional[0].get<std::string>();
+                target = g.find(name);
+                if (!target || !target->type().isA("transform"))
+                    throw CommandError("uvSeamViewOverride: " + name + " is not a camera, locator or mesh");
+            }
+            for (NodeId id : g.nodes())
+                if (Node* n = g.node(id); n && n != target)
+                    if (const bool* on = attrValue<bool>(*n, kSeamViewOverrideAttr); on && *on)
+                        ops::execute("setAttr", {{"args", {n->path() + "." + kSeamViewOverrideAttr, false}}});
+            if (!target)
+                return "";
+            const std::string path = target->path();
+            if (target->type().attrIndex(kSeamViewAttr) < 0)
+                addSeamViewAttr(path, 1.0);
+            if (target->type().attrIndex(kSeamViewOverrideAttr) < 0)
+                ops::execute("addAttr", {{"args", {path}},
+                                         {"longName", kSeamViewOverrideAttr},
+                                         {"attributeType", "bool"},
+                                         {"doc", "Auto UV, Auto Seams and Hose UVs hide seams from this view alone, whatever their options say."}});
+            ops::execute("setAttr", {{"args", {path + "." + kSeamViewOverrideAttr, true}}});
+            return target->name();
+        },
+        .examples = {"uvSeamViewOverride(\"camera1\")", "uvSeamViewOverride()"},
+    });
+
+    ops::registerCommand({
         .name = "uvCutEdges",
         .doc = "Mark the selected edges as uv seams.",
         .run = [](const Args&) -> json {
@@ -1451,43 +1488,6 @@ void registerCommands()
                 return {{"faces", faces.size()}};
             });
         },
-    });
-
-    ops::registerCommand({
-        .name = "uvSeamViewOverride",
-        .doc = "Make a camera, locator or plane the seam view override: uvAuto, uvAutoSeams and uvHose then hide seams from it alone, "
-               "whatever seam views their options or flags name, and say so in their result and a toast. A perspective camera sees "
-               "from its eye, an orthographic one along its axis. With no node, clears the override. Returns the override's name, or "
-               "an empty string when cleared.",
-        .positionalDoc = "node",
-        .run = [](const Args& a) -> json {
-            Graph& g = graph();
-            Node* target = nullptr;
-            if (!a.positional.empty() && a.positional[0].is_string() && !a.positional[0].get<std::string>().empty())
-            {
-                const std::string name = a.positional[0].get<std::string>();
-                target = g.find(name);
-                if (!target || !target->type().isA("transform"))
-                    throw CommandError("uvSeamViewOverride: " + name + " is not a camera, locator or mesh");
-            }
-            for (NodeId id : g.nodes())
-                if (Node* n = g.node(id); n && n != target)
-                    if (const bool* on = attrValue<bool>(*n, kSeamViewOverrideAttr); on && *on)
-                        ops::execute("setAttr", {{"args", {n->path() + "." + kSeamViewOverrideAttr, false}}});
-            if (!target)
-                return "";
-            const std::string path = target->path();
-            if (target->type().attrIndex(kSeamViewAttr) < 0)
-                addSeamViewAttr(path, 1.0);
-            if (target->type().attrIndex(kSeamViewOverrideAttr) < 0)
-                ops::execute("addAttr", {{"args", {path}},
-                                         {"longName", kSeamViewOverrideAttr},
-                                         {"attributeType", "bool"},
-                                         {"doc", "Auto UV, Auto Seams and Hose UVs hide seams from this view alone, whatever their options say."}});
-            ops::execute("setAttr", {{"args", {path + "." + kSeamViewOverrideAttr, true}}});
-            return target->name();
-        },
-        .examples = {"uvSeamViewOverride(\"camera1\")", "uvSeamViewOverride()"},
     });
 
     ops::registerCommand({
