@@ -879,6 +879,8 @@ TEST_CASE("skirt: a box wall's union on a slope and on bumpy terrain keeps its b
     const double slope = std::tan(glm::radians(25.0));
     auto sloped = [&](double x, double z) { return slope * (x * 0.8 + z * 0.6); };
     auto bumpy = [](double x, double z) { return 10.0 * std::sin(x / 90.0) * std::cos(z / 70.0) + 4.0 * std::sin((x + z) / 55.0); };
+    // Curvature radius near 2 x the width.
+    auto harsh = [](double x, double z) { return 12.0 * std::sin(x / 70.0) * std::cos(z / 55.0) + 6.0 * std::sin((x + z) / 31.0); };
     for (const double cell : {50.0, 10.0})
     {
         INFO("terrain cell " << cell);
@@ -889,6 +891,10 @@ TEST_CASE("skirt: a box wall's union on a slope and on bumpy terrain keeps its b
         {
             INFO("bumpy");
             checkUnionSkirt(objs, groundOf(cell, bumpy), 30.0);
+        }
+        {
+            INFO("harsh bumps");
+            checkUnionSkirt(objs, groundOf(cell, harsh), 30.0);
         }
     }
 }
