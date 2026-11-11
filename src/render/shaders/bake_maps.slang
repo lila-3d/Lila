@@ -234,12 +234,17 @@ float3 aoDirection(uint k, uint rays, float r1, float r2, float3 t, float3 b, fl
 }
 
 // The surface met along n is a back face of a high that also closes behind the point (along -n): an open lid doesn't.
-bool aoBuried(float3 o, float3 n)
+// exit is where the point leaves that high on the nearer side, just outside it.
+bool aoBuried(float3 o, float3 n, out float3 exit)
 {
     TraceHit up, down;
     up.front = true;
     down.front = true;
-    return traceClosest(o, n, pc.boundsMin.w, false, up) && !up.front && traceClosestHigh(o, -n, pc.boundsMin.w, up.high, down) && !down.front;
+    exit = o;
+    if (!(traceClosest(o, n, pc.boundsMin.w, false, up) && !up.front && traceClosestHigh(o, -n, pc.boundsMin.w, up.high, down) && !down.front))
+        return false;
+    exit = up.t <= down.t ? o + n * (up.t + pc.boundsExt.w) : o - n * (down.t + pc.boundsExt.w);
+    return true;
 }
 
 // Cosine-weighted occlusion from the hit, the same ray sequence as the CPU kernel. rays per sample in pc.rays.
@@ -258,7 +263,7 @@ void aoCS(uint3 id: SV_DispatchThreadID)
     HitRecord h = pc.hits[i];
     if ((h.flags & kHitValid) == 0)
     {
-        writeOut(i, float4(1.0), true);
+        writeOut(i, float4(0.0), false);
         return;
     }
     float3 n = h.normal;
@@ -286,12 +291,13 @@ void aoCS(uint3 id: SV_DispatchThreadID)
                 ++backs;
         }
     }
-    // Buried inside another high (where parts meet): only front faces occlude it.
-    if (backs * 4 >= rays * 3 && aoBuried(o, n))
+    // Buried inside another high (where parts meet): seen from where it leaves that high; only front faces occlude.
+    float3 exit;
+    if (backs * 4 >= rays * 3 && aoBuried(o, n, exit))
     {
         blocked = 0;
         for (uint k = 0; k < rays; ++k)
-            if (traceClosest(o, aoDirection(k, rays, r1, r2, t, b, n), pc.boundsMin.w, true, th))
+            if (traceClosest(exit, aoDirection(k, rays, r1, r2, t, b, n), pc.boundsMin.w, true, th))
                 ++blocked;
     }
     float ao = 1.0 - float(blocked) / float(rays);

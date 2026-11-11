@@ -274,12 +274,19 @@ bool frontOccluded(const MapContext& ctx, OccluderScope scope, uint32_t high, ui
     return false;
 }
 
-/** The surface met along n is a back face of a high that also closes behind the point (along -n): an open lid doesn't. */
-bool aoBuried(const MapContext& ctx, OccluderScope scope, uint32_t low, const glm::vec3& o, const glm::vec3& n, float tMax)
+/**
+ * A point buried inside a high: the surface met along n is a back face of a high that also closes behind it (along -n),
+ * which an open lid doesn't. exit is where the point leaves that high on the nearer side, just outside it.
+ */
+bool aoBuried(const MapContext& ctx, OccluderScope scope, uint32_t low, const glm::vec3& o, const glm::vec3& n, float tMax, glm::vec3& exit)
 {
     TraceHit up, down;
-    return ctx.tracer->closestHit(ctx.groupIndex, scope, kNoHit, low, RayKind::Occlusion, o, n, tMax, up) && up.backface && up.high != kNoHit &&
-           ctx.tracer->closestHit(ctx.groupIndex, OccluderScope::Self, up.high, kNoHit, RayKind::Occlusion, o, -n, tMax, down) && down.backface;
+    if (!(ctx.tracer->closestHit(ctx.groupIndex, scope, kNoHit, low, RayKind::Occlusion, o, n, tMax, up) && up.backface && up.high != kNoHit &&
+          ctx.tracer->closestHit(ctx.groupIndex, OccluderScope::Self, up.high, kNoHit, RayKind::Occlusion, o, -n, tMax, down) && down.backface))
+        return false;
+    const float step = std::max(1e-4f * glm::length(ctx.group.highMax - ctx.group.highMin), 1e-4f);
+    exit = up.distance <= down.distance ? o + n * (up.distance + step) : o - n * (down.distance + step);
+    return true;
 }
 
 void aoKernel(const MapContext& ctx, std::span<const TexelSample> samples, std::span<const HitRecord> hits, std::span<glm::vec4> out,
@@ -295,9 +302,10 @@ void aoKernel(const MapContext& ctx, std::span<const TexelSample> samples, std::
     const float eps = std::max(1e-4f * diag, 1e-4f);
     for (size_t i = 0; i < samples.size(); ++i)
     {
-        valid[i] = 1;
         const HitRecord& h = hits[i];
-        if (!(h.flags & kHitValid) || !ctx.tracer)
+        // A miss is left to the texel's other samples or the fill, never baked as open sky.
+        valid[i] = (h.flags & kHitValid) ? 1 : 0;
+        if (!valid[i] || !ctx.tracer)
         {
             out[i] = glm::vec4(1.0f);
             continue;
@@ -328,12 +336,14 @@ void aoKernel(const MapContext& ctx, std::span<const TexelSample> samples, std::
                 backs += th.backface ? 1 : 0;
             }
         }
-        // Buried inside another high (where parts meet): only front faces occlude it.
-        if (backs * 4 >= rays * 3 && aoBuried(ctx, scope, samples[i].low, o, n, dist))
+        // Buried inside another high (where parts meet): seen from where it leaves that high, so it shades like the
+        // surface just outside, dark facing in and light facing out; only front faces occlude.
+        glm::vec3 exit;
+        if (backs * 4 >= rays * 3 && aoBuried(ctx, scope, samples[i].low, o, n, dist, exit))
         {
             blocked = 0;
             for (int k = 0; k < rays; ++k)
-                blocked += frontOccluded(ctx, scope, h.high, samples[i].low, o, direction(k), dist) ? 1 : 0;
+                blocked += frontOccluded(ctx, scope, h.high, samples[i].low, exit, direction(k), dist) ? 1 : 0;
         }
         const float ao = 1.0f - float(blocked) / float(rays);
         out[i] = glm::vec4(ao, ao, ao, 1.0f);
@@ -475,7 +485,7 @@ void registerBuiltinMaps()
                  .label = "Ambient Occlusion",
                  .suffix = "ao",
                  .doc = "Cosine-weighted occlusion from the high's surface; a point buried inside another high (where parts meet) "
-                        "is occluded only by front faces, so it never turns black. options rays (64), distance (cm, 0 = the "
+                        "shades like the surface where it leaves that high, front faces only. options rays (64), distance (cm, 0 = the "
                         "group's high bounds), scope (self, group, all; default the group's aoScope).",
                  .secondaryRays = true,
                  .cpu = aoKernel});

@@ -309,6 +309,21 @@ TEST_CASE("GPU bake matches the CPU: isolated groups, AO scopes and backfaces")
         compare(cpuBuried, bakeWith(p3, {"ao"}, be), "ao", 0.02f, 0.1f, 0.01);
     }
 
+    // A high under a roof covering only the floor's middle: missed texels fill from their neighbours on the GPU too.
+    newScene();
+    const std::string rim = addMesh("e_low", plane(1));
+    const std::string middle = addMesh("e_mid", plane(1, {0.0f, 0.0f}, {1.0f, 1.0f}, 60.0));
+    const std::string roof = addMesh("e_roof", lifted(plane(1, {0.0f, 0.0f}, {1.0f, 1.0f}, 100.0), 5.0));
+    const std::string p4 = project(dir, 32, 4);
+    ops::execute("bakeGroup", {{"args", {"e"}}, {"project", p4}, {"lows", {rim}}, {"highs", {middle, roof}}, {"frontal", 2.0}, {"rear", 2.0}});
+    ops::execute("setBakeMap", {{"args", {"ao"}}, {"project", p4}, {"options", {{"rays", 32}, {"distance", 100.0}}}});
+    const Baked cpuMiss = bakeWith(p4, {"ao"}, "cpu");
+    for (const std::string& be : gpuBackends())
+    {
+        INFO("backend " << be);
+        compare(cpuMiss, bakeWith(p4, {"ao"}, be), "ao", 0.02f, 0.1f, 0.01);
+    }
+
     // A high facing away: every ray meets a back face, and the GPU must call it one too.
     newScene();
     const std::string low = addMesh("c_low", plane(1));

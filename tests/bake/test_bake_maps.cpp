@@ -567,6 +567,23 @@ TEST_CASE("AO: a point buried inside another high isn't black")
     CHECK(texel(img, 5, 8).r < 0.9f);
 }
 
+TEST_CASE("AO: a texel whose rays miss the high takes its neighbours' occlusion, not open sky")
+{
+    newScene();
+    const fs::path dir = tempDir("lila_bakemaps_aomiss");
+    // The high covers only the floor's middle, under a 5 cm roof; the floor's rim finds no high.
+    const std::string floor = addMesh("floor", plane(1));
+    const std::string middle = addMesh("middle", plane(1, {0.0f, 0.0f}, {1.0f, 1.0f}, 60.0));
+    const std::string roof = addMesh("roof", lifted(plane(1, {0.0f, 0.0f}, {1.0f, 1.0f}, 100.0), 5.0));
+    const std::string p = project(dir, 16, 1, "exr");
+    ops::execute("bakeGroup", {{"args", {"g"}}, {"project", p}, {"lows", {floor}}, {"highs", {middle, roof}}, {"frontal", 2.0}, {"rear", 2.0}});
+    setMap(p, "ao", {{"rays", 64}, {"distance", 100.0}});
+    const json out = ops::execute("bake", {{"project", p}, {"maps", {"ao"}}, {"backend", "cpu"}});
+    const image::Image img = readImage(outputFor(out, "ao"));
+    CHECK(texel(img, 8, 8).r < 0.5f);
+    CHECK(texel(img, 1, 8).r < 0.5f);
+}
+
 TEST_CASE("a self high ignores its low's normal map, so rebaking doesn't compound the last bake")
 {
     newScene();
