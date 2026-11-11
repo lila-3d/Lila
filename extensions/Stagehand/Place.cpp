@@ -419,8 +419,8 @@ json placedJson(Graph& g, NodeId root, const Asset& a, const std::string& mode)
 
 /**
  * Renders thumb.png for starter props that have none (or all, with force): each model is brought into the scene,
- * captured alone and taken out again inside an undo chunk that is then cancelled, so neither the scene nor undo keeps
- * a trace. Needs captureView, which the app and batch mode have.
+ * captured alone and taken out again with undo recording off, so neither the scene nor undo keeps a trace. Needs
+ * captureView, which the app and batch mode have.
  */
 json renderStarterThumbnails(Graph& g, bool force)
 {
@@ -446,7 +446,10 @@ json renderStarterThumbnails(Graph& g, bool force)
     }
     const std::vector<NodeId> previous = g.selection();
     int64_t rendered = 0;
-    undo.openChunk("Starter thumbnails");
+    // Drawing pumps events, so a script may change the scene meanwhile; with nothing recorded, nothing is rolled back
+    // over its changes.
+    const bool recording = undo.enabled();
+    undo.setEnabled(false);
     try
     {
         for (const Asset& a : todo)
@@ -472,7 +475,12 @@ json renderStarterThumbnails(Graph& g, bool force)
                                          {"grid", false},
                                          {"label", false},
                                          {"showSelection", false}});
-            ops::execute("delete", {{"args", names}});
+            json left = json::array();
+            for (const json& n : names)
+                if (g.find(n.get<std::string>()))
+                    left.push_back(n);
+            if (!left.empty())
+                ops::execute("delete", {{"args", left}});
             ++rendered;
         }
     }
@@ -480,12 +488,12 @@ json renderStarterThumbnails(Graph& g, bool force)
     {
         out["thumbnailNote"] = std::string("stopped: ") + e.what();
     }
-    undo.cancelChunk();
     std::vector<NodeId> keep;
     for (NodeId id : previous)
         if (g.node(id))
             keep.push_back(id);
     g.select(keep);
+    undo.setEnabled(recording);
     library::reload();
     out["thumbnails"] = rendered;
     out["missing"] = int64_t(todo.size()) - rendered;

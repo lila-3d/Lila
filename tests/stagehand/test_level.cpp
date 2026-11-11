@@ -497,6 +497,28 @@ TEST_CASE("library: starter thumbnails are drawn without leaving anything in the
     // The last undo step is still the cube.
     run("undo");
     CHECK_FALSE(run("objExists", {{"args", {keep}}}).get<bool>());
+
+    // A script that empties the scene while a thumbnail is drawn (drawing pumps events) leaves nothing to roll back.
+    ops::registerCommand({.name = "captureView",
+                          .flags = {{"path", "", ArgType::String, nullptr, ""},
+                                    {"view", "", ArgType::String, nullptr, ""},
+                                    {"width", "", ArgType::Int, nullptr, ""},
+                                    {"height", "", ArgType::Int, nullptr, ""},
+                                    {"display", "", ArgType::String, nullptr, ""},
+                                    {"isolate", "", ArgType::Bool, nullptr, ""},
+                                    {"frameSelection", "", ArgType::Bool, nullptr, ""},
+                                    {"grid", "", ArgType::Bool, nullptr, ""},
+                                    {"label", "", ArgType::Bool, nullptr, ""},
+                                    {"showSelection", "", ArgType::Bool, nullptr, ""}},
+                          .undoable = false,
+                          .run = [](const Args& a) -> json {
+                              ops::execute("newScene", json::object());
+                              std::ofstream(a.get<std::string>("path"), std::ios::binary) << "png";
+                              return a.get<std::string>("path");
+                          }});
+    CHECK_NOTHROW(run("libraryStarter", {{"rebuild", true}}));
+    ops::unregisterCommand("captureView");
+    CHECK(scene::Graph::current().nodes().size() <= nodes);
 }
 
 TEST_CASE("library: a saved prop comes back with one body and its snap points, and no empty transforms for them")
