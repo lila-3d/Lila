@@ -41,7 +41,7 @@ Plan: `C:\Users\Jared\.claude\plans\enumerated-watching-quilt.md` is an index; e
 ## Verifying UI work cheaply
 
 - Check state, not pixels, by default: over MCP `execute_python`, read attributes (`ops.getAttr`), widget state (find widgets by class and read text, checked state, enabled, items) and command results. Assert the numbers.
-- Take a screenshot (`captureView`, or a widget grab) only where the visual result is the point: viewport drawing, layout, styling, icons. One capture at the end of a check, not one per step. `captureView` doesn't draw curves.
+- Take a screenshot (`captureView`, or a widget grab) only where the visual result is the point: viewport drawing, layout, styling, icons. One capture at the end of a check, not one per step. `captureView` draws curves, locators and Soft Nets only with `overlays=True`.
 
 ## Token hygiene
 
