@@ -339,3 +339,18 @@ TEST_CASE("plain mesh with no pattern drapes at its own edge lengths")
         }
     CHECK(worst < 1.15f);
 }
+
+TEST_CASE("a clipped distance field matches the full one inside its box")
+{
+    std::vector<Vec3> points;
+    std::vector<std::array<int, 3>> tris;
+    clothSphere(0.5f, 24, 48, points, tris);
+    const Sdf full = sdfFromMesh(points, tris, 0.02f, 0.1f);
+    const Vec3 lo{-0.15f, 0.3f, -0.15f}, hi{0.15f, 0.7f, 0.15f};
+    const Sdf clipped = sdfFromMesh(points, tris, 0.02f, 0.1f, &lo, &hi);
+    CHECK(size_t(clipped.nx) * clipped.ny * clipped.nz < size_t(full.nx) * full.ny * full.nz / 10);
+    for (const Vec3& p : {Vec3{0.f, 0.45f, 0.f}, Vec3{0.05f, 0.52f, -0.05f}, Vec3{-0.1f, 0.6f, 0.1f}})
+        CHECK(clipped.sample(p) == doctest::Approx(full.sample(p)).epsilon(0.05));
+    const Vec3 farLo{3.f, 3.f, 3.f}, farHi{4.f, 4.f, 4.f};
+    CHECK(sdfFromMesh(points, tris, 0.02f, 0.1f, &farLo, &farHi).nx == 0);
+}

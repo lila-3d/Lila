@@ -1,5 +1,6 @@
 // tailorDrapeMesh: any mesh dropped as cloth onto the meshes under it, its own edge lengths as the rest shape.
 
+#include "ClothGpu.h"
 #include "Tailor.h"
 #include "TailorCore.h"
 
@@ -7,6 +8,7 @@
 #include <lila/Deformer.h>
 #include <lila/Extension.h>
 #include <lila/Graph.h>
+#include <lila/Log.h>
 #include <lila/Mesh.h>
 #include <lila/MeshOps.h>
 #include <lila/Node.h>
@@ -26,6 +28,7 @@ namespace
 {
 using T = ArgType;
 constexpr const char* kCmd = "tailorDrapeMesh";
+constexpr size_t kGpuFrom = 400;
 
 bool isMesh(const Node& n) { return n.type().isA("mesh"); }
 
@@ -102,18 +105,58 @@ float meanEdge(const ClothMesh& cm)
     return cm.tris.empty() ? 0.f : float(sum / double(cm.tris.size()));
 }
 
-/** Cell size for a collider's distance field: fine enough for the cloth's edges, capped near 160 cells across. */
-float sdfCell(const std::vector<Vec3>& pts, float clothEdge)
+/**
+ * Where the cloth can reach: its bounds grown by its diagonal on every side, so a sheet sliding or hanging off an edge
+ * still meets the colliders. The distance fields only cover this.
+ */
+std::pair<Vec3, Vec3> reach(const ClothMesh& cm)
 {
     Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
-    for (const Vec3& p : pts)
+    for (const Vec3& p : cm.rest3d)
         for (int a = 0; a < 3; ++a)
         {
             lo[a] = std::min(lo[a], p[a]);
             hi[a] = std::max(hi[a], p[a]);
         }
-    const float extent = std::max({hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2], 0.01f});
-    return std::max({extent / 160.f, std::min(clothEdge * 0.5f, 0.02f), 0.002f});
+    const float grow = std::sqrt((hi[0] - lo[0]) * (hi[0] - lo[0]) + (hi[1] - lo[1]) * (hi[1] - lo[1]) + (hi[2] - lo[2]) * (hi[2] - lo[2])) + 0.05f;
+    for (int a = 0; a < 3; ++a)
+    {
+        lo[a] -= grow;
+        hi[a] += grow;
+    }
+    return {lo, hi};
+}
+
+/** Cell size for the distance fields: fine enough for the cloth's edges, capped near 128 cells across the reach. */
+float sdfCell(const std::pair<Vec3, Vec3>& box, float clothEdge)
+{
+    const float extent = std::max({box.second[0] - box.first[0], box.second[1] - box.first[1], box.second[2] - box.first[2]});
+    return std::max({extent / 128.f, std::min(clothEdge * 0.5f, 0.02f), 0.002f});
+}
+/**
+ * Runs step (one frame; null on failure) until no point moves more than half a millimetre a frame for a few frames
+ * running, or frames run out. The positions it ended with, empty on failure.
+ */
+template <class Step>
+std::vector<Vec3> settle(int frames, progress::Scope& scope, int& ran, bool& settled, Step step)
+{
+    std::vector<Vec3> prev;
+    int still = 0;
+    for (ran = 0, settled = false; ran < frames && !settled; ++ran)
+    {
+        scope.checkCancel();
+        const std::vector<Vec3>* x = step();
+        if (!x)
+            return {};
+        float most = 0.f;
+        for (size_t i = 0; i < x->size() && i < prev.size(); ++i)
+            most = std::max(most, std::abs((*x)[i][0] - prev[i][0]) + std::abs((*x)[i][1] - prev[i][1]) + std::abs((*x)[i][2] - prev[i][2]));
+        prev = *x;
+        still = ran > 20 && most < 5e-4f ? still + 1 : 0;
+        settled = still >= 5;
+        scope.step();
+    }
+    return prev;
 }
 } // namespace
 
@@ -198,7 +241,8 @@ void registerDrapeMesh(ext::Context& ctx)
                 fine = geo::subdivide(*cur, {.levels = levels, .sharpBoundary = true}, &map);
                 cm = clothFrom(fine, world, toCloth);
             }
-            const float clothEdge = meanEdge(cm);
+            const std::pair<Vec3, Vec3> box = reach(cm);
+            const float cell = sdfCell(box, meanEdge(cm));
 
             const int frames = int(a.get<int64_t>("frames"));
             progress::Scope scope("Draping " + cloth->path(), double(frames) + 1.0, progress::Cancellable);
@@ -210,7 +254,8 @@ void registerDrapeMesh(ext::Context& ctx)
                     std::vector<Vec3> pts;
                     std::vector<std::array<int, 3>> tris;
                     colliderTriangles(*m, worldOf(g, *c), pts, tris);
-                    sdfs.push_back(sdfFromMesh(pts, tris, sdfCell(pts, clothEdge), 0.05f));
+                    if (Sdf sdf = sdfFromMesh(pts, tris, cell, 0.05f, &box.first, &box.second); sdf.nx > 0)
+                        sdfs.push_back(std::move(sdf));
                 }
             std::vector<const Sdf*> sdfPtrs;
             for (const Sdf& s : sdfs)
@@ -223,30 +268,37 @@ void registerDrapeMesh(ext::Context& ctx)
             s.substeps = 4;
             s.collisionThickness = float(a.get<double>("gap") / kCmPerM);
             s.selfCollision = a.get<bool>("selfCollision");
-            ClothSolver solver;
-            solver.reset(cm, garment, s);
-            solver.setColliders(sdfPtrs);
-
-            // Settled once no point moves more than half a millimetre a frame for a few frames running.
-            int ran = 0, still = 0;
-            bool settled = false;
-            std::vector<Vec3> prev = solver.positions();
-            for (; ran < frames && !settled; ++ran)
+            int ran = 0;
+            bool settled = false, gpu = false;
+            std::vector<Vec3> x;
+            // A GPU frame costs about the same whatever the size, so small cloths are quicker on the CPU.
+            if (cm.rest3d.size() > kGpuFrom && ClothGpu::available())
             {
-                scope.checkCancel();
-                solver.step();
-                float most = 0.f;
-                const std::vector<Vec3>& x = solver.positions();
-                for (size_t i = 0; i < x.size(); ++i)
-                    most = std::max(most, std::abs(x[i][0] - prev[i][0]) + std::abs(x[i][1] - prev[i][1]) + std::abs(x[i][2] - prev[i][2]));
-                prev = x;
-                still = ran > 20 && most < 5e-4f ? still + 1 : 0;
-                settled = still >= 5;
-                scope.step();
+                ClothGpu solver;
+                std::string err;
+                solver.setColliders(sdfPtrs);
+                bool ok = solver.reset(cm, garment, s, &err);
+                if (ok)
+                    x = settle(frames, scope, ran, settled, [&]() -> const std::vector<Vec3>* {
+                        ok = solver.step(&err);
+                        return ok ? &solver.positions() : nullptr;
+                    });
+                gpu = ok;
+                if (!ok)
+                    log::warn("{}: GPU drape failed, using the CPU solver: {}", kCmd, err);
+            }
+            if (!gpu)
+            {
+                ClothSolver solver;
+                solver.reset(cm, garment, s);
+                solver.setColliders(sdfPtrs);
+                x = settle(frames, scope, ran, settled, [&] {
+                    solver.step();
+                    return &solver.positions();
+                });
             }
 
             const glm::dmat4 toLocal = glm::inverse(world);
-            const std::vector<Vec3>& x = solver.positions();
             auto placed = [&](geo::Index finePoint, glm::dvec3& out) {
                 const int i = finePoint < toCloth.size() ? toCloth[finePoint] : -1;
                 if (i < 0 || !std::isfinite(x[i][0]) || !std::isfinite(x[i][1]) || !std::isfinite(x[i][2]))
@@ -265,7 +317,7 @@ void registerDrapeMesh(ext::Context& ctx)
             json names = json::array();
             for (Node* c : colliders)
                 names.push_back(c->path());
-            return {{"mesh", cloth->path()}, {"colliders", names}, {"frames", ran}, {"settled", settled}, {"detailLevels", levels}};
+            return {{"mesh", cloth->path()}, {"colliders", names}, {"frames", ran}, {"settled", settled}, {"detailLevels", levels}, {"gpu", gpu}};
         },
         .examples = {"tailorDrapeMesh('Plane')", "tailorDrapeMesh('Tablecloth', colliders=['Table'], fabric='Linen')"},
     });

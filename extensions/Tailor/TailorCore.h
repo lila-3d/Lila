@@ -226,7 +226,9 @@ struct Sdf
     float sample(const Vec3& p, Vec3* gradient = nullptr) const;
 };
 
-Sdf sdfFromMesh(const std::vector<Vec3>& points, const std::vector<std::array<int, 3>>& tris, float cell, float padding);
+/** The grid covers the mesh's bounds plus padding, cut to [clipLo, clipHi] when given; empty when they miss. */
+Sdf sdfFromMesh(const std::vector<Vec3>& points, const std::vector<std::array<int, 3>>& tris, float cell, float padding,
+                const Vec3* clipLo = nullptr, const Vec3* clipHi = nullptr);
 
 struct SolverSettings
 {
