@@ -8,6 +8,7 @@
 #include <glm/glm.hpp>
 
 #include <limits>
+#include <span>
 #include <vector>
 
 namespace lila::geo
@@ -60,6 +61,11 @@ public:
 
     void build(const Mesh& mesh);
     void build(const Mesh& mesh, Triangulation tris);
+    /**
+     * Builds over a triangle soup, three positions per triangle, without a Mesh: triangle t is face t with corners
+     * 3t, 3t + 1, 3t + 2. refitPoints is not available on a soup tree.
+     */
+    void buildSoup(std::span<const glm::vec3> corners);
     /** Updates bounds after points moved, keeping the tree. Positions must have the same capacity. */
     void refit(const Mesh& mesh);
     /**

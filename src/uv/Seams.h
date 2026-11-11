@@ -35,7 +35,7 @@ struct AutoSeamOptions
     /** Edges sharper than this (degrees) are always seams; islands never merge across them. */
     double hardAngle = 60.0;
     /** Edges marked "hard" are always seams too. */
-    bool useHardEdges = true;
+    bool useHardEdges = false;
     /** Existing seams stay. */
     bool keepSeams = false;
     /** Islands whose flattened distortion (symmetric Dirichlet excess) is above this are split. */

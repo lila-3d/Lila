@@ -6,8 +6,12 @@
 #include "bake/CageEstimate.h"
 #include "bake/CagePreview.h"
 #include "core/MainQueue.h"
+#include "core/Progress.h"
+#include "geo/Bvh.h"
 #include "geo/Mesh.h"
+#include "geo/Ops.h"
 #include "geo/Primitives.h"
+#include "geo/Triangulate.h"
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "scene/Graph.h"
@@ -16,6 +20,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <iomanip>
 #include <set>
 #include <thread>
 
@@ -240,6 +245,222 @@ TEST_CASE("bakeAutoPaintCage: a low's cage stops short of another low lying on i
     MESSAGE("skirt push under the ribbon " << under << " cm, away from it " << open << " cm");
     CHECK(under < 5.0);
     CHECK(open > 15.0);
+}
+
+namespace
+{
+/** The most push (offset times frontal) on a low's base points after an auto paint. */
+double mostPush(const std::string& low, const json& r)
+{
+    const auto offsets = baseMesh(low)->pointAttrs().get<float>(bake::kOffsetAttr);
+    double most = 0.0;
+    for (float o : offsets)
+        most = std::max(most, double(o) * r["frontal"].get<double>());
+    return most;
+}
+} // namespace
+
+TEST_CASE("bakeAutoPaintCage: a low baking onto itself ignores its other shells where they cross")
+{
+    newScene();
+    // A block with a bar run through it, one mesh baking onto its own smoothed self: where each shell sits inside the
+    // other, walking out would cross the other's whole length.
+    geo::CubeOptions blockO;
+    blockO.width = blockO.height = blockO.depth = 20.0;
+    blockO.subdivX = blockO.subdivY = blockO.subdivZ = 4;
+    geo::CubeOptions barO;
+    barO.width = 80.0;
+    barO.height = barO.depth = 6.0;
+    barO.subdivX = 16;
+    barO.subdivY = barO.subdivZ = 2;
+    const geo::Mesh block = geo::makeCube(blockO), bar = geo::makeCube(barO);
+    const geo::Mesh* parts[] = {&block, &bar};
+    const std::string low = addMesh("crossed_low", geo::combine(parts));
+    const std::string p = ops::execute("createBakeProject", {{"name", "P"}}).get<std::string>();
+    ops::execute("setBakeOutput", {{"project", p}, {"folder", tempDir("lila_cage_shells").generic_string()}, {"resolution", 64}, {"supersampling", 1}});
+    ops::execute("bakeGroup", {{"args", {"g"}}, {"project", p}, {"lows", {low}}, {"self", true}, {"preset", "Smooth x2"}});
+
+    const json r = ops::execute("bakeAutoPaintCage", {{"args", {"g"}}, {"resolution", 128}});
+    const double most = mostPush(low, r);
+    MESSAGE("most push " << most << ", miss rate " << r["after"]["missRate"].get<double>() * 100.0 << "%");
+    // The bar runs 30 past each block face; a cage that tracks the smoothed surface stays within a few units of it.
+    CHECK(most < 3.0);
+}
+
+TEST_CASE("bakeAutoPaintCage: a low baking onto itself doesn't push out through its own fold")
+{
+    newScene();
+    // A bar folded back over itself, 1 unit up, as a pipe's too-tight bend folds: each half's walk out crosses the
+    // other half, though its smoothed self lies within a triangle of it.
+    geo::CubeOptions barO;
+    barO.width = 80.0;
+    barO.height = barO.depth = 6.0;
+    barO.subdivX = 32;
+    barO.subdivY = barO.subdivZ = 2;
+    geo::Mesh bar = geo::makeCube(barO);
+    for (geo::Index q = 0; q < bar.pointCapacity(); ++q)
+        if (bar.pointValid(q))
+            if (const glm::dvec3 at = bar.position(q); at.x > 0.0)
+                bar.setPosition(q, {-at.x, at.y + 1.0 * at.x / 40.0, at.z});
+    const std::string low = addMesh("folded_low", std::move(bar));
+    const std::string p = ops::execute("createBakeProject", {{"name", "P"}}).get<std::string>();
+    ops::execute("setBakeOutput", {{"project", p}, {"folder", tempDir("lila_cage_fold").generic_string()}, {"resolution", 64}, {"supersampling", 1}});
+    ops::execute("bakeGroup", {{"args", {"g"}}, {"project", p}, {"lows", {low}}, {"self", true}, {"preset", "Smooth x2"}});
+
+    const json r = ops::execute("bakeAutoPaintCage", {{"args", {"g"}}, {"resolution", 128}});
+    const double most = mostPush(low, r);
+    MESSAGE("most push " << most);
+    CHECK(most < 2.5);
+}
+
+TEST_CASE("bakeAutoPaintCage: an open sheet seen from behind doesn't read as material the low starts in")
+{
+    newScene();
+    geo::PlaneOptions lowO;
+    lowO.subdivX = lowO.subdivZ = 8;
+    const std::string low = addMesh("floor_low", geo::makePlane(lowO));
+    // The high under the low, and an open sheet facing away 10 above it: walking up meets the sheet's back.
+    geo::PlaneOptions sheetO;
+    sheetO.subdivX = sheetO.subdivZ = 8;
+    const std::string under = addMesh("floor_high", geo::makePlane(sheetO), glm::dvec3(0.0, -0.5, 0.0));
+    const std::string sheet = addMesh("sheet_high", geo::makePlane(sheetO), glm::dvec3(0.0, 10.0, 0.0));
+    const std::string p = ops::execute("createBakeProject", {{"name", "P"}}).get<std::string>();
+    ops::execute("setBakeOutput", {{"project", p}, {"folder", tempDir("lila_cage_sheet").generic_string()}, {"resolution", 64}, {"supersampling", 1}});
+    ops::execute("bakeGroup", {{"args", {"g"}}, {"project", p}, {"lows", {low}}, {"highs", {under, sheet}}});
+
+    const json r = ops::execute("bakeAutoPaintCage", {{"args", {"g"}}, {"resolution", 128}, {"iterations", 0}});
+    const double most = mostPush(low, r);
+    MESSAGE("most push " << most);
+    CHECK(most < 2.0);
+}
+
+namespace
+{
+/** A lumpy high sphere of about 2 x axis x height triangles, crossing in and out of a radius-75 low sphere, as a sculpt over its blockout. */
+geo::Mesh lumpySphere(int axis, int height)
+{
+    geo::SphereOptions so;
+    so.radius = 75.0;
+    so.subdivAxis = axis;
+    so.subdivHeight = height;
+    geo::Mesh m = geo::makeSphere(so);
+    for (geo::Index p = 0; p < m.pointCapacity(); ++p)
+        if (m.pointValid(p))
+        {
+            const glm::dvec3 q = m.position(p);
+            const double bumps = 0.08 * std::sin(q.x * 0.2) * std::cos(q.z * 0.17) + 0.03 * std::sin(q.y * 0.9) * std::sin(q.x * 0.7);
+            m.setPosition(p, q * (1.0 + bumps));
+        }
+    return m;
+}
+
+/** A sphere low crossing in and out of a lumpy high, with a lid low lying over it: refining passes and clearance both run. */
+std::string lumpyGroup(int lowAxis, int highAxis, const std::string& folder)
+{
+    geo::SphereOptions lo;
+    lo.radius = 75.0;
+    lo.subdivAxis = lowAxis;
+    lo.subdivHeight = lowAxis / 2;
+    const std::string low = addMesh("ball_low", geo::makeSphere(lo));
+    geo::PlaneOptions lidO;
+    lidO.width = lidO.depth = 60.0;
+    lidO.subdivX = lidO.subdivZ = 20;
+    geo::Mesh lidMesh = geo::makePlane(lidO);
+    for (geo::Index q = 0; q < lidMesh.pointCapacity(); ++q)
+        if (lidMesh.pointValid(q))
+            lidMesh.setPosition(q, lidMesh.position(q) + glm::dvec3(0.0, 88.0, 0.0));
+    const std::string lid = addMesh("lid_low", std::move(lidMesh));
+    const std::string high = addMesh("ball_high", lumpySphere(highAxis, highAxis / 2));
+    const std::string p = ops::execute("createBakeProject", {{"name", "P"}}).get<std::string>();
+    ops::execute("setBakeOutput", {{"project", p}, {"folder", tempDir(folder).generic_string()}, {"resolution", 64}, {"supersampling", 1}});
+    ops::execute("bakeGroup", {{"args", {"g"}}, {"project", p}, {"lows", {low, lid}}, {"highs", {high}}, {"frontal", 3.0}, {"rear", 3.0}});
+    return "g";
+}
+} // namespace
+
+TEST_CASE("A soup BVH traces like the mesh BVH it replaces")
+{
+    const geo::Mesh m = lumpySphere(48, 24);
+    const geo::Triangulation tris = geo::triangulate(m);
+    std::vector<glm::vec3> soup;
+    for (geo::Index c : tris.corners)
+        soup.emplace_back(m.position(m.cornerPoint(c)));
+    const geo::MeshBvh ref(m);
+    geo::MeshBvh fast;
+    fast.buildSoup(soup);
+    REQUIRE(fast.triangleCount() == ref.triangleCount());
+    int hits = 0;
+    for (int i = 0; i < 2000; ++i)
+    {
+        const double a = i * 2.399963, z = 1.0 - 2.0 * (i + 0.5) / 2000.0;
+        const glm::dvec3 dir(std::sqrt(1.0 - z * z) * std::cos(a), z, std::sqrt(1.0 - z * z) * std::sin(a));
+        const glm::dvec3 origin = glm::dvec3(3.0, -2.0, 1.0) + dir * 200.0;
+        geo::BvhHit h0, h1;
+        const bool r0 = ref.raycast(origin, -dir, h0), r1 = fast.raycast(origin, -dir, h1);
+        REQUIRE(r0 == r1);
+        if (!r0)
+            continue;
+        ++hits;
+        // The soup holds floats where the mesh holds doubles.
+        CHECK(h1.t == doctest::Approx(h0.t).epsilon(1e-6));
+        CHECK(h1.triangle == h0.triangle);
+        CHECK(h1.frontFacing == h0.frontFacing);
+    }
+    CHECK(hits == 2000);
+}
+
+TEST_CASE("bakeAutoPaintCage: the parallel estimate paints the reference cage")
+{
+    newScene();
+    const std::string grp = lumpyGroup(24, 96, "lila_cage_reference");
+    const json r = ops::execute("bakeAutoPaintCage", {{"args", {grp}}, {"resolution", 128}});
+    auto summary = [](const std::string& low) {
+        const auto v = baseMesh(low)->pointAttrs().get<float>(bake::kOffsetAttr);
+        double sum = 0.0, top = 0.0;
+        for (float x : v)
+        {
+            sum += x;
+            top = std::max(top, double(x));
+        }
+        return std::pair{sum, top};
+    };
+    const auto [ballSum, ballMax] = summary("ball_low");
+    const auto [lidSum, lidMax] = summary("lid_low");
+    MESSAGE(std::setprecision(9) << "frontal " << r["frontal"].get<double>() << " rear " << r["rear"].get<double>() << " passes " << r["iterations"]
+                                 << " misses " << r["before"]["misses"] << " -> " << r["after"]["misses"] << " ball " << ballSum << " / " << ballMax
+                                 << " lid " << lidSum << " / " << lidMax);
+    // The serial estimate's numbers on this pair.
+    CHECK(r["frontal"].get<double>() == doctest::Approx(7.98385859).epsilon(1e-5));
+    CHECK(r["rear"].get<double>() == doctest::Approx(24.350925).epsilon(1e-5));
+    CHECK(r["iterations"] == 1);
+    CHECK(r["before"]["misses"] == 21739);
+    CHECK(r["after"]["misses"] == 824);
+    CHECK(ballSum == doctest::Approx(235.683852).epsilon(1e-5));
+    CHECK(ballMax == doctest::Approx(1.43853807).epsilon(1e-5));
+    CHECK(lidSum == doctest::Approx(18.7478723).epsilon(1e-5));
+    CHECK(lidMax == doctest::Approx(0.0425121821).epsilon(1e-5));
+    // The whole run reports under one root, closed once it returns.
+    CHECK(progress::snapshot().empty());
+    UndoStack::get().undo();
+    CHECK(!baseMesh("ball_low")->pointAttrs().has(bake::kOffsetAttr));
+}
+
+// Timing run on a production-sized pair: lila_bake_tests -tc="*benchmark*" --no-skip
+TEST_CASE("bakeAutoPaintCage benchmark" * doctest::skip())
+{
+    for (const bool modifiers : {false, true})
+    {
+        newScene();
+        const std::string grp = lumpyGroup(modifiers ? 48 : 96, 1024, "lila_cage_bench");
+        if (modifiers)
+            ops::execute("addModifier", {{"args", {"ball_low"}}, {"kind", "subdivision"}});
+        const auto t0 = std::chrono::steady_clock::now();
+        const json r = ops::execute("bakeAutoPaintCage", {{"args", {grp}}});
+        const double total = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        MESSAGE(std::string(modifiers ? "subdivided low" : "plain low") << ": " << total << " s, miss rate " << r["before"]["missRate"].get<double>() * 100.0
+                                                                       << "% -> " << r["after"]["missRate"].get<double>() * 100.0 << "%, passes "
+                                                                       << r["iterations"] << ", " << r["timings"].dump());
+    }
 }
 
 TEST_CASE("cage previews bake in memory off the main thread and write nothing")

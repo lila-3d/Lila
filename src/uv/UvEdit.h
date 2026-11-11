@@ -44,9 +44,16 @@ LILA_SCENE_API Stack exportStack(scene::Node& mesh);
 /**
  * With on, re-solves the uv islands of the faces against the exported mesh and returns what happened for the command's
  * result (null when the modifiers leave the surface alone). A modifier the solve can't follow is logged and reported.
+ * usedMap, when given, gets the map the solve used.
  */
 LILA_SCENE_API json refineOnExport(geo::Mesh& m, std::span<const geo::Index> faces, std::string_view uvSet, scene::Node& n,
-                                   const FinalSolveOptions& opts, bool on);
+                                   const FinalSolveOptions& opts, bool on, std::shared_ptr<const FinalMap>* usedMap = nullptr);
+
+/**
+ * Other meshes' uv triangles in the set (as exported) on a texture this mesh also uses: faces under a material slot
+ * both use. The default slot is each mesh's own texture. For tools that must keep islands off them.
+ */
+LILA_SCENE_API std::vector<std::array<glm::dvec2, 3>> sharedTextureTriangles(scene::Node& n, const geo::Mesh& m, std::string_view uvSet);
 
 /** With on, the exported mesh traced back to the cage's faces (traceFaces), for measuring uvs where they are exported. */
 LILA_SCENE_API FinalMap exportTraceOf(const geo::Mesh& m, scene::Node& n, bool on);

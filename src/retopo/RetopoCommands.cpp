@@ -951,11 +951,12 @@ void registerCommands()
         .doc = "Retopo Draw: connect a different reference mesh to the retopo mesh, so drawing continues on that surface and "
                "resumes on it later. Returns the mesh name.",
         .flags = {nodeFlag({"mesh", "", T::String, nullptr, "Retopo mesh."}, "mesh"),
-                  nodeFlag({"reference", "", T::String, nullptr, "The new reference mesh."}, "mesh")},
+                  nodeFlag({"reference", "", T::String, nullptr, "The new reference mesh."}, "mesh"),
+                  {"create", "", T::Bool, false, "Create the mesh if it doesn't exist (taking the reference's symmetry)."}},
         .run = [](const Args& a) -> json {
             if (!a.has("reference"))
                 throw CommandError("retopoDrawSetReference: give reference=");
-            return retopoDrawTarget(a, "retopoDrawSetReference", false).path();
+            return retopoDrawTarget(a, "retopoDrawSetReference", a.get<bool>("create", false)).path();
         },
     });
 

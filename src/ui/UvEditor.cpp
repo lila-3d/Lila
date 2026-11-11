@@ -8,6 +8,7 @@
 #include "ui/Panels.h"
 #include "ui/SpinScrub.h"
 #include "ui/ToolkitLayout.h"
+#include "ui/UvSeamOverride.h"
 
 #include <QApplication>
 #include <QGridLayout>
@@ -411,6 +412,8 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     setRow->addWidget(children);
     setRow->addWidget(panelDefaults::resetButton(this, kDefaultsPref, setBox));
     kit->addWidget(setBox);
+    // Beside the UV set, outside any section, so an override can't hide in a collapsed one.
+    kit->addWidget(new SeamOverrideRow(body));
     mSectionRow = new QHBoxLayout;
     mSectionRow->setContentsMargins(0, 0, 0, 0);
     mSectionRow->setSpacing(0);
@@ -434,7 +437,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
                                           controls::split("uv.bff", {"uv.bffDisk", "uv.bffRectangle", "uv.bffCones"}, body, "Conformal"),
                                           controls::split("uv.unwrapSymmetric", {"uv.unwrapSymmetricStack"}, body, "Symmetric"),
                                           push("uv.lightmap", "Lightmap"), push("mesh.transferAttributes", "Transfer"),
-                                          controls::overflow({"uv.seamView", "uv.delete"}, body)},
+                                          controls::overflow({"uv.seamView", "uv.seamViewPlane", "uv.delete"}, body)},
                                          2, body);
     addSection(collapsibleSection("Unwrap", stacked(body, {unwrapTiles, unwrapPush}), body, kUvCollapsed));
 

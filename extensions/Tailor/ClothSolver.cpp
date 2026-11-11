@@ -1441,7 +1441,8 @@ float Sdf::sample(const Vec3& p, Vec3* gradient) const
     return value + std::sqrt(outside2);
 }
 
-Sdf sdfFromMesh(const std::vector<Vec3>& points, const std::vector<std::array<int, 3>>& tris, float cell, float padding)
+Sdf sdfFromMesh(const std::vector<Vec3>& points, const std::vector<std::array<int, 3>>& tris, float cell, float padding,
+                const Vec3* clipLo, const Vec3* clipHi)
 {
     using glm::vec3;
     Sdf out;
@@ -1455,6 +1456,12 @@ Sdf sdfFromMesh(const std::vector<Vec3>& points, const std::vector<std::array<in
     }
     lo -= vec3(padding);
     hi += vec3(padding);
+    if (clipLo)
+        lo = glm::max(lo, vbd::toVec(*clipLo));
+    if (clipHi)
+        hi = glm::min(hi, vbd::toVec(*clipHi));
+    if (hi.x <= lo.x || hi.y <= lo.y || hi.z <= lo.z)
+        return out;
     out.origin = vbd::toArr(lo);
     out.cell = cell;
     out.nx = std::max(2, int(std::ceil((hi.x - lo.x) / cell)) + 1);
@@ -1491,6 +1498,8 @@ Sdf sdfFromMesh(const std::vector<Vec3>& points, const std::vector<std::array<in
         const vec3 a = vbd::toVec(points[valid[t][0]]), b = vbd::toVec(points[valid[t][1]]),
                    c = vbd::toVec(points[valid[t][2]]);
         const vec3 tlo = (glm::min(a, glm::min(b, c)) - lo) / cell, thi = (glm::max(a, glm::max(b, c)) - lo) / cell;
+        if (glm::any(glm::greaterThan(tlo, vec3(dims[0], dims[1], dims[2]) + 1.f)) || glm::any(glm::lessThan(thi, vec3(-2.f))))
+            continue;
         int r0[3], r1[3];
         for (int ax = 0; ax < 3; ++ax)
         {

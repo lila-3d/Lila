@@ -92,6 +92,7 @@ lila_module(lila_ui UI
     PythonViewport.cpp
     Owner.h
     SpinScrub.cpp SpinScrub.h
+    NumberExpr.cpp NumberExpr.h
     PanelFilter.cpp PanelFilter.h
     PanelDefaults.cpp PanelDefaults.h
     ValueReset.h
@@ -187,6 +188,7 @@ lila_module(lila_ui UI
     UvLive.cpp UvLive.h
     UvPackPanel.cpp UvPackPanel.h
     UvProjectTool.cpp UvProjectTool.h
+    UvSeamOverride.cpp UvSeamOverride.h
     FlowLayout.cpp FlowLayout.h
     FixedRowLayout.cpp FixedRowLayout.h
     MenuButtons.cpp MenuButtons.h

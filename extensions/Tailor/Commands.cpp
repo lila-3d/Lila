@@ -1384,12 +1384,14 @@ void registerCommands(ext::Context& ctx)
     ctx.registerCommand({
         .name = "tailorBake",
         .doc = "Turn a draped garment into a plain mesh for the game: the drape as it stands, seams welded and thickness "
-               "applied as set on the garment, uv0 packed, uv1 the fabric pattern, and point attribute clothMaxDistance (cm from the body) as a runtime cloth mask.\n\n"
+               "applied as set on the garment, uv0 packed, uv1 the fabric pattern, and point attribute clothMaxDistance (cm from the body) as a runtime cloth mask "
+               "unless clothMask is off, for garments that hold their shape with no cloth at runtime.\n\n"
                "When the collider is skinned, the new mesh is bound to the same joints and takes its weights by closest "
                "point, ready to export with the character. Returns the new mesh.",
         .positionalDoc = "garment",
         .flags = {{"name", "n", T::String, json(), "Name of the new mesh; the garment mesh's name plus _baked when left out."},
                   {"skin", "sk", T::Bool, true, "Bind to the collider's joints and copy its weights when it is skinned."},
+                  {"clothMask", "cm", T::Bool, true, "Write clothMaxDistance for runtime cloth; off for a mesh that only follows the skin."},
                   {"maxInfluences", "mi", T::Int, int64_t(4), "Influences per point.", {}, {}, 1.0, 16.0},
                   {"retopo", "rt", T::Int, int64_t(0), "Quad remesh to about this many faces, seams kept as edge loops; 0 keeps the cloth triangles.",
                    {}, {}, 0.0, 200000.0},
@@ -1452,7 +1454,7 @@ void registerCommands(ext::Context& ctx)
                 g.setValue({h->id(), MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(**mesh)));
                 high = h->path();
             }
-            if (collider)
+            if (collider && a.get<bool>("clothMask"))
             {
                 g.evaluate();
                 const PlugValue bv = g.value({baked->id(), MeshNode::kOutMesh});
@@ -1496,7 +1498,8 @@ void registerCommands(ext::Context& ctx)
             g.select({baked->id()});
             return result;
         },
-        .examples = {"tailorBake('Outfit')", "tailorBake('Cloak', name='SM_Cloak', skin=False)", "tailorBake('Tunic', retopo=3000, lods=2)"},
+        .examples = {"tailorBake('Outfit')", "tailorBake('Cloak', name='SM_Cloak', skin=False)", "tailorBake('Tunic', retopo=3000, lods=2)",
+                     "tailorBake('Jacket', clothMask=False)"},
     });
 
     ctx.registerCommand({
@@ -2086,28 +2089,36 @@ void registerCommands(ext::Context& ctx)
                "itself (panels as sim patterns, seams welded, the drape as its rest shape), ready for the Cloth Editor and a "
                "Chaos Cloth Component on your character. as=skeletalMesh bakes it (skinned like its collider, which must be "
                "skinned), imports it and adds clothing data to the mesh. Both paint max distance from how far the cloth hangs "
-               "off the body and carry the fabric's mass, stiffness, damping and friction. Returns what was made.",
+               "off the body and carry the fabric's mass, stiffness, damping and friction. as=skinnedMesh bakes and imports "
+               "it the same way with no cloth at all: the drape holds its shape and follows the skin. Returns what was made.",
         .positionalDoc = "garment",
-        .flags = {{"contentPath", "cp", T::String, json(), "The skeletal mesh asset, like /Game/Characters/Hero/SK_Hero_Cloak."},
+        .flags = {{"contentPath", "cp", T::String, json(), "The skeletal mesh asset, like /Game/Characters/Hero/SK_Hero_Cloak; /Game/Tailor/SK_<garment mesh> when left out."},
                   {"skeleton", "sk", T::String, json(), "Skeleton asset to reuse, like /Game/Characters/Hero/SK_Hero_Skeleton."},
                   {"retopo", "rt", T::Int, int64_t(0), "Quad remesh the game mesh to about this many faces first; 0 keeps the cloth triangles.",
                    {}, {}, 0.0, 200000.0},
                   {"maxInfluences", "mi", T::Int, int64_t(4), "Skin influences per point.", {}, {}, 1.0, 16.0},
                   {"save", "sv", T::Bool, true, "Save the Unreal assets afterwards."},
-                  {"as", "", T::String, "clothAsset", "clothAsset or skeletalMesh.", {"clothAsset", "skeletalMesh"}},
+                  {"as", "", T::String, "clothAsset", "clothAsset, skeletalMesh with clothing, or skinnedMesh with no cloth.",
+                   {"clothAsset", "skeletalMesh", "skinnedMesh"}},
                   {"skeletalMesh", "skm", T::String, json(), "Cloth asset: the character's skeletal mesh in Unreal it is made for."},
                   {"material", "mat", T::String, json(), "Cloth asset: the render material, like /Game/Cloth/M_Wool; a debug material when left out."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             Node& op = garmentArg(g, a, "tailorSendToUnreal");
-            if (!a.has("contentPath"))
-                throw CommandError("tailorSendToUnreal: give contentPath, like /Game/Characters/Hero/SK_Hero_Cloak");
             std::shared_ptr<link::RpcClient> client = link::Link::get().client();
             if (!client)
                 throw CommandError("tailorSendToUnreal: not connected to Unreal; run unrealConnect first");
-            const std::string path = a.get<std::string>("contentPath");
-            if (a.get<std::string>("as") == "clothAsset")
+            std::string path = a.has("contentPath") ? a.get<std::string>("contentPath") : std::string();
+            if (path.empty())
+            {
+                const std::vector<PlugRef> out = g.destinations({op.id(), plugIndex(op, "outMesh")});
+                const Node* fed = out.empty() ? nullptr : g.node(out.front().node);
+                path = "/Game/Tailor/SK_" + (fed ? fed->name() : op.name());
+            }
+            const std::string as = a.get<std::string>("as");
+            if (as == "clothAsset")
                 return sendClothAsset(g, op, *client, path, a);
+            const bool withCloth = as == "skeletalMesh";
             std::string name = path.substr(path.find_last_of('/') + 1);
             if (!Graph::validName(name))
                 name = "Garment_baked";
@@ -2115,6 +2126,7 @@ void registerCommands(ext::Context& ctx)
             const json baked = ops::execute("tailorBake", {{"args", {op.path()}},
                                                            {"name", name},
                                                            {"retopo", a.get<int64_t>("retopo")},
+                                                           {"clothMask", withCloth},
                                                            {"maxInfluences", a.get<int64_t>("maxInfluences")}});
             if (!baked.value("skinned", false))
                 throw CommandError("tailorSendToUnreal: " + op.name() + "'s collider isn't skinned, so the garment can't go to Unreal as a skeletal mesh");
@@ -2137,6 +2149,8 @@ void registerCommands(ext::Context& ctx)
             std::string asset = path;
             if (const json made = imported.result.value("assets", json::array()); made.is_array() && !made.empty() && made[0].is_string())
                 asset = made[0].get<std::string>();
+            if (!withCloth)
+                return {{"mesh", mesh->path()}, {"asset", asset}};
 
             // Max distance per point in Unreal's space; Unreal matches its own cloth vertices to the nearest.
             g.evaluate();
@@ -2164,7 +2178,8 @@ void registerCommands(ext::Context& ctx)
                 throw CommandError("tailorSendToUnreal: the mesh is in Unreal at " + asset + " but its clothing failed: " + cloth.error);
             return {{"mesh", mesh->path()}, {"asset", asset}, {"clothing", cloth.result}};
         },
-        .examples = {"tailorSendToUnreal('Cloak', contentPath='/Game/Characters/Hero/SK_Hero_Cloak', skeleton='/Game/Characters/Hero/SK_Hero_Skeleton')"},
+        .examples = {"tailorSendToUnreal('Cloak', contentPath='/Game/Characters/Hero/SK_Hero_Cloak', skeleton='/Game/Characters/Hero/SK_Hero_Skeleton')",
+                     "tailorSendToUnreal('Jacket', as='skinnedMesh', skeleton='/Game/Characters/Hero/SK_Hero_Skeleton')"},
     });
 
     ctx.registerCommand({

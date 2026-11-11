@@ -6,7 +6,9 @@
 
 #include <glm/glm.hpp>
 
+#include <span>
 #include <string>
+#include <vector>
 
 namespace lila::uv
 {
@@ -59,6 +61,8 @@ struct GuidedUvOptions
     /** Relax each island (SLIM from the transferred layout) before fitting it back onto the source island. */
     bool relax = true;
     int relaxIterations = 20;
+    /** Let borders between transferred islands move onto cheaper, more hidden edges where the match is poor. */
+    bool refineBorders = true;
 };
 
 struct GuidedUvResult
@@ -68,8 +72,19 @@ struct GuidedUvResult
     size_t repaired = 0; // islands whose transferred layout folded in places, filled in around the parts that held
     size_t unfolded = 0; // islands whose transferred layout could not be repaired, so they were unwrapped from scratch
     size_t unmatched = 0; // islands with nothing like them on the source, unwrapped on their own and placed beside the rest
+    /** Faces whose match on the source was poor (far off, or facing another way): their borders follow the surface more than the source. */
+    size_t lowConfidence = 0;
+    size_t rebordered = 0; // faces moved across a transferred border so its seam takes a cheaper, more hidden path
     geo::Index seams = 0;
 };
+
+/**
+ * Treats island borders (label per face, kInvalid for none) as a strong hint rather than the final cut: faces along a
+ * border move to the neighbouring island when that makes the border cheaper (shorter, along creases, out of sight, by
+ * seamCosts), weighed against each face's confidence (0 to 1) in its own label. Confident faces stay put; doubtful ones
+ * let the border settle where auto seams would put it. Returns the faces moved.
+ */
+LILA_SCENE_API size_t refineBorders(const geo::Mesh& mesh, std::vector<geo::Index>& label, std::span<const double> confidence);
 
 /**
  * The source's UV layout used as a guide for a similar mesh of any topology: each target face takes the source

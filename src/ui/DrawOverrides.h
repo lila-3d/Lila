@@ -13,6 +13,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 /**
  * Per node type drawing and picking (Maya's MPxDrawOverride): a node type, typically an extension's, says how its
@@ -53,6 +54,8 @@ struct PickContext
     glm::dmat4 world{1.0};
     QPointF a, b; // the click point twice, or a marquee's corners
     bool click = true;
+    /** A lasso drag's outline in widget pixels (a and b are then its bounds); null for a click or a box. */
+    const std::vector<glm::dvec2>* lasso = nullptr;
 };
 
 struct DrawOverride
@@ -63,10 +66,15 @@ struct DrawOverride
     std::function<void(DrawContext&)> draw;
     /**
      * Click: distance in pixels from the cursor to the drawing, nullopt for a miss (the viewport takes the nearest hit
-     * within 6 px). Marquee: any value when the node is inside the box, nullopt when not. Null pick: never picked.
+     * within kClickPixels). Marquee: any value when the node is inside the box, nullopt when not. Null pick: never picked.
      */
     std::function<std::optional<double>(const PickContext&)> pick;
+    /** pick tests PickContext::lasso itself. Otherwise a lasso also needs the node's pivot inside it. */
+    bool picksLasso = false;
 };
+
+/** How far from a click, in widget pixels (logical, so they follow DPI and UI scale), a drawn line still picks. */
+inline constexpr double kClickPixels = 6.0;
 
 /** Holds "lila.locator" from first use. */
 LILA_UI_API Registry<DrawOverride>& registry();

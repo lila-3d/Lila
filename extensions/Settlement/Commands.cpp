@@ -937,11 +937,25 @@ void registerCommands(ext::Context& ctx)
                     rs.site.roads = plan.roads;
             }
 
+            // The lines lie on the ground, a point every 10 m so they don't cut through the hills between their corners.
+            auto onGround = [&](std::span<const Vec2> pts) {
+                json out = json::array();
+                for (size_t k = 0; k < pts.size(); ++k)
+                {
+                    const int steps = k + 1 < pts.size() ? std::max(1, int(std::ceil(glm::length(pts[k + 1] - pts[k]) / 1000.0))) : 1;
+                    for (int t = 0; t < steps; ++t)
+                    {
+                        const Vec2 q = k + 1 < pts.size() ? glm::mix(pts[k], pts[k + 1], double(t) / steps) : pts[k];
+                        out.push_back(json::array({q.x, ground.surfaceHeight(q) + 30.0, q.y}));
+                    }
+                }
+                return out;
+            };
             json roadLines = json::array(), waterLines = json::array();
             for (const std::vector<Vec2>& r : plan.roads)
-                roadLines.push_back(xzPoints(r));
+                roadLines.push_back(onGround(r));
             for (const WaterLine& w : water)
-                waterLines.push_back(xzPoints(w.pts));
+                waterLines.push_back(onGround(w.pts));
             json made = ops::execute("createMesh", {{"points", json::array()}, {"faces", json::array()}, {"name", a.get<std::string>("name", "Region")}});
             const std::string regionMesh = made.is_string() ? made.get<std::string>() : made.at(0).get<std::string>();
             SiteLines lines{json::array(), roadLines, waterLines, json::array(), waterWidth};

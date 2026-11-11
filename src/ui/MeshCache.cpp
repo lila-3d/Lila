@@ -27,6 +27,8 @@ struct Entry
     bool tangents = false;
     /** A deformed copy's layout, its pick data made from it when picking first asks (pick is null until then). */
     std::shared_ptr<const geo::RenderMesh> pickLayout;
+    /** The node whose live GPU buffer built draws from, when it has one. */
+    scene::NodeId owner = scene::kNoNode;
 };
 
 std::unordered_map<const geo::Mesh*, Entry>& cache()
@@ -34,6 +36,27 @@ std::unordered_map<const geo::Mesh*, Entry>& cache()
     // Never destroyed: at exit the meshes' owners (extension DLLs among them) may already be unloaded.
     static auto& c = *new std::unordered_map<const geo::Mesh*, Entry>();
     return c;
+}
+
+/** Static copies of live entries for the other nodes drawing the same mesh, as duplicates share their source's mesh. */
+std::unordered_map<const geo::Mesh*, Entry>& staticCopies()
+{
+    static auto& c = *new std::unordered_map<const geo::Mesh*, Entry>();
+    return c;
+}
+
+const Entry* staticCopy(const scene::MeshPtr& mesh, const Entry& live)
+{
+    auto& c = staticCopies();
+    if (auto it = c.find(mesh.get()); it != c.end() && it->second.source.lock() == mesh && it->second.tangents == live.tangents)
+        return &it->second;
+    Entry e = live;
+    auto copy = std::make_shared<render::RenderMesh>(*live.built);
+    copy->dynamic.reset();
+    copy->key = render::RenderMesh::nextKey();
+    e.built = std::move(copy);
+    e.owner = scene::kNoNode;
+    return &(c[mesh.get()] = std::move(e));
 }
 
 uint64_t mix(uint64_t h, uint64_t v)
@@ -314,6 +337,7 @@ Entry rebuildPositions(const scene::MeshPtr& source, const Entry& from, uint64_t
         out->key = render::RenderMesh::nextKey();
     Entry e{source, out, nullptr, from.tangents};
     e.pickLayout = from.pick;
+    e.owner = owner;
     return e;
 }
 
@@ -383,11 +407,15 @@ const Entry* entryFor(const scene::MeshPtr& mesh, bool tangents = false, scene::
     auto it = c.find(mesh.get());
     if (it != c.end() && it->second.source.lock() == mesh && (it->second.tangents || !tangents))
     {
+        // Another node's live buffer is rewritten by that node's own edits, so anyone else draws a frozen copy.
+        if (it->second.built->dynamic && owner != scene::kNoNode && it->second.owner != owner)
+            return staticCopy(mesh, it->second);
         restoreLive(*it->second.built);
         return &it->second;
     }
     // Entries of deleted meshes hold gigabytes on dense meshes, so they go as soon as anything new is cached.
     std::erase_if(c, [](const auto& kv) { return kv.second.source.expired(); });
+    std::erase_if(staticCopies(), [](const auto& kv) { return kv.second.source.expired(); });
     // A mesh too big for the memory left stays undrawn, reported once, rather than taking the app down.
     // Never destroyed: at exit the meshes' owners (extension DLLs among them) may already be unloaded.
     static auto& failed = *new std::weak_ptr<const geo::Mesh>();

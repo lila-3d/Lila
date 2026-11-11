@@ -4,6 +4,7 @@
 #include "ops/Command.h"
 #include "ops/CommandOptions.h"
 #include "ops/OptionPresets.h"
+#include "scene/Graph.h"
 #include "core/ExtensionContext.h"
 #include "core/Log.h"
 #include "core/Paths.h"
@@ -44,7 +45,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <array>
 #include <map>
 
 namespace lila::ui::optionBox
@@ -166,6 +166,11 @@ public:
         more->setMenu(menu);
         header->addWidget(more, 0, Qt::AlignTop);
         root->addLayout(header);
+        auto* warningRow = new QHBoxLayout();
+        warningRow->setContentsMargins(12, 0, 12, 0);
+        mWarning = controls::warningBanner(this);
+        warningRow->addWidget(mWarning);
+        root->addLayout(warningRow);
 
         auto* scroll = new QScrollArea(this);
         scroll->setWidgetResizable(true);
@@ -219,7 +224,7 @@ public:
                 }, body);
                 mSetters[flag] = w.set;
                 mDefaults[flag] = f.defaultValue;
-                mWidgets[flag] = {w.label, w.field};
+                mFieldWidgets[flag] = {w.label, w.field};
                 if (w.label)
                 {
                     grid->addWidget(w.label, row, 0, Qt::AlignRight | Qt::AlignVCenter);
@@ -234,6 +239,17 @@ public:
         }
         grid->setRowStretch(row, 1);
         rebuildPresets();
+        refreshWarning();
+        if (over && over->warning)
+            mGraphListener = scene::Graph::current().addListener([this](scene::Change c, scene::NodeId) {
+                if (c == scene::Change::Selection || mWarningQueued)
+                    return;
+                mWarningQueued = true;
+                QTimer::singleShot(0, this, [this] {
+                    mWarningQueued = false;
+                    refreshWarning();
+                });
+            });
         refreshEnabled();
 
         // Apply is the primary action and Enter's default; Esc or the window's close button closes.
@@ -258,7 +274,46 @@ public:
         resize(std::max(420, body->sizeHint().width() + 40), std::min(720, body->sizeHint().height() + 140));
     }
 
+    ~OptionsDialog() override
+    {
+        if (mGraphListener >= 0)
+            scene::Graph::current().removeListener(mGraphListener);
+    }
+
 private:
+    /** Shows the override's warning, if any, and disables the fields it replaces. */
+    void refreshWarning()
+    {
+        const opt::Override* o = opt::findOverride(mCommand);
+        std::string text;
+        if (o && o->warning)
+        {
+            try
+            {
+                text = o->warning();
+            }
+            catch (const std::exception& e)
+            {
+                log::warn("{}", e.what());
+            }
+        }
+        controls::setWarning(mWarning, QString::fromStdString(text));
+        mWarningShown = !text.empty();
+        if (!o)
+            return;
+        for (const std::string& flag : o->warned)
+            if (auto it = mFieldWidgets.find(flag); it != mFieldWidgets.end())
+                for (QWidget* w : {it->second.first, it->second.second})
+                    if (w)
+                    {
+                        if (!w->property("lilaFieldTip").isValid())
+                            w->setProperty("lilaFieldTip", w->toolTip());
+                        w->setEnabled(text.empty());
+                        w->setToolTip(text.empty() ? w->property("lilaFieldTip").toString() : QString::fromStdString(text));
+                    }
+        refreshEnabled();
+    }
+
     static std::string title(const Action& a)
     {
         std::string t = a.label;
@@ -362,12 +417,13 @@ private:
             return;
         for (const auto& [flag, when] : o->enabledWhen)
         {
-            const auto w = mWidgets.find(flag);
-            if (w == mWidgets.end())
+            const auto w = mFieldWidgets.find(flag);
+            if (w == mFieldWidgets.end())
                 continue;
             const json v = mValues.contains(when.first) ? mValues[when.first] : mDefaults[when.first];
-            const bool on = v.is_string() && std::find(when.second.begin(), when.second.end(), v.get<std::string>()) != when.second.end();
-            for (QWidget* x : w->second)
+            const bool warned = mWarningShown && std::find(o->warned.begin(), o->warned.end(), flag) != o->warned.end();
+            const bool on = !warned && v.is_string() && std::find(when.second.begin(), when.second.end(), v.get<std::string>()) != when.second.end();
+            for (QWidget* x : {w->second.first, w->second.second})
                 if (x)
                     x->setEnabled(on);
         }
@@ -526,7 +582,11 @@ private:
     json mValues;
     std::map<std::string, std::function<void(const json&)>> mSetters;
     std::map<std::string, json> mDefaults;
-    std::map<std::string, std::array<QWidget*, 2>> mWidgets; // label, field
+    std::map<std::string, std::pair<QWidget*, QWidget*>> mFieldWidgets; // flag -> label, field
+    QWidget* mWarning = nullptr;
+    int mGraphListener = -1;
+    bool mWarningQueued = false;
+    bool mWarningShown = false;
     QLabel* mPresetLabel = nullptr;
     QWidget* mPresetHost = nullptr;
     QPointer<QComboBox> mPresetMenu;

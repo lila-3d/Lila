@@ -1,6 +1,7 @@
 #include "ui/DrawOverrides.h"
 
 #include "core/Log.h"
+#include "geo/Lasso.h"
 #include "scene/Transform.h"
 
 #include <algorithm>
@@ -49,7 +50,7 @@ std::optional<double> pickLocator(const PickContext& c)
             continue;
         if (!c.click)
         {
-            if (box.contains(*p0) || box.contains(*p1))
+            if (geo::lasso::segmentTouchesBox({p0->x(), p0->y()}, {p1->x(), p1->y()}, {box.left(), box.top()}, {box.right(), box.bottom()}))
                 return 0.0;
             continue;
         }

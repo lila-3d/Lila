@@ -746,7 +746,7 @@ std::vector<std::string> ViewportWidget::hitTest(QPointF a, QPointF b)
     bool click = box.width() < 4 && box.height() < 4;
 
     json hits = json::array();
-    double best = 6.0; // px
+    double best = drawOverrides::kClickPixels;
     std::string bestName;
     ViewInfo view = viewInfo();
     for (scene::NodeId id : g.nodes())
@@ -756,11 +756,17 @@ std::vector<std::string> ViewportWidget::hitTest(QPointF a, QPointF b)
         if (!o || !o->pick || id == mLookThrough || !viewportPickable(g, id, inherit) || !scene::selectionMask::pickable(*n) ||
             !mIsolation.shows(id))
             continue;
-        std::optional<double> px = o->pick({.view = view, .node = *n, .world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix), .a = a, .b = b, .click = click});
+        std::optional<double> px = o->pick({.view = view,
+                                            .node = *n,
+                                            .world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix),
+                                            .a = a,
+                                            .b = b,
+                                            .click = click,
+                                            .lasso = !click && mLassoPick ? &mLasso : nullptr});
         if (!px)
             continue;
-        // The override only knows the lasso's bounds, so its pivot has to fall inside the lasso itself.
-        if (!click && mLassoPick)
+        // An override that only knows the lasso's bounds needs its pivot inside the lasso itself.
+        if (!click && mLassoPick && !o->picksLasso)
             if (auto s = project(glm::dvec3(n->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3])); !s || !inSelectRegion(box, *s))
                 continue;
         if (!click)

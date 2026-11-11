@@ -792,6 +792,9 @@ ModifierStackWidget::ModifierStackWidget(QWidget* parent) : QWidget(parent)
     fillAddModifierMenu(addMenu);
     mAdd->setMenu(addMenu);
     top->addWidget(mAdd, 1);
+    mViewportAll = stackButton("device-desktop", "<b>Show All in Viewport</b><br>Turn every modifier in the stack on or off in the viewport.", mHeader, true);
+    connect(mViewportAll, &QToolButton::clicked, this, [this] { setAllInViewport(!allInViewport()); });
+    top->addWidget(mViewportAll);
     auto* graph = stackButton("node-editor", "<b>Show in Node Editor</b><br>The stack as nodes, with every connection.", mHeader);
     connect(graph, &QToolButton::clicked, this, [] { actions::run("nodeEditor.showHistory"); });
     top->addWidget(graph);
@@ -973,6 +976,13 @@ void ModifierStackWidget::rebuild()
     g.evaluate();
     mAdd->setEnabled(mMesh != scene::kNoNode);
     mMore->setEnabled(mMesh != scene::kNoNode);
+    mUpdaters.push_back([this] {
+        bool any = mMesh && !scene::modifiers::stack(Graph::current(), mMesh).empty();
+        bool on = any && allInViewport();
+        mViewportAll->setEnabled(any);
+        mViewportAll->setChecked(on);
+        mViewportAll->setIcon(icon(on || !any ? "device-desktop" : "device-desktop-off"));
+    });
     if (!mMesh)
     {
         mTitle->hide();
@@ -1017,6 +1027,24 @@ void ModifierStackWidget::rebuild()
     });
     updateValues();
     QTimer::singleShot(0, this, [this, scroll] { mScroll->verticalScrollBar()->setValue(scroll); });
+}
+
+bool ModifierStackWidget::allInViewport() const
+{
+    Graph& g = Graph::current();
+    for (NodeId id : scene::modifiers::stack(g, mMesh))
+        if (auto* m = dynamic_cast<scene::ModifierNode*>(g.node(id)); m && !m->as<bool>(m->enabledAttr))
+            return false;
+    return true;
+}
+
+void ModifierStackWidget::setAllInViewport(bool on)
+{
+    Graph& g = Graph::current();
+    UndoChunk chunk(on ? "Show Modifiers in Viewport" : "Hide Modifiers in Viewport");
+    for (NodeId id : scene::modifiers::stack(g, mMesh))
+        if (auto* m = dynamic_cast<scene::ModifierNode*>(g.node(id)); m && m->as<bool>(m->enabledAttr) != on)
+            runUi("setAttr", {{"args", {g.plugName({id, m->enabledAttr, -1}), on}}});
 }
 
 void ModifierStackWidget::updateValues()

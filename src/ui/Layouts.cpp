@@ -108,7 +108,7 @@ const std::vector<std::pair<std::string, json>>& presets()
         {"Level", preset(with({"levelToolkit", "stagehand.library", "modelingToolkit"}), {"levelToolkit", "channelBox"}, "Level",
                          {{"stagehand.library", {{"height", 0.4}}}}, {"stagehand.library"})},
         {"Effects", preset(with({"timeSlider"}), {"channelBox"}, "Effects")},
-        {"Groom", preset(with({}), {"channelBox"}, "Groom")},
+        {"Groom", preset(with({"groomPalette"}), {"groomPalette", "channelBox"}, "Groom", {{"groomPalette", {{"width", 300}}}})},
         {"Print", preset(with({"modelingToolkit"}), {"modelingToolkit", "channelBox"}, "Print")},
         {"Script", preset(with({"scriptEditor", "scriptOutput"}), {"scriptEditor", "channelBox"}, "Script", {{"scriptEditor", {{"height", 0.45}}}})},
     };
@@ -261,12 +261,11 @@ std::vector<std::string> builtInNames()
 
 std::optional<json> builtIn(const std::string& name)
 {
-    // An extension's layout of the same name (Puppeteer's Animate) replaces Lila's while it is loaded.
-    if (const json* layout = contributed().find(name))
-        return std::optional<json>(std::in_place, *layout);
     for (auto& [n, layout] : presets())
         if (n == name)
             return std::optional<json>(std::in_place, layout);
+    if (const json* layout = contributed().find(name))
+        return std::optional<json>(std::in_place, *layout);
     return std::nullopt;
 }
 

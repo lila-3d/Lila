@@ -64,6 +64,22 @@ bool presenterShows(const std::string& element, bool fallback = true)
     return PrefStore::get().value<bool>(kPresenterPrefs, presenterKey("show/" + element), fallback);
 }
 
+/** Elements that start hidden until switched on in the layout card. */
+bool presenterShowsByDefault(const std::string& element)
+{
+    return element != "selection" && element != "cursorOutside";
+}
+
+/** True when the pointer is over one of Lila's own visible windows, ignoring the presenter's overlays. */
+bool cursorOverLila(const QWidget* ignore)
+{
+    const QPoint at = QCursor::pos();
+    for (QWidget* w : QApplication::topLevelWidgets())
+        if (w != ignore && w->isVisible() && !w->testAttribute(Qt::WA_TransparentForMouseEvents) && w->frameGeometry().contains(at))
+            return true;
+    return false;
+}
+
 double presenterDuration()
 {
     return std::clamp(PrefStore::get().value<double>(kPresenterPrefs, presenterKey("duration"), 3.5), 0.5, 30.0);
@@ -834,7 +850,8 @@ public:
 
     void follow()
     {
-        const bool on = enabled() && presenterShows("cursor") && QApplication::activeWindow() && !state().editing;
+        const bool on = enabled() && presenterShows("cursor") && QApplication::activeWindow() && !state().editing &&
+                        (presenterShows("cursorOutside", false) || cursorOverLila(this));
         if (!on)
         {
             hide();
@@ -907,13 +924,14 @@ public:
             {"context", "Current tool"},
             {"caption", "Captions"},
             {"cursor", "Cursor highlight"},
+            {"cursorOutside", "Cursor highlight outside Lila"},
             {"navigation", "Camera navigation"},
             {"selection", "Selection clicks"},
         };
         for (auto [key, label] : toggles)
         {
             auto* box = new QCheckBox(label, this);
-            box->setChecked(presenterShows(key, std::string(key) != "selection"));
+            box->setChecked(presenterShows(key, presenterShowsByDefault(key)));
             connect(box, &QCheckBox::toggled, this, [key](bool on) { PrefStore::get().set(kPresenterPrefs, presenterKey(std::string("show/") + key), on); });
             mBoxes.emplace_back(box, key);
             v->addWidget(box);
@@ -956,7 +974,7 @@ public:
         for (auto& [box, key] : mBoxes)
         {
             QSignalBlocker block(box);
-            box->setChecked(presenterShows(key, std::string(key) != "selection"));
+            box->setChecked(presenterShows(key, presenterShowsByDefault(key)));
         }
     }
 

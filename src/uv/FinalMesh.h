@@ -106,6 +106,8 @@ LILA_SCENE_API FinalMap buildFinalMap(const geo::Mesh& cage, std::string_view uv
 
 /** The map's exported uv per corner (capacity) for the cage's uvs in the set. */
 LILA_SCENE_API std::vector<glm::dvec2> exportedUvs(const FinalMap& map, const geo::Mesh& cage, std::string_view uvSet);
+/** The same for cage corner uvs given directly (per cage corner, capacity). */
+LILA_SCENE_API std::vector<glm::dvec2> exportedUvs(const FinalMap& map, std::span<const glm::vec2> cageUv);
 
 /**
  * The exported triangles of one chart, with their uvs as a map of the chart's vertices. Fills read local corners; a
@@ -204,6 +206,8 @@ struct FinalRefineResult
     size_t collapsedAfter = 0;
     double distortionBefore = 0.0; // area weighted angle distortion of the exported triangles
     double distortionAfter = 0.0;
+    /** The map the solve used: it holds for these cage uvs and any other layout of them. */
+    std::shared_ptr<const FinalMap> map;
 };
 
 /**
@@ -221,6 +225,15 @@ LILA_SCENE_API FinalRefineResult refineFinal(geo::Mesh& cage, std::span<const In
  */
 LILA_SCENE_API FinalRefineResult repairFinal(geo::Mesh& cage, std::span<const Index> faces, std::string_view uvSet, const Stack& stack,
                                              const FinalSolveOptions& opts = {});
+
+/**
+ * Moves the islands a tool moved whose export now overlaps another island where it did not with the cage uvs before
+ * (per cage corner, capacity), by the least distance that clears them, keeping size and shape. Others are triangles in
+ * uv the islands must keep off too (other meshes on the same texture). Islands no short move clears are packed at their
+ * size around the rest, or where nothing has room, shifted to where they overlap least. Returns the islands moved.
+ */
+LILA_SCENE_API size_t keepIslandsApart(geo::Mesh& cage, const FinalMap& map, std::string_view uvSet, std::span<const glm::vec2> before,
+                                       std::span<const std::array<glm::dvec2, 3>> others = {});
 
 /** Moves an island that grew past its UDIM tile back inside, shrinking it only when it is bigger than the tile. */
 LILA_SCENE_API void keepInUdimTile(Chart& chart, const glm::ivec2& tile);

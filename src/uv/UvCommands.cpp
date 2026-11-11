@@ -6,11 +6,15 @@
 #include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "core/Log.h"
+#include "bake/BakeCommon.h"
+#include "bake/BakeNodes.h"
+#include "bake/Naming.h"
 #include "scene/Camera.h"
 #include "scene/Components.h"
 #include "scene/DeformEval.h"
 #include "scene/Graph.h"
 #include "scene/Instancing.h"
+#include "scene/Materials.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "geo/Symmetry.h"
@@ -27,6 +31,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <set>
 #include <unordered_set>
 
 namespace lila::uv
@@ -311,14 +316,100 @@ void packOnExport(geo::Mesh& m, std::span<const Index> faces, std::string_view u
 /** The attr marking a transform as a seam view: its weight. */
 constexpr const char* kSeamViewAttr = "seamView";
 
-/** Seam views in world space, for seamViewsIn to bring into each mesh's space. */
-std::vector<SeamView> seamViewArgs(const Args& a)
+/** Gives a transform the seamView weight attr. */
+void addSeamViewAttr(const std::string& path, double weight)
+{
+    ops::execute("addAttr", {{"args", {path}},
+                             {"longName", kSeamViewAttr},
+                             {"attributeType", "double"},
+                             {"defaultValue", 1.0},
+                             {"minValue", -1.0},
+                             {"maxValue", 4.0},
+                             {"keyable", true},
+                             {"doc", "How hard Auto UV keeps seams out of this view's sight; negative draws them towards it."}});
+    graph().setValue(graph().plug(path + "." + kSeamViewAttr), weight);
+}
+
+/** The attr marking the one seam view that every seam command uses instead of the views its flags give. */
+constexpr const char* kSeamViewOverrideAttr = "seamViewOverride";
+/** On a seam view: it is a plane facing along this local direction, not a point. */
+constexpr const char* kSeamViewNormalAttr = "seamViewNormal";
+
+template <class T> const T* attrValue(const Node& n, const char* attr)
+{
+    const int i = n.type().attrIndex(attr);
+    return i >= 0 ? std::get_if<T>(&n.value(i)) : nullptr;
+}
+
+/** A transform as a seam view, in world space. */
+SeamView seamViewOf(Graph& g, const Node& n)
+{
+    SeamView v;
+    const glm::dmat4 world = n.as<glm::dmat4>(scene::Transform::kWorldMatrix);
+    const glm::dmat3 normalMatrix = glm::transpose(glm::inverse(glm::dmat3(world)));
+    v.position = glm::dvec3(world[3]);
+    auto facing = [&](const glm::dvec3& local) {
+        if (const glm::dvec3 d = normalMatrix * local; glm::length(d) > 1e-12)
+            v.planeNormal = glm::normalize(d);
+    };
+    if (const glm::dvec3* local = attrValue<glm::dvec3>(n, kSeamViewNormalAttr))
+        facing(*local);
+    else if (n.type().isA("camera"))
+    {
+        // An orthographic camera sees along its axis from everywhere; a perspective one from its eye.
+        if (const bool* ortho = std::get_if<bool>(&n.value(scene::Camera::kOrthographic)); ortho && *ortho)
+            facing({0.0, 0.0, 1.0});
+    }
+    // A mesh is a plane: it sees along its average normal.
+    else if (MeshPtr mesh = cageOf(g, n.id()))
+    {
+        glm::dvec3 normal(0.0), center(0.0);
+        double area = 0.0;
+        for (Index f = 0; f < mesh->faceCapacity(); ++f)
+            if (mesh->faceValid(f))
+            {
+                normal += mesh->faceAreaVector(f);
+                center += mesh->faceCentroid(f) * mesh->faceArea(f);
+                area += mesh->faceArea(f);
+            }
+        normal = normalMatrix * normal;
+        if (area > 0.0 && glm::length(normal) > 1e-12)
+        {
+            v.position = glm::dvec3(world * glm::dvec4(center / area, 1.0));
+            v.planeNormal = glm::normalize(normal);
+        }
+    }
+    if (const double* w = attrValue<double>(n, kSeamViewAttr))
+        v.weight = *w;
+    return v;
+}
+
+Node* seamViewOverride(Graph& g)
+{
+    for (NodeId id : g.nodes())
+        if (Node* n = g.node(id); n && n->type().isA("transform"))
+            if (const bool* on = attrValue<bool>(*n, kSeamViewOverrideAttr); on && *on)
+                return n;
+    return nullptr;
+}
+
+/**
+ * Seam views in world space, for viewsIn to bring into each mesh's space. The seam view override, when one is set,
+ * replaces whatever the flags say; overridden then gets its name.
+ */
+std::vector<SeamView> seamViewArgs(const Args& a, std::string* overridden = nullptr)
 {
     std::vector<SeamView> out;
-    if (!a.get<bool>("useViews", true))
-        return out;
     Graph& g = graph();
     g.evaluate();
+    if (Node* o = seamViewOverride(g))
+    {
+        if (overridden)
+            *overridden = o->name();
+        return {seamViewOf(g, *o)};
+    }
+    if (!a.get<bool>("useViews", true))
+        return out;
     std::vector<Node*> nodes;
     if (a.has("views"))
         for (const json& name : a.flags["views"])
@@ -333,34 +424,7 @@ std::vector<SeamView> seamViewArgs(const Args& a)
             if (Node* n = g.node(id); n && n->type().isA("transform") && n->type().attrIndex(kSeamViewAttr) >= 0)
                 nodes.push_back(n);
     for (Node* n : nodes)
-    {
-        SeamView v;
-        const glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
-        v.position = glm::dvec3(world[3]);
-        // A mesh is a plane: it sees along its average normal.
-        if (MeshPtr mesh = cageOf(g, n->id()))
-        {
-            glm::dvec3 normal(0.0), center(0.0);
-            double area = 0.0;
-            for (Index f = 0; f < mesh->faceCapacity(); ++f)
-                if (mesh->faceValid(f))
-                {
-                    normal += mesh->faceAreaVector(f);
-                    center += mesh->faceCentroid(f) * mesh->faceArea(f);
-                    area += mesh->faceArea(f);
-                }
-            normal = glm::transpose(glm::inverse(glm::dmat3(world))) * normal;
-            if (area > 0.0 && glm::length(normal) > 1e-12)
-            {
-                v.position = glm::dvec3(world * glm::dvec4(center / area, 1.0));
-                v.planeNormal = glm::normalize(normal);
-            }
-        }
-        if (int i = n->type().attrIndex(kSeamViewAttr); i >= 0)
-            if (const double* w = std::get_if<double>(&n->value(i)))
-                v.weight = *w;
-        out.push_back(v);
-    }
+        out.push_back(seamViewOf(g, *n));
     return out;
 }
 
@@ -378,10 +442,29 @@ std::vector<SeamView> viewsIn(std::vector<SeamView> views, Node& node)
     return views;
 }
 
+/** Whether the mesh's last exported Weighted Normals modifier smooths over its hard edges, so they don't show. */
+bool normalsDropHardEdges(Node& node)
+{
+    Graph& g = graph();
+    const std::vector<NodeId> stack = scene::modifiers::stack(g, node.id());
+    for (auto it = stack.rbegin(); it != stack.rend(); ++it)
+        if (const Node* mod = g.node(*it); mod && scene::modifiers::exportEnabled(*mod) && mod->type().isA("weightedNormalsModifier"))
+        {
+            const int keep = mod->type().attrIndex("keepHardEdges");
+            return keep >= 0 && !mod->as<bool>(keep);
+        }
+    return false;
+}
+
 /** The options for one mesh: seam views in its space, and with symmetry on, its mirror edges. */
 AutoSeamOptions seamsIn(AutoSeamOptions o, Node& node, const geo::Mesh& m, const std::optional<geo::SymmetryMap>& map)
 {
     o.views = viewsIn(std::move(o.views), node);
+    if (o.useHardEdges && normalsDropHardEdges(node))
+    {
+        o.useHardEdges = false;
+        log::info("{}: hard edges not used for seams; its Weighted Normals modifier smooths them over (Keep Hard Edges off)", node.name());
+    }
     if (map)
     {
         std::vector<Index> all(m.edgeCapacity());
@@ -392,7 +475,7 @@ AutoSeamOptions seamsIn(AutoSeamOptions o, Node& node, const geo::Mesh& m, const
     return o;
 }
 
-AutoSeamOptions seamArgs(const Args& a)
+AutoSeamOptions seamArgs(const Args& a, std::string* overridden = nullptr)
 {
     AutoSeamOptions o;
     o.hardAngle = a.get<double>("hardAngle", 60.0);
@@ -400,15 +483,28 @@ AutoSeamOptions seamArgs(const Args& a)
     o.keepSeams = a.get<bool>("keepSeams", false);
     o.visibility = a.get<bool>("visibility", true);
     o.merge = a.get<bool>("merge", true);
-    o.useHardEdges = a.get<bool>("useHardEdges", true);
+    o.useHardEdges = a.get<bool>("useHardEdges", false);
     std::string method = a.get<std::string>("method", "split");
     if (method != "split" && method != "optcuts")
         throw CommandError("method must be split or optcuts");
     o.method = method == "optcuts" ? SeamMethod::OptCuts : SeamMethod::Split;
     o.distortionBound = std::max(0.0, a.get<double>("distortionBound", 0.05));
     o.seamWeight = std::max(0.0, a.get<double>("seamWeight", 0.5));
-    o.views = seamViewArgs(a);
+    o.views = seamViewArgs(a, overridden);
     return o;
+}
+
+/** Says the seam view override replaced the command's seam views: in its result, the log and a toast. */
+json reportOverride(json r, const std::string& overridden)
+{
+    if (overridden.empty() || r.is_null())
+        return r;
+    if (r.is_object())
+        r["seamViewOverride"] = overridden;
+    log::warn("Seam view override {} used instead of the seam views in the options", overridden);
+    if (ops::find("viewportToast"))
+        ops::execute("viewportToast", {{"args", {"Seam view override: " + overridden}}, {"warning", true}, {"duration", 3.5}});
+    return r;
 }
 
 FlagDef viewsFlag()
@@ -423,7 +519,7 @@ std::vector<FlagDef> seamFlagDefs()
 {
     using T = ArgType;
     return {{"hardAngle", "", T::Float, 60.0, "Edges sharper than this always get a seam, degrees.", {}, {}, 0.0, 180.0},
-            {"useHardEdges", "", T::Bool, true, "Edges marked hard always get a seam."},
+            {"useHardEdges", "", T::Bool, false, "Edges marked hard always get a seam, unless a Weighted Normals modifier smooths them over."},
             {"keepSeams", "", T::Bool, false, "Keep the seams already there."},
             {"maxDistortion", "", T::Float, 0.08, "Split islands that stretch more than this when flattened.", {}, {}, 0.0},
             {"visibility", "", T::Bool, true, "Hide cuts where they are least visible."},
@@ -560,7 +656,8 @@ Stack exportStack(Node& n)
     return out;
 }
 
-json refineOnExport(geo::Mesh& m, std::span<const Index> faces, std::string_view uvSet, Node& n, const FinalSolveOptions& opts, bool on)
+json refineOnExport(geo::Mesh& m, std::span<const Index> faces, std::string_view uvSet, Node& n, const FinalSolveOptions& opts, bool on,
+                    std::shared_ptr<const FinalMap>* usedMap)
 {
     if (!on)
         return nullptr;
@@ -569,6 +666,8 @@ json refineOnExport(geo::Mesh& m, std::span<const Index> faces, std::string_view
         return nullptr;
     LILA_ZONE_N("refineOnExport");
     const FinalRefineResult r = refineFinal(m, faces, uvSet, stack, opts);
+    if (usedMap)
+        *usedMap = r.map;
     if (!r.warning.empty())
     {
         log::warn("{}: {}", n.name(), r.warning);
@@ -581,6 +680,102 @@ json refineOnExport(geo::Mesh& m, std::span<const Index> faces, std::string_view
             {"failed", r.failed},
             {"collapsed", {r.collapsedBefore, r.collapsedAfter}},
             {"angleDistortion", {r.distortionBefore, r.distortionAfter}}};
+}
+
+namespace
+{
+/** A mesh's faces as uv triangles, those whose material slot share(slot name) accepts. */
+template <class Share>
+void appendSharedFaces(const geo::Mesh& om, std::string_view uvSet, Share&& share, std::vector<std::array<glm::dvec2, 3>>& out)
+{
+    const std::span<const glm::vec2> uv = om.cornerAttrs().get<glm::vec2>(uvSet);
+    if (uv.empty())
+        return;
+    const std::span<const int32_t> mat = om.faceAttrs().get<int32_t>(geo::attr::kMaterial);
+    std::map<int32_t, bool> shared;
+    for (Index f = 0; f < om.faceCapacity(); ++f)
+    {
+        if (!om.faceValid(f))
+            continue;
+        const int32_t k = f < mat.size() ? mat[f] : 0;
+        auto [it, added] = shared.try_emplace(k, false);
+        if (added)
+            it->second = share(scene::materials::slotName(om, k));
+        if (!it->second)
+            continue;
+        const std::vector<Index> cs = om.faceCorners(f);
+        for (size_t i = 1; i + 1 < cs.size(); ++i)
+            out.push_back({glm::dvec2(uv[cs[0]]), glm::dvec2(uv[cs[i]]), glm::dvec2(uv[cs[i + 1]])});
+    }
+}
+} // namespace
+
+std::vector<std::array<glm::dvec2, 3>> sharedTextureTriangles(Node& n, const geo::Mesh& m, std::string_view uvSet)
+{
+    std::vector<std::array<glm::dvec2, 3>> out;
+    Graph& g = graph();
+    const NodeId self = scene::instancing::root(g, n.id());
+    std::vector<std::string> slots;
+    for (const auto& [slot, count] : scene::materials::slotUsage(m))
+        if (count > 0)
+            slots.push_back(slot);
+
+    // A baked mesh shares a texture with the lows whose faces the bake writes to the same file (as bake lint reads it).
+    struct Low
+    {
+        NodeId id;
+        const bake::ProjectSettings* settings;
+        std::string project, group;
+    };
+    std::vector<Low> lows;
+    std::vector<bake::ProjectSettings> settings;
+    const std::vector<NodeId> projects = bake::projects(g);
+    settings.reserve(projects.size());
+    for (NodeId p : projects)
+    {
+        settings.push_back(bake::projectSettings(*g.node(p)));
+        for (NodeId gid : bake::groupsOf(g, p))
+            for (const std::string& path : bake::groupSettings(*g.node(gid)).lows)
+                if (Node* low = bake::detail::meshByName(g, path))
+                    lows.push_back({low->id(), &settings.back(), g.node(p)->name(), g.node(gid)->name()});
+    }
+    auto fileOf = [&](const Low& l, std::string_view slot) {
+        bake::NameTokens tok;
+        tok.project = l.project;
+        tok.group = l.group;
+        tok.mesh = bake::detail::shortName(g.node(l.id)->path());
+        tok.material = std::string(slot);
+        tok.map = "*";
+        tok.ext = "x";
+        return bake::expandName(l.settings->output.name, tok, true);
+    };
+    std::set<std::string> files;
+    for (const Low& l : lows)
+        if (scene::instancing::root(g, l.id) == self)
+            for (const std::string& s : slots)
+                files.insert(fileOf(l, s));
+    if (!files.empty())
+    {
+        for (const Low& l : lows)
+            if (scene::instancing::root(g, l.id) != self)
+                if (const MeshPtr om = bake::detail::exportedMesh(g, l.id))
+                    appendSharedFaces(*om, uvSet, [&](std::string_view slot) { return files.contains(fileOf(l, slot)); }, out);
+        return out;
+    }
+
+    // Otherwise by material: meshes on the same named material share its texture; the default slot is each mesh's own.
+    std::erase(slots, std::string(scene::materials::kDefaultSlot));
+    if (slots.empty())
+        return out;
+    for (NodeId id : g.nodes())
+    {
+        Node* o = g.node(id);
+        if (!o || !o->type().isA("mesh") || scene::instancing::root(g, id) == self)
+            continue;
+        if (const MeshPtr om = bake::detail::exportedMesh(g, id))
+            appendSharedFaces(*om, uvSet, [&](std::string_view slot) { return std::ranges::find(slots, slot) != slots.end(); }, out);
+    }
+    return out;
 }
 
 FinalMap exportTraceOf(const geo::Mesh& m, Node& n, bool on)
@@ -839,18 +1034,44 @@ namespace
 /**
  * When the faces lie on both sides of the symmetry plane: those on the side holding more of them, plus any across the plane.
  * The projection fits and maps these and the other side mirrors them; a fit through both halves averages their normals away.
+ * Empty when a connected piece of the faces spans the plane (a ring around it): that piece projects whole, as one island.
  */
 std::vector<Index> oneSide(const geo::Mesh& m, const geo::SymmetryMap& map, std::span<const Index> faces)
 {
     std::vector<Index> pos, neg, across;
+    std::vector<int8_t> side(m.faceCapacity(), 2); // 2: not among the faces
     for (Index f : liveFaces(m, faces))
     {
         int sum = 0;
         m.forEachFaceCorner(f, [&](Index c) { sum += map.side(m.cornerPoint(c)); });
         (sum > 0 ? pos : sum < 0 ? neg : across).push_back(f);
+        side[f] = int8_t(sum > 0 ? 1 : sum < 0 ? -1 : 0);
     }
     if (pos.empty() || neg.empty())
         return {};
+    std::vector<uint8_t> seen(m.faceCapacity(), 0);
+    for (Index start : pos)
+    {
+        if (seen[start])
+            continue;
+        std::vector<Index> stack = {start};
+        seen[start] = 1;
+        while (!stack.empty())
+        {
+            const Index f = stack.back();
+            stack.pop_back();
+            if (side[f] < 0)
+                return {};
+            m.forEachFaceCorner(f, [&](Index c) {
+                const Index o = m.oppositeFace(m.cornerEdge(c), f);
+                if (o != kInvalid && side[o] != 2 && !seen[o])
+                {
+                    seen[o] = 1;
+                    stack.push_back(o);
+                }
+            });
+        }
+    }
     std::vector<Index>& out = pos.size() >= neg.size() ? pos : neg;
     out.insert(out.end(), across.begin(), across.end());
     std::sort(out.begin(), out.end());
@@ -1193,8 +1414,9 @@ void registerCommands()
                "split it where it would stretch.",
         .flags = seamFlagDefs(),
         .run = [](const Args& a) -> json {
-            AutoSeamOptions o = seamArgs(a);
-            return editUv("UV Auto Seams", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
+            std::string overridden;
+            AutoSeamOptions o = seamArgs(a, &overridden);
+            return reportOverride(editUv("UV Auto Seams", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
                 std::optional<geo::SymmetryMap> map = uvSymmetryMap(n, m);
                 AutoSeamResult r = autoSeams(m, f, seamsIn(o, n, m, map));
                 if (!map)
@@ -1203,7 +1425,7 @@ void registerCommands()
                 const Index added = symmetricSeams(m, *map, f);
                 ChartOptions co;
                 return {{"islands", islandFaces(m, f, co).size()}, {"seams", r.seamEdges + added}};
-            });
+            }), overridden);
         },
     });
 
@@ -1215,11 +1437,12 @@ void registerCommands()
         .run = [](const Args& a) -> json {
             const bool final = a.get<bool>("finalMesh", true);
             AutoUvOptions o;
-            o.seams = seamArgs(a);
+            std::string overridden;
+            o.seams = seamArgs(a, &overridden);
             o.unwrap.iterations = std::clamp(a.get<int>("iterations", 12), 0, 200);
             o.pack = packArgs(a);
             std::string set = uvSetArg(a);
-            return editUv("Auto UV", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
+            return reportOverride(editUv("Auto UV", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
                 std::optional<geo::SymmetryMap> map = uvSymmetryMap(n, m);
                 AutoUvOptions mo = o;
                 mo.seams = seamsIn(o.seams, n, m, map);
@@ -1232,7 +1455,7 @@ void registerCommands()
                 if (json fm = finishOnExport(m, f, set, n, final, &mo.pack); !fm.is_null())
                     j["finalMesh"] = std::move(fm);
                 return j;
-            });
+            }), overridden);
         },
     });
 
@@ -1258,11 +1481,12 @@ void registerCommands()
             o.maxLength = std::max(0.0, a.get<double>("maxLength", 0.0));
             o.visibility = a.get<bool>("visibility", true);
             o.keepSeams = a.get<bool>("keepSeams", false);
-            o.views = seamViewArgs(a);
+            std::string overridden;
+            o.views = seamViewArgs(a, &overridden);
             const bool pack = a.get<bool>("pack", true);
             const PackOptions packing = packArgs(a);
             std::string set = uvSetArg(a);
-            return editUv("UV Hose", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
+            return reportOverride(editUv("UV Hose", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
                 HoseOptions mo = o;
                 mo.views = viewsIn(o.views, n);
                 HoseResult r = hoseUv(m, f, set, mo);
@@ -1280,34 +1504,82 @@ void registerCommands()
                     j["pack"] = packJson(packMeshes(std::span<PackTarget>(&t, 1), set, packing));
                 }
                 return j;
-            });
+            }), overridden);
         },
     });
 
     ops::registerCommand({
         .name = "uvSeamView",
-        .doc = "Create a seam view: a locator that uvAuto and uvAutoSeams keep seams out of sight of, such as where a first person "
-               "camera sits or where a character's face is seen from. Move it and run Auto UV again to see the seams move. Its "
-               "seamView attribute is the weight: higher hides seams harder, negative draws them towards it. Returns its path.",
+        .doc = "Create a seam view: a locator that uvAuto, uvAutoSeams and uvHose keep seams out of sight of, such as where a first "
+               "person camera sits or where a character's face is seen from. With normal it is a plane instead, seeing along its local "
+               "direction like an orthographic camera (a game's fixed side or top view). Move or rotate it and run Auto UV again to see "
+               "the seams move. Its seamView attribute is the weight: higher hides seams harder, negative draws them towards it. "
+               "Returns its path.",
         .flags = {{"position", "p", T::Vec3, nullptr, "World position."},
+                  {"normal", "nm", T::Vec3, nullptr, "Makes it a plane through position with this world normal: it sees along that axis from its own side, like an orthographic camera."},
                   {"weight", "w", T::Float, 1.0, "How hard seams avoid what it sees; negative draws them towards it.", {}, {}, -1.0, 4.0},
+                  {"override", "o", T::Bool, false, "Make it the seam view override (uvSeamViewOverride)."},
                   {"name", "n", T::String, "seamView", "Name; made unique among its siblings."}},
         .run = [](const Args& a) -> json {
             json call = {{"name", a.get<std::string>("name", "seamView")}};
             if (a.has("position"))
                 call["position"] = a.flags["position"];
             const std::string path = ops::execute("spaceLocator", call).get<std::string>();
-            ops::execute("addAttr", {{"args", {path}},
-                                     {"longName", kSeamViewAttr},
-                                     {"attributeType", "double"},
-                                     {"defaultValue", 1.0},
-                                     {"minValue", -1.0},
-                                     {"maxValue", 4.0},
-                                     {"keyable", true},
-                                     {"doc", "How hard Auto UV keeps seams out of this view's sight; negative draws them towards it."}});
-            graph().setValue(graph().plug(path + "." + kSeamViewAttr), std::clamp(a.get<double>("weight", 1.0), -1.0, 4.0));
+            addSeamViewAttr(path, std::clamp(a.get<double>("weight", 1.0), -1.0, 4.0));
+            if (a.has("normal"))
+            {
+                const json& nj = a.flags["normal"];
+                const glm::dvec3 n(nj[0].get<double>(), nj[1].get<double>(), nj[2].get<double>());
+                if (glm::length(n) < 1e-12)
+                    throw CommandError("uvSeamView: normal must not be zero");
+                ops::execute("addAttr", {{"args", {path}},
+                                         {"longName", kSeamViewNormalAttr},
+                                         {"attributeType", "double3"},
+                                         {"doc", "Local direction this plane view faces; seams hide from that side of it."}});
+                // The new locator is unrotated, so its local axes are the world's.
+                graph().setValue(graph().plug(path + "." + kSeamViewNormalAttr), glm::normalize(n));
+            }
+            if (a.get<bool>("override", false))
+                ops::execute("uvSeamViewOverride", {{"args", {path}}});
             return path;
         },
+    });
+
+    ops::registerCommand({
+        .name = "uvSeamViewOverride",
+        .doc = "Make a camera, locator or plane the seam view override: uvAuto, uvAutoSeams and uvHose then hide seams from it alone, "
+               "whatever seam views their options or flags name, and say so in their result and a toast. A perspective camera sees "
+               "from its eye, an orthographic one along its axis. With no node, clears the override. Returns the override's name, or "
+               "an empty string when cleared.",
+        .positionalDoc = "node",
+        .run = [](const Args& a) -> json {
+            Graph& g = graph();
+            Node* target = nullptr;
+            if (!a.positional.empty() && a.positional[0].is_string() && !a.positional[0].get<std::string>().empty())
+            {
+                const std::string name = a.positional[0].get<std::string>();
+                target = g.find(name);
+                if (!target || !target->type().isA("transform"))
+                    throw CommandError("uvSeamViewOverride: " + name + " is not a camera, locator or mesh");
+            }
+            for (NodeId id : g.nodes())
+                if (Node* n = g.node(id); n && n != target)
+                    if (const bool* on = attrValue<bool>(*n, kSeamViewOverrideAttr); on && *on)
+                        ops::execute("setAttr", {{"args", {n->path() + "." + kSeamViewOverrideAttr, false}}});
+            if (!target)
+                return "";
+            const std::string path = target->path();
+            if (target->type().attrIndex(kSeamViewAttr) < 0)
+                addSeamViewAttr(path, 1.0);
+            if (target->type().attrIndex(kSeamViewOverrideAttr) < 0)
+                ops::execute("addAttr", {{"args", {path}},
+                                         {"longName", kSeamViewOverrideAttr},
+                                         {"attributeType", "bool"},
+                                         {"doc", "Auto UV, Auto Seams and Hose UVs hide seams from this view alone, whatever their options say."}});
+            ops::execute("setAttr", {{"args", {path + "." + kSeamViewOverrideAttr, true}}});
+            return target->name();
+        },
+        .examples = {"uvSeamViewOverride(\"camera1\")", "uvSeamViewOverride()"},
     });
 
     ops::registerCommand({
@@ -1517,11 +1789,14 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "uvOrient",
-        .doc = "Rotate the selected islands upright: by bounding box, principal axis or longest edge.",
-        .flags = {uvSetFlag(), {"mode", "", T::String, "bbox", "bbox, principal or edge.", {"bbox", "principal", "edge"}}},
+        .doc = "Rotate the selected islands upright: by bounding box, principal axis, longest edge or edge grid.",
+        .flags = {uvSetFlag(), {"mode", "", T::String, "bbox", "bbox, principal, edge or grid (polygon edges along U and V).", {"bbox", "principal", "edge", "grid"}}},
         .run = [](const Args& a) -> json {
             std::string mode = a.get<std::string>("mode", "bbox");
-            OrientMode om = mode == "principal" ? OrientMode::Principal : mode == "edge" ? OrientMode::LongestEdge : OrientMode::BoundingBox;
+            OrientMode om = mode == "principal" ? OrientMode::Principal
+                            : mode == "edge"    ? OrientMode::LongestEdge
+                            : mode == "grid"    ? OrientMode::Grid
+                                                : OrientMode::BoundingBox;
             std::string set = uvSetArg(a);
             return editUv("UV Orient", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
                 return withUvSymmetry(m, n, set, UvSymmetry::Absolute, {}, [&]() -> json {
@@ -1856,6 +2131,20 @@ void registerCommands()
         if (const ops::options::Override* had = ops::options::findOverride(cmd))
             o = *had;
         o.labels["finalMesh"] = "After Modifiers";
+        ops::options::setOverride(cmd, std::move(o));
+    }
+    for (const char* cmd : {"uvAuto", "uvAutoSeams", "uvHose"})
+    {
+        ops::options::Override o;
+        if (const ops::options::Override* had = ops::options::findOverride(cmd))
+            o = *had;
+        o.warning = []() -> std::string {
+            const Node* n = seamViewOverride(graph());
+            return n ? "Seam view override: " + n->name() + ". Seams hide from it alone; Use Views and Views here are ignored. "
+                       "Clear it in the UV Toolkit."
+                     : std::string();
+        };
+        o.warned = {"useViews", "views"};
         ops::options::setOverride(cmd, std::move(o));
     }
 }

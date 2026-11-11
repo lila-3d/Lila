@@ -1,5 +1,6 @@
 #include "ops/Command.h"
 #include "ops/Undo.h"
+#include "core/Log.h"
 #include "core/Profile.h"
 #include "geo/Bvh.h"
 #include "geo/ColorSets.h"
@@ -752,7 +753,13 @@ void registerTransferCommands()
                                       {"repaired", stats.uvs.repaired},
                                       {"unwrapped", stats.uvs.unfolded},
                                       {"unmatched", stats.uvs.unmatched},
+                                      {"lowConfidence", stats.uvs.lowConfidence},
+                                      {"rebordered", stats.uvs.rebordered},
                                       {"seams", stats.uvs.seams}});
+                if (o.space == TransferSpace::Guided && stats.uvs.lowConfidence > 0)
+                    log::warn("{}: {} faces matched the source poorly, so their seams follow the surface (creases, hidden edges) "
+                              "more than the source's",
+                              dstNode.name(), stats.uvs.lowConfidence);
                 g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(target))));
                 if (skinWeights)
                     ops::execute("copySkinWeights", {{"args", {objs.front(), objs[i]}},

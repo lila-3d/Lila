@@ -57,6 +57,33 @@ inline bool touches(const std::vector<glm::dvec2>& region, const std::vector<glm
     return false;
 }
 
+/** Distance from p to the segment ab (to a when the segment has no length). */
+inline double segmentDistance(glm::dvec2 p, glm::dvec2 a, glm::dvec2 b)
+{
+    const glm::dvec2 d = b - a;
+    const double len2 = glm::dot(d, d);
+    const double t = len2 > 0.0 ? std::clamp(glm::dot(p - a, d) / len2, 0.0, 1.0) : 0.0;
+    return glm::distance(p, a + d * t);
+}
+
+/** The four corners of the box between lo and hi, as a region for touches. */
+inline std::vector<glm::dvec2> box(glm::dvec2 lo, glm::dvec2 hi) { return {{lo.x, lo.y}, {hi.x, lo.y}, {hi.x, hi.y}, {lo.x, hi.y}}; }
+
+/** Whether segment ab overlaps the box between lo and hi anywhere: an end inside, or crossing an edge. */
+inline bool segmentTouchesBox(glm::dvec2 a, glm::dvec2 b, glm::dvec2 lo, glm::dvec2 hi)
+{
+    if (std::max(a.x, b.x) < lo.x || std::min(a.x, b.x) > hi.x || std::max(a.y, b.y) < lo.y || std::min(a.y, b.y) > hi.y)
+        return false;
+    auto inside = [&](glm::dvec2 p) { return p.x >= lo.x && p.x <= hi.x && p.y >= lo.y && p.y <= hi.y; };
+    if (inside(a) || inside(b))
+        return true;
+    const std::vector<glm::dvec2> corners = box(lo, hi);
+    for (size_t i = 0, j = 3; i < 4; j = i++)
+        if (segmentsCross(corners[j], corners[i], a, b))
+            return true;
+    return false;
+}
+
 /** Appends p unless it is within minDistance of the last point. Returns whether it was added. */
 inline bool extend(std::vector<glm::dvec2>& poly, glm::dvec2 p, double minDistance = 2.0)
 {

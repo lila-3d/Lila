@@ -199,6 +199,35 @@ void MeshBvh::build(const Mesh& mesh, Triangulation tris)
     buildTree();
 }
 
+void MeshBvh::buildSoup(std::span<const glm::vec3> corners)
+{
+    LILA_ZONE();
+
+    const size_t n = corners.size() / 3;
+    mParent.clear();
+    mTriLeaf.clear();
+    mPointTriOffsets.clear();
+    mPointTris.clear();
+    mNodeDirty.clear();
+    mTris.corners.resize(n * 3);
+    mTris.faces.resize(n);
+    mTris.faceFirst.resize(n);
+    mTriPoints.resize(n * 3);
+    mPositions.resize(n * 3);
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, n, 1 << 14), [&](const tbb::blocked_range<size_t>& r) {
+        for (size_t t = r.begin(); t < r.end(); ++t)
+        {
+            mTris.faces[t] = mTris.faceFirst[t] = Index(t);
+            for (size_t k = t * 3; k < t * 3 + 3; ++k)
+            {
+                mTris.corners[k] = mTriPoints[k] = Index(k);
+                mPositions[k] = glm::dvec3(corners[k]);
+            }
+        }
+    });
+    buildTree();
+}
+
 void MeshBvh::buildTree()
 {
     LILA_ZONE();

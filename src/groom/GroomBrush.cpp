@@ -448,6 +448,7 @@ struct GroomBrush::Impl
         t.setSegments(s.placeSegments);
         t.place.spacing = float(s.placeSpacing);
         t.place.matchNeighbors = s.matchNeighbors;
+        t.place.drape = true;
         t.place.group = s.group.empty() ? "primary" : s.group;
         t.brush.level = s.level;
         if (s.mode == "freeze")

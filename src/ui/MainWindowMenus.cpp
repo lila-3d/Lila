@@ -8,7 +8,9 @@
 #include "ui/HeightfieldDisplay.h"
 #include "ui/LicensesDialog.h"
 #include "ui/MenuSets.h"
+#include "ui/NumberExpr.h"
 #include "ui/Shelf.h"
+#include "ui/TearOffLogic.h"
 
 #include <QToolBar>
 
@@ -145,12 +147,13 @@ void MainWindow::buildMenus()
                           "select.edgesByCenter", "select.facesByCenter"});
 
     menu("Mesh", "Mesh", Area::MenuBar, {}, "", {"Model", "Sculpt", "Level"});
-    menus::addActions("Mesh", {"#Combine", "mesh.combine", "mesh.smartJoin", "mesh.separate", "mesh.splitMeshTool", "mesh.extract", "mesh.duplicateFaces", "mesh.boundingMesh", "mesh.multiBoxBounds",
-                               "#Mirror", "mesh.mirror", "#Booleans", "mesh.booleanUnion", "mesh.booleanDifference", "mesh.booleanIntersection"});
+    menus::addActions("Mesh", {"#Combine", "mesh.combine", "mesh.smartJoin", "mesh.separate", "mesh.splitMeshTool", "mesh.extract", "mesh.duplicateFaces", "mesh.boundingMesh", "mesh.collisionHull", "mesh.multiBoxBounds",
+                               "#Booleans", "mesh.booleanUnion", "mesh.booleanDifference", "mesh.booleanIntersection", "#Construct"});
     addSubmenu("Mesh", "Clay");
     menus::addActions("Mesh/Clay", {"clay.create", "clay.tool", "clay.addShape", "clay.addCut", "clay.group", "", "clay.refresh", "clay.convert"});
     addSubmenu("Mesh", "Plating");
     menus::addActions("Mesh/Plating", {"layout.pencil", "layout.plates", "layout.fasteners", "layout.patterns", "", "layout.loosen", "layout.deleteLines", "layout.clear"});
+    menus::addActions("Mesh", {"#Mirror", "mesh.mirror"});
     addSubmenu("Mesh", "Symmetry");
     menus::addActions("Mesh/Symmetry", {"mesh.toggleSymmetry", "mesh.symmetryX", "mesh.symmetryY", "mesh.symmetryZ", "mesh.symmetryRadial", "mesh.symmetryOff", "viewport.toggleSymmetryLine", "",
                                  "mesh.symmetryCheck", "mesh.symmetrizePositive", "mesh.symmetrizeNegative", "mesh.symmetryRebuild", "mesh.symmetrizeRadial",
@@ -162,7 +165,7 @@ void MainWindow::buildMenus()
 
     menu("Topology", "Topology", Area::MenuBar, syncChecks, "topology", {"Model", "Sculpt"});
     menus::addActions("Topology", {"#Session", "retopo.setReference", "window.topologyToolkit", "#Draw", "retopo.draw", "topo.pencil", "topo.patch",
-                                   "topo.strip", "topo.stroke", "topo.cylinder", "#Shape", "topo.handles", "topo.relax", "topo.settle", "mesh.relax",
+                                   "topo.strip", "topo.stroke", "topo.cylinder", "topo.cap", "#Shape", "topo.handles", "topo.relax", "topo.settle", "mesh.relax",
                                    "#Auto Retopo", "topo.region", "topo.runRegion", "mesh.quadRemesh", "retopo.poles", "mesh.voxelRemesh",
                                    "#Constructs", "topo.freezeAll", "#Display", "topo.qualityOverlay"});
 
@@ -228,7 +231,7 @@ void MainWindow::buildMenus()
 
     menu("UV", "UV", Area::MenuBar, {}, "", {"UV", "Texture"});
     menus::addActions("UV", {"window.uvEditor", "uv.auto", "uv.autoSeams", "uv.unwrap", "uv.projectPlanar", "uv.projectBox", "uv.projectSpherical", "uv.hose",
-                      "uv.projectCylindrical", "uv.projectCamera", "uv.cut", "uv.sew", "uv.straighten", "uv.orient", "uv.rotateLeft", "uv.rotateRight", "uv.flipX", "uv.flipY", "uv.pack", "uv.lightmap", "uv.delete", "uv.seamView", "", "uv.autoSeams2",
+                      "uv.projectCylindrical", "uv.projectCamera", "uv.cut", "uv.sew", "uv.straighten", "uv.orient", "uv.rotateLeft", "uv.rotateRight", "uv.flipX", "uv.flipY", "uv.pack", "uv.lightmap", "uv.delete", "uv.seamView", "uv.seamViewPlane", "uv.seamViewOverride", "uv.seamViewOverrideClear", "", "uv.autoSeams2",
                       "uv.bff", "uv.bffDisk", "uv.bffRectangle", "uv.bffCones", "uv.unwrapSymmetric", "uv.unwrapSymmetricStack"});
     addSubmenu("UV", "Pack");
     menus::addActions("UV/Pack", {"uv.pack", "uv.packAroundSelected", "uv.packSelectionOnly", "uv.packStacked", "uv.packPerObject", "uv.packPerMaterial", "uv.packUdimByMaterial", "uv.selectStacks"});
@@ -420,7 +423,7 @@ void MainWindow::buildMenus()
 void MainWindow::raiseToolsFor(const std::string& set)
 {
     // The tools column follows the work too: its tab for the set comes forward when that panel is open.
-    static const std::map<std::string, const char*> kTools = {{"Model", kModelingToolkitDock}, {"Level", kLevelToolkitDock}, {"Texture", "textureSets"}};
+    static const std::map<std::string, const char*> kTools = {{"Model", kModelingToolkitDock}, {"Level", kLevelToolkitDock}, {"Texture", "textureSets"}, {"Cloth", "tailorToolkit"}};
     auto it = kTools.find(set);
     if (it == kTools.end())
         return;
@@ -461,7 +464,12 @@ void MainWindow::fillEditorsMenu(QMenu* menu)
     };
     menu->clear();
     const QList<QDockWidget*> found = findChildren<QDockWidget*>();
-    std::vector<QDockWidget*> docks(found.begin(), found.end());
+    // Torn-off menus carry their menu's title, so listing them here doubles the panels they share a name with; Ctrl+T's
+    // Tear-offs tab lists them.
+    std::vector<QDockWidget*> docks;
+    for (QDockWidget* d : found)
+        if (!tearoff::parseDockName(d->objectName().toStdString()))
+            docks.push_back(d);
     std::sort(docks.begin(), docks.end(), [](QDockWidget* a, QDockWidget* b) {
         return QString::localeAwareCompare(a->windowTitle(), b->windowTitle()) < 0;
     });
@@ -550,6 +558,7 @@ void MainWindow::buildStatusBar()
         connect(output, &QDockWidget::visibilityChanged, line, qOverload<>(&QWidget::update));
     }
     installSpinScrub(this);
+    installSpinMath(this);
     installWheelGuard(this);
 
     mWorkspaceLabel = new QToolButton(this);

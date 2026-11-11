@@ -228,38 +228,47 @@ void registerOptimizeCommands()
             OptimizeOptions o = optimizeArgs(a);
             std::string set = uvSetOf(a);
             const bool final = a.get<bool>("finalMesh", true);
-            return editUvMeshes("UV Optimize", K::Face, symmetricUvEdit(set, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
-                if (m.cornerAttrs().get<glm::vec2>(set).empty())
-                    throw CommandError("uvOptimize: no " + set + " uvs; unwrap first");
-                std::vector<Chart> charts = uvIslands(m, f, set);
-                std::vector<OptimizeResult> res(charts.size());
-                tbb::parallel_for(size_t(0), charts.size(), size_t(1), [&](size_t i) { res[i] = optimizeChart(charts[i], o); });
-                writeCharts(m, charts, set);
-                double area[2] = {0.0, 0.0}, angle[2] = {0.0, 0.0}, w = 0.0;
-                size_t failed = 0;
-                for (size_t i = 0; i < charts.size(); ++i)
-                {
-                    if (!res[i].ok)
+            return editUvMeshes("UV Optimize", K::Face, [&](geo::Mesh& mesh, const Ids& faces, Node& node) -> json {
+                const std::span<const glm::vec2> was = mesh.cornerAttrs().get<glm::vec2>(set);
+                const std::vector<glm::vec2> before(was.begin(), was.end());
+                std::shared_ptr<const FinalMap> map;
+                json result = symmetricUvEdit(set, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
+                    if (m.cornerAttrs().get<glm::vec2>(set).empty())
+                        throw CommandError("uvOptimize: no " + set + " uvs; unwrap first");
+                    std::vector<Chart> charts = uvIslands(m, f, set);
+                    std::vector<OptimizeResult> res(charts.size());
+                    tbb::parallel_for(size_t(0), charts.size(), size_t(1), [&](size_t i) { res[i] = optimizeChart(charts[i], o); });
+                    writeCharts(m, charts, set);
+                    double area[2] = {0.0, 0.0}, angle[2] = {0.0, 0.0}, w = 0.0;
+                    size_t failed = 0;
+                    for (size_t i = 0; i < charts.size(); ++i)
                     {
-                        ++failed;
-                        continue;
+                        if (!res[i].ok)
+                        {
+                            ++failed;
+                            continue;
+                        }
+                        double a3 = charts[i].area3d();
+                        area[0] += a3 * res[i].before.area;
+                        area[1] += a3 * res[i].after.area;
+                        angle[0] += a3 * res[i].before.angle;
+                        angle[1] += a3 * res[i].after.angle;
+                        w += a3;
                     }
-                    double a3 = charts[i].area3d();
-                    area[0] += a3 * res[i].before.area;
-                    area[1] += a3 * res[i].after.area;
-                    angle[0] += a3 * res[i].before.angle;
-                    angle[1] += a3 * res[i].after.angle;
-                    w += a3;
-                }
-                w = std::max(w, 1e-300);
-                json out = {{"islands", charts.size()},
-                            {"failed", failed},
-                            {"areaDistortion", {area[0] / w, area[1] / w}},
-                            {"angleDistortion", {angle[0] / w, angle[1] / w}}};
-                if (json fm = refineOnExport(m, f, set, n, finalOptions(o), final); !fm.is_null())
-                    out["finalMesh"] = std::move(fm);
-                return out;
-            }));
+                    w = std::max(w, 1e-300);
+                    json out = {{"islands", charts.size()},
+                                {"failed", failed},
+                                {"areaDistortion", {area[0] / w, area[1] / w}},
+                                {"angleDistortion", {angle[0] / w, angle[1] / w}}};
+                    if (json fm = refineOnExport(m, f, set, n, finalOptions(o), final, &map); !fm.is_null())
+                        out["finalMesh"] = std::move(fm);
+                    return out;
+                })(mesh, faces, node);
+                // After the symmetry pass, which rewrites mirrored islands: islands the solve grew into a neighbour move off it.
+                if (map)
+                    keepIslandsApart(mesh, *map, set, before, sharedTextureTriangles(node, mesh, set));
+                return result;
+            });
         },
     });
 

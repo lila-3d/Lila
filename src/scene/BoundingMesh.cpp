@@ -1,10 +1,12 @@
 #include "ops/Command.h"
+#include "core/Log.h"
 #include "core/Profile.h"
 #include "geo/BoundingShapes.h"
 #include "geo/MultiBox.h"
 #include "geo/Primitives.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
+#include "scene/MeshEditInternal.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "scene/TransformOps.h"
@@ -13,6 +15,7 @@
 
 #include <cstdio>
 #include <limits>
+#include <map>
 #include <set>
 
 namespace lila::scene
@@ -43,8 +46,37 @@ void addWorldPoints(const Node& n, const geo::Mesh& mesh, std::vector<glm::dvec3
             out.push_back(glm::dvec3(w * glm::dvec4(mesh.position(p), 1.0)));
 }
 
-/** One job per mesh: whole meshes at or under the selection, or the selected components in a component mode. */
-std::vector<Job> gather(Graph& g, const std::vector<std::string>& names)
+/**
+ * The selected components of one mesh as vertex sets. With the mesh's symmetry on and the selection clear of the mirror
+ * plane, symmetry "perSide" gives one set per side and "clickedSide" only the side clicked; "selection", or a selection
+ * across the plane, gives one set.
+ */
+std::vector<components::Ids> componentSides(const Node& n, const MeshPtr& cage, ComponentMode mode, const components::Ids& ids,
+                                            const std::string& symmetry)
+{
+    const components::Ids all = components::convert(*cage, mode, ids, ComponentMode::Vertex);
+    if (symmetry == "selection")
+        return {all};
+    const components::Ids driving = drivingSide(n.id(), mode, ids, cage);
+    if (driving.size() == ids.size())
+        return {all};
+    if (symmetry == "clickedSide")
+        return {components::convert(*cage, mode, driving, ComponentMode::Vertex)};
+    geo::Mesh m = *cage;
+    const std::optional<geo::SymmetryMap> sym = detail::symmetryFor(n, m);
+    if (!sym)
+        return {all};
+    std::map<int, components::Ids> byWedge;
+    for (geo::Index p : all)
+        byWedge[sym->wedge(p)].push_back(p);
+    std::vector<components::Ids> out;
+    for (auto& [wedge, pts] : byWedge)
+        out.push_back(std::move(pts));
+    return out;
+}
+
+/** One job per mesh: whole meshes at or under the selection, or the selected components in a component mode (split per componentSides). */
+std::vector<Job> gather(Graph& g, const std::vector<std::string>& names, const std::string& symmetry)
 {
     g.evaluate();
     std::vector<Job> jobs;
@@ -57,12 +89,15 @@ std::vector<Job> gather(Graph& g, const std::vector<std::string>& names)
             MeshPtr cage = n && n->type().isA("mesh") ? modifiers::cage(g, id) : nullptr;
             if (!cage || ids.empty())
                 continue;
-            Job job{id, {}};
             glm::dmat4 w = n->as<glm::dmat4>(Transform::kWorldMatrix);
-            for (geo::Index p : components::convert(*cage, mode, ids, ComponentMode::Vertex))
-                if (cage->pointValid(p))
-                    job.points.push_back(glm::dvec3(w * glm::dvec4(cage->position(p), 1.0)));
-            jobs.push_back(std::move(job));
+            for (const components::Ids& side : componentSides(*n, cage, mode, ids, symmetry))
+            {
+                Job job{id, {}};
+                for (geo::Index p : side)
+                    if (cage->pointValid(p))
+                        job.points.push_back(glm::dvec3(w * glm::dvec4(cage->position(p), 1.0)));
+                jobs.push_back(std::move(job));
+            }
         }
         return jobs;
     }
@@ -152,7 +187,13 @@ Placed solve(Graph& g, const Job& job, const Args& a)
         Placed p;
         p.mesh = geo::convexHullMesh(job.points, a.get<int>("maxHullPoints", 32), offset);
         if (p.mesh.numFaces() == 0)
-            throw CommandError("boundingMesh: the points are flat, so they have no convex hull");
+        {
+            const std::string owner = g.node(job.owner)->name();
+            const std::string count = std::to_string(job.points.size());
+            throw CommandError(job.points.size() < 4
+                                   ? "boundingMesh: a hull needs at least 4 vertices not all on one plane; " + owner + " has " + count
+                                   : "boundingMesh: the " + count + " vertices on " + owner + " lie on one plane, so they have no hull. Add a vertex off that plane");
+        }
         glm::dvec3 lo(std::numeric_limits<double>::max()), hi(-lo);
         for (geo::Index i = 0; i < p.mesh.pointCapacity(); ++i)
             if (p.mesh.pointValid(i))
@@ -322,7 +363,8 @@ void registerBoundingMeshCommands()
         .name = "boundingMesh",
         .doc = "Wrap the selection's points in a fitted shape, ready to go to Unreal as collision. Orientation is solved from the "
                "points alone (minimum-volume box), so frozen and unfrozen geometry behave the same, and every point is inside. "
-               "Works on objects (every mesh at or under them) or on selected components. Returns the new meshes.",
+               "Works on objects (every mesh at or under them) or on selected vertices, edges or faces, which get one shape per mesh "
+               "around their vertices. Returns the new meshes.",
         .positionalDoc = "objects",
         .flags = {
             {"shape", "s", A::String, "box", "box, sphere, capsule, cylinder or hull.", {"box", "sphere", "capsule", "cylinder", "hull"}},
@@ -332,7 +374,11 @@ void registerBoundingMeshCommands()
              {"fit", "world", "object"}},
             {"axis", "ax", A::String, "auto", "Axis a capsule or cylinder runs along: auto (smallest), x, y or z of the box.",
              {"auto", "x", "y", "z"}},
-            {"perObject", "po", A::Bool, false, "One shape per mesh instead of one around everything."},
+            {"perObject", "po", A::Bool, false, "One shape per mesh instead of one around everything. Component selections always get one per mesh."},
+            {"symmetry", "sym", A::String, "perSide",
+             "Components on a mesh with symmetry on, selected clear of the mirror plane: perSide (one shape per side), clickedSide "
+             "(only the side clicked) or selection (one shape around all of them).",
+             {"perSide", "clickedSide", "selection"}},
             {"nameFromSelection", "ns", A::Bool, true, "Name after the mesh it wraps, so Unreal pairs it as that mesh's collision."},
             {"name", "n", A::String, "Collision", "Base name when not named from the selection."},
             {"prefix", "p", A::String, "auto", "Put before the name; auto picks Unreal's: UBX_, USP_, UCP_, or UCX_ for cylinders and hulls."},
@@ -348,10 +394,11 @@ void registerBoundingMeshCommands()
             std::vector<std::string> names = a.objects();
             if (names.empty() && components::mode() == ComponentMode::Object)
                 throw CommandError("boundingMesh: select some objects or components");
-            std::vector<Job> jobs = gather(g, names);
+            std::vector<Job> jobs = gather(g, names, a.get<std::string>("symmetry", "perSide"));
             if (jobs.empty())
                 throw CommandError("boundingMesh: no mesh points in the selection");
-            if (!a.get<bool>("perObject", false) && jobs.size() > 1)
+            const bool fromComponents = components::mode() != ComponentMode::Object;
+            if (!fromComponents && !a.get<bool>("perObject", false) && jobs.size() > 1)
             {
                 NodeId owner = jobs[0].owner;
                 if (Node* first = names.empty() ? nullptr : g.find(names[0]); first && components::mode() == ComponentMode::Object)
@@ -368,9 +415,23 @@ void registerBoundingMeshCommands()
                 prefix = autoPrefix(shape);
             json out = json::array();
             std::vector<NodeId> made;
+            std::string skipped;
             for (const Job& job : jobs)
             {
-                Placed placed = solve(g, job, a);
+                Placed placed;
+                try
+                {
+                    placed = solve(g, job, a);
+                }
+                catch (const CommandError& e)
+                {
+                    // One mesh with too few components should not cost the others their shapes.
+                    if (jobs.size() == 1)
+                        throw;
+                    log::warn("{}", e.what());
+                    skipped = e.what();
+                    continue;
+                }
                 std::string base = a.get<bool>("nameFromSelection", true) ? g.node(job.owner)->name() : a.get<std::string>("name", "Collision");
                 if (auto colon = base.rfind(':'); colon != std::string::npos)
                     base = base.substr(colon + 1);
@@ -380,7 +441,9 @@ void registerBoundingMeshCommands()
                 out.push_back(mesh->path());
                 made.push_back(mesh->id());
             }
-            if (components::mode() != ComponentMode::Object)
+            if (made.empty())
+                throw CommandError(skipped);
+            if (fromComponents)
                 components::setMode(ComponentMode::Object);
             g.select(made);
             return out;

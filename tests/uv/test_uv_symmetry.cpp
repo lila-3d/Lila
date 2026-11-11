@@ -285,11 +285,11 @@ TEST_CASE("uv symmetry: cutting along the symmetry line opens it")
     REQUIRE(centre.size() == 2);
     run("selectMode", {{"args", {"edge"}}});
     run("selectComponents", {{"args", {plane}}, {"edges", centre}});
-    CHECK(run("uvCut")["cut"] == 2);
+    json cut = run("uvCut");
+    CHECK(cut["cut"] == 2);
+    CHECK(cut["islands"] == 2);
     run("selectMode", {{"args", {"object"}}});
-    json info = run("uvLayout");
-    CHECK(info["islands"] == 2);
-    CHECK(info["foldedFaces"] == 0);
+    CHECK(run("uvLayout")["foldedFaces"] == 0);
 }
 
 TEST_CASE("uv symmetry: auto uv cuts both halves alike")
@@ -317,3 +317,4 @@ TEST_CASE("uv symmetry: auto uv cuts both halves alike")
     CHECK(mismatched == 0);
     CHECK(run("uvLayout")["foldedFaces"] == 0);
 }
+

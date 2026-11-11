@@ -717,6 +717,16 @@ void onLastOp(lo::Change change)
 }
 } // namespace
 
+nlohmann::json seamViewAtCamera(bool plane)
+{
+    json call = json::object();
+    if (gViewEye)
+        call["position"] = {gViewEye->x, gViewEye->y, gViewEye->z};
+    if (plane && gViewDir)
+        call["normal"] = {-gViewDir->x, -gViewDir->y, -gViewDir->z};
+    return call;
+}
+
 void installUvProjectTool()
 {
     static bool installed = false;
@@ -747,12 +757,9 @@ void installUvProjectTool()
                   .category = "UV",
                   .run =
                       [] {
-                          json call = json::object();
-                          if (gViewEye)
-                              call["position"] = {gViewEye->x, gViewEye->y, gViewEye->z};
                           try
                           {
-                              ops::execute("uvSeamView", call, CallSource::UI);
+                              ops::execute("uvSeamView", seamViewAtCamera(false), CallSource::UI);
                           }
                           catch (const CommandError& e)
                           {
@@ -761,5 +768,55 @@ void installUvProjectTool()
                       },
                   .doc = "A locator where the camera is now, that Auto UV keeps seams out of sight of. Move it and run Auto UV again.",
                   .python = "lila.ops.uvSeamView()"});
+    actions::add({.id = "uv.seamViewPlane",
+                  .label = "Add Seam Plane",
+                  .category = "UV",
+                  .run =
+                      [] {
+                          try
+                          {
+                              ops::execute("uvSeamView", seamViewAtCamera(true), CallSource::UI);
+                          }
+                          catch (const CommandError& e)
+                          {
+                              log::warn("{}", e.what());
+                          }
+                      },
+                  .doc = "A plane facing the camera, that Auto UV keeps seams out of sight of from anywhere on that side, like a game's "
+                         "fixed side or top view. Rotate it and run Auto UV again.",
+                  .python = "lila.ops.uvSeamView(normal=(0, 0, 1))"});
+    actions::add({.id = "uv.seamViewOverride",
+                  .label = "Override Seam Views with Selected",
+                  .category = "UV",
+                  .run =
+                      [] {
+                          scene::Graph& g = scene::Graph::current();
+                          for (scene::NodeId id : g.selection())
+                              if (const scene::Node* n = g.node(id); n && n->type().isA("transform"))
+                              {
+                                  try
+                                  {
+                                      ops::execute("uvSeamViewOverride", {{"args", {n->path()}}}, CallSource::UI);
+                                  }
+                                  catch (const CommandError& e)
+                                  {
+                                      log::warn("{}", e.what());
+                                  }
+                                  return;
+                              }
+                          log::warn("Override Seam Views: select a camera, locator or plane first");
+                      },
+                  .doc = "Auto UV, Auto Seams and Hose UVs hide seams from the selected camera, locator or plane alone, whatever "
+                         "their options say, until cleared.",
+                  .python = "lila.ops.uvSeamViewOverride(\"camera1\")",
+                  .keywords = {"camera", "seam", "hide", "override"}});
+    actions::add({.id = "uv.seamViewOverrideClear",
+                  .label = "Clear Seam View Override",
+                  .category = "UV",
+                  .doc = "Auto UV, Auto Seams and Hose UVs go back to the seam views their options name.",
+                  .python = "lila.ops.uvSeamViewOverride()",
+                  .command = "uvSeamViewOverride",
+                  .call = json::object(),
+                  .keywords = {"camera", "seam", "override"}});
 }
 } // namespace lila::ui

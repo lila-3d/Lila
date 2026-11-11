@@ -13,6 +13,7 @@
 #include <lila/Log.h>
 #include <lila/Menus.h>
 #include <lila/Node.h>
+#include <lila/OptionBox.h>
 #include <lila/Shelves.h>
 #include <lila/ViewportTool.h>
 
@@ -120,6 +121,10 @@ void registerUi(ext::Context& ctx)
     actions::add(ctx, {.id = "tailor.simulate", .label = "Drape", .category = "Tailor",
                        .doc = "Run the cloth solver on the selected garment until it settles.", .python = "tailorSimulate('Garment', frames=200)",
                        .command = "tailorSimulate", .call = nlohmann::json::object()});
+    actions::add(ctx, {.id = "tailor.drapeMesh", .label = "Drape Mesh", .category = "Tailor",
+                       .doc = "Drop the selected mesh as cloth onto the meshes under it (or the other selected meshes) and keep the settled shape.",
+                       .python = "tailorDrapeMesh('Plane')", .command = "tailorDrapeMesh", .call = nlohmann::json::object(),
+                       .icon = "arrow-wave-right-down", .keywords = {"drape", "cloth", "throw", "tablecloth", "sheet", "shrinkwrap", "fall"}});
     actions::add(ctx, {.id = "tailor.setFabric", .label = "Set Fabric", .category = "Tailor",
                        .doc = "Set the selected garment's fabric preset.", .python = "tailorSetFabric('Garment', fabric='Wool')",
                        .command = "tailorSetFabric", .call = nlohmann::json::object()});
@@ -137,6 +142,15 @@ void registerUi(ext::Context& ctx)
     actions::add(ctx, {.id = "tailor.bake", .label = "Bake to Game Mesh", .category = "Tailor",
                        .doc = "Make a plain mesh from the selected garment's drape, skinned like its collider when that is skinned.",
                        .python = "tailorBake('Garment')", .command = "tailorBake", .call = nlohmann::json::object()});
+    actions::add(ctx, {.id = "tailor.sendToUnreal", .label = "Send to Unreal", .category = "Tailor",
+                       .doc = "Send the selected garment to Unreal as a Chaos Cloth asset, a skeletal mesh with clothing, or a skinned mesh with no cloth.",
+                       .python = "tailorSendToUnreal('Garment', as='skinnedMesh')", .command = "tailorSendToUnreal",
+                       .call = nlohmann::json::object(), .icon = "cube-send"});
+    ops::options::setOverride("tailorSendToUnreal",
+                              {.order = {"as", "contentPath", "skeleton", "skeletalMesh", "material"},
+                               .labels = {{"as", "Send As"}},
+                               .choices = {{"as", {{"clothAsset", "Cloth Asset"}, {"skeletalMesh", "Skeletal Mesh + Cloth"}, {"skinnedMesh", "Skinned Mesh, No Cloth"}}}}});
+    ops::options::setOverride("tailorBake", {.labels = {{"clothMask", "Cloth Mask"}}});
     actions::add(ctx, {.id = "tailor.live", .label = "Live Drape", .category = "Tailor",
                        .doc = "Keep the selected garment simulating in real time.", .python = "tailorLive('Garment')",
                        .command = "tailorLive", .call = nlohmann::json::object()});
@@ -175,20 +189,23 @@ void registerUi(ext::Context& ctx)
                        .command = "tailorClearBrush", .call = nlohmann::json::object()});
 
     registerPatternEditor(ctx);
+    registerToolkit(ctx);
     registerGrabTool(ctx);
     registerAnimation(ctx);
     menus::addMenu(ctx, {.id = "Tailor", .title = "Tailor", .before = "Rig", .sets = {"Cloth"}});
     int sep = 0;
-    for (const char* a : {"tailor.mannequin", "tailor.createBlock", "tailor.drawPanel", "tailor.importGarmentCode", "", "tailor.simulate", "tailor.setFabric",
+    for (const char* a : {"tailor.mannequin", "tailor.createBlock", "tailor.drawPanel", "tailor.importGarmentCode", "", "tailor.simulate", "tailor.drapeMesh", "tailor.setFabric",
                           "tailor.sew", "tailor.autoSew", "tailor.check", "window.tailorPatternEditor", "", "tailor.live", "tailor.stopLive", "tailor.grab",
                           "tailor.pin", "tailor.fold", "tailor.shrink", "tailor.steam", "tailor.clearBrush", "", "tailor.freeze", "tailor.unfreeze", "", "tailor.addStitching",
-                          "tailor.bake", "layout.apply.Tailor"})
+                          "tailor.bake", "tailor.sendToUnreal", "window.tailorToolkit", "layout.apply.Tailor"})
     {
         if (*a)
             menus::addItem(ctx, {.id = std::string("tailor.menu.") + a, .menu = "Tailor", .action = a});
         else
             menus::addItem(ctx, {.id = "tailor.menu.sep" + std::to_string(sep++), .menu = "Tailor", .kind = menus::Kind::Separator});
     }
+
+    menus::addItem(ctx, {.id = "tailor.menu.meshDrape", .menu = "Mesh", .action = "tailor.drapeMesh"});
 
     attributeEditor::addSection(ctx, kGarmentType, "Panels and Seams", [](scene::NodeId id) { return garmentSection(id); });
 
@@ -200,21 +217,25 @@ void registerUi(ext::Context& ctx)
                                        {"Auto-Sew", "needle-thread", "tailor.autoSew"},
                                        {"Check", "checklist", "tailor.check"},
                                        {"Drape", "player-play", "tailor.simulate"},
+                                       {"Drape Mesh", "arrow-wave-right-down", "tailor.drapeMesh"},
                                        {"Live", "bolt", "tailor.live"},
                                        {"Grab", "hand-grab", "tailor.grab"},
                                        {"Pin", "pinned", "tailor.pin"},
                                        {"Fold", "fold", "tailor.fold"},
                                        {"Shrink", "arrows-minimize", "tailor.shrink"},
                                        {"Steam", "ironing-steam", "tailor.steam"},
-                                       {"Bake", "package-export", "tailor.bake"}})
+                                       {"Bake", "package-export", "tailor.bake"},
+                                       {"Unreal", "cube-send", "tailor.sendToUnreal"}})
         items.push_back({{"label", label}, {"icon", icon}, {"target", target}});
     shelves::add(ctx, {"Tailor", std::move(items)});
     layouts::add(ctx, "Tailor",
                  {{"version", 1},
                   {"preset",
-                   {{"open", {"outliner", "channelBox", "attributeEditor", "displayLayers", "tailorPatternEditor", "timeSlider"}},
-                    {"raise", {"tailorPatternEditor"}},
-                    {"size", {{"tailorPatternEditor", {{"width", 0.42}}}}}}},
+                   {{"open", {"outliner", "channelBox", "attributeEditor", "displayLayers", "tailorPatternEditor", "tailorToolkit", "timeSlider"}},
+                    {"raise", {"tailorPatternEditor", "tailorToolkit", "channelBox"}},
+                    {"size", {{"tailorPatternEditor", {{"width", 0.31}}}}},
+                    // The pattern takes its own full-height column beside the viewport, the outliner and inspector beyond it.
+                    {"columns", nlohmann::json::array({{"tailorPatternEditor"}, {"outliner", "channelBox"}})}}},
                   {"viewport", {{"quad", false}, {"camera", "persp"}}},
                   {"menuSet", "Cloth"},
                   {"shelf", {{"current", "Tailor"}}}});

@@ -8,6 +8,7 @@
 
 #include <QButtonGroup>
 #include <QEvent>
+#include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -518,5 +519,55 @@ void cycle(QAbstractButton* button, std::function<void(int)> step)
     button->setContextMenuPolicy(Qt::PreventContextMenu);
     button->installEventFilter(new CycleBack(button, step));
     QObject::connect(button, &QAbstractButton::clicked, button, [step] { step(1); });
+}
+
+QIcon tintedIcon(const QString& name, const char* colorToken, int size)
+{
+    QIcon out;
+    for (qreal dpr : {1.0, 2.0})
+    {
+        QPixmap pm = icon(name).pixmap(QSize(size, size), dpr);
+        {
+            QPainter p(&pm);
+            p.setCompositionMode(QPainter::CompositionMode_SourceIn);
+            p.fillRect(pm.rect(), themeColor(colorToken));
+        }
+        out.addPixmap(pm);
+    }
+    return out;
+}
+
+QWidget* warningBanner(QWidget* parent)
+{
+    auto* w = new QFrame(parent);
+    w->setObjectName("warningBanner");
+    const QColor c = themeColor("issueWarning");
+    w->setStyleSheet(QString("QFrame#warningBanner { background: rgba(%1, %2, %3, 40); border: none; border-left: 3px solid %4; }"
+                             "QFrame#warningBanner QLabel { background: transparent; border: none; }")
+                         .arg(c.red())
+                         .arg(c.green())
+                         .arg(c.blue())
+                         .arg(c.name()));
+    w->setProperty("lilaRawColors", true);
+    auto* h = new QHBoxLayout(w);
+    h->setContentsMargins(8, 6, 8, 6);
+    h->setSpacing(8);
+    auto* glyph = new QLabel(w);
+    glyph->setPixmap(tintedIcon("alert-triangle", "issueWarning").pixmap(16, 16));
+    h->addWidget(glyph, 0, Qt::AlignTop);
+    auto* text = new QLabel(w);
+    text->setObjectName("warningText");
+    text->setWordWrap(true);
+    text->setTextFormat(Qt::PlainText);
+    h->addWidget(text, 1);
+    w->setVisible(false);
+    return w;
+}
+
+void setWarning(QWidget* banner, const QString& text)
+{
+    if (auto* l = banner->findChild<QLabel*>("warningText"))
+        l->setText(text);
+    banner->setVisible(!text.isEmpty());
 }
 } // namespace lila::ui::controls

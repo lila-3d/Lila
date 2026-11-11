@@ -173,6 +173,8 @@ private:
     QDockWidget* dockForTab(QTabBar* bar, int index) const;
     void hideStaleTabBars();
     bool mStaleBarsQueued = false;
+    /** The tab bar under a held left button. A tab dragged out undocks through it, so hiding it strands the drag. */
+    QPointer<QTabBar> mPressedTabBar;
     void rememberSize(QDockWidget* dock);
     void restoreSize(QDockWidget* dock);
     /** Gives a docked panel squeezed to almost nothing its remembered size, or a default share of the window. */

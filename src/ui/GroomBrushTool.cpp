@@ -186,14 +186,11 @@ public:
 
     void activate() override
     {
-        Graph& g = Graph::current();
-        Node* gr = selectedGroomNode(g);
+        Node* gr = groomForSelection();
         mBrush.setGroom(gr ? gr->id() : scene::kNoNode);
         gActiveBrush = &mBrush;
         mControls.activate({}, {});
         showGroomPalette(GroomPalettePage::Groom);
-        if (!gr)
-            log::warn("Groom Brushes: select a groom");
     }
 
     void deactivate() override
@@ -204,6 +201,7 @@ public:
             mBrush.cancelLengthKeys();
         mBrush.cancel();
         mControls.deactivate();
+        viewportTools::setHoverHighlight(scene::kNoNode);
         hideGroomPalette();
         viewportTools::requestRedraw();
     }
@@ -220,7 +218,10 @@ public:
             mBrush.setGroom(groomId());
         if (mBrush.groom() == scene::kNoNode)
         {
-            log::warn("Groom Brushes: select a groom");
+            // No groom yet: the click picks the mesh it grows from.
+            if (Node* gr = startGroomOn(groomScalpUnder(view, e->position())))
+                mBrush.setGroom(gr->id());
+            viewportTools::requestRedraw();
             return true;
         }
         mBrush.setSettings(state().settings);
@@ -241,6 +242,8 @@ public:
         mHover = e->position();
         if (mControls.mouseMove(e))
             return true;
+        if (mBrush.groom() == scene::kNoNode)
+            groomScalpUnder(view, e->position());
         if (mPressed)
         {
             mBrush.drag(brushView(view), e->position().x(), e->position().y(), pressureOf(e));
@@ -375,7 +378,7 @@ public:
                         .mode = mode,
                         .fields = {{"radius", QString("%1 px").arg(int(std::lround(s.radius)))}, {"strength", QString::number(s.strength, 'f', 2)}},
                         .flags = {{"invert", invert}},
-                        .prompt = gr ? QString() : QString("select a groom"),
+                        .prompt = gr ? QString() : QString("click the mesh hair grows from"),
                         .symmetry = axis >= 0 ? std::optional<ToolSymmetry>(ToolSymmetry{true, QString("XYZ").mid(axis, 1)}) : std::nullopt});
         if (groomKeysShown())
             drawKeyList(p, QPointF(16.0, view.height - 84.0), groomBrushKeys());
@@ -442,6 +445,19 @@ QString caption(const char* id)
     return QString::fromStdString(groom::groomBrushSettingText(id).first);
 }
 
+/** A catalog hint's first sentence without its asides: the tile says what the tool does, the docs the rest. */
+QString firstSentence(const QString& hint)
+{
+    qsizetype end = hint.size();
+    for (const QString& stop : {QString(". "), QString(" ("), QString("; ")})
+        if (const qsizetype at = hint.indexOf(stop); at >= 0)
+            end = std::min(end, at);
+    QString out = hint.left(end).trimmed();
+    if (out.endsWith('.'))
+        out.chop(1);
+    return out;
+}
+
 QString tip(const char* id, const QString& fallback)
 {
     const std::string t = groom::groomBrushSettingText(id).second;
@@ -471,7 +487,8 @@ public:
             b->setCheckable(true);
             b->setFocusPolicy(Qt::NoFocus);
             controls::setRole(b, "tile");
-            b->setToolTip(hint.isEmpty() ? text : QString("%1: %2").arg(text, hint));
+            const QString first = firstSentence(hint);
+            b->setToolTip(first.isEmpty() ? text : QString("%1: %2").arg(text, first));
             connect(b, &QToolButton::clicked, this, std::move(fn));
             return b;
         };

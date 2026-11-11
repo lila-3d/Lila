@@ -2,6 +2,8 @@
 
 #include "core/Export.h"
 
+#include <nlohmann/json.hpp>
+
 namespace lila::ui
 {
 /**
@@ -11,4 +13,10 @@ namespace lila::ui
  * the handles or another tool ends it. Also feeds uvProject the active view's direction for seam placement.
  */
 LILA_UI_API void installUvProjectTool();
+
+/**
+ * uvSeamView flags for a seam view at the last perspective view's camera: a point there, or with plane, a plane through
+ * it facing that camera. Empty before any view has drawn.
+ */
+LILA_UI_API nlohmann::json seamViewAtCamera(bool plane);
 } // namespace lila::ui

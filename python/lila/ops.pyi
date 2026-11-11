@@ -1377,8 +1377,8 @@ def borderBlend(segments: int | None = None, tensionA: float | None = None, tens
         name: Mesh name. Short form n.
     """
 
-def boundingMesh(*objects: Any, shape: str | None = None, offset: float | None = None, axisOffset: Sequence[float] | None = None, orient: str | None = None, axis: str | None = None, perObject: bool | None = None, nameFromSelection: bool | None = None, name: str | None = None, prefix: str | None = None, parent: bool | None = None, segments: int | None = None, maxHullPoints: int | None = None, generator: bool | None = None, s: str | None = None, o: float | None = None, ao: Sequence[float] | None = None, ax: str | None = None, po: bool | None = None, ns: bool | None = None, n: str | None = None, p: str | None = None, pa: bool | None = None, sg: int | None = None, mh: int | None = None, g: bool | None = None) -> Any:
-    """Wrap the selection's points in a fitted shape, ready to go to Unreal as collision. Orientation is solved from the points alone (minimum-volume box), so frozen and unfrozen geometry behave the same, and every point is inside. Works on objects (every mesh at or under them) or on selected components. Returns the new meshes.
+def boundingMesh(*objects: Any, shape: str | None = None, offset: float | None = None, axisOffset: Sequence[float] | None = None, orient: str | None = None, axis: str | None = None, perObject: bool | None = None, symmetry: str | None = None, nameFromSelection: bool | None = None, name: str | None = None, prefix: str | None = None, parent: bool | None = None, segments: int | None = None, maxHullPoints: int | None = None, generator: bool | None = None, s: str | None = None, o: float | None = None, ao: Sequence[float] | None = None, ax: str | None = None, po: bool | None = None, sym: str | None = None, ns: bool | None = None, n: str | None = None, p: str | None = None, pa: bool | None = None, sg: int | None = None, mh: int | None = None, g: bool | None = None) -> Any:
+    """Wrap the selection's points in a fitted shape, ready to go to Unreal as collision. Orientation is solved from the points alone (minimum-volume box), so frozen and unfrozen geometry behave the same, and every point is inside. Works on objects (every mesh at or under them) or on selected vertices, edges or faces, which get one shape per mesh around their vertices. Returns the new meshes.
 
     Args:
         objects: objects.
@@ -1387,7 +1387,8 @@ def boundingMesh(*objects: Any, shape: str | None = None, offset: float | None =
         axisOffset: Extra padding per box axis, added to offset, cm. Short form ao.
         orient: fit (tightest box from the points), world or object (the owner's axes). Short form or. One of 'fit', 'world', 'object'. Default 'fit'.
         axis: Axis a capsule or cylinder runs along: auto (smallest), x, y or z of the box. Short form ax. One of 'auto', 'x', 'y', 'z'. Default 'auto'.
-        perObject: One shape per mesh instead of one around everything. Short form po. Default False.
+        perObject: One shape per mesh instead of one around everything. Component selections always get one per mesh. Short form po. Default False.
+        symmetry: Components on a mesh with symmetry on, selected clear of the mirror plane: perSide (one shape per side), clickedSide (only the side clicked) or selection (one shape around all of them). Short form sym. One of 'perSide', 'clickedSide', 'selection'. Default 'perSide'.
         nameFromSelection: Name after the mesh it wraps, so Unreal pairs it as that mesh's collision. Short form ns. Default True.
         name: Base name when not named from the selection. Short form n. Default 'Collision'.
         prefix: Put before the name; auto picks Unreal's: UBX_, USP_, UCP_, or UCX_ for cylinders and hulls. Short form p. Default 'auto'.
@@ -1712,6 +1713,13 @@ def clearLoopKey(*objects: Any, attribute: Any | None = None, at: Any | None = N
     Args:
         objects: objects.
         attribute: Attribute name or list of names. Short form at.
+    """
+
+def clearMaterialTextures(*objects: Any) -> Any:
+    """Clear every texture map on the materials, keeping their values and sampling settings. Returns the channels cleared.
+
+    Args:
+        objects: material...
     """
 
 def clearRecoveredScenes() -> Any:
@@ -7658,12 +7666,13 @@ def retopoDrawSetDots(mesh: str | None = None, dots: Sequence[Any] | None = None
         create: Create the mesh if it doesn't exist (taking the reference's symmetry). Default False.
     """
 
-def retopoDrawSetReference(mesh: str | None = None, reference: str | None = None) -> Any:
+def retopoDrawSetReference(mesh: str | None = None, reference: str | None = None, create: bool | None = None) -> Any:
     """Retopo Draw: connect a different reference mesh to the retopo mesh, so drawing continues on that surface and resumes on it later. Returns the mesh name.
 
     Args:
         mesh: Retopo mesh.
         reference: The new reference mesh.
+        create: Create the mesh if it doesn't exist (taking the reference's symmetry). Default False.
     """
 
 def retopoPoles(*objects: Any, preset: str | None = None, method: str | None = None, targetFaces: int | None = None, countTolerance: float | None = None, timeout: float | None = None, targetEdgeLength: float | None = None, adaptivity: float | None = None, useHardEdges: bool | None = None, sharpAngle: float | None = None, symmetry: str | None = None, guides: Sequence[Any] | None = None, guidePoints: Sequence[Any] | None = None, featureGuides: Sequence[Any] | None = None, featureGuidePoints: Sequence[Any] | None = None, densityHandles: Sequence[Any] | None = None, pureQuads: bool | None = None, jointDensity: float | None = None, jointDensityReach: float | None = None, jointPoleAvoidance: float | None = None, edgesAround: int | None = None, resolveGaps: bool | None = None, poles: Sequence[Any] | None = None) -> Any:
@@ -7826,7 +7835,7 @@ def rotate(*objects: Any, by: Sequence[float] | None = None, to: Sequence[float]
         x: Local X rotation, degrees; on components, a turn about world X.
         y: Local Y rotation, degrees.
         z: Local Z rotation, degrees.
-        space: 'world', 'object' or 'parent' for `by`. Default 'world'.
+        space: 'world', 'object' or 'parent' for `by`, or 'gimbal' to add `by` to the rotate channels. Default 'world'.
     """
 
 def rotateComponents(by: Sequence[float] | None = None, pivot: Sequence[float] | None = None) -> Any:

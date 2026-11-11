@@ -921,7 +921,7 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         sectionHeader(manip, "Manipulators");
         numberField(manip, "Size (pixels)", "/manipulator/size", 100.0, 30.0, 400.0, 5.0, 0);
         choiceField(manip, "Move space", "/manipulator/moveSpace", {{"World", "world"}, {"Object", "object"}, {"Parent", "parent"}, {"Component", "component"}, {"Normal", "normal"}}, "world");
-        choiceField(manip, "Rotate space", "/manipulator/rotateSpace", {{"World", "world"}, {"Object", "object"}, {"Parent", "parent"}, {"Component", "component"}}, "world");
+        choiceField(manip, "Rotate space", "/manipulator/rotateSpace", {{"World", "world"}, {"Object", "object"}, {"Parent", "parent"}, {"Gimbal", "gimbal"}, {"Component", "component"}}, "world");
         choiceField(manip, "Scale space (components)", "/manipulator/scaleSpace", {{"World", "world"}, {"Object", "object"}, {"Component", "component"}}, "world");
         numberField(manip, "Rotate snap (degrees)", "/manipulator/rotateStep", 15.0, 0.1, 180.0, 1.0, 1);
         sectionHeader(manip, "Soft Select");

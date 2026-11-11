@@ -1,34 +1,23 @@
 #pragma once
 
+#include "core/Export.h"
+
 #include <QString>
 
 #include <optional>
 
+class QObject;
+
 namespace lila::ui
 {
-/** Maya-style relative edits: "+=5", "-=2", "*=2", "/=4"; otherwise a plain value. */
-inline std::optional<double> evalExpression(const QString& text, double current)
-{
-    QString t = text.trimmed();
-    bool ok = false;
-    if (t.size() > 2 && t[1] == '=' && QString("+-*/").contains(t[0]))
-    {
-        double v = t.mid(2).trimmed().toDouble(&ok);
-        if (!ok)
-            return std::nullopt;
-        switch (t[0].toLatin1())
-        {
-        case '+': return current + v;
-        case '-': return current - v;
-        case '*': return current * v;
-        case '/': return v != 0.0 ? std::optional(current / v) : std::nullopt;
-        }
-    }
-    if (t.startsWith('='))
-        t = t.mid(1);
-    double v = t.toDouble(&ok);
-    return ok ? std::optional(v) : std::nullopt;
-}
+/**
+ * A typed number: arithmetic ("2048/4", "sqrt(2)*10", "1.5e3"), or a relative edit of current ("+=5", "-=2", "*=3",
+ * "/=4", "*=2+1"). A leading '=' is allowed. nullopt for anything that isn't a finite number.
+ */
+LILA_UI_API std::optional<double> evalExpression(const QString& text, double current);
+
+/** Lets every spin box in the app take evalExpression text: Enter or leaving the field applies it. Installed once on the application. */
+LILA_UI_API void installSpinMath(QObject* parent);
 
 /** A boolean channel typed as on/off, 1/0, true/false or yes/no; nullopt for anything else. */
 inline std::optional<bool> parseBool(const QString& text)

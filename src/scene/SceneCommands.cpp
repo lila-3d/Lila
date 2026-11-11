@@ -108,6 +108,12 @@ PlugRef plugArg(const std::string& path)
 
 using rigutil::guarded;
 
+bool isRotationInterpolation(const PlugRef& p)
+{
+    const Node* n = Graph::current().node(p.node);
+    return n && p.attr == Transform::kRotationInterpolation && p.component < 0 && dynamic_cast<const Transform*>(n);
+}
+
 NodeId parentArg(const Args& a)
 {
     if (!a.has("parent"))
@@ -584,7 +590,12 @@ void registerCommands()
                 AttrDef def = Graph::current().attr(p);
                 if (p.component >= 0)
                     def.type = PlugType::Float;
-                guarded([&] { Graph::current().setValue(p, fromJson(def, v)); return 0; });
+                const PlugValue value = guarded([&] { return fromJson(def, v); });
+                // The rotate animation follows the interpolation it is given, not only keys set later.
+                if (isRotationInterpolation(p) && std::holds_alternative<int64_t>(value))
+                    guarded([&] { return anim::convertRotationCurves(Graph::current(), p.node, RotationInterpolation(std::get<int64_t>(value))); });
+                else
+                    guarded([&] { Graph::current().setValue(p, value); return 0; });
             }
             if (a.has("lock") && a.get<bool>("lock"))
                 guarded([&] { Graph::current().setLocked(p, true); return 0; });

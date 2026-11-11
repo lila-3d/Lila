@@ -116,4 +116,14 @@ LILA_UI_API void cycle(QAbstractButton* button, std::function<void(int)> step);
 
 /** Sets a role property and re-polishes, for sheet rules keyed on it. */
 LILA_UI_API void setRole(QWidget* w, const char* role);
+
+/**
+ * A warning strip for a setting outside the panel that replaces some of its own: a warning-tinted plate with a triangle
+ * and wrapped text, hidden while the text is empty. The tint is issueWarning, which stays hued in Monotone.
+ */
+LILA_UI_API QWidget* warningBanner(QWidget* parent);
+/** Sets a warningBanner's text, showing it, or hides it for empty text. */
+LILA_UI_API void setWarning(QWidget* banner, const QString& text);
+/** An icon drawn in one theme colour, such as issueWarning for a warning triangle. */
+LILA_UI_API QIcon tintedIcon(const QString& name, const char* colorToken, int size = 16);
 } // namespace lila::ui::controls

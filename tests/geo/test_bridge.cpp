@@ -189,6 +189,20 @@ TEST_CASE("bridge: open ends weld to the border between the sides")
     CHECK(boundaryEdgeCount(h.mesh) == 22);
 }
 
+TEST_CASE("bridge: an end border that runs round the rest of a hole is not welded to")
+{
+    // A slot three cells deep open to the sheet's edge; bridging the two edges at its mouth makes one quad, not a fan
+    // landing on the slot's sides and floor.
+    Gap g = cut(makePlane({600, 500, 6, 5}), [](const glm::dvec3& c) { return std::abs(c.x - 50) < 1 && c.z > -50; },
+                [](const glm::dvec3& mid) { return (std::abs(mid.x) < 1 || std::abs(mid.x - 100) < 1) && std::abs(mid.z - 200) < 1; });
+    REQUIRE(g.border.size() == 2);
+    const BridgeResult r = bridge(g.mesh, g.border, autoOptions());
+    CHECK(r.rows == 1);
+    CHECK(r.faces.size() == 1);
+    CHECK(r.welded == 0);
+    CHECK(isValid(g.mesh));
+}
+
 TEST_CASE("bridge: a sliver between two curves meeting at both ends leaves no loose points")
 {
     // An upper arc of 7 points and a lower arc of 5, sharing their end points, with a row of quads beyond each.
@@ -466,4 +480,30 @@ TEST_CASE("bridge: explicit start points pair as asked")
     bridge(m, rims, o);
     CHECK(isValid(m));
     CHECK(m.findEdge(a, target) != kInvalid);
+}
+
+TEST_CASE("bridge: with mirror symmetry a border never pairs with its mirror image")
+{
+    // A gap down the middle: its two sides face each other across x = 0.
+    Gap g = cut(makePlane({400.0, 100.0, 8, 2}), [](const glm::dvec3& c) { return std::abs(c.x) < 50.0; },
+                [](const glm::dvec3& mid) { return std::abs(std::abs(mid.x) - 50.0) < 1e-6; });
+    REQUIRE(g.border.size() == 4);
+
+    Mesh plain = g.mesh;
+    BridgeOptions o = autoOptions();
+    CHECK(bridge(plain, g.border, o).pairsBridged == 1);
+
+    const SymmetryMap map = SymmetryMap::build(g.mesh, axisPlane(0), 1e-3);
+    o.symmetry = &map;
+    const BridgeResult r = bridge(g.mesh, g.border, o);
+    for (Index f : r.faces)
+    {
+        bool neg = false, pos = false;
+        g.mesh.forEachFaceCorner(f, [&](Index c) {
+            const double x = g.mesh.position(g.mesh.cornerPoint(c)).x;
+            neg = neg || x < -1e-6;
+            pos = pos || x > 1e-6;
+        });
+        CHECK_FALSE((neg && pos));
+    }
 }

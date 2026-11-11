@@ -643,7 +643,8 @@ void registerBuiltins()
     cmd("mesh.spin", "Spin Edge", "Mesh", "polySpinEdge", json::object(), "Turns the selected edges to join the next corners of their two faces.");
     cmd("mesh.fillHole", "Fill Hole", "Mesh", "polyFillHole", json::object(), "Caps the selected open borders with a face.");
     cmd("mesh.gridFill", "Grid Fill", "Mesh", "polyGridFill", json::object(), "Rebuilds the selected fans or faces, or fills the selected holes, as a quad grid inside a ring of quads.");
-    cmd("mesh.flip", "Flip Normals", "Mesh", "polyFlip", json::object(), "Reverses the selected faces so they point the other way.");
+    add({.id = "mesh.flip", .label = "Flip Normals", .category = "Mesh", .doc = "Reverses the selected faces so they point the other way.",
+         .python = ops::toPython("polyFlip", json::object()), .command = "polyFlip", .call = json::object(), .keywords = {"reverse"}});
     cmd("mesh.conform", "Conform Normals", "Mesh", "polyConform", json::object(), "Turns faces to agree with their neighbours, so the whole shell faces one way.");
     cmd("mesh.triangulate", "Triangulate", "Mesh", "polyTriangulate", json::object(), "Splits the selected faces into triangles.");
     cmd("mesh.quadrangulate", "Quadrangulate", "Mesh", "polyQuadrangulate", json::object(), "Joins pairs of triangles into quads where they make good ones.");
@@ -702,8 +703,18 @@ void registerBuiltins()
         "Pairs mirror vertices again from their positions, leaving the geometry as it is.");
     cmd("mesh.symmetryRebuildTopological", "Re-pair Symmetry from Edge", "Mesh", "symmetryRebuild", {{"topological", true}},
         "Pairs mirror vertices by topology, outward from the selected center edge. Works on posed or uneven meshes.");
-    cmd("mesh.boundingMesh", "Bounding Mesh", "Mesh", "boundingMesh", json::object(),
-        "Wraps the selection in a fitted box, sphere, capsule, cylinder or hull, named and parented as its Unreal collision.");
+    // add() with keywords, so menu search finds collision by Unreal's prefixes and other apps' terms.
+    auto collisionCmd = [](std::string id, std::string label, json call, std::string doc, std::vector<std::string> keywords) {
+        add({.id = std::move(id), .label = std::move(label), .category = "Mesh", .doc = std::move(doc), .python = ops::toPython("boundingMesh", call),
+             .command = "boundingMesh", .call = call, .keywords = std::move(keywords)});
+    };
+    collisionCmd("mesh.boundingMesh", "Bounding Mesh", json::object(),
+                 "Wraps the selection in a fitted box, sphere, capsule, cylinder or hull, named and parented as its Unreal collision.",
+                 {"collision", "unreal collision", "ubx", "usp", "ucp", "ucx", "bounding box", "simple collision"});
+    collisionCmd("mesh.collisionHull", "Collision Hull", {{"shape", "hull"}},
+                 "Wraps the selected objects, or the selected vertices, edges or faces, in a convex hull named UCX_ and parented as "
+                 "the mesh's Unreal collision. One hull per mesh, or one per side with symmetry on.",
+                 {"convex hull", "ucx", "collision", "collision from selection", "hull from selection", "unreal collision", "simple collision"});
     cmd("mesh.multiBoxBounds", "Multi-Box Bounds", "Mesh", "multiBoxBounds", json::object(),
         "Splits the selected meshes into chunks that conform to boxes and creates one box (or hull) per chunk, named and parented as Unreal collision.");
     cmd("unreal.sendBake", "Send Bake to Unreal", "Unreal", "unrealSendTextures", json::object(),

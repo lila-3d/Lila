@@ -282,7 +282,12 @@ void collect(QMenu* menu, const QString& path, std::vector<Item>& out, int depth
         if (QMenu* sub = a->menu())
             collect(sub, path + " > " + label, out, depth + 1);
         else
+        {
+            // The rows a menu picks between (layouts) say what they are, so "Groom" the layout reads apart from the panel.
+            if (a->isCheckable())
+                label += menu->property(kSearchSuffixProperty).toString();
             out.push_back({a, label, path});
+        }
     }
 }
 
