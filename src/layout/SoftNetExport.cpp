@@ -15,6 +15,7 @@
 #include "scene/Node.h"
 #include "scene/Rig.h"
 #include "scene/RigUtil.h"
+#include "scene/RotationCurve.h"
 #include "scene/Skin.h"
 #include "scene/SkinBake.h"
 #include "scene/Transform.h"
@@ -33,6 +34,10 @@
 #include <algorithm>
 #include <cmath>
 #include <format>
+#include <limits>
+#include <numeric>
+#include <random>
+#include <set>
 #include <map>
 #include <string>
 
@@ -299,63 +304,219 @@ Errors errorsAgainst(Graph& g, NodeId mesh, const std::vector<double>& times, co
 }
 
 /**
- * Morph correctives for what linear skinning leaves: the residual per frame taken back through the skin into rest
- * space, its principal components as morph targets (up to cap, until tolerance), their weights keyed per frame.
+ * A pose feature a corrective reads: a translate component as it is, a rotate component as its sine and versine, which
+ * a turn's matrix (and so the skin's residual) is linear in.
  */
-json bakeCorrectives(Graph& g, NodeId mesh, NodeId skin, const std::vector<double>& times, const std::vector<std::vector<glm::dvec3>>& targets, int cap,
-                     double tolerance)
+struct Channel
+{
+    PlugRef plug;
+    enum Form
+    {
+        Linear,
+        Sine,
+        Versine
+    } form = Linear;
+};
+
+/** The features correctives read: translate and rotate of the net's control and handle joints, rotate of the skin's own joints. */
+std::vector<Channel> poseChannels(Graph& g, const std::vector<NodeId>& netJoints, const std::vector<NodeId>& skinJoints)
+{
+    std::vector<Channel> out;
+    auto turns = [&](NodeId j) {
+        for (int c = 0; c < 3; ++c)
+            for (Channel::Form f : {Channel::Sine, Channel::Versine})
+                out.push_back({{j, int(Transform::kRotate), c}, f});
+    };
+    for (NodeId j : netJoints)
+    {
+        for (int c = 0; c < 3; ++c)
+            out.push_back({{j, int(Transform::kTranslate), c}, Channel::Linear});
+        turns(j);
+    }
+    for (NodeId j : skinJoints)
+        turns(j);
+    // Expressions name plugs without a path.
+    std::erase_if(out, [&](const Channel& ch) { return g.plugName(ch.plug).find('|') != std::string::npos; });
+    return out;
+}
+
+double formOf(Channel::Form form, double v)
+{
+    switch (form)
+    {
+    case Channel::Sine: return std::sin(glm::radians(v));
+    case Channel::Versine: return 1.0 - std::cos(glm::radians(v));
+    default: return v;
+    }
+}
+
+double channelValue(Graph& g, const Channel& ch) { return formOf(ch.form, g.node(ch.plug.node)->as<glm::dvec3>(ch.plug.attr)[ch.plug.component]); }
+
+/** Fit rows for the correctives: per sample its features (channel forms) and the rest-space residual per point. */
+struct CorrectiveRows
+{
+    Eigen::MatrixXd x, r;
+};
+
+
+std::string channelText(Graph& g, const Channel& ch)
+{
+    const std::string p = g.plugName(ch.plug);
+    switch (ch.form)
+    {
+    case Channel::Sine: return "sin(radians(" + p + "))";
+    case Channel::Versine: return "(1 - cos(radians(" + p + ")))";
+    default: return p;
+    }
+}
+
+/**
+ * Pose-driven morph correctives for what linear skinning leaves. The residual per frame, taken back through the skin into
+ * rest space, is regressed on the pose channels (ridge, its strength picked by generalized cross-validation); the
+ * principal components of the regressed residual become morph targets, each weighted by an expression linear in the
+ * channels, so a pose outside the clip gets its correctives too. Up to cap, until tolerance.
+ */
+json bakeCorrectives(Graph& g, NodeId mesh, NodeId skin, const std::vector<Channel>& channels, const std::vector<double>& times,
+                     const std::vector<std::vector<glm::dvec3>>& targets, const CorrectiveRows& extra, int cap, double tolerance)
 {
     LILA_ZONE();
-    if (cap <= 0 || times.empty())
+    if (cap <= 0 || times.size() < 2)
         return json::array();
-    const size_t frames = times.size();
+    using Eigen::Index;
+    const Index clip = Index(times.size());
+    const Index n = clip + extra.x.rows();
     const size_t points = targets.front().size();
-    Eigen::MatrixXd r(Eigen::Index(frames), Eigen::Index(points * 3));
-    const double saved = g.time();
-    for (size_t f = 0; f < frames; ++f)
+    Eigen::MatrixXd r(n, Index(points * 3));
+    Eigen::MatrixXd x(n, Index(channels.size()));
+    if (extra.x.rows() > 0)
     {
-        g.setTime(times[f]);
+        r.bottomRows(extra.r.rows()) = extra.r;
+        x.bottomRows(extra.x.rows()) = extra.x;
+    }
+    const double saved = g.time();
+    for (Index f = 0; f < clip; ++f)
+    {
+        g.setTime(times[size_t(f)]);
         g.evaluate();
         const std::vector<glm::dvec3> pts = outPoints(g, mesh);
         const std::vector<glm::dmat3> b = blendedLinear(g, skin, points);
         for (size_t p = 0; p < points; ++p)
         {
-            const glm::dvec3 miss = p < pts.size() ? targets[f][p] - pts[p] : glm::dvec3(0.0);
+            const glm::dvec3 miss = p < pts.size() ? targets[size_t(f)][p] - pts[p] : glm::dvec3(0.0);
             const double det = glm::determinant(b[p]);
             const glm::dvec3 rest = std::abs(det) > 1e-12 ? glm::inverse(b[p]) * miss : miss;
             for (int c = 0; c < 3; ++c)
-                r(Eigen::Index(f), Eigen::Index(p * 3 + size_t(c))) = rest[c];
+                r(f, Index(p * 3 + size_t(c))) = rest[c];
         }
+        for (size_t c = 0; c < channels.size(); ++c)
+            x(f, Index(c)) = channelValue(g, channels[c]);
     }
     g.setTime(saved);
     g.evaluate();
+
+    // Standardized channels that move in the clip; one that doesn't can't be told apart from the intercept.
+    std::vector<size_t> used;
+    std::vector<double> mean, scale;
+    for (size_t c = 0; c < channels.size(); ++c)
+    {
+        const double m = x.col(Index(c)).mean();
+        const double sd = std::sqrt((x.col(Index(c)).array() - m).square().sum() / double(n));
+        if (sd > 1e-9)
+        {
+            used.push_back(c);
+            mean.push_back(m);
+            scale.push_back(sd);
+        }
+    }
+    Eigen::MatrixXd z(n, Index(used.size()));
+    for (size_t k = 0; k < used.size(); ++k)
+        z.col(Index(k)) = (x.col(Index(used[k])).array() - mean[k]) / scale[k];
+
     const Eigen::MatrixXd gram = r * r.transpose();
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eig(gram);
+    const Eigen::MatrixXd centre = Eigen::MatrixXd::Constant(n, n, 1.0 / double(n));
+    Eigen::MatrixXd u = Eigen::MatrixXd::Zero(n, 0), v = Eigen::MatrixXd::Zero(Index(used.size()), 0);
+    Eigen::VectorXd sv = Eigen::VectorXd::Zero(0);
+    if (!used.empty())
+    {
+        Eigen::BDCSVD<Eigen::MatrixXd, Eigen::ComputeThinU | Eigen::ComputeThinV> svd(z);
+        u = svd.matrixU();
+        v = svd.matrixV();
+        sv = svd.singularValues();
+    }
+    auto hat = [&](double lambda) {
+        const Eigen::VectorXd shrink = sv.array().square() / (sv.array().square() + lambda);
+        return Eigen::MatrixXd(centre + u * shrink.asDiagonal() * u.transpose());
+    };
+    // Generalized cross-validation over a log grid of ridge strengths.
+    double lambda = double(n), best = std::numeric_limits<double>::infinity();
+    const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(n, n);
+    for (int e = -6; e <= 6; ++e)
+    {
+        const double l = std::pow(10.0, double(e)) * double(n);
+        const Eigen::MatrixXd h = hat(l);
+        const double dof = double(n) - h.trace();
+        if (dof < 0.5)
+            continue;
+        const Eigen::MatrixXd m = identity - h;
+        const double score = double(n) * (m * gram * m.transpose()).trace() / (dof * dof);
+        if (score < best)
+        {
+            best = score;
+            lambda = l;
+        }
+    }
+    const Eigen::MatrixXd h = hat(lambda);
+    const Eigen::VectorXd shrinkFit = sv.array() / (sv.array().square() + lambda);
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eig(Eigen::MatrixXd(h * gram * h.transpose()));
     const Eigen::VectorXd values = eig.eigenvalues();
     const Eigen::MatrixXd vectors = eig.eigenvectors();
-    double remaining = values.sum();
-    const double total = double(frames * points);
+    const double total = double(size_t(n) * points);
+    double remaining = gram.trace();
+
     NodeId morph = morphs::find(g, mesh);
     if (morph == kNoNode)
         morph = morphs::create(g, mesh, "SoftNetCorrectives");
     json made = json::array();
-    for (Eigen::Index k = values.size() - 1; k >= 0 && int(made.size()) < cap; --k)
+    for (Index k = values.size() - 1; k >= 0 && int(made.size()) < cap; --k)
     {
-        if (values[k] <= 1e-12 || std::sqrt(std::max(remaining, 0.0) / total) <= tolerance)
+        if (values[k] <= 1e-12 * std::max(1.0, values.maxCoeff()) || std::sqrt(std::max(remaining, 0.0) / total) <= tolerance)
             break;
-        const Eigen::VectorXd v = vectors.col(k);
-        Eigen::VectorXd shape = r.transpose() * v; // = sigma * unit shape
-        Eigen::VectorXd weights = v;              // per frame
-        // Scaled so the largest keyed weight is 1.
-        const double peak = weights.cwiseAbs().maxCoeff();
+        const double sigma = std::sqrt(values[k]);
+        const Eigen::VectorXd w = vectors.col(k); // the corrective's weight per frame
+        const Eigen::VectorXd hw = h.transpose() * w;
+        Eigen::VectorXd shape = r.transpose() * hw;   // sigma times the unit shape
+        const Eigen::VectorXd rv = gram * hw / sigma; // the residual along the unit shape, per frame
+        // weight(x) = a0 + sum a_k z_k(x), the ridge regression of rv / sigma on the standardized channels.
+        double a0 = rv.mean() / sigma;
+        Eigen::VectorXd ak = used.empty() ? Eigen::VectorXd() : Eigen::VectorXd(v * shrinkFit.asDiagonal() * (u.transpose() * rv) / sigma);
+        const double peak = w.cwiseAbs().maxCoeff();
         if (!(peak > 0.0))
             break;
         shape *= peak;
-        weights /= peak;
+        a0 /= peak;
+        ak /= peak;
+
+        // The strongest terms, until they carry all but a millionth of the weight's variance.
+        std::vector<size_t> order(used.size());
+        std::iota(order.begin(), order.end(), size_t(0));
+        std::sort(order.begin(), order.end(), [&](size_t i, size_t j) { return std::abs(ak[Index(i)]) > std::abs(ak[Index(j)]); });
+        const double energy = ak.squaredNorm();
+        double kept = 0.0, c0 = a0;
+        std::string terms;
+        for (size_t i : order)
+        {
+            if (kept >= energy * (1.0 - 1e-6) || ak[Index(i)] == 0.0)
+                break;
+            kept += ak[Index(i)] * ak[Index(i)];
+            const double c = ak[Index(i)] / scale[i];
+            c0 -= c * mean[i];
+            terms += std::format(" + {:.9g} * {}", c, channelText(g, channels[used[i]]));
+        }
+
         auto deltas = std::make_shared<MorphDeltas>();
         for (size_t p = 0; p < points; ++p)
         {
-            const glm::dvec3 d(shape[Eigen::Index(p * 3)], shape[Eigen::Index(p * 3 + 1)], shape[Eigen::Index(p * 3 + 2)]);
+            const glm::dvec3 d(shape[Index(p * 3)], shape[Index(p * 3 + 1)], shape[Index(p * 3 + 2)]);
             if (glm::length(d) > 1e-7)
             {
                 deltas->indices.push_back(uint32_t(p));
@@ -364,11 +525,11 @@ json bakeCorrectives(Graph& g, NodeId mesh, NodeId skin, const std::vector<doubl
         }
         const std::string name = "softNetFix" + std::to_string(made.size() + 1);
         const NodeId target = morphs::addTarget(g, morph, name, deltas, 0.0);
-        for (size_t f = 0; f < frames; ++f)
-            anim::setKey(g, {target, morphs::kWeight, -1}, times[f], weights[Eigen::Index(f)]);
+        ops::execute("expression", {{"args", {g.plugName({target, morphs::kWeight, -1})}}, {"string", std::format("{:.9g}", c0) + terms}});
         made.push_back(g.node(target)->path());
         remaining -= values[k];
     }
+    log::write(LogLevel::Info, std::format("bakeSoftNet: correctives read {} of {} pose channels (ridge {:.3g})", used.size(), channels.size(), lambda));
     return made;
 }
 
@@ -469,6 +630,187 @@ WeightTable seedNetWeights(Graph& g, NodeId mesh, NodeId skin, const NetJoints& 
     return w;
 }
 
+/**
+ * Range-of-motion rows at bind: the net's control and handle joints posed at random within (a quarter past) the span
+ * each channel covers over times, the skin at its bind pose. The net's result and the fitted skin's are both worked
+ * out directly (rest points, the influence table, the joints' bind palettes), so no keys are touched. Body mesh only.
+ */
+CorrectiveRows romRows(Graph& g, NodeId mesh, NodeId skin, NodeId hub, const NetJoints& joints, const std::vector<Channel>& channels,
+                       const std::vector<double>& times, int count)
+{
+    LILA_ZONE();
+    CorrectiveRows out;
+    const NodeId d = deformerOn(g, mesh);
+    if (d == kNoNode || count <= 0)
+        return out;
+    g.evaluate();
+    const Node& dn = *g.node(d);
+    if (dn.as<int64_t>(dn.type().attrIndex("meshIndex")) != 0)
+        return out;
+    const MeshBind b = MeshBind::fromJson(dn.as<std::string>(dn.type().attrIndex("binding")));
+    const MeshPtr in = dn.as<MeshPtr>(DeformerNode::kInMesh);
+    const MeshPtr restMesh = skin::inputMesh(g, skin);
+    if (!in || !restMesh || b.points != in->pointCapacity() || restMesh->pointCapacity() != b.points)
+        return out;
+    const InfluencePtr table = sharedTable(g, d, in);
+    if (!table || table->points() == 0)
+        return out;
+    const Node& h = *g.node(hub);
+    const NetBind net = NetBind::fromJson(h.as<std::string>(h.type().attrIndex("binding")));
+    std::vector<glm::dmat4> frames;
+    for (const auto& k : net.knots)
+    {
+        glm::dmat4 f(k.rest);
+        f[3] = glm::dvec4(k.origin, 1.0);
+        frames.push_back(f);
+    }
+    std::map<NodeId, glm::dmat4> restWorld;
+    for (size_t i = 0; i < joints.joints.size() && i < joints.restWorld.size(); ++i)
+        restWorld[joints.joints[i]] = joints.restWorld[i];
+
+    // Per tangent index: its handle joint and the handle's rest offset.
+    const int tangentAttr = dn.type().attrIndex("tangentMatrix");
+    std::vector<std::pair<NodeId, glm::dmat4>> handleOf(b.tangentRest.size(), {kNoNode, glm::dmat4(1.0)});
+    for (size_t t = 0; t < b.tangentRest.size(); ++t)
+        if (const auto src = g.source({d, tangentAttr, -1, int(t)}))
+            if (const auto it = joints.handles.find(src->node); it != joints.handles.end())
+                handleOf[t] = {it->second.first, g.node(src->node)->as<glm::dmat4>(Transform::kOffsetParentMatrix)};
+
+    // The net joints' channels: their span over the clip, sampled; anything else reads its bind value.
+    std::set<NodeId> netJoints;
+    for (const auto& [frame, control] : joints.knots)
+        netJoints.insert(control);
+    for (const auto& [jt, offset] : handleOf)
+        netJoints.insert(jt);
+    std::map<NodeId, std::array<glm::dvec2, 6>> span; // translate xyz, rotate xyz: min, max
+    const double saved = g.time();
+    for (size_t f = 0; f < times.size(); ++f)
+    {
+        g.setTime(times[f]);
+        g.evaluate();
+        for (NodeId j : netJoints)
+        {
+            if (j == kNoNode)
+                continue;
+            const glm::dvec3 tr = g.node(j)->as<glm::dvec3>(Transform::kTranslate), ro = g.node(j)->as<glm::dvec3>(Transform::kRotate);
+            auto [it, fresh] = span.try_emplace(j);
+            for (int c = 0; c < 6; ++c)
+            {
+                const double v = c < 3 ? tr[c] : ro[c - 3];
+                it->second[size_t(c)] = fresh ? glm::dvec2(v) : glm::dvec2(std::min(it->second[size_t(c)].x, v), std::max(it->second[size_t(c)].y, v));
+            }
+        }
+    }
+    g.setTime(saved);
+    g.evaluate();
+
+    const glm::dmat4 geom = g.node(skin)->as<glm::dmat4>(SkinClusterNode::kGeomMatrix), geomInv = glm::inverse(geom);
+    std::vector<std::pair<NodeId, glm::dmat4>> bindPre; // by influence index
+    for (const skin::Influence& i : skin::influences(g, skin))
+    {
+        if (bindPre.size() <= i.index)
+            bindPre.resize(i.index + 1, {kNoNode, glm::dmat4(1.0)});
+        bindPre[i.index] = {i.joint, g.node(i.link)->as<glm::dmat4>(SkinInfluenceNode::kBindPreMatrix)};
+    }
+    std::map<NodeId, glm::dvec3> bindRotate;
+    for (const auto& [j, pre] : bindPre)
+        if (j != kNoNode && !restWorld.contains(j))
+        {
+            const NodeId p = g.parent(j);
+            glm::dmat4 parentWorld = p != kNoNode ? worldOf(*g.node(p)) : glm::dmat4(1.0);
+            for (const auto& [pj, ppre] : bindPre)
+                if (pj == p)
+                    parentWorld = glm::inverse(ppre);
+            const glm::dmat4 local = glm::inverse(parentWorld) * glm::inverse(pre);
+            bindRotate[j] = eulerNear(orthonormal(glm::dmat3(local)), RotateOrder(g.node(j)->as<int64_t>(Transform::kRotateOrder)),
+                                      g.node(j)->as<glm::dvec3>(Transform::kRotate));
+        }
+
+    const WeightTable weights = skin::table(g, skin);
+    const std::span<const glm::dvec3> rest = restMesh->positions();
+    const size_t points = rest.size();
+    out.x.resize(count, Eigen::Index(channels.size()));
+    out.r.resize(count, Eigen::Index(points * 3));
+    std::mt19937_64 rng(1);
+    for (int s = 0; s < count; ++s)
+    {
+        std::map<NodeId, std::pair<glm::dvec3, glm::dvec3>> pose; // translate, rotate
+        std::map<NodeId, glm::dmat4> local;
+        for (const auto& [j, sp] : span)
+        {
+            glm::dvec3 tr, ro;
+            for (int c = 0; c < 6; ++c)
+            {
+                const double lo = sp[size_t(c)].x, hi = sp[size_t(c)].y, pad = 0.25 * (hi - lo);
+                const double v = std::uniform_real_distribution<double>(lo - pad, hi + pad + 1e-12)(rng);
+                (c < 3 ? tr[c] : ro[c - 3]) = v;
+            }
+            pose[j] = {tr, ro};
+            glm::dmat4 m(glm::mat3_cast(anim::eulerToQuat(ro, RotateOrder(g.node(j)->as<int64_t>(Transform::kRotateOrder)))));
+            m[3] = glm::dvec4(tr, 1.0);
+            local[j] = m;
+        }
+        std::map<NodeId, glm::dmat4> world;
+        std::map<int, glm::dmat4> knotMats, tangentMats;
+        for (size_t k = 0; k < joints.knots.size(); ++k)
+        {
+            const auto [frame, control] = joints.knots[k];
+            if (frame == kNoNode || !local.contains(control))
+                continue;
+            knotMats[int(k)] = local[control];
+            world[frame] = restWorld[frame];
+            world[control] = restWorld[frame] * local[control];
+        }
+        for (size_t t = 0; t < handleOf.size(); ++t)
+        {
+            const auto& [jt, offset] = handleOf[t];
+            const NodeId control = jt != kNoNode ? g.parent(jt) : kNoNode;
+            if (jt == kNoNode || !local.contains(jt) || !world.contains(control))
+                continue;
+            tangentMats[int(t)] = glm::inverse(offset) * local[jt];
+            world[jt] = world[control] * local[jt];
+        }
+        const std::vector<glm::dvec3> moves = dofMoves(b, frames, knotMats, tangentMats, glm::dmat4(1.0));
+        std::vector<glm::dvec3> offsets(points, glm::dvec3(0.0));
+        table->apply(moves, offsets);
+        std::vector<glm::dmat4> palette(bindPre.size(), glm::dmat4(1.0));
+        for (size_t i = 0; i < bindPre.size(); ++i)
+            if (const auto it = world.find(bindPre[i].first); it != world.end())
+                palette[i] = geomInv * it->second * bindPre[i].second * geom;
+        for (size_t p = 0; p < points; ++p)
+        {
+            glm::dmat4 m(0.0);
+            double total = 0.0;
+            if (p < weights.points.size())
+                for (const auto& [i, w] : weights.points[p])
+                    if (i < palette.size())
+                    {
+                        m += double(w) * palette[i];
+                        total += w;
+                    }
+            m = total > 0.0 ? m * (1.0 / total) : glm::dmat4(1.0);
+            const glm::dvec3 miss = rest[p] + offsets[p] - glm::dvec3(m * glm::dvec4(rest[p], 1.0));
+            const glm::dmat3 m3(m);
+            const glm::dvec3 back = std::abs(glm::determinant(m3)) > 1e-12 ? glm::inverse(m3) * miss : miss;
+            for (int c = 0; c < 3; ++c)
+                out.r(s, Eigen::Index(p * 3 + size_t(c))) = back[c];
+        }
+        for (size_t c = 0; c < channels.size(); ++c)
+        {
+            const Channel& ch = channels[c];
+            double raw = 0.0;
+            if (const auto it = pose.find(ch.plug.node); it != pose.end())
+                raw = (ch.plug.attr == Transform::kTranslate ? it->second.first : it->second.second)[ch.plug.component];
+            else if (const auto bt = bindRotate.find(ch.plug.node); bt != bindRotate.end() && ch.plug.attr == Transform::kRotate)
+                raw = bt->second[ch.plug.component];
+            else
+                raw = g.node(ch.plug.node)->as<glm::dvec3>(ch.plug.attr)[ch.plug.component];
+            out.x(s, Eigen::Index(c)) = formOf(ch.form, raw);
+        }
+    }
+    return out;
+}
+
 json bake(Graph& g, NodeId mesh, const Args& a)
 {
     LILA_ZONE();
@@ -477,11 +819,18 @@ json bake(Graph& g, NodeId mesh, const Args& a)
         throw CommandError("bakeSoftNet: " + g.node(mesh)->path() + " has no skin to bake into; skin it first, or send it to Unreal as a geometry cache");
     const NodeId hub = netOf(g, mesh);
     const Range range = rangeOf(a);
+    const int step = std::max(1, a.get<int>("step", 1));
+    std::vector<double> checkTimes;
+    if (a.has("checkTo"))
+        for (int64_t f = std::llround(range.times.back() * range.fps) + step; f <= a.get<int>("checkTo"); f += step)
+            checkTimes.push_back(double(f) / range.fps);
+    std::vector<double> allTimes = range.times;
+    allTimes.insert(allTimes.end(), checkTimes.begin(), checkTimes.end());
 
     // What the stack makes now, the net included, is what the bake must reach.
     std::vector<std::vector<glm::dvec3>> targets;
     const double saved = g.time();
-    for (double t : range.times)
+    for (double t : allTimes)
     {
         g.setTime(t);
         g.evaluate();
@@ -491,7 +840,11 @@ json bake(Graph& g, NodeId mesh, const Args& a)
     g.evaluate();
 
     // Knot joints as fixed bones: added to the skin with their rest as bind.
-    const NetJoints joints = makeJoints(g, hub, skin, range.times);
+    std::vector<NodeId> skinJoints;
+    for (const skin::Influence& i : skin::influences(g, skin))
+        if (i.joint != kNoNode)
+            skinJoints.push_back(i.joint);
+    const NetJoints joints = makeJoints(g, hub, skin, allTimes);
     const std::vector<NodeId>& made = joints.joints;
     for (size_t i = 0; i < made.size(); ++i)
     {
@@ -511,10 +864,25 @@ json bake(Graph& g, NodeId mesh, const Args& a)
     fo.seed = seedNetWeights(g, mesh, skin, joints);
     const skinbake::FitResult fitted = skinbake::fitSkinWeights(g, skin, fo);
     json fit = skinbake::applyFit(g, skin, fitted, true);
-    const Errors skinned = errorsAgainst(g, mesh, range.times, targets);
-    const json correctives = bakeCorrectives(g, mesh, skin, range.times, targets, a.get<int>("correctives"), a.get<double>("tolerance"));
+    const std::vector<std::vector<glm::dvec3>> clipTargets(targets.begin(), targets.begin() + std::ptrdiff_t(range.times.size()));
+    const std::vector<std::vector<glm::dvec3>> checkTargets(targets.begin() + std::ptrdiff_t(range.times.size()), targets.end());
+    const Errors skinned = errorsAgainst(g, mesh, range.times, clipTargets);
+    const Errors skinnedCheck = errorsAgainst(g, mesh, checkTimes, checkTargets);
+    std::vector<NodeId> drivers;
+    for (NodeId j : made)
+        if (g.node(j)->name().ends_with("_jnt"))
+            drivers.push_back(j);
+    const std::vector<Channel> channels = poseChannels(g, drivers, skinJoints);
+    // Helpers are keyed to the range, so poses outside it can't be sampled with them.
+    const int romCount = fo.helpers > 0 ? 0 : std::clamp(int(channels.size()) * 2, 64, 256);
+    if (fo.helpers > 0 && a.get<int>("correctives") > 0)
+        log::write(LogLevel::Info, "bakeSoftNet: helper joints are keyed to the range, so correctives are fitted to the range only; poses outside it may miss them");
+    const CorrectiveRows rom = romRows(g, mesh, skin, hub, joints, channels, range.times, romCount);
+    const json correctives =
+        bakeCorrectives(g, mesh, skin, channels, range.times, clipTargets, rom, a.get<int>("correctives"), a.get<double>("tolerance"));
     std::vector<double> perFrame;
-    const Errors final = errorsAgainst(g, mesh, range.times, targets, &perFrame);
+    const Errors final = errorsAgainst(g, mesh, range.times, clipTargets, &perFrame);
+    const Errors check = errorsAgainst(g, mesh, checkTimes, checkTargets);
 
     // U1: the skeleton under Unreal's transform rules over the baked frames.
     const uecheck::ExportCheck c = uecheck::checkExport(g, {mesh}, false, range.times.front(), range.times.back(), range.fps, "bakeSoftNet");
@@ -533,6 +901,7 @@ json bake(Graph& g, NodeId mesh, const Args& a)
             {"rmse", final.rms},
             {"maxError", final.max},
             {"frameError", perFrame},
+            {"check", {{"frames", checkTimes.size()}, {"skinnedRmse", skinnedCheck.rms}, {"rmse", check.rms}, {"maxError", check.max}}},
             {"frames", range.times.size()},
             {"disabled", fit.value("disabled", json::array())},
             {"unrealCheck", {{"worst", c.report.worst}, {"frames", c.report.frames}, {"mismatches", mismatches}, {"error", c.error}}}};
@@ -630,9 +999,10 @@ void registerSoftNetExportCommands()
     };
     std::vector<FlagDef> bakeFlags = rangeFlags;
     bakeFlags.insert(bakeFlags.end(), {
-        {"helpers", "", T::Int, 4, "Helper joints solved with the weights for what knots and skin can't follow (capped per character).", {}, {}, 0.0, 16.0},
-        {"correctives", "", T::Int, 8, "Most morph correctives for the residual.", {}, {}, 0.0, 64.0},
+        {"helpers", "", T::Int, 0, "Helper joints solved with the weights for what knots and skin can't follow. They are keyed to the range, so poses outside it don't get them.", {}, {}, 0.0, 16.0},
+        {"correctives", "", T::Int, 32, "Most morph correctives for the residual.", {}, {}, 0.0, 64.0},
         {"tolerance", "", T::Float, 0.001, "cm of RMS residual at which correctives stop.", {}, {}, 0.0},
+        {"checkTo", "", T::Int, nullptr, "Frames after end up to this one are baked and checked against the net but not fitted: how the bake holds up on poses it wasn't fitted to."},
         {"maxInfluences", "mi", T::Int, 8, "Influences per point.", {}, {}, 1.0, 12.0},
         {"iterations", "", T::Int, 3, "Fit passes.", {}, {}, 1.0},
     });
@@ -640,17 +1010,18 @@ void registerSoftNetExportCommands()
         .name = "bakeSoftNet",
         .doc = "Bake a skinned mesh's Soft Net for Unreal: each knot becomes a frame joint riding the surface with a control joint "
                "under it, each tangent handle a joint under its knot, keyed over the range and added to the skin as fixed bones; "
-               "weights are fitted to the net's result (with up to helpers helper joints), and morph correctives keyed per frame "
-               "take the residual. The net is turned off so the viewport shows what Unreal gets. Returns {joints, helpers, "
-               "correctives, skinnedRmse, rmse, maxError, frameError, frames, unrealCheck}: errors in cm against the net, per frame "
-               "worst, and the Unreal round-trip check.",
+               "weights are fitted to the net's result (with up to helpers helper joints), and morph correctives take the residual, "
+               "each weighted by an expression on the knot, handle and skin joints' channels, so poses outside the range get them "
+               "too (unrealExpressionRig sends them to Unreal). The net is turned off so the viewport shows what Unreal gets. "
+               "Returns {joints, helpers, correctives, skinnedRmse, rmse, maxError, frameError, frames, check, unrealCheck}: "
+               "errors in cm against the net, per frame worst, the checkTo frames' errors, and the Unreal round-trip check.",
         .positionalDoc = "mesh (or its net)",
         .flags = bakeFlags,
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             return bake(g, meshArg(g, a, "bakeSoftNet"), a);
         },
-        .examples = {"bakeSoftNet(\"Mochi\", helpers=4, correctives=8)"},
+        .examples = {"bakeSoftNet(\"Mochi\", correctives=32)"},
     });
 
     std::vector<FlagDef> routeFlags = bakeFlags;

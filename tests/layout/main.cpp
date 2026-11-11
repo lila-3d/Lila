@@ -5,6 +5,7 @@
 #include "io/SceneFile.h"
 #include "layout/LayoutNode.h"
 #include "ops/Command.h"
+#include "rigmath/MathNodes.h"
 #include "scene/Node.h"
 #include "scene/SceneCommands.h"
 
@@ -26,6 +27,8 @@ int main(int argc, char** argv)
     lila::scene::types::registerBuiltins();
     lila::scene::registerCommands();
     lila::io::registerCommands();
+    lila::rigmath::registerTypes();
+    lila::rigmath::registerCommands();
     lila::layout::registerTypes();
     lila::layout::registerCommands();
 

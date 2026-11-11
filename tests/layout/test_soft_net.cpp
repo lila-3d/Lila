@@ -492,16 +492,18 @@ std::string animatedNet()
     softnettest::run("panelLayoutStroke", {{"args", {layout}}, {"points", softnettest::segment({10, 0, -30}, {10, 0, 30})}, {"tolerance", 1.0}});
     const json net = softnettest::run("softNet", {{"args", {mesh}}, {"reach", 10.0}});
     const json knots = softnettest::run("softNetKnots", {{"args", {net["knotsGroup"]}}});
-    // The skin's mid joint bends a little; every knot and handle moves on its own rhythm.
-    for (int f = 0; f <= 20; f += 2)
+    // The skin's mid joint bends a little; every knot and handle moves on its own rhythm. Frames past 20 are poses the
+    // clip never makes, for checking.
+    for (int f = 0; f <= 40; f += 2)
     {
         const double time = f / 30.0;
-        softnettest::run("setKeyframe", {{"args", {mid + ".rotateY"}}, {"time", time}, {"value", 20.0 * std::sin(f * 0.2)}});
+        const bool held = f > 20;
+        softnettest::run("setKeyframe", {{"args", {mid + ".rotateY"}}, {"time", time}, {"value", 20.0 * std::sin(f * (held ? 0.37 : 0.2))}});
         int i = 0;
         for (const json& k : knots)
         {
             const std::string kn = k["knot"].get<std::string>();
-            const double ph = f * 0.3 + i * 1.3;
+            const double ph = held ? f * 0.53 + i * 2.1 : f * 0.3 + i * 1.3;
             softnettest::run("setKeyframe", {{"args", {kn + ".translateZ"}}, {"time", time}, {"value", 4.0 * std::sin(ph)}});
             softnettest::run("setKeyframe", {{"args", {kn + ".translateX"}}, {"time", time}, {"value", 2.0 * std::cos(ph * 0.7)}});
             softnettest::run("setKeyframe", {{"args", {kn + ".rotateZ"}}, {"time", time}, {"value", 25.0 * std::sin(ph * 0.5)}});
@@ -514,22 +516,27 @@ std::string animatedNet()
 }
 } // namespace softnettest
 
-TEST_CASE("bakeSoftNet: knot joints as fixed bones, helpers and correctives beat a plain skin bake of the same net")
+TEST_CASE("bakeSoftNet: knot joints as fixed bones and pose-driven correctives beat a plain skin bake of the same net")
 {
     std::string mesh = softnettest::animatedNet();
     const json plain = softnettest::run("bakeSkinWeights", {{"args", {mesh}}, {"source", "animation"}, {"start", 0}, {"end", 20}, {"helpers", 4}});
     MESSAGE("bakeSkinWeights helpers=4: rmse ", plain["rmse"].get<double>(), " max ", plain["maxError"].get<double>());
 
     mesh = softnettest::animatedNet();
-    const json baked = softnettest::run("bakeSoftNet", {{"args", {mesh}}, {"start", 0}, {"end", 20}, {"helpers", 4}, {"correctives", 8}});
+    const json baked = softnettest::run("bakeSoftNet", {{"args", {mesh}}, {"start", 0}, {"end", 20}, {"checkTo", 40}});
     MESSAGE("bakeSoftNet: joints ", baked["joints"].size(), " correctives ", baked["correctives"].size(), " skinned rmse ", baked["skinnedRmse"].get<double>(),
             " final rmse ", baked["rmse"].get<double>(), " max ", baked["maxError"].get<double>(), " unreal worst ", baked["unrealCheck"]["worst"].get<double>());
     CHECK(baked["rmse"].get<double>() < plain["rmse"].get<double>());
     // The knot joints carry the net: weights on them must land.
-    CHECK(baked["skinnedRmse"].get<double>() < 0.5 * plain["rmse"].get<double>());
+    CHECK(baked["skinnedRmse"].get<double>() < 0.8 * plain["rmse"].get<double>());
     CHECK(baked["rmse"].get<double>() < 0.065);
     CHECK(baked["unrealCheck"]["mismatches"].empty());
     CHECK(baked["frameError"].size() == 21);
+    // Correctives follow the pose, not the frame: poses outside the clip get them too.
+    const json& check = baked["check"];
+    MESSAGE("unseen poses: skinned rmse ", check["skinnedRmse"].get<double>(), " final rmse ", check["rmse"].get<double>(), " max ", check["maxError"].get<double>());
+    CHECK(check["frames"].get<int>() == 20);
+    CHECK(check["rmse"].get<double>() < 0.25 * check["skinnedRmse"].get<double>());
 }
 
 TEST_CASE("softNet entry gradients turn normals as the net bends the surface")
