@@ -1,4 +1,4 @@
-// The Push tool (live physics in the viewport: grab, push, wiggle, drop, shake, pin), its Level menu entries and the Level Toolkit's Stagehand sections.
+// The Push tool (live physics in the viewport: grab, push, wiggle, drop, shake, sweep, pin), its Level menu entries and the Level Toolkit's Stagehand sections.
 
 #include "Session.h"
 #include "Stagehand.h"
@@ -13,6 +13,7 @@
 #include <lila/ViewportTool.h>
 
 #include <QElapsedTimer>
+#include <QGuiApplication>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QTimer>
@@ -31,6 +32,9 @@ namespace
 constexpr const char* kPushTool = "stagehand.push";
 /** How much push the wiggle brush gives per second held, cm/s, spread over the frames. */
 constexpr double kWiggleSpeedPerSecond = 400.0;
+/** The sweep brush carries things at the cursor's speed up to this, and gathers at kGatherSpeed, cm/s. */
+constexpr double kSweepSpeedMax = 600.0;
+constexpr double kGatherSpeed = 80.0;
 
 enum class Mode : int
 {
@@ -39,6 +43,7 @@ enum class Mode : int
     Wiggle,
     Drop,
     Shake,
+    Sweep,
     Count
 };
 
@@ -56,6 +61,8 @@ const char* modeName(Mode m)
         return "Drop";
     case Mode::Shake:
         return "Shake";
+    case Mode::Sweep:
+        return "Sweep";
     default:
         return "";
     }
@@ -79,6 +86,10 @@ QString addModeHint(Mode m, ToolStatus& s)
         return "click to let everything fall";
     case Mode::Shake:
         return "click a shelf or table to shake it";
+    case Mode::Sweep:
+        s.keys.push_back({"Shift", "gather"});
+        s.keys.push_back({"[ ]", "size"});
+        return "drag to sweep along the stroke";
     default:
         return {};
     }
@@ -155,6 +166,10 @@ public:
         case Mode::Wiggle:
             mWiggling = true;
             break;
+        case Mode::Sweep:
+            mSweeping = true;
+            mSweepLast.reset();
+            break;
         case Mode::Shake:
         {
             const auto hit = mSession->world().scene().raycast(o, d, 1e7);
@@ -213,6 +228,7 @@ public:
             return false;
         mPressed = false;
         mWiggling = false;
+        mSweeping = false;
         if (!mSession)
             return true;
         if (mMode == Mode::Push && mPushBody >= 0)
@@ -279,7 +295,7 @@ public:
 
     bool hotkey(const QKeyEvent& e, std::string_view action) override
     {
-        // 1 to 5 pick the mode while the tool is up, over their usual smooth preview.
+        // 1 to 6 pick the mode while the tool is up, over their usual smooth preview.
         if (e.key() >= Qt::Key_1 && e.key() < Qt::Key_1 + int(Mode::Count) && e.modifiers() == Qt::NoModifier)
         {
             mMode = Mode(e.key() - Qt::Key_1);
@@ -308,13 +324,13 @@ public:
         else
         {
             status.flags = {{"paused", mSession->paused()}};
-            status.keys = {{"1-5", "mode"}};
+            status.keys = {{"1-6", "mode"}};
             status.prompt = addModeHint(mMode, status);
             for (const KeyHint& k : {KeyHint{"Ctrl-click", "pin"}, KeyHint{"P", "pause"}, KeyHint{"Enter", "keep"}, KeyHint{"Esc", "revert"}})
                 status.keys.push_back(k);
         }
         drawToolStatus(p, view, status);
-        if (mMode == Mode::Wiggle)
+        if (mMode == Mode::Wiggle || mMode == Mode::Sweep)
             drawBrush(p, view);
         if (mSession && mSession->held() >= 0)
         {
@@ -368,6 +384,19 @@ private:
             if (const auto hit = mSession->world().scene().raycast(o, d, 1e7))
                 mSession->wiggle(hit->point, mRadius, kWiggleSpeedPerSecond * dt);
         }
+        if (mSweeping)
+        {
+            glm::dvec3 o, d;
+            mView.ray(mCursor, o, d);
+            if (const auto hit = mSession->world().scene().raycast(o, d, 1e7))
+            {
+                const bool gather = QGuiApplication::queryKeyboardModifiers() & Qt::ShiftModifier;
+                const glm::dvec3 motion = mSweepLast ? hit->point - *mSweepLast : glm::dvec3(0.0);
+                const double speed = gather ? kGatherSpeed : std::min(glm::length(motion) / std::max(dt, 1e-3), kSweepSpeedMax);
+                mSession->sweep(hit->point, motion, mRadius, speed, gather);
+                mSweepLast = hit->point;
+            }
+        }
         mSession->advance(dt);
         mSession->show(scene::Graph::current());
         viewportTools::requestRedraw();
@@ -404,7 +433,8 @@ private:
     ViewInfo mView;
     Mode mMode = Mode::Grab;
     QPointF mPress, mCursor;
-    bool mPressed = false, mLift = false, mWiggling = false;
+    bool mPressed = false, mLift = false, mWiggling = false, mSweeping = false;
+    std::optional<glm::dvec3> mSweepLast;
     glm::dvec3 mPlanePoint{0.0}, mPlaneNormal{0, 0, 1};
     int mPushBody = -1;
     glm::dvec3 mPushAt{0.0};
@@ -459,6 +489,7 @@ void registerUi(ext::Context& ctx)
         {"stagehand.tool.wiggle", "stagehand.menu.wiggle", "Wiggle Brush", Mode::Wiggle, "Hold over things to jostle them into a natural, slightly messy rest."},
         {"stagehand.tool.drop", "stagehand.menu.drop", "Drop Tool", Mode::Drop, "Lift things and let them fall where they would land."},
         {"stagehand.tool.shake", "stagehand.menu.shake", "Shake Tool", Mode::Shake, "Click a shelf or table to shake what rests on it."},
+        {"stagehand.tool.sweep", "stagehand.menu.sweep", "Sweep Brush", Mode::Sweep, "Drag to broom things along the stroke; hold Shift to gather them under the brush."},
     };
     for (const ToolAction& t : tools)
     {
@@ -524,7 +555,7 @@ void registerUi(ext::Context& ctx)
                             .items = {{"window.propLibrary", "books", "Library", "Library"}, {},
                                       {"stagehand.tool.grab", "hand-grab", "Grab", "Grab"}, {"stagehand.tool.push", "hand-finger", "Push"},
                                       {"stagehand.tool.wiggle", "wave-sine", "Wiggle"}, {"stagehand.tool.drop", "arrow-bar-to-down", "Drop"},
-                                      {"stagehand.tool.shake", "activity", "Shake"}, {},
+                                      {"stagehand.tool.shake", "activity", "Shake"}, {"stagehand.tool.sweep", "brush", "Sweep"}, {},
                                       {"stagehand.settle", "anchor", "Settle", "Settle"}, {"stagehand.drop", "arrow-down", "Drop"}, {"stagehand.wiggle", "dice", "Wiggle"},
                                       {"stagehand.shake", "activity", "Shake"}, {"stagehand.check", "checklist", "Check"}, {},
                                       {"stagehand.body.dynamic", "", "Dynamic"}, {"stagehand.body.static", "", "Static"}, {"stagehand.body.off", "", "Ignore"},

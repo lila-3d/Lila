@@ -199,6 +199,41 @@ TEST_CASE("stagehand: drop onto stacks the drops above the target, and dressChec
     CHECK(check["issues"][0]["kind"] == "floating");
 }
 
+TEST_CASE("stagehand: sweep brooms things along the stroke, and gather pulls them together")
+{
+    loadStagehand();
+    run("newScene");
+    auto worldXZ = [](const std::string& n) {
+        const json t = run("xform", {{"args", {n}}, {"query", true}, {"worldSpace", true}, {"translation", true}});
+        return glm::dvec2(t[0].get<double>(), t[2].get<double>());
+    };
+    std::vector<std::string> litter;
+    for (int k = 0; k < 5; ++k)
+        litter.push_back(cube(("Can" + std::to_string(k)).c_str(), {k * 10.0, 0, (k % 2) * 12.0 - 6.0}, {8, 8, 8}));
+    double before = 0.0;
+    for (const std::string& c : litter)
+        before += worldXZ(c).x;
+    const json r = run("sweep", {{"args", litter}, {"path", json::array({json::array({-40, 0, 0}), json::array({200, 0, 0})})}, {"radius", 40.0}});
+    CHECK(r["atRest"].get<bool>());
+    double after = 0.0;
+    for (const std::string& c : litter)
+        after += worldXZ(c).x;
+    CHECK((after - before) / double(litter.size()) > 40.0);
+    CHECK(run("dressCheck", {{"args", litter}})["ok"].get<bool>());
+    run("undo");
+    CHECK(worldXZ(litter[0]).x == doctest::Approx(0.0));
+
+    run("newScene");
+    std::vector<std::string> books;
+    const glm::dvec2 corners[] = {{-100, -100}, {100, -100}, {100, 100}, {-100, 100}};
+    for (int k = 0; k < 4; ++k)
+        books.push_back(cube(("Book" + std::to_string(k)).c_str(), {corners[k].x, 0, corners[k].y}, {16, 4, 22}));
+    run("sweep", {{"args", books}, {"path", json::array({json::array({0, 0, 0})})}, {"gather", true}, {"radius", 200.0}});
+    for (const std::string& b : books)
+        CHECK(glm::length(worldXZ(b)) < 100.0);
+    CHECK_THROWS(run("sweep", {{"args", books}, {"path", json::array({json::array({0, 0, 0})})}}));
+}
+
 TEST_CASE("stagehand: physicsBody makes a body child with the material's numbers")
 {
     loadStagehand();
