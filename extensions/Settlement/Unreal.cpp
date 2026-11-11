@@ -3,6 +3,7 @@
 // the last send.
 
 #include "Export.h"
+#include "Generators.h"
 #include "Settlement.h"
 
 #include <lila/Command.h>
@@ -297,6 +298,44 @@ json zoneData(const Rebuilt& r, const RoadNetwork& net)
                              {"walks", j.walks},
                              {"crosswalks", crosswalks}});
     }
+    // Levels above the ground: each deck's own road network, and the elevated roads, ramps and skybridges joining them.
+    auto levelRoad = [&](std::span<const glm::dvec3> pts, StreetClass cls, int layer, const std::string& kind) {
+        const RoadProfile& p = l.roads[size_t(std::min(cls, StreetClass::Path))];
+        profiles[p.name] = {{"lanes", lanesOf(p)}};
+        roads.push_back({{"points", uePoints(pts)},
+                         {"profile", p.name},
+                         {"tags", json::array({cls == StreetClass::Path ? "Pedestrian" : "Vehicle", "Level"})},
+                         {"layer", layer},
+                         {"kind", kind}});
+    };
+    if (l.gen)
+    {
+        for (size_t k = 0; k < l.gen->levels.size(); ++k)
+            if (l.gen->levels[k].kind == "deck")
+            {
+                const RoadNetwork deck = levelNetwork(l, int(k));
+                for (const StreetLine& s : deck.lines)
+                    levelRoad(s.pts, s.cls, int(k) + 1, "deck");
+                for (const Junction& j : deck.junctions)
+                {
+                    json ends = json::array();
+                    for (const RoadEnd& e : j.ends)
+                        ends.push_back({{"position", ue(e.p)}, {"forward", ue(-e.out)}, {"profile", l.roads[size_t(deck.lines[size_t(e.line)].profile)].name}});
+                    if (ends.size() >= 2)
+                        junctions.push_back({{"center", ue(j.p)},
+                                             {"points", ends},
+                                             {"tags", json::array({"Intersection", "Vehicle", "Level"})},
+                                             {"control", controlName(j.control)},
+                                             {"phases", j.phases},
+                                             {"walks", j.walks},
+                                             {"crosswalks", json::array()},
+                                             {"layer", int(k) + 1}});
+                }
+            }
+        for (const LevelLine& line : levelLines(l, r.ground))
+            if (line.kind != "deck" && line.kind != "air")
+                levelRoad(line.pts, line.cls, line.layer, line.kind);
+    }
     json parking = json::array();
     for (const ParkingSpot& p : net.parking)
         parking.push_back({{"position", ue(p.p)}, {"forward", ue(p.dir)}, {"length", p.length}, {"width", p.width}});
@@ -388,6 +427,23 @@ json sendSplines(link::RpcClient& c, const Rebuilt& r, const Args& a, const std:
     if (a.has("roadMesh"))
         params["mesh"] = {{"asset", a.get<std::string>("roadMesh")}, {"forwardAxis", "x"}};
     return call(c, "setSpline", params, cmd);
+}
+
+/** Levels above the ground as one spline actor: deck streets, elevated roads, ramps and skybridges at their heights. */
+json sendLevels(link::RpcClient& c, const Rebuilt& r, const std::string& key, const std::string& label, const char* cmd)
+{
+    curve::Splines splines;
+    for (const LevelLine& line : levelLines(r.layout, r.ground))
+        if (line.kind != "air")
+            splines.push_back(smoothSpline(line.pts, 0.0));
+    return call(c, "setSpline",
+                {{"id", key + "/levels"},
+                 {"label", label + "_Levels"},
+                 {"mode", "actor"},
+                 {"location", json::array({0, 0, 0})},
+                 {"splines", link::splinePoints(splines, glm::dvec3(0.0))},
+                 {"folder", "Lila/Settlement"}},
+                cmd);
 }
 
 json readJsonFile(const fs::path& path)
@@ -486,7 +542,7 @@ json sendToUnreal(const Args& a)
         for (const std::string& k : *keys)
         {
             const std::string& kind = byKey[k]->kind;
-            splines |= (kind == "roads" && mode != "meshes") || kind == "paths";
+            splines |= (kind == "roads" && mode != "meshes") || kind == "paths" || kind == "levels";
             settlement |= kind == "pcg" || kind == "zoneGraph";
             cellData |= kind == "pcg" && o.partition;
         }
@@ -520,6 +576,8 @@ json sendToUnreal(const Args& a)
                                 {mid.x, 0.0, mid.y}, cellFolder, dir, cmd);
         if (i.kind == "roads" || i.kind == "paths")
             return sendSplines(*c, r, a, key, label, i.kind == "paths", cmd);
+        if (i.kind == "levels")
+            return sendLevels(*c, r, key, label, cmd);
         if (i.kind == "massing")
             return sendCellMesh(*c, massingCells.at(i.cell), "SM_" + assetName(label) + "_Massing_" + i.cell.name(), i.key,
                                 {mid.x, 0.0, mid.y}, cellFolder, dir, cmd);
@@ -597,7 +655,7 @@ json sendToUnreal(const Args& a)
         {
             if (kind == "massing" || kind == "place" || (kind == "roads" && k.find("/roads/") != std::string::npos))
                 groups.push_back(k);
-            else if (kind == "roads" || kind == "paths")
+            else if (kind == "roads" || kind == "paths" || kind == "levels")
                 removed[k] = call(*c, "removeSpline", {{"id", k}}, cmd);
             else if (kind == "pcg" && k.find("/pcg/") != std::string::npos)
                 pcgCells.push_back(cellNameOf(k));
