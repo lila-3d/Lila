@@ -851,6 +851,14 @@ std::vector<Index> endBorder(const Mesh& m, Index from, Index skipEdge, Index to
     return {};
 }
 
+double borderLength(const Mesh& m, const std::vector<Index>& chain)
+{
+    double len = 0.0;
+    for (size_t i = 1; i < chain.size(); ++i)
+        len += glm::distance(m.position(chain[i - 1]), m.position(chain[i]));
+    return len;
+}
+
 /** Attribute sources of a strip point: corners and points with weights. */
 struct Sources
 {
@@ -1176,6 +1184,12 @@ void PairBridge::pickRows()
                 continue;
             const Index skip = mS0.edges[e ? mS0.edges.size() - 1 : 0];
             endChain[e] = endBorder(mMesh, from, skip, to, stop, endEdges[e]);
+            // A border that only reaches the other end by going round a hole is not this gap's end.
+            if (endChain[e].size() >= 2 && borderLength(mMesh, endChain[e]) > 2.0 * glm::distance(mMesh.position(from), mMesh.position(to)))
+            {
+                endChain[e].clear();
+                endEdges[e].clear();
+            }
         }
     }
 

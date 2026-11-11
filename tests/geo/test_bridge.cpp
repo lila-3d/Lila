@@ -189,6 +189,20 @@ TEST_CASE("bridge: open ends weld to the border between the sides")
     CHECK(boundaryEdgeCount(h.mesh) == 22);
 }
 
+TEST_CASE("bridge: an end border that runs round the rest of a hole is not welded to")
+{
+    // A slot three cells deep open to the sheet's edge; bridging the two edges at its mouth makes one quad, not a fan
+    // landing on the slot's sides and floor.
+    Gap g = cut(makePlane({600, 500, 6, 5}), [](const glm::dvec3& c) { return std::abs(c.x - 50) < 1 && c.z > -50; },
+                [](const glm::dvec3& mid) { return (std::abs(mid.x) < 1 || std::abs(mid.x - 100) < 1) && std::abs(mid.z - 200) < 1; });
+    REQUIRE(g.border.size() == 2);
+    const BridgeResult r = bridge(g.mesh, g.border, autoOptions());
+    CHECK(r.rows == 1);
+    CHECK(r.faces.size() == 1);
+    CHECK(r.welded == 0);
+    CHECK(isValid(g.mesh));
+}
+
 TEST_CASE("bridge: a sliver between two curves meeting at both ends leaves no loose points")
 {
     // An upper arc of 7 points and a lower arc of 5, sharing their end points, with a row of quads beyond each.
