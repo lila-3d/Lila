@@ -43,6 +43,7 @@ void registerNodeLibrary()
     nodes::registerFieldStatsNodes();
     nodes::registerRotationNodes2();
     nodes::registerStringNodes2();
+    nodes::registerSceneInfoNodes();
     registerBakeNode();
 }
 } // namespace lila::gn

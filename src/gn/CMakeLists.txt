@@ -44,6 +44,7 @@ lila_module(lila_gn Scene
     NodesFieldStats.cpp
     NodesRotation2.cpp
     NodesStrings2.cpp
+    NodesSceneInfo.cpp
     Zones.cpp
     GeometryIO.cpp
     Bake.cpp
