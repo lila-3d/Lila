@@ -117,8 +117,10 @@ public:
 
 	/**
 	 * Runs a Control Rig class once with Control at Target (global) and returns every bone's global transform after its
-	 * Forwards Solve, to check a rig unrealStringsRig built against Lila. Empty when the class isn't a Control Rig.
+	 * Forwards Solve, to check a rig unrealStringsRig built against Lila. TurnVector, when not zero, turns the control
+	 * from where it starts (axis times radians) in place of Target's rotation, as SolveOnMesh. Empty when the class isn't
+	 * a Control Rig.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Lila|Strings")
-	static TMap<FName, FTransform> DragRig(UClass* RigClass, FName Control, const FTransform& Target);
+	static TMap<FName, FTransform> DragRig(UClass* RigClass, FName Control, const FTransform& Target, FVector TurnVector);
 };

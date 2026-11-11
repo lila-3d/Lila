@@ -420,7 +420,7 @@ TMap<FName, FTransform> ULilaStringsLibrary::SolveOnMesh(USkeletalMesh* Mesh, co
 	return Out;
 }
 
-TMap<FName, FTransform> ULilaStringsLibrary::DragRig(UClass* RigClass, const FName Control, const FTransform& Target)
+TMap<FName, FTransform> ULilaStringsLibrary::DragRig(UClass* RigClass, const FName Control, const FTransform& Target, const FVector TurnVector)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaStringsLibrary::DragRig);
 
@@ -437,7 +437,13 @@ TMap<FName, FTransform> ULilaStringsLibrary::DragRig(UClass* RigClass, const FNa
 	{
 		return Out;
 	}
-	H->SetGlobalTransform(FRigElementKey(Control, ERigElementType::Control), Target, false, true);
+	const FRigElementKey Key(Control, ERigElementType::Control);
+	FTransform Goal = Target;
+	if (const double Angle = TurnVector.Size(); Angle > 0.0)
+	{
+		Goal.SetRotation(FQuat(TurnVector / Angle, Angle) * H->GetGlobalTransform(Key).GetRotation());
+	}
+	H->SetGlobalTransform(Key, Goal, false, true);
 	Rig->Execute(FRigUnit_BeginExecution::EventName);
 	H->ForEach<FRigBoneElement>([&](FRigBoneElement* E) {
 		Out.Add(E->GetFName(), H->GetGlobalTransform(E->GetKey()));
