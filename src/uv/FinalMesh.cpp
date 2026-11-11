@@ -9,8 +9,10 @@
 #include <Eigen/SparseCholesky>
 
 #include <tbb/parallel_for.h>
+#include <tbb/parallel_invoke.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <memory>
 #include <numeric>
@@ -2093,22 +2095,37 @@ constexpr int kNeighbourRounds = 2;
  */
 bool solveIsland(Chart& chart, const FinalIsland& isl, const FinalSolveOptions& opts, size_t limit)
 {
-    Chart trial = chart;
+    Chart trial = chart, loose = chart;
     const glm::ivec2 tile(glm::floor(trial.uvCentroid()));
-    if (!solveFinal(trial, isl, opts).ok)
-        return false;
     // The hold keeps barely read vertices home; where slivers are left (with the solve's margin, as the written export can
-    // differ a little), the solve without it may open them.
+    // differ a little), the solve without it may open them. Both run at once; the second is skipped if it starts after the
+    // first came out clean.
     auto slivers = [&](const Chart& c) {
         const std::vector<glm::dvec2> y = isl.uvs(c);
         return std::pair{collapsedOf(isl, y), collapsedOf(isl, y, kCollapsedFraction * kSolveMargin)};
     };
-    if (const auto held = slivers(trial); held.second > 0)
-    {
-        Chart loose = chart;
-        if (solveHeld(loose, isl, opts, 0.0).ok && slivers(loose) < held)
-            trial = std::move(loose);
-    }
+    enum : int { Solving, Clean, Slivers, Failed };
+    std::atomic<int> held{Solving};
+    std::pair<size_t, size_t> heldSlivers{0, 0};
+    bool looseOk = false;
+    tbb::parallel_invoke(
+        [&] {
+            if (!solveFinal(trial, isl, opts).ok)
+            {
+                held = Failed;
+                return;
+            }
+            heldSlivers = slivers(trial);
+            held = heldSlivers.second > 0 ? Slivers : Clean;
+        },
+        [&] {
+            if (const int h = held.load(); h == Solving || h == Slivers)
+                looseOk = solveHeld(loose, isl, opts, 0.0).ok;
+        });
+    if (held == Failed)
+        return false;
+    if (held == Slivers && looseOk && slivers(loose) < heldSlivers)
+        trial = std::move(loose);
     // Moving the island alone shifts it against the uvs its neighbours lend its export: that move goes, not the solve.
     if (!opts.usePins || std::ranges::none_of(trial.pinned, [](uint8_t p) { return p != 0; }))
     {
