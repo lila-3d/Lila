@@ -624,3 +624,54 @@ TEST_CASE("arrange: debrisProps strews chips sized from the pieces beside them, 
     CHECK_FALSE(run("objExists", {{"args", {r["group"]}}}).get<bool>());
     CHECK_THROWS(run("debrisProps", {{"args", {"NoSuchWall"}}}));
 }
+
+TEST_CASE("presets: a built-in preset dresses a floor in one undo step; a saved one runs; unset slots are named")
+{
+    load();
+    run("newScene");
+    run("libraryStarter", {{"thumbnails", false}});
+    const json all = run("arrangementPresets");
+    std::vector<std::string> names;
+    for (const json& p : all)
+        names.push_back(p["name"].get<std::string>());
+    for (const char* want : {"Storeroom", "Rubble Corner", "Library Shelf", "Messy Desk"})
+        CHECK(std::ranges::find(names, want) != names.end());
+
+    const std::string floor = cube("Floor", {0, -10, 0}, {800, 10, 800});
+    const json r = run("arrangePreset", {{"args", {"Storeroom"}}, {"slots", {{"floor", floor}}}});
+    REQUIRE(r["group"].is_string());
+    CHECK(r["steps"].size() == 2);
+    CHECK(r["steps"][0]["result"]["count"].get<int64_t>() > 0);
+    CHECK(r["steps"][1]["result"]["count"].get<int64_t>() == 6);
+    const std::string group = r["group"].get<std::string>();
+    CHECK(run("listRelatives", {{"args", {group}}}).size() == 2);
+    run("undo");
+    CHECK_FALSE(run("objExists", {{"args", {group}}}).get<bool>());
+
+    // The optional broken slot left out skips the chips.
+    const json rubble = run("arrangePreset", {{"args", {"rubble corner"}}, {"slots", {{"floor", floor}}}, {"seed", 3}});
+    CHECK(rubble["steps"][2]["skipped"].get<bool>());
+
+    try
+    {
+        run("arrangePreset", {{"args", {"Library Shelf"}}, {"slots", {{"boards", {floor}}}}});
+        FAIL("no books given");
+    }
+    catch (const std::exception& e)
+    {
+        CHECK(std::string(e.what()).find("books") != std::string::npos);
+    }
+    CHECK_THROWS(run("arrangePreset", {{"args", {"No Such Preset"}}}));
+
+    const json spec = {{"description", "A row of crates."},
+                       {"slots", {{"floor", {{"kind", "mesh"}}}}},
+                       {"steps", json::array({{{"command", "stackProps"},
+                                               {"flags", {{"items", json::array({"Industrial/Crate"})}, {"at", "$floor.top"}, {"count", 3}, {"realize", true}}}}})}};
+    const std::string file = run("arrangementSave", {{"args", {"Crate Tower"}}, {"spec", spec}, {"overwrite", true}}).get<std::string>();
+    CHECK(std::filesystem::exists(file));
+    const json tower = run("arrangePreset", {{"args", {"Crate Tower"}}, {"slots", {{"floor", floor}}}});
+    CHECK(tower["steps"][0]["result"]["count"].get<int64_t>() == 3);
+    CHECK_THROWS(run("arrangementSave", {{"args", {"Bad"}}, {"spec", {{"steps", json::array({{{"command", "noSuchCommand"}}})}}}}));
+    std::error_code ec;
+    std::filesystem::remove(file, ec);
+}

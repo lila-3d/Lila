@@ -582,6 +582,9 @@ void registerUi(ext::Context& ctx)
          "pileProps(items=['Debris/Brick'], at=[0, 0, 0], count=40)"},
         {"stagehand.stackProps", "Stack Props", "stackProps", "Stack items one on another.", "stackProps(items=['Kitchen/Plate'], at=[0, 90, 0])"},
         {"stagehand.pathProps", "Props Along Curve", "pathProps", "Place items along the selected curves.", "pathProps('Kerb', items=['Debris/Rebar'], spacing=60)"},
+        {"stagehand.debrisProps", "Debris Around", "debrisProps", "Strew chips around the selected broken objects, sized from their pieces.", "debrisProps('Wall_fractured')"},
+        {"stagehand.arrangePreset", "Arrangement Preset", "arrangePreset", "Dress a place from a preset: storeroom, rubble corner, library shelf, messy desk.",
+         "arrangePreset('Storeroom', slots={'floor': 'Floor'})"},
     };
     menus::addItem(ctx, {.id = "stagehand.menu.arrange", .menu = levelToolkit::kMenu, .kind = menus::Kind::Submenu, .label = "Arrange",
                          .before = levelToolkit::kAssetsSection});
@@ -618,7 +621,8 @@ void registerUi(ext::Context& ctx)
     levelToolkit::add(ctx, {.id = "stagehand.arrange",
                             .title = "Arrange",
                             .items = {{"stagehand.fillShelf", "books", "Fill Shelf"}, {"stagehand.scatterProps", "grain", "Scatter", "Scatter"},
-                                      {"stagehand.pileProps", "stack-2", "Pile"}, {"stagehand.stackProps", "stack", "Stack"}, {"stagehand.pathProps", "route", "Along Curve"}},
+                                      {"stagehand.pileProps", "stack-2", "Pile"}, {"stagehand.stackProps", "stack", "Stack"}, {"stagehand.pathProps", "route", "Along Curve"},
+                                      {"stagehand.debrisProps", "wall", "Debris"}, {"stagehand.arrangePreset", "template", "Preset"}},
                             .order = 41, .docs = "stagehand"});
     levelToolkit::add(ctx, {.id = "stagehand.kit",
                             .title = "Level Kit",
