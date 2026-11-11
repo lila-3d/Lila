@@ -485,6 +485,14 @@ Geometry transformed(const Geometry& g, const glm::dmat4& xf)
                 x *= s;
             v.background *= s;
         }
+        if (v.isVector())
+        {
+            const glm::mat3 linear{glm::dmat3(xf)};
+            std::vector<glm::vec3> turned(v.vectors.size());
+            for (size_t n = 0; n < turned.size(); ++n)
+                turned[n] = linear * v.vectors[n];
+            v.setVectors(std::move(turned));
+        }
         out.volume = std::make_shared<const Volume>(std::move(v));
     }
     return out;
@@ -517,9 +525,19 @@ Geometry join(std::span<const GeometryPtr> parts)
             {
                 if (!merged)
                     merged = *out.volume;
-                const std::vector<float>& add = g->volume->values;
-                for (size_t k = 0; k < merged->values.size(); ++k)
-                    merged->values[k] = merged->isSdf() ? std::min(merged->values[k], add[k]) : merged->values[k] + add[k];
+                if (merged->isVector())
+                {
+                    std::vector<glm::vec3> sum = merged->vectors;
+                    for (size_t k = 0; k < sum.size() && k < g->volume->vectors.size(); ++k)
+                        sum[k] += g->volume->vectors[k];
+                    merged->setVectors(std::move(sum));
+                }
+                else
+                {
+                    const std::vector<float>& add = g->volume->values;
+                    for (size_t k = 0; k < merged->values.size(); ++k)
+                        merged->values[k] = merged->isSdf() ? std::min(merged->values[k], add[k]) : merged->values[k] + add[k];
+                }
             }
         }
         if (g->mesh)

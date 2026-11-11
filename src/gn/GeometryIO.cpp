@@ -99,8 +99,11 @@ glm::dmat4 matrixOf(const json& j)
 
 json volumeToJson(const Volume& v)
 {
-    return {{"name", v.name}, {"kind", int(v.kind)}, {"dims", {v.dims.x, v.dims.y, v.dims.z}}, {"indexToWorld", matrixJson(v.indexToWorld)},
-            {"values", blobOf(v.values)}, {"background", v.background}};
+    json j = {{"name", v.name}, {"kind", int(v.kind)}, {"dims", {v.dims.x, v.dims.y, v.dims.z}}, {"indexToWorld", matrixJson(v.indexToWorld)},
+              {"values", blobOf(v.values)}, {"background", v.background}};
+    if (v.isVector())
+        j["vectors"] = blobOf(v.vectors);
+    return j;
 }
 
 Volume volumeFromJson(const json& j)
@@ -114,6 +117,12 @@ Volume volumeFromJson(const json& j)
     v.background = j.at("background").get<float>();
     if (v.values.size() != size_t(v.dims.x) * size_t(v.dims.y) * size_t(v.dims.z))
         throw std::invalid_argument("volume values don't match its size");
+    if (v.isVector())
+    {
+        v.vectors = unblob<glm::vec3>(j.at("vectors"));
+        if (v.vectors.size() != v.values.size())
+            throw std::invalid_argument("volume vectors don't match its size");
+    }
     return v;
 }
 
