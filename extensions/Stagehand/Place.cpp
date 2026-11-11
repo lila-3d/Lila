@@ -439,16 +439,27 @@ json renderStarterThumbnails(Graph& g, bool force)
         return out;
     }
     UndoStack& undo = UndoStack::get();
-    if (undo.chunkOpen())
+    static bool drawing = false;
+    if (undo.chunkOpen() || drawing)
     {
-        out["thumbnailNote"] = "skipped inside another command";
+        out["thumbnailNote"] = drawing ? "skipped: already drawing them" : "skipped inside another command";
         return out;
     }
     const std::vector<NodeId> previous = g.selection();
     int64_t rendered = 0;
     // Drawing pumps events, so a script may change the scene meanwhile; with nothing recorded, nothing is rolled back
-    // over its changes.
-    const bool recording = undo.enabled();
+    // over its changes. Recording comes back however this returns.
+    struct Restore
+    {
+        UndoStack& undo;
+        bool recording;
+        ~Restore()
+        {
+            undo.setEnabled(recording);
+            drawing = false;
+        }
+    } restore{undo, undo.enabled()};
+    drawing = true;
     undo.setEnabled(false);
     try
     {
@@ -493,7 +504,7 @@ json renderStarterThumbnails(Graph& g, bool force)
         if (g.node(id))
             keep.push_back(id);
     g.select(keep);
-    undo.setEnabled(recording);
+    undo.setEnabled(restore.recording);
     library::reload();
     out["thumbnails"] = rendered;
     out["missing"] = int64_t(todo.size()) - rendered;
