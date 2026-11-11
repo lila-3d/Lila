@@ -186,7 +186,7 @@ void collectionInfo()
         .label = "Collection Info",
         .category = "Input",
         .doc = "The mesh and curve objects under a transform (its children, theirs and so on), each placed as it stands in the scene. "
-               "Original places them relative to that transform, relative relative to the mesh this group runs on. Separate gives one "
+               "Original places them relative to that transform, Relative to the mesh this group runs on. Separate gives one "
                "instance per object, named after it (Geometry Name reads it); otherwise one instance holds them all. Reset puts each "
                "at the origin. Objects moved, reparented or added under it are picked up when the group is next edited or reapplied.",
         .props = {prop("parent", {}, "", "Name of the transform whose objects to use."), prop("transformSpace", {"original", "relative"}, "original")},
