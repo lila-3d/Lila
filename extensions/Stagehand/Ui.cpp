@@ -1,4 +1,4 @@
-// The Push tool (live physics in the viewport: grab, push, wiggle, drop, shake, sweep, pin), its Level menu entries and the Level Toolkit's Stagehand sections.
+// The Push tool (live physics in the viewport: grab, push, wiggle, drop, shake, sweep, pin; slow motion, auto keep at rest), its Level menu entries and the Level Toolkit's Stagehand sections.
 
 #include "Session.h"
 #include "Stagehand.h"
@@ -9,6 +9,7 @@
 #include <lila/LevelToolkit.h>
 #include <lila/Log.h>
 #include <lila/Menus.h>
+#include <lila/Prefs.h>
 #include <lila/Undo.h>
 #include <lila/ViewportTool.h>
 
@@ -34,6 +35,9 @@ constexpr double kWiggleSpeedPerSecond = 400.0;
 /** The sweep brush carries things at the cursor's speed up to this, and gathers at kGatherSpeed, cm/s. */
 constexpr double kSweepSpeedMax = 600.0;
 constexpr double kGatherSpeed = 80.0;
+/** With auto keep on, the result is kept once everything has rested this long after a drag, seconds. */
+constexpr double kKeepAfterRest = 0.3;
+constexpr double kSlowMotion = 0.25;
 
 enum class Mode : int
 {
@@ -109,6 +113,7 @@ public:
     void activate() override
     {
         mMode = gStartMode;
+        mAutoKeep = PrefStore::get().value<bool>("stagehand", "/push/autoKeep", true);
         mTimer = new QTimer();
         mTimer->setInterval(16);
         QObject::connect(mTimer, &QTimer::timeout, [this] { tick(); });
@@ -137,6 +142,8 @@ public:
         view.ray(e->position(), o, d);
         mPress = e->position();
         mPressed = true;
+        mTouched = true;
+        mRestFor = 0.0;
         const int body = mSession->pick(o, d, &at);
         if (e->modifiers() & Qt::ControlModifier)
         {
@@ -290,7 +297,7 @@ public:
             viewportTools::requestRedraw();
             return true;
         default:
-            return false;
+            return toggleKey(e->key(), e->modifiers());
         }
     }
 
@@ -303,6 +310,8 @@ public:
             viewportTools::requestRedraw();
             return true;
         }
+        if (toggleKey(e.key(), e.modifiers()))
+            return true;
         if (action == "edit.undo" && mSession)
         {
             mSession->revert(scene::Graph::current());
@@ -324,10 +333,11 @@ public:
         }
         else
         {
-            status.flags = {{"paused", mSession->paused()}};
+            status.flags = {{"paused", mSession->paused()}, {"slow", mSlow}, {"auto keep", mAutoKeep}};
             status.keys = {{"1-6", "mode"}};
             status.prompt = addModeHint(mMode, status);
-            for (const KeyHint& k : {KeyHint{"Ctrl-click", "pin"}, KeyHint{"P", "pause"}, KeyHint{"Enter", "keep"}, KeyHint{"Esc", "revert"}})
+            for (const KeyHint& k : {KeyHint{"Ctrl-click", "pin"}, KeyHint{"P", "pause"}, KeyHint{"L", "slow"}, KeyHint{"K", "auto keep"},
+                                     KeyHint{"Enter", "keep"}, KeyHint{"Esc", "revert"}})
                 status.keys.push_back(k);
         }
         drawToolStatus(p, view, status);
@@ -369,8 +379,48 @@ private:
             log::write(LogLevel::Warning, std::string("Push tool: ") + e.what());
             return false;
         }
+        mSession->setTimeScale(mSlow ? kSlowMotion : 1.0);
         mClock.restart();
         return true;
+    }
+
+    /** K toggles auto keep, L slow motion; both stay as set for the next session. */
+    bool toggleKey(int key, Qt::KeyboardModifiers mods)
+    {
+        if (mods != Qt::NoModifier)
+            return false;
+        if (key == Qt::Key_K)
+        {
+            mAutoKeep = !mAutoKeep;
+            PrefStore::get().set("stagehand", "/push/autoKeep", mAutoKeep);
+        }
+        else if (key == Qt::Key_L)
+        {
+            mSlow = !mSlow;
+            if (mSession)
+                mSession->setTimeScale(mSlow ? kSlowMotion : 1.0);
+        }
+        else
+            return false;
+        viewportTools::requestRedraw();
+        return true;
+    }
+
+    /** Keeps the result once everything rests after the hand lets go, so each drag is its own undo step. */
+    void keepAtRest(double dt)
+    {
+        const bool idle = !mPressed && !mWiggling && !mSweeping && mSession->held() < 0 && !mSession->paused();
+        if (!mAutoKeep || !mTouched || !idle)
+        {
+            mRestFor = 0.0;
+            return;
+        }
+        mRestFor = mSession->world().scene().atRest() ? mRestFor + dt : 0.0;
+        if (mRestFor >= kKeepAfterRest)
+        {
+            keep();
+            mTouched = false;
+        }
     }
 
     void tick()
@@ -399,6 +449,7 @@ private:
         }
         mSession->advance(dt);
         mSession->show(scene::Graph::current());
+        keepAtRest(dt);
         viewportTools::requestRedraw();
     }
 
@@ -434,6 +485,8 @@ private:
     Mode mMode = Mode::Grab;
     QPointF mPress, mCursor;
     bool mPressed = false, mLift = false, mWiggling = false, mSweeping = false, mGather = false;
+    bool mAutoKeep = true, mSlow = false, mTouched = false;
+    double mRestFor = 0.0;
     std::optional<glm::dvec3> mSweepLast;
     glm::dvec3 mPlanePoint{0.0}, mPlaneNormal{0, 0, 1};
     int mPushBody = -1;
