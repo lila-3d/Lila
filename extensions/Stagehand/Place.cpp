@@ -563,7 +563,7 @@ void registerLibraryCommands(ext::Context& ctx)
         .doc = "Find props in the library by words, tags, collection and size. Best match first.\n\n"
                "Every word must match the name, tags, collection, id or description (prefixes and one-letter typos count). "
                "Each result has id, name, collection, tier, model, thumbnail, tags, description, size [x, y, z] cm, physics, "
-               "unreal and snapPoints. Pass an id to place().",
+               "unreal, snapPoints and assembly (null, or kind and members for an assembly). Pass an id to place().",
         .positionalDoc = "words (optional)",
         .flags = queryFlags,
         .undoable = false,

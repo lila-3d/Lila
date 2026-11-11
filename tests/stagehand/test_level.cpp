@@ -403,6 +403,10 @@ TEST_CASE("library: an assembly saves its props by id, nests, and places as a wh
     CHECK(saved["assembly"]["members"].size() == 3);
     CHECK(saved["assembly"]["kind"] == "packedLevelActor");
     CHECK(saved["model"].get<std::string>().find("Gate.glb") != std::string::npos);
+    const json found = run("librarySearch", {{"args", {"gate"}}, {"collection", "Kits"}, {"tier", "studio"}});
+    REQUIRE(found.size() >= 1);
+    CHECK(found[0]["id"] == "Kits/Gate");
+    CHECK(found[0]["assembly"]["members"].size() == 3);
 
     // Two gates side by side make a court: an assembly of assemblies.
     run("newScene");
