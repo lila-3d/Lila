@@ -320,8 +320,228 @@ bool sweepCurve(Builder& b, const Curve& c, const Surface& wall, const Surface& 
     return true;
 }
 
-/** A closed slab of the heightfield over cells [x0, x1) x [z0, z1), down to bottom, in the heightfield's space. */
-Mesh slab(const Heightfield& h, int x0, int z0, int x1, int z1, double bottom)
+/**
+ * The ground round an object where the union's slab keeps no grid points: the object's convex hull seen from above, grown
+ * by 1.5 x the skirt width. The fillet's bevel clamps its offset to the shortest edge it slides along, so grid points
+ * close to the seam would narrow the whole band.
+ */
+struct KeepOut
+{
+    std::vector<glm::dvec2> hull;
+    double reach = 0.0;
+    double width = 0.0;
+
+    bool contains(const glm::dvec2& p) const
+    {
+        if (hull.size() < 3)
+            return false;
+        bool inside = true;
+        double nearest = 1e300;
+        for (size_t i = 0; i < hull.size(); ++i)
+        {
+            const glm::dvec2 a = hull[i], b = hull[(i + 1) % hull.size()], ab = b - a;
+            inside &= ab.x * (p.y - a.y) - ab.y * (p.x - a.x) >= 0.0;
+            const double t = std::clamp(glm::dot(p - a, ab) / std::max(glm::dot(ab, ab), 1e-12), 0.0, 1.0);
+            nearest = std::min(nearest, glm::distance(p, a + ab * t));
+        }
+        return inside || nearest < reach;
+    }
+
+    /** The object's points through toSpace, seen from above (x, z), for a skirt width wide. */
+    static KeepOut of(const Object& obj, const glm::dmat4& toSpace, double width)
+    {
+        std::vector<glm::dvec2> pts;
+        const Mesh& m = *obj.mesh;
+        for (Index p = 0; p < m.pointCapacity(); ++p)
+            if (m.pointValid(p))
+            {
+                const glm::dvec3 q(toSpace * glm::dvec4(m.position(p), 1.0));
+                pts.push_back({q.x, q.z});
+            }
+        std::sort(pts.begin(), pts.end(), [](const glm::dvec2& a, const glm::dvec2& b) { return a.x < b.x || (a.x == b.x && a.y < b.y); });
+        // Monotone chain, counter-clockwise.
+        auto cross = [](const glm::dvec2& o, const glm::dvec2& a, const glm::dvec2& b) { return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x); };
+        std::vector<glm::dvec2> h(2 * pts.size() + 1);
+        size_t k = 0;
+        for (size_t i = 0; i < pts.size(); ++i)
+        {
+            while (k >= 2 && cross(h[k - 2], h[k - 1], pts[i]) <= 0.0)
+                --k;
+            h[k++] = pts[i];
+        }
+        for (size_t i = pts.size() - 1, t = k + 1; i-- > 0;)
+        {
+            while (k >= t && cross(h[k - 2], h[k - 1], pts[i]) <= 0.0)
+                --k;
+            h[k++] = pts[i];
+        }
+        h.resize(k > 1 ? k - 1 : k);
+        return {std::move(h), width * 1.5, width};
+    }
+};
+
+/** Area of a closed loop seen from above (x, z), positive counter-clockwise. */
+double loopArea(const std::vector<glm::dvec3>& pts, const std::vector<Index>& loop)
+{
+    double a = 0.0;
+    for (size_t i = 0; i < loop.size(); ++i)
+    {
+        const glm::dvec3 p = pts[loop[i]], q = pts[loop[(i + 1) % loop.size()]];
+        a += p.x * q.z - q.x * p.z;
+    }
+    return 0.5 * a;
+}
+
+/** Appends a face, wound to face up. */
+void upFace(const std::vector<glm::dvec3>& pts, std::vector<Index>& sizes, std::vector<Index>& idx, std::initializer_list<Index> f)
+{
+    std::vector<Index> v(f);
+    glm::dvec3 n(0.0);
+    for (size_t i = 0; i < v.size(); ++i)
+        n += glm::cross(pts[v[i]], pts[v[(i + 1) % v.size()]]);
+    if (n.y < 0.0)
+        std::reverse(v.begin(), v.end());
+    sizes.push_back(Index(v.size()));
+    idx.insert(idx.end(), v.begin(), v.end());
+}
+
+/**
+ * Fills the slab's hole round the object: a ring just inside its hull and one 1.25 x the width outside it (round at the
+ * corners), quads between them, the inner ring's polygon, and a strip zipped out to the grid's rim. The seam crosses
+ * only the ring quads, whose edges reach past the fillet.
+ */
+void ringTop(const Heightfield& h, const KeepOut& keep, std::map<Index, Index> rim, std::vector<glm::dvec3>& pts, std::vector<Index>& sizes,
+             std::vector<Index>& idx)
+{
+    const std::vector<glm::dvec2>& hull = keep.hull;
+    const size_t n = hull.size();
+    const double out = keep.width * 1.25, step = keep.width;
+    auto add = [&](const glm::dvec2& p) {
+        pts.push_back({p.x, h.heightAt(p.x, p.y), p.y});
+        return Index(pts.size() - 1);
+    };
+    // The hull is counter-clockwise, so edge i's outward normal is its direction turned clockwise.
+    auto normal = [&](size_t i) {
+        const glm::dvec2 e = glm::normalize(hull[(i + 1) % n] - hull[i]);
+        return glm::dvec2(e.y, -e.x);
+    };
+    // The inner ring sits well inside the object, a third of its thinnest width at most, so no point is near the seam.
+    double thinnest = 1e300;
+    for (size_t i = 0; i < n; ++i)
+    {
+        double across = 0.0;
+        for (const glm::dvec2& q : hull)
+            across = std::max(across, -glm::dot(q - hull[i], normal(i)));
+        thinnest = std::min(thinnest, across);
+    }
+    const double inset = std::min(keep.width * 0.5, thinnest / 3.0);
+    auto inner = [&](const glm::dvec2& p, const glm::dvec2& na, const glm::dvec2& nb) {
+        const glm::dvec2 d = na + nb;
+        return glm::dot(d, d) > 1e-12 ? p - glm::normalize(d) * inset / std::max(0.5, glm::dot(glm::normalize(d), nb)) : p;
+    };
+    std::vector<Index> ringIn, ringOut;
+    for (size_t i = 0; i < n; ++i)
+    {
+        // Round the corner from the previous edge's normal to this one's.
+        const glm::dvec2 na = normal((i + n - 1) % n), nb = normal(i);
+        const Index cIn = add(inner(hull[i], na, nb));
+        double turn = std::atan2(na.x * nb.y - na.y * nb.x, glm::dot(na, nb));
+        if (turn < 0.0)
+            turn += 6.283185307179586;
+        const int arc = std::max(1, int(std::ceil(turn * out / step)));
+        for (int k = 0; k <= arc; ++k)
+        {
+            const double t = turn * double(k) / double(arc), a0 = std::atan2(na.y, na.x);
+            ringIn.push_back(cIn);
+            ringOut.push_back(add(hull[i] + glm::dvec2(std::cos(a0 + t), std::sin(a0 + t)) * out));
+        }
+        const glm::dvec2 a = hull[i], b = hull[(i + 1) % n];
+        const int segs = std::max(1, int(std::round(glm::distance(a, b) / step)));
+        for (int k = 1; k < segs; ++k)
+        {
+            const glm::dvec2 p = a + (b - a) * (double(k) / double(segs));
+            ringIn.push_back(add(inner(p, nb, nb)));
+            ringOut.push_back(add(p + nb * out));
+        }
+    }
+    const size_t m = ringOut.size();
+    for (size_t k = 0; k < m; ++k)
+    {
+        const size_t k1 = (k + 1) % m;
+        if (ringIn[k] == ringIn[k1])
+            upFace(pts, sizes, idx, {ringIn[k], ringOut[k1], ringOut[k]});
+        else
+            upFace(pts, sizes, idx, {ringIn[k], ringIn[k1], ringOut[k1], ringOut[k]});
+    }
+    std::vector<Index> core;
+    for (size_t k = 0; k < m; ++k)
+        if (core.empty() || (ringIn[k] != core.back() && ringIn[k] != core.front()))
+            core.push_back(ringIn[k]);
+    if (core.size() >= 3)
+    {
+        if (loopArea(pts, core) < 0.0)
+            std::reverse(core.begin(), core.end());
+        sizes.push_back(Index(core.size()));
+        idx.insert(idx.end(), core.begin(), core.end());
+        glm::dvec3 nrm(0.0);
+        for (size_t i = 0; i < core.size(); ++i)
+            nrm += glm::cross(pts[core[i]], pts[core[(i + 1) % core.size()]]);
+        if (nrm.y < 0.0)
+            std::reverse(idx.end() - std::ptrdiff_t(core.size()), idx.end());
+    }
+
+    // The grid's rim round the hole, then a zipper of triangles between it and the outer ring, both counter-clockwise.
+    std::vector<Index> outer;
+    Index at = rim.begin()->first;
+    while (rim.count(at))
+    {
+        outer.push_back(at);
+        const Index next = rim[at];
+        rim.erase(at);
+        at = next;
+    }
+    std::vector<Index> ring(ringOut.begin(), ringOut.end());
+    if (loopArea(pts, outer) < 0.0)
+        std::reverse(outer.begin(), outer.end());
+    if (loopArea(pts, ring) < 0.0)
+        std::reverse(ring.begin(), ring.end());
+    size_t start = 0;
+    double best = 1e300;
+    for (size_t j = 0; j < outer.size(); ++j)
+        if (const double d = glm::distance(pts[outer[j]], pts[ring[0]]); d < best)
+        {
+            best = d;
+            start = j;
+        }
+    std::rotate(outer.begin(), outer.begin() + std::ptrdiff_t(start), outer.end());
+    size_t i = 0, j = 0;
+    const size_t na = ring.size(), nb = outer.size();
+    while (i < na || j < nb)
+    {
+        const Index a = ring[i % na], a1 = ring[(i + 1) % na], b = outer[j % nb], b1 = outer[(j + 1) % nb];
+        // Both loops run counter-clockwise, so a triangle between them winds clockwise seen from above; the other way folds.
+        auto folds = [&](Index p, Index q, Index r) { return loopArea(pts, {p, q, r}) >= 0.0; };
+        const bool ringOk = i < na && !folds(a, a1, b), outerOk = j < nb && !folds(a, b1, b);
+        const bool shorter = glm::distance(pts[a1], pts[b]) < glm::distance(pts[a], pts[b1]);
+        const bool advanceRing = j >= nb || (i < na && (ringOk != outerOk ? ringOk : shorter));
+        if (advanceRing)
+        {
+            upFace(pts, sizes, idx, {a, a1, b});
+            ++i;
+        }
+        else
+        {
+            upFace(pts, sizes, idx, {a, b1, b});
+            ++j;
+        }
+    }
+}
+
+/**
+ * A closed slab of the heightfield over cells [x0, x1) x [z0, z1), down to bottom, in the heightfield's space. Cells
+ * touching keep's zone are left out and the hole is meshed by ringTop.
+ */
+Mesh slab(const Heightfield& h, int x0, int z0, int x1, int z1, double bottom, const KeepOut* keep = nullptr)
 {
     const int cx = x1 - x0 + 1, cz = z1 - z0 + 1;
     std::vector<glm::dvec3> pts;
@@ -338,14 +558,40 @@ Mesh slab(const Heightfield& h, int x0, int z0, int x1, int z1, double bottom)
             pts.push_back(p);
         }
     std::vector<Index> sizes, idx;
+    std::vector<uint8_t> out(size_t(cx) * size_t(cz), 0);
+    if (keep)
+        for (int j = 1; j + 1 < cz; ++j)
+            for (int i = 1; i + 1 < cx; ++i)
+                out[size_t(top(i, j))] = keep->contains(h.samplePos(x0 + i, z0 + j));
+    // Each kept top face's edges, to find the hole's rim: an edge with no twin that isn't on the slab's outline.
+    std::map<std::pair<Index, Index>, int> edges;
+    for (int j = 0; j + 1 < cz; ++j)
+        for (int i = 0; i + 1 < cx; ++i)
+        {
+            const Index q[4] = {top(i, j), top(i, j + 1), top(i + 1, j + 1), top(i + 1, j)};
+            if (out[size_t(q[0])] || out[size_t(q[1])] || out[size_t(q[2])] || out[size_t(q[3])])
+                continue;
+            sizes.push_back(4);
+            idx.insert(idx.end(), std::begin(q), std::end(q));
+            for (int k = 0; k < 4; ++k)
+                ++edges[{q[k], q[(k + 1) % 4]}];
+        }
     for (int j = 0; j + 1 < cz; ++j)
         for (int i = 0; i + 1 < cx; ++i)
         {
             sizes.push_back(4);
-            idx.insert(idx.end(), {top(i, j), top(i, j + 1), top(i + 1, j + 1), top(i + 1, j)});
-            sizes.push_back(4);
             idx.insert(idx.end(), {bot(i, j), bot(i + 1, j), bot(i + 1, j + 1), bot(i, j + 1)});
         }
+    auto onOutline = [&](Index a, Index b) {
+        const int ia = int(a) % cx, ja = int(a) / cx, ib = int(b) % cx, jb = int(b) / cx;
+        return (ia == ib && (ia == 0 || ia == cx - 1)) || (ja == jb && (ja == 0 || ja == cz - 1));
+    };
+    std::map<Index, Index> rim;
+    for (const auto& [e, n] : edges)
+        if (!edges.count({e.second, e.first}) && !onOutline(e.first, e.second))
+            rim[e.second] = e.first;
+    if (keep && !rim.empty())
+        ringTop(h, *keep, rim, pts, sizes, idx);
     const glm::dvec3 centre = (h.position(x0, z0) + h.position(x1, z1)) * 0.5;
     auto side = [&](Index a, Index b) {
         const Index c = a + Index(cx * cz), d = b + Index(cx * cz);
@@ -642,7 +888,8 @@ bool meshFloorSlab(const Object& floorObj, const Object& obj, const SkirtOptions
         *why = "the ground mesh doesn't reach under the object";
         return false;
     }
-    out = slab(top, 0, 0, nx - 1, nz - 1, std::min(lo.y, double(top.range().x)) - 200.0);
+    const KeepOut keep = KeepOut::of(obj, obj.world, o.width);
+    out = slab(top, 0, 0, nx - 1, nz - 1, std::min(lo.y, double(top.range().x)) - 200.0, &keep);
     return true;
 }
 
@@ -682,7 +929,8 @@ bool unionObject(Builder& b, int object, std::span<const Object> objects, const 
         const int x1 = std::clamp(int(std::ceil((hi.x + margin - h.origin.x) / h.cell)), x0 + 1, h.nx - 1);
         const int z1 = std::clamp(int(std::ceil((hi.z + margin - h.origin.y) / h.cell)), z0 + 1, h.nz - 1);
         const double bottom = std::min(lo.y, double(h.range().x)) - 200.0;
-        ground3 = slab(h, x0, z0, x1, z1, bottom);
+        const KeepOut keep = KeepOut::of(obj, toHf, o.width);
+        ground3 = slab(h, x0, z0, x1, z1, bottom, &keep);
         floorOp = {&ground3, ground->world};
         floor = Surface::of(*ground);
     }

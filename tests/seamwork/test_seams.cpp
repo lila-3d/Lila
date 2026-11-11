@@ -572,6 +572,54 @@ TEST_CASE("skirt: a box wall on a floor mesh is unioned, on a closed floor and o
     }
 }
 
+TEST_CASE("skirt: a union's ground border keeps the full width along the wall, whatever the ground's resolution")
+{
+    // The ground border's distance from the 400 x 20 wall's footprint, along its long sides.
+    auto alongWidth = [](const SkirtResult& s) {
+        const auto side = s.mesh.pointAttrs().get<float>("side");
+        std::vector<uint8_t> border(s.mesh.pointCapacity(), 0);
+        for (Index e = 0; e < s.mesh.edgeCapacity(); ++e)
+            if (s.mesh.edgeValid(e) && s.mesh.isBoundaryEdge(e))
+                border[s.mesh.edgePoint(e, 0)] = border[s.mesh.edgePoint(e, 1)] = 1;
+        glm::dvec2 range(1e300, 0.0);
+        for (Index p = 0; p < s.mesh.pointCapacity(); ++p)
+            if (s.mesh.pointValid(p) && border[p] && side[p] > 0.99f && std::abs(s.mesh.position(p).x) < 200.0)
+            {
+                const double d = std::abs(s.mesh.position(p).z) - 10.0;
+                range = {std::min(range.x, d), std::max(range.y, d)};
+            }
+        return range;
+    };
+    SkirtOptions o;
+    o.width = 30.0;
+    o.method = SkirtMethod::Union;
+    const std::vector<Object> wall = {object("Wall", box({-200, -20, -10}, {200, 280, 10}))};
+    for (const double cell : {50.0, 10.0})
+    {
+        Ground g;
+        g.field = std::make_shared<const Heightfield>(lila::geo::makeHeightfield(int(2000.0 / cell) + 1, int(2000.0 / cell) + 1, cell, {-1000.0, -1000.0}));
+        const SkirtResult s = buildSkirt(findSeams(wall, &g, quick()), wall, &g, o);
+        REQUIRE(s.curves.size() == 1);
+        INFO(s.curves[0].reason);
+        REQUIRE(s.curves[0].method == "union");
+        const glm::dvec2 w = alongWidth(s);
+        INFO("terrain cell " << cell << ": " << w.x << " to " << w.y);
+        CHECK(w.x > o.width * 0.85);
+        CHECK(w.y < o.width * 1.15);
+    }
+    const std::vector<glm::dvec3> quad = {{-5000, 0, -5000}, {-5000, 0, 5000}, {5000, 0, 5000}, {5000, 0, -5000}};
+    Object floor = object("Floor", std::make_shared<const Mesh>(Mesh::fromPolygons(quad, std::vector<Index>{4}, std::vector<Index>{0, 1, 2, 3})));
+    floor.ground = true;
+    const std::vector<Object> objs = {wall[0], floor};
+    const SkirtResult s = buildSkirt(findSeams(objs, nullptr, quick()), objs, nullptr, o);
+    REQUIRE_FALSE(s.curves.empty());
+    REQUIRE(s.curves[0].method == "union");
+    const glm::dvec2 w = alongWidth(s);
+    INFO("floor quad: " << w.x << " to " << w.y);
+    CHECK(w.x > o.width * 0.85);
+    CHECK(w.y < o.width * 1.15);
+}
+
 TEST_CASE("skirt: on terrain the box wall is unioned with a fillet, borders on both surfaces")
 {
     const std::vector<Object> objs = {object("Wall", box({-200, -20, -10}, {200, 280, 10}))};
@@ -581,6 +629,7 @@ TEST_CASE("skirt: on terrain the box wall is unioned with a fillet, borders on b
     o.width = 15.0;
     const SkirtResult s = buildSkirt(r, objs, &g, o);
     REQUIRE(s.curves.size() == 1);
+    INFO(s.curves[0].reason);
     CHECK(s.curves[0].method == "union");
     CHECK(s.curves[0].reason.find("past") != std::string::npos);
     checkSkirt(s.mesh, objs[0], &g, nullptr);
@@ -596,6 +645,7 @@ TEST_CASE("skirt: a unioned box wall's outer corners are rounded, not tapered")
     o.method = SkirtMethod::Union;
     const SkirtResult s = buildSkirt(r, objs, &g, o);
     REQUIRE(s.curves.size() == 1);
+    INFO(s.curves[0].reason);
     REQUIRE(s.curves[0].method == "union");
     checkSkirt(s.mesh, objs[0], &g, nullptr);
     // At each corner the ground border runs round it at the fillet width, like the ball the fillet rolls.
