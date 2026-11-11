@@ -284,7 +284,13 @@ CurveSet CurveSet::evaluated(const curve::TessOptions& o) const
         size_t p0 = offsets[c], n = curveSize(c);
         if (!curve::isValid(sp) || n == 0)
             continue;
-        curve::Polyline pl = sp.kind == curve::Kind::Poly ? curve::polylineFrom(sp.points, sp.closed) : curve::tessellate(sp, o);
+        curve::TessOptions co = o;
+        if (auto res = curveAttrs.get<int32_t>("resolution"); !res.empty() && res[c] > 0)
+        {
+            co.mode = curve::TessMode::Fixed;
+            co.perSpan = res[c];
+        }
+        curve::Polyline pl = sp.kind == curve::Kind::Poly ? curve::polylineFrom(sp.points, sp.closed) : curve::tessellate(sp, co);
         size_t q0 = out.positions.size();
         out.addCurve(pl.points, sp.closed);
         out.curveAttrs.copyFrom(curveAttrs, out.numCurves() - 1, c);
@@ -432,6 +438,7 @@ Geometry transformed(const Geometry& g, const glm::dmat4& xf)
     LILA_ZONE();
 
     Geometry out;
+    out.name = g.name;
     if (g.mesh)
     {
         geo::Mesh m = *g.mesh;
@@ -509,6 +516,8 @@ Geometry join(std::span<const GeometryPtr> parts)
     {
         if (!g)
             continue;
+        if (out.name.empty())
+            out.name = g->name;
         if (g->volume)
         {
             if (!out.volume)
@@ -603,7 +612,11 @@ Geometry realize(const Geometry& g)
         return out;
     }
     if (joinable(g))
-        return realizeJoined(*g.instances);
+    {
+        Geometry out = realizeJoined(*g.instances);
+        out.name = g.name;
+        return out;
+    }
     const Instances& inst = *g.instances;
     // Each reference is realized once, then copied per instance.
     std::vector<Geometry> refs(inst.references.size());

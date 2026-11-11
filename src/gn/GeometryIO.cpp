@@ -187,6 +187,8 @@ json geometryToJson(const Geometry& g)
         j["heightfield"] = heightfieldToJson(*g.heightfield);
     if (g.volume)
         j["volume"] = volumeToJson(*g.volume);
+    if (!g.name.empty())
+        j["name"] = g.name;
     return j;
 }
 
@@ -220,6 +222,7 @@ GeometryPtr geometryFromJson(const json& j)
             g.heightfield = std::make_shared<const geo::Heightfield>(heightfieldFromJson(j["heightfield"]));
         if (j.contains("volume"))
             g.volume = std::make_shared<const Volume>(volumeFromJson(j["volume"]));
+        g.name = j.value("name", std::string());
         return makeGeometry(std::move(g));
     }
     catch (const json::exception& e)

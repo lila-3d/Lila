@@ -119,6 +119,8 @@ struct LILA_SCENE_API Geometry
     std::shared_ptr<const geo::Heightfield> heightfield;
     /** A density or signed-distance grid (gn/Volume.h). Never reaches the modifier stack; Volume to Mesh makes it a mesh. */
     std::shared_ptr<const Volume> volume;
+    /** A label for the whole geometry (Set Geometry Name); joins keep the first named part's. */
+    std::string name;
 
     bool empty() const;
 };

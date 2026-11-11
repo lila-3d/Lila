@@ -38,6 +38,14 @@ void registerNodeLibrary()
     nodes::registerBundleNodes();
     nodes::registerBuildNodes();
     nodes::registerDeform2Nodes();
+    nodes::registerCurveNodes2();
+    nodes::registerCurveSurfaceNodes();
+    nodes::registerCurveBooleanNodes();
+    nodes::registerInstanceNodes2();
+    nodes::registerFieldStatsNodes();
+    nodes::registerRotationNodes2();
+    nodes::registerStringNodes2();
+    nodes::registerSceneInfoNodes();
     registerBakeNode();
 }
 } // namespace lila::gn
