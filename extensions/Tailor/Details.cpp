@@ -184,6 +184,38 @@ int addPocket(Garment& g, int host, const Vec2& at, float width, float height, b
     return index;
 }
 
+int addPatch(Garment& g, int host, const Vec2& centre, float width, float height, const std::string& name)
+{
+    if (host < 0 || size_t(host) >= g.panels.size() || width <= 0.f || height <= 0.f)
+        return -1;
+    const Panel hostPanel = g.panels[size_t(host)];
+    Panel p;
+    p.name = detailName(g, hostPanel.name + " " + name);
+    const float rc = 0.3f * std::min(width, height), hw = 0.5f * width, hh = 0.5f * height;
+    const Vec2 corners[4] = {{hw - rc, -hh + rc}, {hw - rc, hh - rc}, {-hw + rc, hh - rc}, {-hw + rc, -hh + rc}};
+    for (int c = 0; c < 4; ++c)
+        for (int k = 0; k <= 4; ++k)
+        {
+            const float t = 1.5707963f * (float(c) + float(k) / 4.f) - 1.5707963f;
+            p.outline.push_back({corners[c][0] + rc * std::cos(t), corners[c][1] + rc * std::sin(t)});
+        }
+    p.fabric = hostPanel.fabric;
+    p.layer = hostPanel.layer + 1;
+    p.particleDistance = std::min(hostPanel.particleDistance, 0.2f * std::min(width, height));
+    placeOnPanel(hostPanel, centre, kLift, p);
+    const int index = int(g.panels.size());
+    const std::vector<Vec2> outline = p.outline;
+    g.panels.push_back(std::move(p));
+    const float step = g.panels[size_t(index)].particleDistance;
+    const int n = int(outline.size());
+    for (int i = 0; i < n; ++i)
+    {
+        const Vec2 &a = outline[size_t(i)], &b = outline[size_t((i + 1) % n)];
+        tackRow(g, index, a, b, host, {centre[0] + a[0], centre[1] + a[1]}, {centre[0] + b[0], centre[1] + b[1]}, step);
+    }
+    return index;
+}
+
 std::vector<int> addBeltLoops(Garment& g, int host, float y, int count, float width, float height)
 {
     std::vector<int> out;
