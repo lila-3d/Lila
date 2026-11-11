@@ -327,7 +327,8 @@ NodeId makeHelper(Graph& g, NodeId mesh, NodeId root, const glm::dmat4& geom, co
     return id;
 }
 
-/** Puts fitted weights on the skin: helpers become keyed joints and influences, the method goes linear. */
+} // namespace
+
 json applyFit(Graph& g, NodeId skin, const FitResult& r, bool disableAfter)
 {
     NodeId mesh = skin::meshOf(g, skin);
@@ -367,7 +368,6 @@ json applyFit(Graph& g, NodeId skin, const FitResult& r, bool disableAfter)
             }
     return {{"helpers", helpers}, {"disabled", disabled}};
 }
-} // namespace
 
 // ------------------------------------------------------------------------------------------------ poses
 
@@ -464,7 +464,7 @@ FitResult fitSkinWeights(Graph& g, NodeId skin, const FitOptions& o)
     if (s.frames < 2)
         throw CommandError("bakeSkinWeights: needs at least two samples");
 
-    const WeightTable current = skin::table(g, skin);
+    const WeightTable current = o.seed ? *o.seed : skin::table(g, skin);
     deform::SsdrProblem p;
     p.rest = s.rest;
     p.polygons = s.polygons;

@@ -525,6 +525,8 @@ TEST_CASE("bakeSoftNet: knot joints as fixed bones, helpers and correctives beat
     MESSAGE("bakeSoftNet: joints ", baked["joints"].size(), " correctives ", baked["correctives"].size(), " skinned rmse ", baked["skinnedRmse"].get<double>(),
             " final rmse ", baked["rmse"].get<double>(), " max ", baked["maxError"].get<double>(), " unreal worst ", baked["unrealCheck"]["worst"].get<double>());
     CHECK(baked["rmse"].get<double>() < plain["rmse"].get<double>());
+    // The knot joints carry the net: weights on them must land.
+    CHECK(baked["skinnedRmse"].get<double>() < 0.5 * plain["rmse"].get<double>());
     CHECK(baked["rmse"].get<double>() < 0.065);
     CHECK(baked["unrealCheck"]["mismatches"].empty());
     CHECK(baked["frameError"].size() == 21);

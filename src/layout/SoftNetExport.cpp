@@ -16,6 +16,7 @@
 #include "scene/Rig.h"
 #include "scene/RigUtil.h"
 #include "scene/Skin.h"
+#include "scene/SkinBake.h"
 #include "scene/Transform.h"
 #include "scene/UnrealCheck.h"
 
@@ -398,6 +399,76 @@ NodeId deformerOn(Graph& g, NodeId mesh)
     return kNoNode;
 }
 
+InfluencePtr sharedTable(Graph& g, NodeId d, const MeshPtr& in)
+{
+    const Node& dn = *g.node(d);
+    return influenceTable(*in, dn.as<std::string>(dn.type().attrIndex("binding")), dn.as<double>(dn.type().attrIndex("reach")),
+                          dn.as<double>(dn.type().attrIndex("stiffness")))
+        .get();
+}
+
+/** The joint each of the net's degrees of freedom moves with: a knot's control joint, a tangent handle's joint. */
+std::vector<NodeId> dofJoints(Graph& g, NodeId d, const NetJoints& joints, const MeshBind& b)
+{
+    std::vector<NodeId> out(deform::softnet::dofCount(b.knots, b.tangentRest.size()), kNoNode);
+    for (size_t k = 0; k < b.knots && k < joints.knots.size(); ++k)
+        out[k] = joints.knots[k].second;
+    const int attr = g.node(d)->type().attrIndex("tangentMatrix");
+    for (size_t t = 0; t < b.tangentRest.size(); ++t)
+        if (const auto src = g.source({d, attr, -1, int(t)}))
+            if (const auto it = joints.handles.find(src->node); it != joints.handles.end())
+                out[b.knots + t] = it->second.first;
+    return out;
+}
+
+/**
+ * Starts each point on the knot and handle joints the net moves it with, by its influence weights, so the weight fit
+ * considers them: Dem Bones only picks among the bones a point already leans on.
+ */
+WeightTable seedNetWeights(Graph& g, NodeId mesh, NodeId skin, const NetJoints& joints)
+{
+    LILA_ZONE();
+    WeightTable w = skin::table(g, skin);
+    const NodeId d = deformerOn(g, mesh);
+    if (d == kNoNode)
+        return w;
+    g.evaluate();
+    const Node& dn = *g.node(d);
+    const MeshPtr in = dn.as<MeshPtr>(DeformerNode::kInMesh);
+    const MeshBind b = MeshBind::fromJson(dn.as<std::string>(dn.type().attrIndex("binding")));
+    if (!in || b.points != in->pointCapacity())
+        return w;
+    const InfluencePtr table = sharedTable(g, d, in);
+    if (!table || table->points() == 0)
+        return w;
+    std::map<NodeId, uint32_t> idOf;
+    for (const skin::Influence& i : skin::influences(g, skin))
+        idOf[i.joint] = i.index;
+    std::vector<int64_t> dofId;
+    for (NodeId j : dofJoints(g, d, joints, b))
+        dofId.push_back(idOf.contains(j) ? int64_t(idOf[j]) : -1);
+    for (size_t p = 0; p < w.points.size() && p < table->points(); ++p)
+    {
+        std::map<uint32_t, float> net;
+        double sum = 0.0;
+        for (uint32_t k = table->offsets[p]; k < table->offsets[p + 1]; ++k)
+            if (const auto& e = table->entries[k]; e.weight > 0.0 && e.dof < dofId.size() && dofId[e.dof] >= 0)
+            {
+                net[uint32_t(dofId[e.dof])] += float(e.weight);
+                sum += e.weight;
+            }
+        if (net.empty())
+            continue;
+        const float keep = float(1.0 - std::min(sum, 0.9));
+        const float scale = float(std::min(sum, 0.9) / sum);
+        for (auto& [i, wt] : w.points[p])
+            wt *= keep;
+        for (const auto& [i, wt] : net)
+            w.points[p].push_back({i, wt * scale});
+    }
+    return w;
+}
+
 json bake(Graph& g, NodeId mesh, const Args& a)
 {
     LILA_ZONE();
@@ -429,15 +500,17 @@ json bake(Graph& g, NodeId mesh, const Args& a)
             if (inf.joint == made[i])
                 g.setValue({inf.link, SkinInfluenceNode::kBindPreMatrix, -1}, glm::inverse(joints.restWorld[i]));
     }
-
-    json fit = ops::execute("bakeSkinWeights", {{"args", {g.node(mesh)->path()}},
-                                                {"source", "animation"},
-                                                {"start", int(std::llround(range.times.front() * range.fps))},
-                                                {"end", int(std::llround(range.times.back() * range.fps))},
-                                                {"step", std::max(1, a.get<int>("step", 1))},
-                                                {"helpers", std::max(0, a.get<int>("helpers"))},
-                                                {"maxInfluences", a.get<int>("maxInfluences")},
-                                                {"iterations", a.get<int>("iterations")}});
+    skinbake::FitOptions fo;
+    fo.animation = true;
+    fo.start = std::llround(range.times.front() * range.fps);
+    fo.end = std::llround(range.times.back() * range.fps);
+    fo.step = std::max(1, a.get<int>("step", 1));
+    fo.helpers = std::max(0, a.get<int>("helpers"));
+    fo.maxInfluences = a.get<int>("maxInfluences");
+    fo.iterations = a.get<int>("iterations");
+    fo.seed = seedNetWeights(g, mesh, skin, joints);
+    const skinbake::FitResult fitted = skinbake::fitSkinWeights(g, skin, fo);
+    json fit = skinbake::applyFit(g, skin, fitted, true);
     const Errors skinned = errorsAgainst(g, mesh, range.times, targets);
     const json correctives = bakeCorrectives(g, mesh, skin, range.times, targets, a.get<int>("correctives"), a.get<double>("tolerance"));
     std::vector<double> perFrame;

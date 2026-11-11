@@ -65,6 +65,8 @@ struct FitOptions
     double smoothness = 1e-4;
     /** Leave simulated deformers (jiggle) on while sampling; off for a range of motion, which isn't played. */
     bool simulated = false;
+    /** Weights the fit starts from instead of the skin's, which still deforms the sampled stack. The fit only gives a point bones it starts on. */
+    std::optional<WeightTable> seed;
 };
 
 struct FitResult
@@ -82,6 +84,9 @@ struct FitResult
 
 /** Samples the mesh's whole stack and fits linear weights to it. Leaves the scene as it was. Throws CommandError. */
 LILA_SCENE_API FitResult fitSkinWeights(Graph& g, NodeId skin, const FitOptions& o);
+
+/** Puts a fit on the skin: helpers become keyed joints and influences, the method goes linear; disableAfter turns off the deformers after the skin. Returns {helpers, disabled}. */
+LILA_SCENE_API json applyFit(Graph& g, NodeId skin, const FitResult& r, bool disableAfter);
 
 /** Whether linear skinning alone would lose something on export: a non-linear method or deformers after the skin. */
 LILA_SCENE_API bool needsRoute(Graph& g, NodeId skin);
