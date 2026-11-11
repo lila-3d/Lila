@@ -649,14 +649,17 @@ json sendToUnreal(const Args& a)
 
     // What the last send made that this layout no longer has.
     const json before = previous.is_object() ? previous.value("items", json::object()) : json::object();
-    json groups = json::array(), pcgCells = json::array(), removed = json::object();
+    json groups = json::array(), meshGroups = json::array(), pcgCells = json::array(), removed = json::object();
     std::set<std::string> keptRemoved;
     for (const std::string& k : d.removed)
     {
         const std::string kind = before[k].value("kind", std::string());
         try
         {
-            if (kind == "massing" || kind == "place" || (kind == "roads" && k.find("/roads/") != std::string::npos))
+            // Massing and road mesh cells own their static meshes, which go with them; placements show the project's.
+            if (kind == "massing" || (kind == "roads" && k.find("/roads/") != std::string::npos))
+                meshGroups.push_back(k);
+            else if (kind == "place")
                 groups.push_back(k);
             else if (kind == "roads" || kind == "paths" || kind == "levels")
                 removed[k] = call(*c, "removeSpline", {{"id", k}}, cmd);
@@ -686,6 +689,7 @@ json sendToUnreal(const Args& a)
         }
     };
     removeBatch(groups, "removePlacements", {{"groups", groups}}, "placements");
+    removeBatch(meshGroups, "removePlacements", {{"groups", meshGroups}, {"deleteMeshes", true}, {"meshFolder", cellFolder}}, "meshCells");
     removeBatch(pcgCells, "removeSettlementCells", {{"id", key}, {"cells", pcgCells}}, "pcgCells");
 
     // The manifest records what Unreal holds now: failed sends keep their old hash (or none) so the next send retries them.
