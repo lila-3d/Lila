@@ -44,6 +44,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <array>
 #include <map>
 
 namespace lila::ui::optionBox
@@ -214,8 +215,11 @@ public:
                     mValues[flag] = v;
                     if (!mFilling && mPresetMenu)
                         mPresetMenu->setCurrentIndex(-1);
+                    refreshEnabled();
                 }, body);
                 mSetters[flag] = w.set;
+                mDefaults[flag] = f.defaultValue;
+                mWidgets[flag] = {w.label, w.field};
                 if (w.label)
                 {
                     grid->addWidget(w.label, row, 0, Qt::AlignRight | Qt::AlignVCenter);
@@ -230,6 +234,7 @@ public:
         }
         grid->setRowStretch(row, 1);
         rebuildPresets();
+        refreshEnabled();
 
         // Apply is the primary action and Enter's default; Esc or the window's close button closes.
         auto* buttons = new QHBoxLayout();
@@ -333,6 +338,7 @@ private:
                 it->second(v);
         }
         mFilling = false;
+        refreshEnabled();
     }
 
     void resetSettings()
@@ -344,8 +350,27 @@ private:
             if (set && mValues.contains(flag))
                 set(mValues[flag]);
         mFilling = false;
+        refreshEnabled();
         if (mPresetMenu)
             mPresetMenu->setCurrentIndex(-1);
+    }
+
+    void refreshEnabled()
+    {
+        const opt::Override* o = opt::findOverride(mCommand);
+        if (!o)
+            return;
+        for (const auto& [flag, when] : o->enabledWhen)
+        {
+            const auto w = mWidgets.find(flag);
+            if (w == mWidgets.end())
+                continue;
+            const json v = mValues.contains(when.first) ? mValues[when.first] : mDefaults[when.first];
+            const bool on = v.is_string() && std::find(when.second.begin(), when.second.end(), v.get<std::string>()) != when.second.end();
+            for (QWidget* x : w->second)
+                if (x)
+                    x->setEnabled(on);
+        }
     }
 
     /**
@@ -500,6 +525,8 @@ private:
     /** The fields' values, stored only by Apply or Save Settings so Close leaves the remembered ones alone. */
     json mValues;
     std::map<std::string, std::function<void(const json&)>> mSetters;
+    std::map<std::string, json> mDefaults;
+    std::map<std::string, std::array<QWidget*, 2>> mWidgets; // label, field
     QLabel* mPresetLabel = nullptr;
     QWidget* mPresetHost = nullptr;
     QPointer<QComboBox> mPresetMenu;

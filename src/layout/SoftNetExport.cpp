@@ -1119,6 +1119,14 @@ void registerSoftNetExportCommands()
         },
         .examples = {"unrealSoftNet(\"Mochi\", skeletalMesh=\"/Game/Mochi/Mochi\")"},
     });
-    ops::options::setOverride("softNetUnreal", {.editors = {{"route", "segmented"}, {"cacheFormat", "segmented"}}});
+    {
+        ops::options::Override o{.choices = {{"cacheFormat", {{"alembic", "Alembic"}, {"vat", "VAT"}}}},
+                                 .editors = {{"route", "segmented"}, {"cacheFormat", "segmented"}}};
+        for (const char* f : {"helpers", "correctives", "tolerance", "checkTo", "maxInfluences", "iterations"})
+            o.enabledWhen[f] = {"route", {"bake"}};
+        for (const char* f : {"cacheFormat", "path"})
+            o.enabledWhen[f] = {"route", {"cache"}};
+        ops::options::setOverride("softNetUnreal", std::move(o));
+    }
 }
 } // namespace lila::layout

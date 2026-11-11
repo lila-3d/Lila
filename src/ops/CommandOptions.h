@@ -90,6 +90,8 @@ struct Override
     std::map<std::string, std::function<std::string()>> notes;
     /** Docs page the option box's help button opens ("curves?id=text"); empty for none. */
     std::string docs;
+    /** Fields that only apply under some values of another: flag -> (that flag, its values). The field is disabled otherwise. */
+    std::map<std::string, std::pair<std::string, std::vector<std::string>>> enabledWhen;
 };
 
 LILA_FOUNDATION_API void setOverride(const std::string& command, Override o);
