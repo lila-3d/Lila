@@ -438,6 +438,7 @@ Geometry transformed(const Geometry& g, const glm::dmat4& xf)
     LILA_ZONE();
 
     Geometry out;
+    out.name = g.name;
     if (g.mesh)
     {
         geo::Mesh m = *g.mesh;
@@ -515,6 +516,8 @@ Geometry join(std::span<const GeometryPtr> parts)
     {
         if (!g)
             continue;
+        if (out.name.empty())
+            out.name = g->name;
         if (g->volume)
         {
             if (!out.volume)
@@ -609,7 +612,11 @@ Geometry realize(const Geometry& g)
         return out;
     }
     if (joinable(g))
-        return realizeJoined(*g.instances);
+    {
+        Geometry out = realizeJoined(*g.instances);
+        out.name = g.name;
+        return out;
+    }
     const Instances& inst = *g.instances;
     // Each reference is realized once, then copied per instance.
     std::vector<Geometry> refs(inst.references.size());
