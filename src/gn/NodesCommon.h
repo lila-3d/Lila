@@ -260,6 +260,9 @@ void registerCurveNodes2();
 void registerCurveSurfaceNodes();
 void registerCurveBooleanNodes();
 void registerInstanceNodes2();
+void registerFieldStatsNodes();
+void registerRotationNodes2();
+void registerStringNodes2();
 
 /** A link between two pieces (b = -1: the world) at an anchor, as the Rigid Body Solver reads them. */
 struct PieceLink
