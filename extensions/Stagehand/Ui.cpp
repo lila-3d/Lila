@@ -13,7 +13,6 @@
 #include <lila/ViewportTool.h>
 
 #include <QElapsedTimer>
-#include <QGuiApplication>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QTimer>
@@ -168,6 +167,7 @@ public:
             break;
         case Mode::Sweep:
             mSweeping = true;
+            mGather = e->modifiers() & Qt::ShiftModifier;
             mSweepLast.reset();
             break;
         case Mode::Shake:
@@ -193,6 +193,7 @@ public:
     {
         mCursor = e->position();
         mView = view;
+        mGather = e->modifiers() & Qt::ShiftModifier;
         if (!mSession || !mPressed)
         {
             viewportTools::requestRedraw();
@@ -390,10 +391,9 @@ private:
             mView.ray(mCursor, o, d);
             if (const auto hit = mSession->world().scene().raycast(o, d, 1e7))
             {
-                const bool gather = QGuiApplication::queryKeyboardModifiers() & Qt::ShiftModifier;
                 const glm::dvec3 motion = mSweepLast ? hit->point - *mSweepLast : glm::dvec3(0.0);
-                const double speed = gather ? kGatherSpeed : std::min(glm::length(motion) / std::max(dt, 1e-3), kSweepSpeedMax);
-                mSession->sweep(hit->point, motion, mRadius, speed, gather);
+                const double speed = mGather ? kGatherSpeed : std::min(glm::length(motion) / std::max(dt, 1e-3), kSweepSpeedMax);
+                mSession->sweep(hit->point, motion, mRadius, speed, mGather);
                 mSweepLast = hit->point;
             }
         }
@@ -433,7 +433,7 @@ private:
     ViewInfo mView;
     Mode mMode = Mode::Grab;
     QPointF mPress, mCursor;
-    bool mPressed = false, mLift = false, mWiggling = false, mSweeping = false;
+    bool mPressed = false, mLift = false, mWiggling = false, mSweeping = false, mGather = false;
     std::optional<glm::dvec3> mSweepLast;
     glm::dvec3 mPlanePoint{0.0}, mPlaneNormal{0, 0, 1};
     int mPushBody = -1;
