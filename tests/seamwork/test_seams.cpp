@@ -549,20 +549,27 @@ TEST_CASE("skirt: a sunk round column is swept, its borders on both surfaces wit
     checkSkirt(s.mesh, objs[0], &g, nullptr);
 }
 
-TEST_CASE("skirt: a box wall on a floor mesh gets a skirt and says which method made it")
+TEST_CASE("skirt: a box wall on a floor mesh is unioned, on a closed floor and on one open quad")
 {
-    Object floor = object("Floor", box({-1000, -50, -1000}, {1000, 0, 1000}));
-    floor.ground = true;
-    const std::vector<Object> objs = {object("Wall", box({-200, -20, -10}, {200, 280, 10})), floor};
-    const Result r = findSeams(objs, nullptr, quick());
-    SkirtOptions o;
-    o.width = 15.0;
-    const SkirtResult s = buildSkirt(r, objs, nullptr, o);
-    REQUIRE_FALSE(s.curves.empty());
-    // Whatever ran is named with its reason (a fallback says what it fell back from).
-    CHECK_FALSE(s.curves[0].reason.empty());
-    CHECK(s.curves[0].method != "none");
-    checkSkirt(s.mesh, objs[0], nullptr, &objs[1]);
+    const std::vector<glm::dvec3> quad = {{-5000, 0, -5000}, {-5000, 0, 5000}, {5000, 0, 5000}, {5000, 0, -5000}};
+    const std::vector<Index> qs = {4}, qi = {0, 1, 2, 3};
+    const std::shared_ptr<const Mesh> floors[] = {box({-1000, -50, -1000}, {1000, 0, 1000}),
+                                                  std::make_shared<const Mesh>(Mesh::fromPolygons(quad, qs, qi))};
+    for (const auto& fm : floors)
+    {
+        Object floor = object("Floor", fm);
+        floor.ground = true;
+        const std::vector<Object> objs = {object("Wall", box({-200, -20, -10}, {200, 280, 10})), floor};
+        const Result r = findSeams(objs, nullptr, quick());
+        SkirtOptions o;
+        o.width = 15.0;
+        o.method = SkirtMethod::Union;
+        const SkirtResult s = buildSkirt(r, objs, nullptr, o);
+        REQUIRE_FALSE(s.curves.empty());
+        INFO(s.curves[0].reason);
+        CHECK(s.curves[0].method == "union");
+        checkSkirt(s.mesh, objs[0], nullptr, &objs[1]);
+    }
 }
 
 TEST_CASE("skirt: on terrain the box wall is unioned with a fillet, borders on both surfaces")

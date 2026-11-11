@@ -610,17 +610,56 @@ void cornerCap(Builder& b, const OuterCorner& oc, const std::vector<Index>& endA
     }
 }
 
+/**
+ * A ground mesh seen from above round the object's footprint, resampled at a third of the skirt width and closed into a
+ * world-space slab. The union needs a closed solid with points near the seam, which an open floor or one huge face is not.
+ */
+bool meshFloorSlab(const Object& floorObj, const Object& obj, const SkirtOptions& o, Mesh& out, Heightfield& top, std::string* why)
+{
+    const lila::geo::Bounds lb = obj.bvh->bounds();
+    glm::dvec3 lo(1e300), hi(-1e300);
+    for (int k = 0; k < 8; ++k)
+    {
+        const glm::dvec3 c((k & 1) ? lb.max.x : lb.min.x, (k & 2) ? lb.max.y : lb.min.y, (k & 4) ? lb.max.z : lb.min.z);
+        const glm::dvec3 q(obj.world * glm::dvec4(c, 1.0));
+        lo = glm::min(lo, q);
+        hi = glm::max(hi, q);
+    }
+    const double margin = o.width * 3.0;
+    const double ex = hi.x - lo.x + 2.0 * margin, ez = hi.z - lo.z + 2.0 * margin;
+    const double cell = std::max(o.width / 3.0, std::max(ex, ez) / 256.0);
+    const int nx = int(std::ceil(ex / cell)) + 1, nz = int(std::ceil(ez / cell)) + 1;
+    const glm::dvec2 origin(lo.x - margin, lo.z - margin);
+
+    Mesh world = *floorObj.mesh;
+    for (glm::dvec3& p : world.positions())
+        p = glm::dvec3(floorObj.world * glm::dvec4(p, 1.0));
+    const double fill = world.bounds().min.y;
+    size_t covered = 0;
+    top = lila::geo::meshToHeightfield(world, nx, nz, cell, origin, float(fill), &covered);
+    if (covered == 0)
+    {
+        *why = "the ground mesh doesn't reach under the object";
+        return false;
+    }
+    out = slab(top, 0, 0, nx - 1, nz - 1, std::min(lo.y, double(top.range().x)) - 200.0);
+    return true;
+}
+
 /** The object's ground skirt by boolean union with a fillet, cut back to the fillet band, outer corners capped round. False (with why) when it fails. */
 bool unionObject(Builder& b, int object, std::span<const Object> objects, const Ground* ground, int groundObject, const std::vector<std::string>& layers,
                  const std::vector<const Curve*>& curves, const SkirtOptions& o, std::string* why)
 {
     const Object& obj = objects[size_t(object)];
     Mesh ground3;
+    Heightfield floorTop;
     lila::scene::BooleanOperand floorOp;
     Surface floor;
     if (groundObject >= 0)
     {
-        floorOp = {objects[size_t(groundObject)].mesh.get(), objects[size_t(groundObject)].world};
+        if (!meshFloorSlab(objects[size_t(groundObject)], obj, o, ground3, floorTop, why))
+            return false;
+        floorOp = {&ground3, glm::dmat4(1.0)};
         floor = Surface::of(objects[size_t(groundObject)]);
     }
     else
@@ -670,7 +709,9 @@ bool unionObject(Builder& b, int object, std::span<const Object> objects, const 
             glm::dvec3 at;
             wall.project(m.position(p), at, nw[p], &dw[p]);
             floor.project(m.position(p), at, ng[p], &dg[p]);
-            below[p] = glm::dot(m.position(p) - at, ng[p]) < -kOn;
+            // A closed floor mesh's nearest face may be its underside, so mesh floors use the heights the slab was cut from.
+            below[p] = floorTop.empty() ? glm::dot(m.position(p) - at, ng[p]) < -kOn
+                                        : m.position(p).y < floorTop.heightAt(m.position(p).x, m.position(p).z) - kOn;
         }
     // The fillet band: faces with a point off both source surfaces, none under the ground (the slab's sides and bottom).
     std::vector<Index> keep;
