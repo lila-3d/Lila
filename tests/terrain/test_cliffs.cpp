@@ -184,6 +184,39 @@ TEST_CASE("cliffs: the slope-aware projection keeps flat and vertical texel dens
     CHECK(wallTop < 0.01 / 400.0);
 }
 
+TEST_CASE("cliffs: a one-cell landscape step keeps its texel density, the lip included")
+{
+    // A 1500 cm step across one 100 cm cell, shaded with per-vertex normals from central differences as a landscape is.
+    const int n = 8;
+    const double cell = 100.0;
+    auto height = [&](int x) { return x >= n / 2 ? 1500.0 : 0.0; };
+    auto vertexNormal = [&](int x) {
+        const double dh = (height(std::min(x + 1, n - 1)) - height(std::max(x - 1, 0))) / (2.0 * cell);
+        return glm::normalize(glm::dvec3(-dh, 1.0, 0.0));
+    };
+    double lo = 1e300, hi = 0.0;
+    bool leaning = false;
+    for (int x = 0; x + 1 < n; ++x)
+    {
+        const glm::dvec3 p0(x * cell, height(x), 0.0), p1((x + 1) * cell, height(x + 1), 0.0);
+        const glm::dvec3 q0 = p0 + glm::dvec3(0, 0, cell), q1 = p1 + glm::dvec3(0, 0, cell);
+        const glm::dvec3 shading = glm::normalize(vertexNormal(x) + vertexNormal(x + 1));
+        for (const auto& [a, b, c] : {std::array{p0, q0, p1}, std::array{p1, q0, q1}})
+        {
+            const glm::dvec3 face = glm::normalize(glm::cross(b - a, c - a));
+            leaning = leaning || glm::degrees(std::acos(std::clamp(std::abs(glm::dot(face, shading)), 0.0, 1.0))) > kProjectionFace;
+            const double d = texelDensity(a, b, c, 400.0, kSlopeStart, kSlopeBlend, false, &shading);
+            lo = std::min(lo, d);
+            hi = std::max(hi, d);
+        }
+    }
+    CHECK(leaning);
+    CHECK(hi / lo < 1.5);
+    // Gently curved ground keeps the smooth shading normal.
+    const glm::dvec3 smooth = glm::normalize(glm::dvec3(0.3, 1.0, 0.0)), facet = glm::normalize(glm::dvec3(0.35, 1.0, 0.0));
+    CHECK(glm::length(projectionNormal(smooth, facet) - smooth) < 1e-9);
+}
+
 TEST_CASE("cliffs: tiles cut on the World Partition grid weld exactly and stay inside their cells")
 {
     const geo::Heightfield h = escarpment(65);

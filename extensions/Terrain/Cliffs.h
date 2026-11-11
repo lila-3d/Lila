@@ -469,13 +469,23 @@ std::vector<ScatterPoint> scatterTiers(const TriMesh& m, const std::vector<Tier>
  */
 glm::dvec3 projectionWeights(const glm::dvec3& n, double slopeStart, double blend, bool biplanar);
 /**
- * Texels per cm a face gets from the projection at tile cm per repeat: the largest stretch of the weighted projections,
- * for the stretch test (1 / tile on every face when nothing stretches).
+ * The normal the projection weights read: the shading normal, giving way to the face's own where the two part by more
+ * than kProjectionTrust degrees (fully past kProjectionFace). Across a one-cell landscape step the interpolated normal
+ * leans halfway between plateau and face, which would project the plateau's lip from the side and the face from above.
  */
-double texelDensity(const glm::dvec3& a, const glm::dvec3& b, const glm::dvec3& c, double tile, double slopeStart, double blend, bool biplanar);
+glm::dvec3 projectionNormal(const glm::dvec3& shading, const glm::dvec3& face);
+/**
+ * Texels per cm a face gets from the projection at tile cm per repeat: the largest stretch of the weighted projections,
+ * for the stretch test (1 / tile on every face when nothing stretches). With shading, the weights read
+ * projectionNormal(shading, face) as the materials do; without, the face's own normal.
+ */
+double texelDensity(const glm::dvec3& a, const glm::dvec3& b, const glm::dvec3& c, double tile, double slopeStart, double blend, bool biplanar,
+                    const glm::dvec3* shading = nullptr);
 
 inline constexpr double kSlopeStart = 35.0;
 inline constexpr double kSlopeBlend = 15.0;
+inline constexpr double kProjectionTrust = 10.0;
+inline constexpr double kProjectionFace = 25.0;
 
 // ---------------------------------------------------------------------------------------------------- shared
 

@@ -2110,13 +2110,29 @@ glm::dvec3 projectionWeights(const glm::dvec3& nIn, double slopeStart, double bl
     return {side * wx / s, 1.0 - side, side * wz / s};
 }
 
-double texelDensity(const glm::dvec3& a, const glm::dvec3& b, const glm::dvec3& c, double tile, double slopeStart, double blend, bool biplanar)
+glm::dvec3 projectionNormal(const glm::dvec3& shading, const glm::dvec3& face)
+{
+    const double ls = glm::length(shading), lf = glm::length(face);
+    if (lf <= 1e-12)
+        return shading;
+    if (ls <= 1e-12)
+        return face / lf;
+    const glm::dvec3 n = shading / ls;
+    glm::dvec3 f = face / lf;
+    if (glm::dot(f, n) < 0.0)
+        f = -f;
+    const double k = 1.0 - smooth01(std::cos(kProjectionFace * kDeg), std::cos(kProjectionTrust * kDeg), glm::dot(f, n));
+    return glm::normalize(n + (f - n) * k);
+}
+
+double texelDensity(const glm::dvec3& a, const glm::dvec3& b, const glm::dvec3& c, double tile, double slopeStart, double blend, bool biplanar,
+                    const glm::dvec3* shading)
 {
     const glm::dvec3 nrm = glm::cross(b - a, c - a);
     const double area = 0.5 * glm::length(nrm);
     if (area <= 0.0)
         return 0.0;
-    const glm::dvec3 w = projectionWeights(nrm, slopeStart, blend, biplanar);
+    const glm::dvec3 w = projectionWeights(shading ? projectionNormal(*shading, nrm) : nrm, slopeStart, blend, biplanar);
     // Each projection maps the face onto its plane; the face's texels per cm is sqrt(projected area / area) / tile.
     auto projected = [&](int axis) {
         const glm::dvec3 n = glm::abs(nrm) * 0.5;
