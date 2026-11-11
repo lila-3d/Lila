@@ -13,39 +13,15 @@ namespace lila::bake
 {
 namespace
 {
-/**
- * A BVH over a soup. The soup becomes an unwelded mesh, one face per triangle; the triangulation keeps the soup's
- * corner order, so a BVH triangle's corner k is soup corner 3 t + k; soupTri maps BVH triangles to soup triangles.
- */
+/** A BVH over a soup, its triangles in soup order; soupTri maps BVH triangles to soup triangles (the identity). */
 std::unique_ptr<geo::MeshBvh> buildBvh(const MeshSoup& soup, std::vector<uint32_t>& soupTri)
 {
     LILA_ZONE();
 
-    const size_t n = soup.triangleCount();
-    std::vector<glm::dvec3> pts(soup.positions.begin(), soup.positions.end());
-    std::vector<geo::Index> sizes(n, 3), idx(n * 3);
-    std::iota(idx.begin(), idx.end(), geo::Index(0));
-    geo::Mesh m = geo::Mesh::fromPolygons(pts, sizes, idx);
-    geo::Triangulation tris;
-    tris.faceFirst.assign(m.faceCapacity(), geo::kInvalid);
-    for (geo::Index f = 0; f < m.faceCapacity(); ++f)
-    {
-        if (!m.faceValid(f) || m.faceSize(f) != 3)
-            continue;
-        const std::vector<geo::Index> cs = m.faceCorners(f);
-        tris.faceFirst[f] = geo::Index(tris.faces.size());
-        tris.faces.push_back(f);
-        // Rotate so the first corner is the soup's corner 0, keeping the winding.
-        size_t first = 0;
-        for (size_t k = 0; k < 3; ++k)
-            if (m.cornerPoint(cs[k]) % 3 == 0)
-                first = k;
-        for (size_t k = 0; k < 3; ++k)
-            tris.corners.push_back(cs[(first + k) % 3]);
-        soupTri.push_back(m.cornerPoint(cs[first]) / 3);
-    }
+    soupTri.resize(soup.triangleCount());
+    std::iota(soupTri.begin(), soupTri.end(), 0u);
     auto bvh = std::make_unique<geo::MeshBvh>();
-    bvh->build(m, std::move(tris));
+    bvh->buildSoup(soup.positions);
     return bvh;
 }
 } // namespace

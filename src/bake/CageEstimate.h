@@ -88,6 +88,8 @@ struct LILA_SCENE_API CageEstimate
     int iterations = 0;
     /** Missed samples with no high anywhere along their line, which no cage can fix. */
     uint64_t unreachable = 0;
+    /** Seconds per phase. */
+    json timings = json::object();
 
     json toJson() const;
 };
@@ -104,7 +106,8 @@ LILA_SCENE_API CageEstimate estimateCage(std::span<const CageLow> lows, const Gr
  * the group's frontal and rear distances, and an editable cage moved to the result. One undo step. A low whose
  * modifiers change its points is estimated as exported and the result mapped back to its base points; after is then
  * measured through the stack. Returns {group, frontal, rear, before: coverage as the group bakes now, after,
- * iterations, unreachable, mapped: those lows}. Throws std::runtime_error.
+ * iterations, unreachable, mapped: those lows, timings: seconds per phase}. Reports progress under one cancellable root
+ * (tracing runs on a worker while the main thread pumps); a cancel throws progress::Cancelled. Throws std::runtime_error.
  */
 LILA_SCENE_API json estimateGroupCage(scene::Graph& g, scene::NodeId group, const CageEstimateOptions& options = {}, bool apply = true);
 
