@@ -567,6 +567,55 @@ TEST_CASE("AO: a point buried inside another high isn't black")
     CHECK(texel(img, 5, 8).r < 0.9f);
 }
 
+TEST_CASE("projection: a ray tilted off a hard edge that meets a surface facing away is re-aimed along the face normal")
+{
+    newScene();
+    const fs::path dir = tempDir("lila_bakemaps_reaim");
+    // Rays near the cube's top rim follow the smooth cage normal, 45 degrees off the face, into a wall that faces away
+    // from the top: the far side of a thin part as such a ray sees it.
+    const std::string low = addMesh("cube", geo::makeCube({.width = 20.0, .height = 20.0, .depth = 20.0, .subdivX = 8, .subdivY = 8, .subdivZ = 8}));
+    geo::Mesh wall = plane(1, {0.0f, 0.0f}, {1.0f, 1.0f}, 8.0);
+    const double a = glm::radians(-108.0);
+    for (geo::Index q = 0; q < wall.pointCapacity(); ++q)
+    {
+        const glm::dvec3 v = wall.position(q);
+        wall.setPosition(q, glm::dvec3(v.x * std::cos(a) - v.y * std::sin(a) + 8.0, v.x * std::sin(a) + v.y * std::cos(a) + 8.0, v.z * 2.5));
+    }
+    const std::string high = addMesh("wall", std::move(wall));
+    const std::string p = project(dir, 64);
+    ops::execute("bakeGroup", {{"args", {"g"}}, {"project", p}, {"lows", {low}}, {"highs", {high}}, {"frontal", 0.5}, {"rear", 10.0}});
+    const json r = ops::execute("bake", {{"project", p}, {"maps", {"normal", "alpha"}}, {"backend", "cpu"}});
+    CHECK(r["stats"]["reaimed"].get<uint64_t>() > 0);
+    const image::Image nrm = readImage(outputFor(r, "normal")), cover = readImage(outputFor(r, "alpha"));
+    int inward = 0;
+    for (int y = 0; y < 64; ++y)
+        for (int x = 0; x < 64; ++x)
+            if (texel(cover, x, y).r >= 1.0f && texel(nrm, x, y).b * 2.0f - 1.0f < -0.02f)
+                ++inward;
+    CHECK(inward == 0);
+}
+
+TEST_CASE("projection: where a thin slab's smoothed high pulls back past the rim, samples take the nearest high")
+{
+    newScene();
+    const fs::path dir = tempDir("lila_bakemaps_probe");
+    // Smoothing a 1 cm slab onto itself rounds its rim far inside the low's side faces: rays along them pass it by.
+    const std::string low = addMesh("slab", geo::makeCube({.width = 40.0, .height = 1.0, .depth = 40.0, .subdivX = 10, .subdivZ = 10}));
+    const std::string p = project(dir, 64);
+    ops::execute("bakeGroup", {{"args", {"g"}}, {"project", p}, {"lows", {low}}, {"self", true}, {"preset", "Smooth x4"}, {"frontal", 0.5}, {"rear", 20.0}});
+    const json r = ops::execute("bake", {{"project", p}, {"maps", {"normal", "alpha"}}, {"backend", "cpu"}});
+    const json& st = r["stats"];
+    CHECK(st["probed"].get<uint64_t>() > 0);
+    CHECK(st["misses"].get<uint64_t>() * 100 < st["samples"].get<uint64_t>());
+    const image::Image nrm = readImage(outputFor(r, "normal")), cover = readImage(outputFor(r, "alpha"));
+    int inward = 0;
+    for (int y = 0; y < 64; ++y)
+        for (int x = 0; x < 64; ++x)
+            if (texel(cover, x, y).r >= 1.0f && texel(nrm, x, y).b * 2.0f - 1.0f < -0.02f)
+                ++inward;
+    CHECK(inward == 0);
+}
+
 TEST_CASE("AO: a texel whose rays miss the high takes its neighbours' occlusion, not open sky")
 {
     newScene();

@@ -324,6 +324,38 @@ TEST_CASE("GPU bake matches the CPU: isolated groups, AO scopes and backfaces")
         compare(cpuMiss, bakeWith(p4, {"ao"}, be), "ao", 0.02f, 0.1f, 0.01);
     }
 
+    // Rays tilted off the cube's hard top rim into a wall facing away: re-aimed along the face normal on the GPU too.
+    newScene();
+    const std::string rimmed = addMesh("f_low", geo::makeCube({.width = 20.0, .height = 20.0, .depth = 20.0, .subdivX = 8, .subdivY = 8, .subdivZ = 8}));
+    geo::Mesh wall = plane(1, {0.0f, 0.0f}, {1.0f, 1.0f}, 8.0);
+    const double a = glm::radians(-108.0);
+    for (geo::Index q = 0; q < wall.pointCapacity(); ++q)
+    {
+        const glm::dvec3 v = wall.position(q);
+        wall.setPosition(q, glm::dvec3(v.x * std::cos(a) - v.y * std::sin(a) + 8.0, v.x * std::sin(a) + v.y * std::cos(a) + 8.0, v.z * 2.5));
+    }
+    const std::string wallMesh = addMesh("f_wall", std::move(wall));
+    const std::string p5 = project(dir, 64, 1);
+    ops::execute("bakeGroup", {{"args", {"f"}}, {"project", p5}, {"lows", {rimmed}}, {"highs", {wallMesh}}, {"frontal", 0.5}, {"rear", 10.0}});
+    const Baked cpuReaim = bakeWith(p5, {"normal"}, "cpu");
+    for (const std::string& be : gpuBackends())
+    {
+        INFO("backend " << be);
+        compare(cpuReaim, bakeWith(p5, {"normal"}, be), "normal", 0.05f, 0.5f);
+    }
+
+    // A slab smoothed onto itself pulls its rim back past the low's side faces: probes find the nearest high on the GPU too.
+    newScene();
+    const std::string slab = addMesh("g_low", geo::makeCube({.width = 40.0, .height = 1.0, .depth = 40.0, .subdivX = 10, .subdivZ = 10}));
+    const std::string p6 = project(dir, 64, 1);
+    ops::execute("bakeGroup", {{"args", {"g"}}, {"project", p6}, {"lows", {slab}}, {"self", true}, {"preset", "Smooth x4"}, {"frontal", 0.5}, {"rear", 20.0}});
+    const Baked cpuProbe = bakeWith(p6, {"normal"}, "cpu");
+    for (const std::string& be : gpuBackends())
+    {
+        INFO("backend " << be);
+        compare(cpuProbe, bakeWith(p6, {"normal"}, be), "normal", 0.05f, 0.5f);
+    }
+
     // A high facing away: every ray meets a back face, and the GPU must call it one too.
     newScene();
     const std::string low = addMesh("c_low", plane(1));
