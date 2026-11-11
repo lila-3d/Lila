@@ -1104,6 +1104,7 @@ json runSendCliffs(const Args& a)
         std::string key, name;
         Tile tile;
         bool cliffMaterial = true;
+        json materials;
     };
     std::vector<Planned> planned;
     json perMesh = json::array();
@@ -1121,7 +1122,8 @@ json runSendCliffs(const Args& a)
             tris += tile.triangles;
             nanite += tile.nanite;
             const std::string suffix = std::format("x{}_y{}", tile.cell.first, tile.cell.second);
-            planned.push_back({id + "/cliffs/" + name + "/" + suffix, "SM_" + label + "_" + identifier(name) + "_" + suffix, std::move(tile), !extras.count(n)});
+            planned.push_back({id + "/cliffs/" + name + "/" + suffix, "SM_" + label + "_" + identifier(name) + "_" + suffix, std::move(tile), !extras.count(n),
+                               extras.count(n) ? link::materialParams(g, {n->id()}) : json()});
         }
         perMesh.push_back({{"name", name}, {"mesh", n->path()}, {"tiles", tiles.size()}, {"triangles", tris}, {"naniteTiles", nanite}});
     }
@@ -1183,12 +1185,14 @@ json runSendCliffs(const Args& a)
         const Planned& p = planned[i];
         link::TileItem it;
         it.key = p.key;
-        it.hash = p.tile.hash ^ link::hashBytes(hlod.data(), hlod.size());
+        const std::string mats = p.materials.is_null() ? std::string() : p.materials.dump();
+        it.hash = p.tile.hash ^ link::hashBytes(hlod.data(), hlod.size()) ^ (mats.empty() ? 0 : link::hashBytes(mats.data(), mats.size()));
         it.group = p.key;
         json options = {{"nanite", p.tile.nanite}, {"collision", "complexAsSimple"}, {"existing", "replace"}, {"reapplyOptions", true}};
         // Without Nanite the collision comes from the last LOD: simplified, and its borders still meet the neighbours'.
         options["lodForCollision"] = !p.tile.nanite && p.tile.lods.size() > 1 ? int64_t(p.tile.lods.size() - 1) : int64_t(0);
         it.mapping = options;
+        it.materials = p.materials;
         it.mapping["contentPath"] = content + "/" + p.name;
         it.mapping["kind"] = "static";
         it.write = [&p, &folder]() {
