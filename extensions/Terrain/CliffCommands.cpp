@@ -1052,6 +1052,8 @@ json runSendCliffs(const Args& a)
     for (const json& o : a.flags.value("only", json::array()))
         only.insert(o.get<std::string>());
     std::vector<std::pair<std::string, Node*>> meshes;
+    // Extra meshes (contact skirts, strips) keep their own material slots, which LilaLink maps to its masters.
+    std::set<const Node*> extras;
     json kits = json::array();
     for (const json& e : state.cliffs)
     {
@@ -1072,6 +1074,7 @@ json runSendCliffs(const Args& a)
         if (!n || !n->type().isA("mesh"))
             throw CommandError(cmd + ": extra " + x.get<std::string>() + " is not a mesh");
         meshes.push_back({identifier(n->name()), n});
+        extras.insert(n);
     }
     if (meshes.empty() && kits.empty())
         throw CommandError(cmd + ": nothing to send: the terrain has no cliffs (terrainCliffMesh, terrainCliffExtrude, terrainCliffKit) and no extra= meshes");
@@ -1093,6 +1096,7 @@ json runSendCliffs(const Args& a)
     {
         std::string key, name;
         Tile tile;
+        bool cliffMaterial = true;
     };
     std::vector<Planned> planned;
     json perMesh = json::array();
@@ -1110,7 +1114,7 @@ json runSendCliffs(const Args& a)
             tris += tile.triangles;
             nanite += tile.nanite;
             const std::string suffix = std::format("x{}_y{}", tile.cell.first, tile.cell.second);
-            planned.push_back({id + "/cliffs/" + name + "/" + suffix, "SM_" + label + "_" + identifier(name) + "_" + suffix, std::move(tile)});
+            planned.push_back({id + "/cliffs/" + name + "/" + suffix, "SM_" + label + "_" + identifier(name) + "_" + suffix, std::move(tile), !extras.count(n)});
         }
         perMesh.push_back({{"name", name}, {"mesh", n->path()}, {"tiles", tiles.size()}, {"triangles", tris}, {"naniteTiles", nanite}});
     }
@@ -1189,7 +1193,7 @@ json runSendCliffs(const Args& a)
         it.after = [&call, &p, c, hlod, i, &assets, material, &label, &materialResult](const std::string& asset) {
             assets[i] = asset;
             // Per tile, so a long send never loads every tile at the end to give them their material.
-            if (material)
+            if (material && p.cliffMaterial)
                 materialResult = call("setCliffMaterial", {{"label", label}, {"meshes", json::array({asset})}});
             const math::Vector u = math::toUnreal(math::Vector(c.x, c.y, c.z));
             json params = {{"group", p.key},
@@ -1441,7 +1445,7 @@ void registerCliffCommands(ext::Context& ctx)
                   {"only", "on", T::List, json::array(), "Send only these cliffs, by name."},
                   {"kitAs", "ka", T::String, "assembly", "Kits: assembly (a Nanite Assembly) or hism.", {"assembly", "hism"}},
                   {"contentFolder", "cf", T::String, nullptr, "Where the tile assets go in Unreal; defaults to /Game/LilaLink/Landscapes/<terrain>/Cliffs."},
-                  {"material", "mat", T::Bool, true, "Give the tiles MI_<terrain>_Cliffs."},
+                  {"material", "mat", T::Bool, true, "Give the cliff tiles MI_<terrain>_Cliffs; extra= meshes keep their own material slots."},
                   {"force", "fc", T::Bool, false, "Send every tile, changed or not."},
                   {"collectEvery", "ce", T::Int, int64_t(8), "Ask Unreal to collect garbage after this many tiles.", {}, {}, 0.0},
                   {"stopAfter", "sa", T::Int, int64_t(-1), "Stop after this many tiles (a resumable partial send); -1 sends all.", {}, {}, -1.0},

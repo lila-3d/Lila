@@ -261,6 +261,35 @@ TEST_CASE("cliffs: slicing splits shared edges once and keeps corner attributes"
             CHECK((std::abs(std::abs(m.p[v].x) - 500.0) < 1e-6 || std::abs(std::abs(m.p[v].z) - 500.0) < 1e-6));
 }
 
+TEST_CASE("cliffs: tiles keep the source's colour set and material slots, so contact skirts tile with their blend")
+{
+    geo::Mesh src = toMesh(plate(1000.0, 4));
+    auto col = geo::colors::add(src, "Col", glm::vec4(1.0f));
+    for (geo::Index c = 0; c < src.cornerCapacity(); ++c)
+        if (src.cornerValid(c))
+            col[c] = glm::vec4(0.25f, 0.5f, 0.75f, float(src.position(src.cornerPoint(c)).x > 0.0 ? 1.0 : 0.0));
+    src.materialNames() = {"LilaSkirtBlend"};
+    TileParams tp;
+    tp.cell = 300.0;
+    tp.lods = 2;
+    const std::vector<Tile> tiles = cutTiles(fromMesh(src), tp);
+    REQUIRE(tiles.size() > 1);
+    for (const Tile& t : tiles)
+        for (const geo::Mesh& lod : t.lods)
+        {
+            CHECK(lod.materialNames() == std::vector<std::string>{"LilaSkirtBlend"});
+            REQUIRE(geo::colors::sets(lod) == std::vector<std::string>{"Col"});
+            const auto v = geo::colors::values(lod, "Col");
+            for (geo::Index c = 0; c < lod.cornerCapacity(); ++c)
+                if (lod.cornerValid(c))
+                {
+                    CHECK(v[c].g == doctest::Approx(0.5f));
+                    CHECK(v[c].a >= 0.0f);
+                    CHECK(v[c].a <= 1.0f);
+                }
+        }
+}
+
 TEST_CASE("cliffs: tiered scatter seeds per cell, so an edit only reshuffles the cells it touches")
 {
     TriMesh m = plate(8000.0, 40);
