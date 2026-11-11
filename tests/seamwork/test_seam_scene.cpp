@@ -123,6 +123,19 @@ TEST_CASE("seamFind: a wall on a terrain gives a live join, a field and a terrai
     CHECK(back["length"].get<double>() == doctest::Approx(840.0).epsilon(0.001));
 }
 
+TEST_CASE("seamFind: a terrain past the stepped-preview size is read as its full heightfield")
+{
+    load();
+    run("newScene");
+    const json t = run("terrainCreate", {{"flat", true}, {"size", json::array({4000, 4000})}, {"resolution", 2101}, {"name", "Big"}});
+    const std::string terrain = t["mesh"].get<std::string>();
+    REQUIRE(evaluatedMesh(terrain).numPoints() < size_t(2101) * 2101);
+    const std::string wall = box("BigWall", {-200, -20, -10}, {200, 280, 10}, 4);
+    const json r = run("seamFind", {{"args", {wall}}, {"terrain", terrain}});
+    CHECK(r["terrain"] == "heightfield");
+    CHECK(r["length"].get<double>() == doctest::Approx(840.0).epsilon(0.001));
+}
+
 TEST_CASE("terrainSpec: a seams key finds and covers contacts once the terrain is built")
 {
     load();
