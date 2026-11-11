@@ -7,6 +7,7 @@
 #include <doctest/doctest.h>
 
 #include <cmath>
+#include <filesystem>
 #include <set>
 
 using namespace lila;
@@ -468,6 +469,37 @@ TEST_CASE("cliffs: terrainCliffs, terrainCliffMesh, terrainCheck and terrainSend
     json list = run("terrainCliffs", {{"args", {t["mesh"]}}, {"list", true}});
     CHECK(list["cliffs"].size() == 1);
     CHECK(list["regions"].contains("cliff_1"));
+}
+
+TEST_CASE("cliffs: lowPoly makes a reduced cliff with normal and AO maps baked from the full one")
+{
+    loadTerrain();
+    run("newScene");
+    json t = run("terrainCreate", {{"size", {20000.0, 20000.0}}, {"resolution", 129}, {"amplitude", 6000.0}, {"featureSize", 6000.0}, {"seed", 3},
+                                   {"name", "LowCrag"}});
+    json c = run("terrainCliffs", {{"args", {t["mesh"]}}, {"slope", 40.0}, {"minHeight", 300.0}, {"minArea", 10.0}});
+    REQUIRE(c["count"].get<int>() > 0);
+    // An unsaved scene bakes into the working folder.
+    const std::filesystem::path before = std::filesystem::current_path(), dir = std::filesystem::temp_directory_path() / "lila_cliff_lowpoly";
+    std::filesystem::create_directories(dir);
+    std::filesystem::current_path(dir);
+    json m = run("terrainCliffMesh", {{"args", {t["mesh"]}}, {"region", "cliff_1"}, {"detail", 1.0}, {"lowPoly", true}, {"lowPolyRatio", 0.1},
+                                      {"bakeResolution", 128}});
+    std::filesystem::current_path(before);
+    REQUIRE(m["cliffs"].size() == 1);
+    const json& low = m["cliffs"][0]["lowPoly"];
+    REQUIRE(low.is_object());
+    CHECK_FALSE(low.contains("warning"));
+    const int high = m["cliffs"][0]["stats"]["triangles"].get<int>();
+    CHECK(low["triangles"].get<int>() > 0);
+    CHECK(low["triangles"].get<int>() < high / 5);
+    REQUIRE(low.contains("bake"));
+    CHECK(low["bake"]["lint"]["issues"].empty());
+    std::set<std::string> maps;
+    for (const json& o : low["bake"]["outputs"])
+        if (std::filesystem::exists(o["file"].get<std::string>()))
+            maps.insert(o["map"].get<std::string>());
+    CHECK(maps == std::set<std::string>{"ao", "normal"});
 }
 
 TEST_CASE("cliffs: a terrain spec's cliffs entry finds and meshes the cliffs")

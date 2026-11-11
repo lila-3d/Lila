@@ -27,6 +27,7 @@
 #include <lila/TextureGraph.h>
 #include <lila/Transform.h>
 #include <lila/UnrealLink.h>
+#include <lila/Uv.h>
 
 #include <algorithm>
 #include <cmath>
@@ -438,10 +439,16 @@ json makeLowPoly(Graph& g, Node* high, Node* parent, double ratio, int resolutio
     const scene::MeshPtr m = meshOf(g, high);
     if (!m)
         return nullptr;
+    // The cliff's uv0 tiles in world units with a seam at every layer: kept, its seams would stall the reduction and the
+    // bake would skip every triangle outside 0-1. The low poly gets a unique layout of its own instead.
+    geo::Mesh src = *m;
+    src.cornerAttrs().remove(geo::attr::uvName(0));
     geo::ReduceOptions ro;
     ro.ratio = std::clamp(ratio, 0.001, 1.0);
     ro.keepBorders = true;
-    geo::Mesh low = geo::reduceMesh(*m, ro).mesh;
+    ro.keepHardEdges = false;
+    geo::Mesh low = geo::reduceMesh(src, ro).mesh;
+    uv::autoUv(low, {}, geo::attr::uvName(0));
     const std::string name = high->name() + "_low";
     Node* n = putMesh(g, name, parent, std::move(low));
     json out = {{"mesh", n->path()}, {"triangles", int64_t(geo::triangulate(*meshOf(g, n)).faces.size())}};
