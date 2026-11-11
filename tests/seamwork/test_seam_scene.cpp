@@ -272,6 +272,33 @@ TEST_CASE("seamScatter: rubble along a wall settles clean")
     CHECK(p["kept"].get<int>() > 0);
 }
 
+TEST_CASE("seamScatter: a library asset becomes one hidden prototype and leaves no placement behind")
+{
+    load();
+    run("newScene");
+    const json t = run("terrainCreate", {{"flat", true}, {"size", json::array({4000, 4000})}, {"resolution", 81}, {"name", "Ground"}});
+    const std::string wall = box("Wall", {-200, -20, -10}, {200, 280, 10});
+    const json r = run("seamFind", {{"args", {wall}}, {"terrain", t["mesh"]}, {"field", "none"}});
+    const json s = run("seamScatter", {{"args", {r["seam"]}}, {"items", json::array({"Industrial/Crate"})}, {"density", 0.5}});
+    INFO(s.dump());
+    CHECK(s["instances"].get<int>() > 0);
+    REQUIRE(s["assets"].size() == 1);
+    CHECK(s["assets"][0] == "Industrial/Crate");
+    g().evaluate();
+    int visibleCrates = 0;
+    std::string visible;
+    for (const json& n : run("ls", {{"type", "mesh"}}))
+    {
+        scene::Node* m = g().find(n.get<std::string>());
+        if (m && m->name().find("Crate") != std::string::npos && m->as<bool>(m->type().attrIndex("visibility")) &&
+            m->path().find(s["group"].get<std::string>()) == std::string::npos &&
+            m->fullPath().rfind("|StagehandLibrary", 0) != 0)
+            visible += m->fullPath() + " ", ++visibleCrates;
+    }
+    INFO(visible);
+    CHECK(visibleCrates == 0);
+}
+
 TEST_CASE("contacts feed terrain layer rules and export to JSON and USD")
 {
     load();
