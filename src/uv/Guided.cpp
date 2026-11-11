@@ -600,6 +600,64 @@ AlignResult alignShapes(const geo::Mesh& moving, const geo::Mesh& fixed, const g
     return r;
 }
 
+/** Below this a face's match counts as poor: well off the source, or facing well away from it. */
+constexpr double kLowGuideConfidence = 0.5;
+
+size_t refineBorders(const geo::Mesh& mesh, std::vector<Index>& label, std::span<const double> confidence)
+{
+    LILA_ZONE();
+    const std::vector<double> cost = seamCosts(mesh, {}, true);
+    std::vector<Index> original = label;
+    size_t moved = 0;
+    for (int pass = 0; pass < 8; ++pass)
+    {
+        size_t changed = 0;
+        for (Index f = 0; f < mesh.faceCapacity(); ++f)
+        {
+            if (!mesh.faceValid(f) || label[f] == kInvalid)
+                continue;
+            // The border cost per label this face could take, from its labelled neighbours.
+            std::map<Index, double> border;
+            double rim = 0.0;
+            mesh.forEachFaceCorner(f, [&](Index c) {
+                const Index e = mesh.cornerEdge(c);
+                const double ce = e < cost.size() ? cost[e] : mesh.edgeLength(e);
+                rim += ce;
+                const Index o = mesh.oppositeFace(e, f);
+                if (o != kInvalid && label[o] != kInvalid)
+                    border[label[o]] += ce;
+            });
+            if (border.size() < 2 && border.count(label[f]))
+                continue;
+            double total = 0.0;
+            for (const auto& [l, c] : border)
+                total += c;
+            // Giving up its own match costs a confident face half its rim, about what smoothing a one-face step saves, so
+            // confident borders hold.
+            const double keep = confidence[f] * rim * 0.5;
+            Index best = label[f];
+            double bestCost = total - (border.count(label[f]) ? border[label[f]] : 0.0) + (label[f] == original[f] ? 0.0 : keep);
+            for (const auto& [l, c] : border)
+            {
+                const double e = total - c + (l == original[f] ? 0.0 : keep);
+                if (e < bestCost - 1e-12)
+                    best = l, bestCost = e;
+            }
+            if (best != label[f])
+            {
+                label[f] = best;
+                ++changed;
+            }
+        }
+        if (changed == 0)
+            break;
+    }
+    for (Index f = 0; f < mesh.faceCapacity(); ++f)
+        if (mesh.faceValid(f) && label[f] != original[f])
+            ++moved;
+    return moved;
+}
+
 GuidedUvResult guidedUvs(const geo::Mesh& source, geo::Mesh& target, const glm::dmat4& toSource, const GuidedUvOptions& opts)
 {
     LILA_ZONE();
@@ -644,15 +702,32 @@ GuidedUvResult guidedUvs(const geo::Mesh& source, geo::Mesh& target, const glm::
 
     // Label each target face with the source island under it, on the side facing the same way.
     std::vector<Index> label(target.faceCapacity(), kInvalid);
+    // Confidence compares the target as placed, before the wrap pulled it snug: the wrap hides how far apart the shapes are.
+    std::vector<double> confidence(target.faceCapacity(), 0.0);
+    const glm::dmat3 normalToSource = glm::transpose(glm::inverse(glm::dmat3(toSource)));
     tbb::parallel_for(Index(0), shape.faceCapacity(), [&](Index f) {
         if (!shape.faceValid(f))
             return;
         // Faces with nothing facing them on the source (a cap where the source is open) stay unlabelled.
-        auto hit = closestFacing(whole, source, shape.faceCentroid(f), shape.faceNormal(f) * outward);
-        if (hit && hit->facing)
-            label[f] = islandOf[whole.triangles().faces[hit->triangle]];
+        const glm::dvec3 n = shape.faceNormal(f) * outward;
+        auto hit = closestFacing(whole, source, shape.faceCentroid(f), n);
+        if (!hit || !hit->facing)
+            return;
+        const Index sf = whole.triangles().faces[hit->triangle];
+        label[f] = islandOf[sf];
+        const glm::dvec3 placed = glm::dvec3(toSource * glm::dvec4(target.faceCentroid(f), 1.0));
+        const glm::dvec3 placedNormal = glm::normalize(normalToSource * target.faceNormal(f)) * outward;
+        const double size = std::sqrt(std::max(shape.faceArea(f), 1e-20));
+        const double off = glm::length(hit->point - placed) / (2.0 * size);
+        const double facing = std::max(0.0, glm::dot(placedNormal, source.faceNormal(sf)));
+        confidence[f] = facing * facing * std::exp(-off * off);
     });
     cleanLabels(target, label, opts.separateUnmatched);
+    for (Index f = 0; f < target.faceCapacity(); ++f)
+        if (target.faceValid(f) && label[f] != kInvalid && confidence[f] < kLowGuideConfidence)
+            ++r.lowConfidence;
+    if (opts.refineBorders)
+        r.rebordered = refineBorders(target, label, confidence);
 
     // Each corner samples its face's island facing its face's way, so thin parts never map onto their far side.
     std::vector<glm::dvec2> cornerUv(target.cornerCapacity(), glm::dvec2(0.0));

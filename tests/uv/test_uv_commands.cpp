@@ -7,6 +7,7 @@
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "uv/Chart.h"
+#include "uv/Guided.h"
 #include "uv/Uv.h"
 #include "uv/UvCommands.h"
 
@@ -854,4 +855,49 @@ TEST_CASE("camera projection maps what a camera sees to 0-1, image up as V")
                 CHECK((uvs[c].x > 0.5f) == (p.x > 0.0));
                 CHECK((uvs[c].y > 0.5f) == (p.z < 0.0));
             });
+}
+
+TEST_CASE("guided transfer onto a different shape reports its poor matches")
+{
+    run("newScene");
+    std::string src = run("polyCube", {{"name", "Box"}, {"width", 100}, {"height", 100}, {"depth", 100},
+                                       {"subdivisionsX", 4}, {"subdivisionsY", 4}, {"subdivisionsZ", 4}})[0];
+    run("select", {{"args", {src}}});
+    run("uvAuto");
+    std::string dst = run("polySphere", {{"name", "Ball"}, {"radius", 60}, {"subdivisionsAxis", 32}, {"subdivisionsHeight", 24}})[0];
+    run("move", {{"args", {dst}}, {"by", {300, 0, 0}}});
+    json r = run("transferAttributes", {{"args", {src, dst}}, {"uvs", true}, {"sampleSpace", "guided"}});
+    REQUIRE(r.is_array());
+    CHECK(r[0]["lowConfidence"].get<int>() > 0);
+    CHECK(r[0]["rebordered"].is_number());
+    CHECK(r[0]["unwrapped"].get<int>() == 0);
+}
+
+TEST_CASE("refineBorders smooths doubtful island borders and keeps confident ones")
+{
+    run("newScene");
+    std::string plane = run("polyPlane", {{"width", 100}, {"depth", 100}, {"subdivisionsX", 10}, {"subdivisionsZ", 10}})[0];
+    const geo::Mesh& m = *cageOf(plane);
+    // Two islands split down x = 0, with a tooth of the left one poking right on every third row.
+    std::vector<geo::Index> jagged(m.faceCapacity(), geo::kInvalid);
+    size_t teeth = 0;
+    for (geo::Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f))
+        {
+            const glm::dvec3 c = m.faceCentroid(f);
+            const bool tooth = c.x > 0.0 && c.x < 10.0 && int(std::floor((c.z + 50.0) / 10.0)) % 3 == 0;
+            jagged[f] = c.x < 0.0 || tooth ? 0 : 1;
+            teeth += tooth;
+        }
+    REQUIRE(teeth == 4);
+
+    std::vector<geo::Index> label = jagged;
+    CHECK(uv::refineBorders(m, label, std::vector<double>(m.faceCapacity(), 1.0)) == 0);
+    CHECK(label == jagged);
+
+    label = jagged;
+    CHECK(uv::refineBorders(m, label, std::vector<double>(m.faceCapacity(), 0.2)) == teeth);
+    for (geo::Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f))
+            CHECK(label[f] == (m.faceCentroid(f).x < 0.0 ? 0u : 1u));
 }
