@@ -525,6 +525,81 @@ TEST_CASE("final mesh: a turn a bevel moved along a respaced border stays at the
     CHECK(collapsedOn(geo::subdivide(m, {.levels = 2, .uvs = geo::SubdivideUvs::FitSurface})) == 0);
 }
 
+/**
+ * A sheet whose bevel cut a tongue of island 1 into island 0 where the cage's border runs straight: island 0's border runs
+ * along z = 2, turns up at (4, 2) beside the tongue and back along its top, with bevel-sized strips on both legs of the
+ * corner. In the cage (uvs and spacing proxy) the corner's strip ends bunch on it and the tongue's sides lie on along the
+ * straight border; the layout bends that straight run bend radians away from the island at the corner.
+ */
+geo::Mesh notchSheet(double bend, bool creased, int top)
+{
+    const std::vector<double> xs{0, 2, 4, 4.35, 4.43, 4.51, 4.64, 4.87, 6.87, 8.87};
+    const std::vector<double> zs{0, 2, 3.12, 3.2, 3.28, 3.83, 5.33, 7.33, 9.33};
+    const int nx = int(xs.size()) - 1, nz = int(zs.size()) - 1;
+    auto islandOf = [&](int x, int z) { return z == 0 || (x < 2 && z < top) ? 1 : 0; };
+    const glm::dvec2 corner(4.0, 2.0);
+    std::map<std::pair<int, int>, glm::dvec2> cage;
+    const double leg1[] = {0.0, 0.039, 0.078, 0.117, 0.216, 0.43};
+    for (int x = 2; x <= 7; ++x)
+        cage[{x, 1}] = corner + glm::dvec2(leg1[x - 2], 0.0);
+    double s = 0.0;
+    for (int z = 2; z <= top; ++z)
+        cage[{2, z}] = corner - glm::dvec2(s += z <= 4 ? 0.04 : zs[size_t(z)] - zs[size_t(z - 1)], 0.0);
+    for (int x = 1; x >= 0; --x)
+        cage[{x, top}] = corner - glm::dvec2(s += xs[size_t(x + 1)] - xs[size_t(x)], 0.0);
+    for (int z = top + 1; z <= nz; ++z)
+        cage[{0, z}] = corner + glm::dvec2(-s, zs[size_t(z)] - zs[size_t(top)]);
+    geo::Mesh m = geo::makePlane({.width = double(nx), .depth = double(nz), .subdivX = nx, .subdivZ = nz});
+    std::span<glm::vec2> uv = m.cornerAttrs().getOrAdd<glm::vec2>("uv0");
+    std::span<glm::vec2> proxy = m.cornerAttrs().getOrAdd<glm::vec2>("__fitSpacing@uv0");
+    const glm::dvec2 turn(std::cos(bend), std::sin(bend));
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+    {
+        if (!m.faceValid(f))
+            continue;
+        const glm::dvec3 c = m.faceCentroid(f) + glm::dvec3(0.5 * nx, 0.0, 0.5 * nz);
+        const int island = islandOf(int(std::floor(c.x)), int(std::floor(c.z)));
+        m.forEachFaceCorner(f, [&](Index k) {
+            const glm::dvec3 p = m.position(m.cornerPoint(k)) + glm::dvec3(0.5 * nx, 0.0, 0.5 * nz);
+            const auto it = cage.find({int(std::lround(p.x)), int(std::lround(p.z))});
+            const bool moved = island == 0 && it != cage.end();
+            const glm::dvec2 q = moved ? it->second : glm::dvec2(xs[size_t(std::lround(p.x))], zs[size_t(std::lround(p.z))]);
+            proxy[k] = glm::vec2(q);
+            glm::dvec2 u = q;
+            if (moved && q.x < corner.x)
+            {
+                const glm::dvec2 d = q - corner;
+                u = corner + glm::dvec2(d.x * turn.x - d.y * turn.y, d.x * turn.y + d.y * turn.x);
+            }
+            uv[k] = glm::vec2(u * 0.02 + glm::dvec2(0.05 + 0.3 * island, 0.05));
+        });
+    }
+    if (creased)
+        for (float& cr : m.edgeAttrs().getOrAdd<float>(geo::attr::kCrease))
+            cr = 10.0f;
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        if (m.pointValid(p))
+        {
+            const glm::dvec3 q = m.position(p) + glm::dvec3(0.5 * nx, 0.0, 0.5 * nz);
+            m.setPosition(p, glm::dvec3(xs[size_t(std::lround(q.x))], 0.0, zs[size_t(std::lround(q.z))]));
+        }
+    return m;
+}
+
+TEST_CASE("final mesh: a notch a bevel cut into a straight cage border opens, however the layout bends there")
+{
+    // The fill must not fold the strips beside the notch's first corner onto the border, even where the layout bends
+    // the straight run away from the island.
+    for (double bend : {0.0, 0.26, 0.52})
+        for (bool creased : {false, true})
+            for (int top : {5, 6})
+            {
+                const geo::Mesh m = notchSheet(bend, creased, top);
+                INFO("bend " << bend << ", creased " << creased << ", top " << top);
+                CHECK(collapsedOn(geo::subdivide(m, {.levels = 2, .uvs = geo::SubdivideUvs::FitSurface})) == 0);
+            }
+}
+
 TEST_CASE("final mesh: a border point between two bunched runs is respaced with them")
 {
     // A bevel's corner patch left the island's border points round a reflex corner on two cage uvs, so two bunched runs

@@ -818,7 +818,19 @@ constexpr double kClosedTip = 0.5;
 /** Where the proxy turns more than this (radians) inside a window, the point taking that turn on the surface lands on it. */
 constexpr double kWindowTurn = 1.0;
 
+/** Surface turns sharper than this (radians) at a border point are a slit folding back, not a corner. */
+constexpr double kSlitFold = 2.5;
+/** Share of the turn the proxy misses at a notch's first corner that the border after it takes in uv. */
+constexpr double kNotchTurn = 0.5;
+
 double angleSum(const Mesh& m, const Islands& is, Index g);
+
+/** A respaced border group turned about another: its value becomes value * w + pivot * (1 - w), values read as u + iv. */
+struct BorderTurn
+{
+    Index group, pivot;
+    std::complex<double> w;
+};
 
 /**
  * Where an island's border bunches up in uv (a bevel's corner points all carry the one cage uv of the corner they
@@ -826,9 +838,13 @@ double angleSum(const Mesh& m, const Islands& is, Index g);
  * along the same uv polyline by their length on the surface. Runs, windows and where each point lands on the polyline
  * are measured in the spacing proxy (see addFitSpacing), so the blends are the same for any layout of the cage and a uv
  * tool's map of the export stays exact after it writes. Every layer using the island layer is blended alike.
+ *
+ * A bevel can cut a neighbour's tongue into the island where the cage's border runs straight: a notch. At its first
+ * corner (convex, bunched, unseen by the proxy) the window's side towards the notch's turn back rotates about that corner
+ * by kNotchTurn of the turn the proxy misses, easing off to the window's end (turns, applied after the blends).
  */
 std::vector<BorderBlend> respaceBorder(const Mesh& m, const Islands& is, Index island, std::span<const glm::vec2> proxy,
-                                       std::span<const glm::vec2> set)
+                                       std::span<const glm::vec2> set, std::vector<BorderTurn>& turns)
 {
     std::vector<BorderBlend> out;
     auto cornerAt = [&](Index c, Index p) { return m.cornerPoint(c) == p ? c : m.cornerNext(c); };
@@ -1028,6 +1044,58 @@ std::vector<BorderBlend> respaceBorder(const Mesh& m, const Islands& is, Index i
             }
             targets = std::move(moved);
         };
+        // A notch turns sharply into the island at a bunch and back at its next sharp turn while the proxy runs straight;
+        // left on the polyline, the fill folds the cells beside the first turn onto the border.
+        const double sideUv = auv < 0.0 ? -1.0 : 1.0;
+        auto turnNotch = [&](size_t a, size_t b) {
+            std::vector<double> arc(b - a + 2, 0.0);
+            double reach = 0.0;
+            for (size_t j = a; j <= b; ++j)
+            {
+                arc[j + 1 - a] = arc[j - a] + u[at(j)];
+                reach += u[at(j)];
+            }
+            reach *= 0.5 / double(b - a + 1);
+            auto surfaceTurn = [&](size_t k) { return std::numbers::pi - angleSum(m, is, loop[at(k)]); };
+            // The next sharp surface turn from v in direction dir, if it turns back.
+            auto turnBack = [&](size_t v, int dir) -> size_t {
+                for (size_t k = dir > 0 ? v + 1 : v - 1; dir > 0 ? k <= b : k > a; k = dir > 0 ? k + 1 : k - 1)
+                    if (const double t = surfaceTurn(k); std::abs(t) > kWindowTurn)
+                        return t < 0.0 && t > -kSlitFold ? k : 0;
+                return 0;
+            };
+            for (size_t v = a + 1; v <= b; ++v)
+            {
+                const size_t i = at(v);
+                const double ts = surfaceTurn(v);
+                if (!bad((i + n - 1) % n) || !bad(i) || ts <= kWindowTurn || ts >= kSlitFold)
+                    continue;
+                const glm::dvec2 pv = proxyAt(i);
+                size_t lo = v, hi = v;
+                while (lo > a && glm::length(proxyAt(at(lo)) - pv) <= reach)
+                    --lo;
+                while (hi <= b && glm::length(proxyAt(at(hi)) - pv) <= reach)
+                    ++hi;
+                const glm::dvec2 din = pv - proxyAt(at(lo)), dout = proxyAt(at(hi)) - pv;
+                if (glm::length(din) <= reach || glm::length(dout) <= reach)
+                    continue;
+                const double tp = orient * std::atan2(din.x * dout.y - din.y * dout.x, glm::dot(din, dout));
+                if (std::abs(tp) >= kWindowTurn || ts - tp < kWindowTurn)
+                    continue;
+                const double turn = sideUv * kNotchTurn * (ts - tp), s0 = arc[v - a];
+                if (!(s0 > 0.0 && arc[b + 1 - a] > s0))
+                    continue;
+                if (turnBack(v, 1))
+                    for (size_t q = v + 1; q <= b; ++q)
+                        turns.push_back({loop[at(q)], loop[i], std::polar(1.0, turn * (1.0 - (arc[q - a] - s0) / (arc[b + 1 - a] - s0)))});
+                else if (turnBack(v, -1))
+                    for (size_t q = a + 1; q < v; ++q)
+                        turns.push_back({loop[at(q)], loop[i], std::polar(1.0, -turn * arc[q - a] / s0)});
+                else
+                    continue;
+                return;
+            }
+        };
         for (size_t w = 0; w < windows.size(); ++w)
         {
             // Offsets shifted by n, so margins can run back past the start edge (the window before is the last one).
@@ -1073,6 +1141,7 @@ std::vector<BorderBlend> respaceBorder(const Mesh& m, const Islands& is, Index i
             }
             targets[b + 1 - a] = U;
             alignWindowTurns(a, b);
+            turnNotch(a, b);
             double segStart = 0.0;
             size_t seg = a;
             for (size_t v = a + 1; v <= b; ++v)
@@ -1171,7 +1240,8 @@ namespace fit
 thread_local FitRecorder* tRecorder = nullptr;
 
 /** The island's record for uv tools: its groups, its border groups as blends of the values before the fit, its fill. */
-FitIslandRecord recordIsland(const Islands& is, std::span<const BorderBlend> blends, std::span<const CornerApex> apexes, const System& s,
+FitIslandRecord recordIsland(const Islands& is, std::span<const BorderBlend> blends, std::span<const BorderTurn> turns,
+                             std::span<const CornerApex> apexes, const System& s,
                              std::shared_ptr<const Factor> factor)
 {
     FitIslandRecord r;
@@ -1186,7 +1256,7 @@ FitIslandRecord recordIsland(const Islands& is, std::span<const BorderBlend> ble
         id(g);
     for (Index g : s.interior)
         id(g);
-    // Respacing reads the values before it, the corners read respaced ones.
+    // Respacing reads the values before it, turns read respaced ones, the corners read turned ones.
     using Blend = std::vector<std::pair<Index, std::complex<double>>>;
     std::unordered_map<Index, Blend> from;
     auto value = [&](Index g) {
@@ -1196,6 +1266,17 @@ FitIslandRecord recordIsland(const Islands& is, std::span<const BorderBlend> ble
     std::vector<std::pair<Index, Blend>> moved;
     for (const BorderBlend& b : blends)
         moved.push_back({b.group, {{id(b.a), 1.0 - b.t}, {id(b.b), b.t}}});
+    for (auto& [g, v] : moved)
+        from[g] = std::move(v);
+    moved.clear();
+    for (const BorderTurn& x : turns)
+    {
+        Blend v;
+        for (auto [g, w] : {std::pair{x.group, x.w}, std::pair{x.pivot, 1.0 - x.w}})
+            for (auto [q, wq] : value(g))
+                v.push_back({q, w * wq});
+        moved.push_back({x.group, std::move(v)});
+    }
     for (auto& [g, v] : moved)
         from[g] = std::move(v);
     moved.clear();
@@ -1638,7 +1719,8 @@ void fitSurface(Mesh& m)
         }
         // Islands share no corners, so each writes only its own groups while the others read theirs.
         tbb::parallel_for(Index(0), Index(is.faces.size()), [&](Index island) {
-            const std::vector<BorderBlend> blends = respaceBorder(m, is, island, proxy, set);
+            std::vector<BorderTurn> turns;
+            const std::vector<BorderBlend> blends = respaceBorder(m, is, island, proxy, set, turns);
             std::vector<glm::vec2> moved(blends.size());
             // The island's orientation, all openCorners reads of the layout, is the same before and after respacing.
             const std::vector<CornerApex> apexes = openCorners(m, is, island, set, blends);
@@ -1650,6 +1732,16 @@ void fitSurface(Mesh& m)
                     for (size_t k = 0; k < blends.size(); ++k)
                         for (Index c : is.groupCorners[blends[k].group])
                             uv[c] = moved[k];
+                    std::vector<glm::vec2> turned(turns.size());
+                    for (size_t k = 0; k < turns.size(); ++k)
+                    {
+                        const std::complex<double> v = cx(groupValue(uv, is.groupCorners[turns[k].group])) * turns[k].w +
+                                                       cx(groupValue(uv, is.groupCorners[turns[k].pivot])) * (1.0 - turns[k].w);
+                        turned[k] = glm::vec2(float(v.real()), float(v.imag()));
+                    }
+                    for (size_t k = 0; k < turns.size(); ++k)
+                        for (Index c : is.groupCorners[turns[k].group])
+                            uv[c] = turned[k];
                 }
             const System s = systemOf(m, is, island);
             std::shared_ptr<const Factor> f;
@@ -1658,7 +1750,7 @@ void fitSurface(Mesh& m)
                     f.reset();
             if (record)
             {
-                record->islands[island] = recordIsland(is, blends, apexes, s, f);
+                record->islands[island] = recordIsland(is, blends, turns, apexes, s, f);
                 return;
             }
             moved.resize(apexes.size());
