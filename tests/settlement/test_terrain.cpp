@@ -276,8 +276,9 @@ TEST_CASE("settlement terrain: on rough ground every graded street keeps its gra
     CAPTURE(graded.dump());
     CHECK(graded["errors"].empty());
     REQUIRE(graded["streets"].get<int>() > 20);
+    // Only pieces whose junction heights leave no way within the grade remain: curve rounding never adds any.
     for (const json& o : graded["overGrade"])
-        CHECK_FALSE(o["why"].get<std::string>().empty());
+        CHECK(o["why"].get<std::string>().find("the height keys need grades over maxGrade") != std::string::npos);
     MESSAGE("over grade: " << graded["overGrade"].size() << " of " << graded["streets"].get<int>());
     CHECK(graded["overGrade"].size() * 50 <= graded["streets"].get<size_t>());
     // Every terrain road steeper than its limit is in the report.
