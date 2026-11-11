@@ -64,6 +64,10 @@ private:
     void refresh();
     void rebuild();
     void updateValues();
+    /** True when every modifier in the stack evaluates in the viewport. */
+    bool allInViewport() const;
+    /** One undo step turning every modifier on or off in the viewport. */
+    void setAllInViewport(bool on);
     scene::NodeId resolveMesh() const;
     std::vector<uint64_t> signature(scene::NodeId mesh) const;
     QWidget* buildSourceCard(scene::NodeId source);
@@ -84,6 +88,7 @@ private:
     QLabel* mTitle = nullptr;
     QToolButton* mAdd = nullptr;
     QToolButton* mMore = nullptr;
+    QToolButton* mViewportAll = nullptr;
     QScrollArea* mScroll = nullptr;
     ModifierCardList* mList = nullptr;
     QVBoxLayout* mListLayout = nullptr;
