@@ -356,6 +356,30 @@ void transformChart(Chart& ch, const glm::dvec2& pivot, double angle, const glm:
         p = pivot + offset + rotate((p - pivot) * scale, c, s);
 }
 
+double gridAngle(const Chart& ch, double* agreement)
+{
+    // Each edge direction folded four ways, so edges along U and V (and their opposites) all add up.
+    double s = 0.0, c = 0.0, total = 0.0;
+    for (size_t f = 0; f + 1 < ch.faceStart.size(); ++f)
+    {
+        const Index first = ch.faceStart[f], end = ch.faceStart[f + 1];
+        for (Index k = first; k < end; ++k)
+        {
+            const glm::dvec2 e = ch.uv[ch.cornerVertex[k + 1 < end ? k + 1 : first]] - ch.uv[ch.cornerVertex[k]];
+            const double l = glm::length(e);
+            if (l <= 0.0)
+                continue;
+            const double a = 4.0 * std::atan2(e.y, e.x);
+            s += l * std::sin(a);
+            c += l * std::cos(a);
+            total += l;
+        }
+    }
+    if (agreement)
+        *agreement = total > 0.0 ? std::hypot(s, c) / total : 0.0;
+    return total > 0.0 ? -0.25 * std::atan2(s, c) : 0.0;
+}
+
 void orientChart(Chart& ch, OrientMode mode)
 {
     LILA_ZONE();
@@ -382,6 +406,7 @@ void orientChart(Chart& ch, OrientMode mode)
         angle = -0.5 * std::atan2(2.0 * sxy, sxx - syy);
         break;
     }
+    case OrientMode::Grid: angle = gridAngle(ch); break;
     case OrientMode::LongestEdge:
     {
         double best = -1.0;

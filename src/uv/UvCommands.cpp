@@ -437,10 +437,29 @@ std::vector<SeamView> viewsIn(std::vector<SeamView> views, Node& node)
     return views;
 }
 
+/** Whether the mesh's last exported Weighted Normals modifier smooths over its hard edges, so they don't show. */
+bool normalsDropHardEdges(Node& node)
+{
+    Graph& g = graph();
+    const std::vector<NodeId> stack = scene::modifiers::stack(g, node.id());
+    for (auto it = stack.rbegin(); it != stack.rend(); ++it)
+        if (const Node* mod = g.node(*it); mod && scene::modifiers::exportEnabled(*mod) && mod->type().isA("weightedNormalsModifier"))
+        {
+            const int keep = mod->type().attrIndex("keepHardEdges");
+            return keep >= 0 && !mod->as<bool>(keep);
+        }
+    return false;
+}
+
 /** The options for one mesh: seam views in its space, and with symmetry on, its mirror edges. */
 AutoSeamOptions seamsIn(AutoSeamOptions o, Node& node, const geo::Mesh& m, const std::optional<geo::SymmetryMap>& map)
 {
     o.views = viewsIn(std::move(o.views), node);
+    if (o.useHardEdges && normalsDropHardEdges(node))
+    {
+        o.useHardEdges = false;
+        log::info("{}: hard edges not used for seams; its Weighted Normals modifier smooths them over (Keep Hard Edges off)", node.name());
+    }
     if (map)
     {
         std::vector<Index> all(m.edgeCapacity());
@@ -459,7 +478,7 @@ AutoSeamOptions seamArgs(const Args& a, std::string* overridden = nullptr)
     o.keepSeams = a.get<bool>("keepSeams", false);
     o.visibility = a.get<bool>("visibility", true);
     o.merge = a.get<bool>("merge", true);
-    o.useHardEdges = a.get<bool>("useHardEdges", true);
+    o.useHardEdges = a.get<bool>("useHardEdges", false);
     std::string method = a.get<std::string>("method", "split");
     if (method != "split" && method != "optcuts")
         throw CommandError("method must be split or optcuts");
@@ -495,7 +514,7 @@ std::vector<FlagDef> seamFlagDefs()
 {
     using T = ArgType;
     return {{"hardAngle", "", T::Float, 60.0, "Edges sharper than this always get a seam, degrees.", {}, {}, 0.0, 180.0},
-            {"useHardEdges", "", T::Bool, true, "Edges marked hard always get a seam."},
+            {"useHardEdges", "", T::Bool, false, "Edges marked hard always get a seam, unless a Weighted Normals modifier smooths them over."},
             {"keepSeams", "", T::Bool, false, "Keep the seams already there."},
             {"maxDistortion", "", T::Float, 0.08, "Split islands that stretch more than this when flattened.", {}, {}, 0.0},
             {"visibility", "", T::Bool, true, "Hide cuts where they are least visible."},
@@ -1640,11 +1659,14 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "uvOrient",
-        .doc = "Rotate the selected islands upright: by bounding box, principal axis or longest edge.",
-        .flags = {uvSetFlag(), {"mode", "", T::String, "bbox", "bbox, principal or edge.", {"bbox", "principal", "edge"}}},
+        .doc = "Rotate the selected islands upright: by bounding box, principal axis, longest edge or edge grid.",
+        .flags = {uvSetFlag(), {"mode", "", T::String, "bbox", "bbox, principal, edge or grid (polygon edges along U and V).", {"bbox", "principal", "edge", "grid"}}},
         .run = [](const Args& a) -> json {
             std::string mode = a.get<std::string>("mode", "bbox");
-            OrientMode om = mode == "principal" ? OrientMode::Principal : mode == "edge" ? OrientMode::LongestEdge : OrientMode::BoundingBox;
+            OrientMode om = mode == "principal" ? OrientMode::Principal
+                            : mode == "edge"    ? OrientMode::LongestEdge
+                            : mode == "grid"    ? OrientMode::Grid
+                                                : OrientMode::BoundingBox;
             std::string set = uvSetArg(a);
             return editUv("UV Orient", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
                 return withUvSymmetry(m, n, set, UvSymmetry::Absolute, {}, [&]() -> json {

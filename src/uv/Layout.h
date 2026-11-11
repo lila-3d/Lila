@@ -16,7 +16,14 @@ enum class OrientMode : uint8_t
     BoundingBox, // smallest bounding rectangle, long side along U
     Principal,   // principal axis of the uv area along U
     LongestEdge, // longest boundary edge snapped to the nearest axis
+    Grid,        // polygon edges, weighted by length, turned onto the axes: a quad grid runs along U and V
 };
+
+/**
+ * The turn that puts the chart's polygon edges, weighted by length, closest onto the axes, and how much they agree on
+ * it: 1 for a perfect grid, near 0 for edges in every direction.
+ */
+LILA_SCENE_API double gridAngle(const Chart& chart, double* agreement = nullptr);
 
 /** Rotates the chart about its uv centroid. */
 LILA_SCENE_API void orientChart(Chart& chart, OrientMode mode = OrientMode::BoundingBox);

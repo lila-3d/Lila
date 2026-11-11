@@ -2,6 +2,7 @@
 
 #include "core/Profile.h"
 #include "geo/Topology.h"
+#include "uv/Layout.h"
 #include "uv/Metrics.h"
 #include "uv/UvCommon.h"
 
@@ -254,9 +255,15 @@ AutoUvResult autoUv(geo::Mesh& mesh, std::span<const Index> faces, std::string_v
         Chart& ch = charts[i];
         std::fill(ch.pinned.begin(), ch.pinned.end(), uint8_t(0));
         // Islands come back already flattened once; refine those, start over on the rest.
-        if (uo.method == UnwrapMethod::Slim && usable(ch) && slim(ch, uo.iterations, false) >= 0)
-            return;
-        unwrapChart(ch, uo);
+        if (!(uo.method == UnwrapMethod::Slim && usable(ch) && slim(ch, uo.iterations, false) >= 0))
+            unwrapChart(ch, uo);
+        // A fresh island's turn is arbitrary: put its edge grid on the axes, or its bounding box when it has no grid.
+        double agreement = 0.0;
+        const double turn = gridAngle(ch, &agreement);
+        if (agreement >= 0.4)
+            transformChart(ch, ch.uvCentroid(), turn);
+        else
+            orientChart(ch, OrientMode::BoundingBox);
     });
     res.pack = packCharts(charts, opts.pack);
     writeCharts(mesh, charts, uvSet);
