@@ -37,6 +37,7 @@ void registerNodeLibrary()
     nodes::registerMatrixNodes();
     nodes::registerBundleNodes();
     nodes::registerBuildNodes();
+    nodes::registerDeform2Nodes();
     registerBakeNode();
 }
 } // namespace lila::gn
