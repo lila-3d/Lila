@@ -936,22 +936,23 @@ def bakeSkinWeights(*objects: Any, angle: float | None = None, axes: str | None 
         keep: Store the weights for export only and leave the scene as it is. Default False.
     """
 
-def bakeSoftNet(*objects: Any, start: int | None = None, end: int | None = None, step: int | None = None, helpers: int | None = None, correctives: int | None = None, tolerance: float | None = None, maxInfluences: int | None = None, iterations: int | None = None, mi: int | None = None) -> Any:
-    """Bake a skinned mesh's Soft Net for Unreal: each knot becomes a frame joint riding the surface with a control joint under it, each tangent handle a joint under its knot, keyed over the range and added to the skin as fixed bones; weights are fitted to the net's result (with up to helpers helper joints), and morph correctives keyed per frame take the residual. The net is turned off so the viewport shows what Unreal gets. Returns {joints, helpers, correctives, skinnedRmse, rmse, maxError, frameError, frames, unrealCheck}: errors in cm against the net, per frame worst, and the Unreal round-trip check.
+def bakeSoftNet(*objects: Any, start: int | None = None, end: int | None = None, step: int | None = None, helpers: int | None = None, correctives: int | None = None, tolerance: float | None = None, checkTo: int | None = None, maxInfluences: int | None = None, iterations: int | None = None, mi: int | None = None) -> Any:
+    """Bake a skinned mesh's Soft Net for Unreal: each knot becomes a frame joint riding the surface with a control joint under it, each tangent handle a joint under its knot, keyed over the range and added to the skin as fixed bones; weights are fitted to the net's result (with up to helpers helper joints), and morph correctives take the residual, each weighted by an expression on the knot, handle and skin joints' channels, so poses outside the range get them too (unrealExpressionRig sends them to Unreal). The net is turned off so the viewport shows what Unreal gets. Returns {joints, helpers, correctives, skinnedRmse, rmse, maxError, frameError, frames, check, unrealCheck}: errors in cm against the net, per frame worst, the checkTo frames' errors, and the Unreal round-trip check.
 
     Args:
         objects: mesh (or its net).
         start: First frame (the playback start by default).
         end: Last frame (the playback end by default).
         step: Frames between samples. Default 1.
-        helpers: Helper joints solved with the weights for what knots and skin can't follow (capped per character). Default 4.
-        correctives: Most morph correctives for the residual. Default 8.
+        helpers: Helper joints solved with the weights for what knots and skin can't follow. They are keyed to the range, so poses outside it don't get them. Default 0.
+        correctives: Most morph correctives for the residual. Default 32.
         tolerance: cm of RMS residual at which correctives stop. Default 0.001.
+        checkTo: Frames after end up to this one are baked and checked against the net but not fitted: how the bake holds up on poses it wasn't fitted to.
         maxInfluences: Influences per point. Short form mi. Default 8.
         iterations: Fit passes. Default 3.
 
     Examples:
-        bakeSoftNet("Mochi", helpers=4, correctives=8)
+        bakeSoftNet("Mochi", correctives=32)
     """
 
 def bakeStatus(project: str | None = None, *, pj: str | None = None) -> Any:
@@ -1517,7 +1518,7 @@ def cameraSettings(*objects: Any, filmFit: str | None = None, overscan: float | 
         query: Short form q. Default False.
     """
 
-def captureTurntable(view: str | None = None, lookThrough: str | None = None, yaw: float | None = None, pitch: float | None = None, width: int | None = None, height: int | None = None, display: str | None = None, isolate: bool | None = None, frameSelection: bool | None = None, grid: bool | None = None, showSelection: bool | None = None, samples: int | None = None, label: bool | None = None, path: str | None = None, count: int | None = None, columns: int | None = None, views: Sequence[Any] | None = None, *, v: str | None = None, lt: str | None = None, w: int | None = None, h: int | None = None, d: str | None = None, fs: bool | None = None, p: str | None = None, c: int | None = None) -> Any:
+def captureTurntable(view: str | None = None, lookThrough: str | None = None, yaw: float | None = None, pitch: float | None = None, width: int | None = None, height: int | None = None, display: str | None = None, isolate: bool | None = None, frameSelection: bool | None = None, grid: bool | None = None, showSelection: bool | None = None, samples: int | None = None, label: bool | None = None, overlays: bool | None = None, path: str | None = None, count: int | None = None, columns: int | None = None, views: Sequence[Any] | None = None, *, v: str | None = None, lt: str | None = None, w: int | None = None, h: int | None = None, d: str | None = None, fs: bool | None = None, ov: bool | None = None, p: str | None = None, c: int | None = None) -> Any:
     """Render several views offscreen and tile them into one PNG contact sheet (row by row): count angles around the subject, or the named views. Returns the path.
 
     Args:
@@ -1534,13 +1535,14 @@ def captureTurntable(view: str | None = None, lookThrough: str | None = None, ya
         showSelection: Tint selected components, and outline selected terrains drawn from their heights. Default True.
         samples: Jittered frames averaged into the image: 16 or more gives a supersampled still. Default 1.
         label: Write the view's name in the top-left corner. Default True.
+        overlays: Draw what the viewport draws over the scene too: locators, curves' draw overrides, Soft Net lines and knots, extension drawers. Short form ov. Default False.
         path: PNG file to write. Short form p.
         count: Views around the up axis, starting at the front. Short form c. Default 4.
         columns: Tiles per row; 0 picks. Default 0.
         views: Named views to tile instead of a turn, e.g. ['front', 'right', 'top', 'persp'].
     """
 
-def captureView(view: str | None = None, lookThrough: str | None = None, yaw: float | None = None, pitch: float | None = None, width: int | None = None, height: int | None = None, display: str | None = None, isolate: bool | None = None, frameSelection: bool | None = None, grid: bool | None = None, showSelection: bool | None = None, samples: int | None = None, label: bool | None = None, path: str | None = None, *, v: str | None = None, lt: str | None = None, w: int | None = None, h: int | None = None, d: str | None = None, fs: bool | None = None, p: str | None = None) -> Any:
+def captureView(view: str | None = None, lookThrough: str | None = None, yaw: float | None = None, pitch: float | None = None, width: int | None = None, height: int | None = None, display: str | None = None, isolate: bool | None = None, frameSelection: bool | None = None, grid: bool | None = None, showSelection: bool | None = None, samples: int | None = None, label: bool | None = None, overlays: bool | None = None, path: str | None = None, *, v: str | None = None, lt: str | None = None, w: int | None = None, h: int | None = None, d: str | None = None, fs: bool | None = None, ov: bool | None = None, p: str | None = None) -> Any:
     """Render the scene offscreen from a named view or angle and save a PNG. Never moves a viewport's camera, works with Lila in the background and in batch mode. Returns the path.
 
     Args:
@@ -1557,6 +1559,7 @@ def captureView(view: str | None = None, lookThrough: str | None = None, yaw: fl
         showSelection: Tint selected components, and outline selected terrains drawn from their heights. Default True.
         samples: Jittered frames averaged into the image: 16 or more gives a supersampled still. Default 1.
         label: Write the view's name in the top-left corner. Default True.
+        overlays: Draw what the viewport draws over the scene too: locators, curves' draw overrides, Soft Net lines and knots, extension drawers. Short form ov. Default False.
         path: PNG file to write. Short form p.
     """
 
@@ -5407,7 +5410,7 @@ def mayaReference(*objects: Any, path: str | None = None, namespace: str | None 
 def measureSelection() -> Any:
     """Measure the selection without making nodes: 2 vertices or objects give distance and dx/dy/dz, 3 an angle, edges total and per-edge length, a closed edge loop or 4+ vertices a best-fit circle, faces area and perimeter, one object its bounding box (and diameter when it is cylinder-like), a measure node its value. Returns a dict: lengths in cm; 'value' and 'text' are the headline in the display unit (/units/linear)."""
 
-def measureView(view: str | None = None, lookThrough: str | None = None, yaw: float | None = None, pitch: float | None = None, width: int | None = None, height: int | None = None, display: str | None = None, isolate: bool | None = None, frameSelection: bool | None = None, grid: bool | None = None, showSelection: bool | None = None, samples: int | None = None, label: bool | None = None, frames: int | None = None, ambientOcclusion: bool | None = None, *, v: str | None = None, lt: str | None = None, w: int | None = None, h: int | None = None, d: str | None = None, fs: bool | None = None, ao: bool | None = None) -> Any:
+def measureView(view: str | None = None, lookThrough: str | None = None, yaw: float | None = None, pitch: float | None = None, width: int | None = None, height: int | None = None, display: str | None = None, isolate: bool | None = None, frameSelection: bool | None = None, grid: bool | None = None, showSelection: bool | None = None, samples: int | None = None, label: bool | None = None, overlays: bool | None = None, frames: int | None = None, ambientOcclusion: bool | None = None, *, v: str | None = None, lt: str | None = None, w: int | None = None, h: int | None = None, d: str | None = None, fs: bool | None = None, ov: bool | None = None, ao: bool | None = None) -> Any:
     """Draw the scene offscreen several times like captureView and return the median GPU time per frame in ms, with the ambient occlusion share, and the render thread's time recording it: {gpuMs, aoMs, cpuMs, aoCpuMs, frames}. 0 where the GPU has no timestamps.
 
     Args:
@@ -5424,6 +5427,7 @@ def measureView(view: str | None = None, lookThrough: str | None = None, yaw: fl
         showSelection: Tint selected components, and outline selected terrains drawn from their heights. Default True.
         samples: Jittered frames averaged into the image: 16 or more gives a supersampled still. Default 1.
         label: Write the view's name in the top-left corner. Default True.
+        overlays: Draw what the viewport draws over the scene too: locators, curves' draw overrides, Soft Net lines and knots, extension drawers. Short form ov. Default False.
         frames: Frames to draw; the result is their median. Default 20.
         ambientOcclusion: Force ambient occlusion on or off instead of the viewport pref. Short form ao.
     """
@@ -9299,7 +9303,7 @@ def softNetRebind(*objects: Any, layout: str | None = None, meshes: Sequence[Any
         softNetRebind("SoftNet_knots")
     """
 
-def softNetUnreal(*objects: Any, route: str | None = None, start: int | None = None, end: int | None = None, step: int | None = None, helpers: int | None = None, correctives: int | None = None, tolerance: float | None = None, maxInfluences: int | None = None, iterations: int | None = None, cacheFormat: str | None = None, path: str | None = None, mi: int | None = None) -> Any:
+def softNetUnreal(*objects: Any, route: str | None = None, start: int | None = None, end: int | None = None, step: int | None = None, helpers: int | None = None, correctives: int | None = None, tolerance: float | None = None, checkTo: int | None = None, maxInfluences: int | None = None, iterations: int | None = None, cacheFormat: str | None = None, path: str | None = None, mi: int | None = None) -> Any:
     """Send a Soft Net to Unreal one of three ways. bake (default): knot joints, fitted weights and morph correctives on the skin (bakeSoftNet), so any Unreal export carries it. live: the net runs in Unreal as a Deformer Graph over the skin, matching Lila (unrealSoftNet; knot joints are baked to drive it). cache: the deformed mesh as an Alembic or vertex animation cache, exact but fixed, for cinematics. Returns that route's result.
 
     Args:
@@ -9308,9 +9312,10 @@ def softNetUnreal(*objects: Any, route: str | None = None, start: int | None = N
         start: First frame (the playback start by default).
         end: Last frame (the playback end by default).
         step: Frames between samples. Default 1.
-        helpers: Helper joints solved with the weights for what knots and skin can't follow (capped per character). Default 4.
-        correctives: Most morph correctives for the residual. Default 8.
+        helpers: Helper joints solved with the weights for what knots and skin can't follow. They are keyed to the range, so poses outside it don't get them. Default 0.
+        correctives: Most morph correctives for the residual. Default 32.
         tolerance: cm of RMS residual at which correctives stop. Default 0.001.
+        checkTo: Frames after end up to this one are baked and checked against the net but not fitted: how the bake holds up on poses it wasn't fitted to.
         maxInfluences: Influences per point. Short form mi. Default 8.
         iterations: Fit passes. Default 3.
         cacheFormat: cache: Alembic or vertex animation (VAT). One of 'alembic', 'vat'. Default 'alembic'.
@@ -10873,7 +10878,7 @@ def uvAuto(uvSet: str | None = None, iterations: int | None = None, finalMesh: b
         iterations: SLIM iterations. Default 12.
         finalMesh: Measure and solve on the mesh as exported, after modifiers that move its surface (bevel, subdivision); False works on the base mesh alone. Short form fm. Default True.
         hardAngle: Edges sharper than this always get a seam, degrees. Default 60.0.
-        useHardEdges: Edges marked hard always get a seam. Default True.
+        useHardEdges: Edges marked hard always get a seam, unless a Weighted Normals modifier smooths them over. Default False.
         keepSeams: Keep the seams already there. Default False.
         maxDistortion: Split islands that stretch more than this when flattened. Default 0.08.
         visibility: Hide cuts where they are least visible. Default True.
@@ -10911,7 +10916,7 @@ def uvAutoSeams(hardAngle: float | None = None, useHardEdges: bool | None = None
 
     Args:
         hardAngle: Edges sharper than this always get a seam, degrees. Default 60.0.
-        useHardEdges: Edges marked hard always get a seam. Default True.
+        useHardEdges: Edges marked hard always get a seam, unless a Weighted Normals modifier smooths them over. Default False.
         keepSeams: Keep the seams already there. Default False.
         maxDistortion: Split islands that stretch more than this when flattened. Default 0.08.
         visibility: Hide cuts where they are least visible. Default True.
@@ -11062,11 +11067,11 @@ def uvOptimize(uvSet: str | None = None, mode: str | None = None, mix: float | N
     """
 
 def uvOrient(uvSet: str | None = None, mode: str | None = None) -> Any:
-    """Rotate the selected islands upright: by bounding box, principal axis or longest edge.
+    """Rotate the selected islands upright: by bounding box, principal axis, longest edge or edge grid.
 
     Args:
         uvSet: UV set; the current one (uvSetCurrent) when not given.
-        mode: bbox, principal or edge. One of 'bbox', 'principal', 'edge'. Default 'bbox'.
+        mode: bbox, principal, edge or grid (polygon edges along U and V). One of 'bbox', 'principal', 'edge', 'grid'. Default 'bbox'.
     """
 
 def uvPack(uvSet: str | None = None, finalMesh: bool | None = None, resolution: int | None = None, padding: float | None = None, margin: float | None = None, paddingMips: int | None = None, rotateStep: int | None = None, angles: Sequence[Any] | None = None, freeRotation: bool | None = None, flip: bool | None = None, orient: bool | None = None, scaleMode: str | None = None, normalize: bool | None = None, stack: bool | None = None, stackMirrored: bool | None = None, stackTolerance: float | None = None, tilesU: int | None = None, tilesV: int | None = None, region: Sequence[Any] | None = None, texelsPerUnit: float | None = None, effort: int | None = None, timeLimit: float | None = None, workingResolution: int | None = None, layout: str | None = None, groupBy: str | None = None, groupAttr: str | None = None, keep: str | None = None, fixPinned: bool | None = None, perObject: bool | None = None, *, fm: bool | None = None) -> Any:
@@ -11138,13 +11143,27 @@ def uvProject(uvSet: str | None = None, type: str | None = None, axis: str | Non
         pack: Pack the resulting islands afterwards. Default False.
     """
 
-def uvSeamView(position: Sequence[float] | None = None, weight: float | None = None, name: str | None = None, *, p: Sequence[float] | None = None, w: float | None = None, n: str | None = None) -> Any:
-    """Create a seam view: a locator that uvAuto and uvAutoSeams keep seams out of sight of, such as where a first person camera sits or where a character's face is seen from. Move it and run Auto UV again to see the seams move. Its seamView attribute is the weight: higher hides seams harder, negative draws them towards it. Returns its path.
+def uvSeamView(position: Sequence[float] | None = None, normal: Sequence[float] | None = None, weight: float | None = None, override: bool | None = None, name: str | None = None, *, p: Sequence[float] | None = None, nm: Sequence[float] | None = None, w: float | None = None, o: bool | None = None, n: str | None = None) -> Any:
+    """Create a seam view: a locator that uvAuto, uvAutoSeams and uvHose keep seams out of sight of, such as where a first person camera sits or where a character's face is seen from. With normal it is a plane instead, seeing along its local direction like an orthographic camera (a game's fixed side or top view). Move or rotate it and run Auto UV again to see the seams move. Its seamView attribute is the weight: higher hides seams harder, negative draws them towards it. Returns its path.
 
     Args:
         position: World position. Short form p.
+        normal: Makes it a plane through position with this world normal: it sees along that axis from its own side, like an orthographic camera. Short form nm.
         weight: How hard seams avoid what it sees; negative draws them towards it. Short form w. Default 1.0.
+        override: Make it the seam view override (uvSeamViewOverride). Short form o. Default False.
         name: Name; made unique among its siblings. Short form n. Default 'seamView'.
+    """
+
+def uvSeamViewOverride(*objects: Any) -> Any:
+    """Make a camera, locator or plane the seam view override: uvAuto, uvAutoSeams and uvHose then hide seams from it alone, whatever seam views their options or flags name, and say so in their result and a toast. A perspective camera sees from its eye, an orthographic one along its axis. With no node, clears the override. Returns the override's name, or an empty string when cleared.
+
+    Args:
+        objects: node.
+
+    Examples:
+        uvSeamViewOverride("camera1")
+
+        uvSeamViewOverride()
     """
 
 def uvSetCurrent(*objects: Any) -> Any:
@@ -11456,7 +11475,7 @@ def viewportInspect(pick: Sequence[Any] | None = None, path: str | None = None, 
 def viewportStats() -> Any:
     """The active viewport's last finished frame as the GPU measured it: {frames, gpuMs, aoMs, cpuMs, meshDrawCalls, meshUploads, renderer}. frames counts frames drawn so far, so two calls apart give the frame rate; meshUploads counts GPU mesh copies the same way. Unlike measureView it times what the view really draws, components and highlights included. When an external renderer such as a Hydra delegate draws the view, rendererStats holds what it reports."""
 
-def viewportToast(*objects: Any, all: bool | None = None, duration: float | None = None, error: bool | None = None, a: bool | None = None, d: float | None = None, e: bool | None = None) -> Any:
+def viewportToast(*objects: Any, all: bool | None = None, duration: float | None = None, error: bool | None = None, warning: bool | None = None, a: bool | None = None, d: float | None = None, e: bool | None = None, w: bool | None = None) -> Any:
     """Pop up a short message in the bottom-right corner of the active viewport; it fades out after duration. Showing the same text again restarts it instead of adding another.
 
     Args:
@@ -11464,6 +11483,7 @@ def viewportToast(*objects: Any, all: bool | None = None, duration: float | None
         all: Show it in every viewport, not only the active one. Short form a.
         duration: Seconds before it is gone, including the fade. Short form d. Default 2.0.
         error: Mark it as a failure, with a red accent. Short form e.
+        warning: Mark it as a warning, with a warning accent and triangle. Short form w.
 
     Examples:
         viewportToast("Exported 12 meshes")
