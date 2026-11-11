@@ -256,6 +256,7 @@ void registerWrangleNode();
 void registerZoneNodes();
 void registerMatrixNodes();
 void registerBundleNodes();
+void registerBuildNodes();
 
 /** A link between two pieces (b = -1: the world) at an anchor, as the Rigid Body Solver reads them. */
 struct PieceLink
