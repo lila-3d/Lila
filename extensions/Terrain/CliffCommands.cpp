@@ -9,6 +9,7 @@
 #include "TerrainEdit.h"
 #include "Volume.h"
 
+#include <lila/Bake.h>
 #include <lila/Command.h>
 #include <lila/Curves.h>
 #include <lila/Deformer.h>
@@ -448,7 +449,11 @@ json makeLowPoly(Graph& g, Node* high, Node* parent, double ratio, int resolutio
     ro.keepBorders = true;
     ro.keepHardEdges = false;
     geo::Mesh low = geo::reduceMesh(src, ro).mesh;
-    uv::autoUv(low, {}, geo::attr::uvName(0));
+    // Seams at 45 degrees: at the default 60 a wavy cliff's islands come out with triangles squashed flat in uv, which smear
+    // in the bake.
+    uv::AutoUvOptions uo;
+    uo.seams.hardAngle = 45.0;
+    uv::autoUv(low, {}, geo::attr::uvName(0), uo);
     const std::string name = high->name() + "_low";
     Node* n = putMesh(g, name, parent, std::move(low));
     json out = {{"mesh", n->path()}, {"triangles", int64_t(geo::triangulate(*meshOf(g, n)).faces.size())}};
@@ -458,7 +463,13 @@ json makeLowPoly(Graph& g, Node* high, Node* parent, double ratio, int resolutio
         ops::execute("createBakeProject", {{"name", project}});
         ops::execute("bakeGroup", {{"args", {identifier(high->name()) + "_group"}}, {"project", project}, {"lows", {n->path()}}, {"highs", {high->path()}}});
         ops::execute("setBakeOutput", {{"project", project}, {"resolution", resolution}});
-        out["bake"] = ops::execute("bake", {{"project", project}, {"maps", {"normal", "ao"}}});
+        json bakeArgs = {{"project", project}, {"maps", {"normal", "ao"}}};
+        const std::vector<std::string> backends = bake::backendNames();
+        if (std::ranges::find(backends, "gpu") != backends.end())
+            bakeArgs["backend"] = "gpu";
+        else
+            out["backendNote"] = "no GPU bake backend in this session (batch, or the renderer hasn't started): baked on the CPU";
+        out["bake"] = ops::execute("bake", bakeArgs);
     }
     catch (const std::exception& e)
     {

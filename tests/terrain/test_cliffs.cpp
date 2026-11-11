@@ -517,7 +517,7 @@ TEST_CASE("cliffs: lowPoly makes a reduced cliff with normal and AO maps baked f
     std::filesystem::create_directories(dir);
     std::filesystem::current_path(dir);
     json m = run("terrainCliffMesh", {{"args", {t["mesh"]}}, {"region", "cliff_1"}, {"detail", 1.0}, {"lowPoly", true}, {"lowPolyRatio", 0.1},
-                                      {"bakeResolution", 128}});
+                                      {"bakeResolution", 1024}});
     std::filesystem::current_path(before);
     REQUIRE(m["cliffs"].size() == 1);
     const json& low = m["cliffs"][0]["lowPoly"];
@@ -527,7 +527,10 @@ TEST_CASE("cliffs: lowPoly makes a reduced cliff with normal and AO maps baked f
     CHECK(low["triangles"].get<int>() > 0);
     CHECK(low["triangles"].get<int>() < high / 5);
     REQUIRE(low.contains("bake"));
+    // At 1024 the lint sees uv-collapsed triangles a squashed layout would leave.
     CHECK(low["bake"]["lint"]["issues"].empty());
+    // Headless there's no GPU backend, and the result says so.
+    CHECK(low.value("backendNote", std::string()).find("CPU") != std::string::npos);
     std::set<std::string> maps;
     for (const json& o : low["bake"]["outputs"])
         if (std::filesystem::exists(o["file"].get<std::string>()))
