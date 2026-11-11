@@ -485,9 +485,11 @@ json unrealPayload(Graph& g, NodeId mesh, const NetJoints& joints, const std::st
     if (!in || !rest || b.points != in->pointCapacity())
         throw CommandError("unrealSoftNet: the mesh changed since the net was bound; run softNetRebind");
     const double reach = dn.as<double>(dn.type().attrIndex("reach"));
-    const deform::softnet::InfluenceTable table =
-        deform::softnet::buildInfluence(*in, b.samples, b.runs, b.knots, b.tangentRest.size(), b.edge, reach > 0.0 ? reach : b.autoReach,
-                                        dn.as<double>(dn.type().attrIndex("stiffness")));
+    const InfluencePtr shared =
+        influenceTable(*in, dn.as<std::string>(dn.type().attrIndex("binding")), reach, dn.as<double>(dn.type().attrIndex("stiffness"))).get();
+    if (!shared || shared->points() == 0)
+        throw CommandError("unrealSoftNet: the net's influence couldn't be solved on this mesh");
+    const deform::softnet::InfluenceTable& table = *shared;
     json knots = json::array(), tangents = json::array();
     for (const auto& [frame, control] : joints.knots)
         knots.push_back({{"frame", frame != kNoNode ? bareName(g.node(frame)->name()) : ""}, {"control", control != kNoNode ? bareName(g.node(control)->name()) : ""}});
@@ -652,7 +654,9 @@ void registerSoftNetExportCommands()
                 throw CommandError("unrealSoftNet: " + r.value("error", std::string("Unreal didn't answer")));
             json result;
             std::string text;
-            for (const json& line : r.value("result", json::object()).value("log", json::array()))
+            const json reply = r.contains("result") && r["result"].is_object() ? r["result"] : json::object();
+            const json lines = reply.contains("log") ? reply["log"] : json::array();
+            for (const json& line : lines)
             {
                 const std::string l = line.value("text", "");
                 if (l.rfind("LILA_RESULT:", 0) == 0)
@@ -664,7 +668,8 @@ void registerSoftNetExportCommands()
                 throw CommandError("unrealSoftNet: Unreal didn't bind the mesh" + (text.empty() ? std::string() : ":\n" + text));
             if (const json errors = result.value("errors", json::array()); !errors.empty())
                 throw CommandError("unrealSoftNet: " + errors[0].get<std::string>());
-            for (const json& w : result.value("warnings", json::array()))
+            const json warnings = result.contains("warnings") ? result["warnings"] : json::array();
+            for (const json& w : warnings)
                 log::write(LogLevel::Warning, "unrealSoftNet: " + w.get<std::string>());
             return {{"skeletalMesh", sm}, {"deformer", payload["deformer"]}, {"joints", names}, {"unreal", result}};
         },

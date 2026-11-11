@@ -6,7 +6,9 @@
 #include "layout/SoftNet.h"
 #include "scene/Plug.h"
 
+#include <future>
 #include <map>
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
@@ -50,6 +52,15 @@ struct LILA_SCENE_API MeshBind
  */
 LILA_SCENE_API std::vector<glm::dvec3> dofMoves(const MeshBind& b, std::span<const glm::dmat4> frames, const std::map<int, glm::dmat4>& knots,
                                                 const std::map<int, glm::dmat4>& tangents, const glm::dmat4& toMesh);
+
+using InfluencePtr = std::shared_ptr<const deform::softnet::InfluenceTable>;
+
+/**
+ * A bound mesh's influence table, built on a worker thread and shared through a small cache keyed by the bind text, reach,
+ * stiffness and topology, so the deformer, the bake and the Unreal export build it once. The deformer asks at its first
+ * evaluation after a bind, so the table is ready, or nearly, by the first knot move.
+ */
+LILA_SCENE_API std::shared_future<InfluencePtr> influenceTable(const geo::Mesh& topology, const std::string& bindText, double reach, double stiffness);
 
 /** The net's deformers, body first. */
 LILA_SCENE_API std::vector<scene::NodeId> netDeformers(scene::Graph& g, scene::NodeId knotsNode);

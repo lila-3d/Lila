@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <cmath>
 #include <format>
+#include <future>
 #include <map>
 #include <mutex>
 #include <set>
@@ -183,6 +184,49 @@ MeshBind MeshBind::fromJson(const std::string& text)
     return b;
 }
 
+namespace
+{
+struct TableKey
+{
+    size_t bind = 0;
+    double reach = 0.0, stiffness = 0.0;
+    uint64_t topology = 0;
+    size_t points = 0;
+    bool operator==(const TableKey&) const = default;
+};
+
+std::mutex gTablesMutex;
+/** Most recent first. */
+std::vector<std::pair<TableKey, std::shared_future<InfluencePtr>>> gTables;
+constexpr size_t kKeptTables = 6;
+} // namespace
+
+std::shared_future<InfluencePtr> influenceTable(const geo::Mesh& topology, const std::string& bindText, double reach, double stiffness)
+{
+    LILA_ZONE();
+    const TableKey key{std::hash<std::string>{}(bindText), reach, stiffness, topology.topologyId(), topology.pointCapacity()};
+    std::lock_guard lock(gTablesMutex);
+    for (size_t i = 0; i < gTables.size(); ++i)
+        if (gTables[i].first == key)
+        {
+            std::rotate(gTables.begin(), gTables.begin() + std::ptrdiff_t(i), gTables.begin() + std::ptrdiff_t(i) + 1);
+            return gTables.front().second;
+        }
+    auto mesh = std::make_shared<const geo::Mesh>(topology);
+    std::shared_future<InfluencePtr> built = std::async(std::launch::async, [mesh, bindText, reach, stiffness]() -> InfluencePtr {
+                                                 LILA_ZONE_N("softNet table build");
+                                                 const MeshBind b = MeshBind::fromJson(bindText);
+                                                 if (b.points != mesh->pointCapacity())
+                                                     return std::make_shared<const sn::InfluenceTable>();
+                                                 return std::make_shared<const sn::InfluenceTable>(sn::buildInfluence(
+                                                     *mesh, b.samples, b.runs, b.knots, b.tangentRest.size(), b.edge, reach > 0.0 ? reach : b.autoReach, stiffness));
+                                             }).share();
+    gTables.insert(gTables.begin(), {key, built});
+    if (gTables.size() > kKeptTables)
+        gTables.resize(kKeptTables);
+    return built;
+}
+
 std::vector<glm::dvec3> dofMoves(const MeshBind& b, std::span<const glm::dmat4> frames, const std::map<int, glm::dmat4>& knots,
                                  const std::map<int, glm::dmat4>& tangents, const glm::dmat4& toMesh)
 {
@@ -338,38 +382,49 @@ public:
         for (const auto& [i, m] : elementMatrices(*this, t.attrIndex("tangentMatrix")))
             if (!nearIdentity(m))
                 tangents[i] = m;
+        std::shared_future<InfluencePtr> pending;
+        std::shared_ptr<const MeshBind> bind;
+        {
+            std::lock_guard lock(mMutex);
+            const std::string& text = as<std::string>(t.attrIndex("binding"));
+            const double reach = as<double>(t.attrIndex("reach")), stiffness = as<double>(t.attrIndex("stiffness"));
+            if (text != mText || reach != mReach || stiffness != mStiffness || in.topologyId() != mTopology)
+            {
+                mText = text;
+                mReach = reach;
+                mStiffness = stiffness;
+                mTopology = in.topologyId();
+                mBind = std::make_shared<const MeshBind>(MeshBind::fromJson(text));
+                mTable = mBind->points == points.size() ? influenceTable(in, text, reach, stiffness) : std::shared_future<InfluencePtr>();
+            }
+            if (mBind->points != points.size())
+                throw std::runtime_error("the mesh changed since the Soft Net was bound; run softNetRebind");
+            pending = mTable;
+            bind = mBind;
+        }
+        // At rest the table is only started, so it builds while nothing waits on it.
         if (knots.empty() && tangents.empty())
             return;
-
-        std::lock_guard lock(mMutex);
-        const std::string text = as<std::string>(t.attrIndex("binding"));
-        const double reach = as<double>(t.attrIndex("reach")), stiffness = as<double>(t.attrIndex("stiffness"));
-        if (text != mText || reach != mReach || stiffness != mStiffness || mTable.points() != points.size())
+        if (!pending.valid())
+            return;
+        InfluencePtr table;
         {
-            mText = text;
-            mReach = reach;
-            mStiffness = stiffness;
-            mBind = MeshBind::fromJson(text);
-            mTable = {};
-            if (mBind.points == points.size())
-                mTable = sn::buildInfluence(in, mBind.samples, mBind.runs, mBind.knots, mBind.tangentRest.size(), mBind.edge,
-                                            reach > 0.0 ? reach : mBind.autoReach, stiffness);
+            LILA_ZONE_N("softNet wait for table");
+            table = pending.get();
         }
-        if (mBind.points != points.size())
-            throw std::runtime_error("the mesh changed since the Soft Net was bound; run softNetRebind");
-        if (mTable.points() == 0)
+        if (!table || table->points() == 0)
             return;
         const Matrices* frames = matricesOf(*this, t.attrIndex("frames"));
-        if (!frames || frames->m.size() < mBind.knots)
+        if (!frames || frames->m.size() < bind->knots)
             return;
         // A mesh other than the body has the body's frames carried into its own object space.
         glm::dmat4 toMesh(1.0);
         const int64_t slot = as<int64_t>(t.attrIndex("meshIndex"));
         if (const Matrices* spaces = matricesOf(*this, t.attrIndex("spaces")); slot > 0 && spaces && size_t(slot) < spaces->m.size())
             toMesh = glm::inverse(spaces->m[size_t(slot)]) * spaces->m[0];
-        const std::vector<glm::dvec3> moves = dofMoves(mBind, frames->m, knots, tangents, toMesh);
+        const std::vector<glm::dvec3> moves = dofMoves(*bind, frames->m, knots, tangents, toMesh);
         std::vector<glm::dvec3> moved(points.size(), glm::dvec3(0.0));
-        mTable.apply(moves, moved);
+        table->apply(moves, moved);
         for (size_t i = 0; i < points.size(); ++i)
             points[i] += moved[i];
     }
@@ -378,8 +433,9 @@ private:
     mutable std::mutex mMutex;
     mutable std::string mText;
     mutable double mReach = -1.0, mStiffness = -1.0;
-    mutable MeshBind mBind;
-    mutable sn::InfluenceTable mTable;
+    mutable uint64_t mTopology = 0;
+    mutable std::shared_ptr<const MeshBind> mBind = std::make_shared<const MeshBind>();
+    mutable std::shared_future<InfluencePtr> mTable;
 };
 
 /** Keeps every knots group's world matrix on its body mesh's, and the bound meshes' matrices current, after each evaluation. */
