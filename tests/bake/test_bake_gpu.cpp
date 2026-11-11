@@ -361,6 +361,32 @@ TEST_CASE("GPU bake matches the CPU: self highs per low and unlinked occluders, 
     }
 }
 
+TEST_CASE("GPU bake: a self high ignores its low's normal map")
+{
+    if (gpuBackends().empty())
+        return;
+    newScene();
+    const fs::path dir = tempDir("lila_bake_gpu_selfnormal");
+    const glm::vec3 tilt(std::sin(glm::radians(30.0f)), 0.0f, std::cos(glm::radians(30.0f)));
+    image::Image nm{2, 2, {}};
+    for (int i = 0; i < 4; ++i)
+        nm.rgba.insert(nm.rgba.end(), {tilt.x * 0.5f + 0.5f, 0.5f, tilt.z * 0.5f + 0.5f, 1.0f});
+    image::write(dir / "n.png", nm, 16);
+    ops::execute("createMaterial", {{"args", {"M_Baked"}}, {"normalMap", (dir / "n.png").generic_string()}});
+    geo::Mesh flat = plane(4);
+    scene::materials::assign(flat, "M_Baked", {});
+    const std::string low = addMesh("low", std::move(flat));
+    const std::string p = project(dir, 16, 1, "png");
+    ops::execute("bakeGroup", {{"args", {"g"}}, {"project", p}, {"lows", {low}}, {"self", true}, {"frontal", 1.0}, {"rear", 1.0}});
+    ops::execute("setBakeMap", {{"args", {"normal"}}, {"project", p}, {"options", {{"highNormalMap", true}}}});
+    for (const std::string& be : gpuBackends())
+    {
+        INFO("backend " << be);
+        const Baked gpu = bakeWith(p, {"normal"}, be);
+        CHECK(angleDegOrFlat(glm::vec3(texel(gpu.maps.at("normal"), 8, 8)) * 2.0f - 1.0f, glm::vec3(0, 0, 1)) < 0.5f);
+    }
+}
+
 TEST_CASE("GPU dilation fills the same texels as the CPU and copies values exactly")
 {
     if (gpuBackends().empty())
@@ -580,6 +606,7 @@ TEST_CASE("GPU bake matches the CPU: material transfer, vertex colours, the high
     opts("vertexColor", {{"set", "paint"}});
     opts("id", {{"source", "vertexColor"}});
     opts("wireframe", {{"width", 1.5}});
+    opts("normal", {{"highNormalMap", true}});
     const std::vector<std::string> maps{"baseColor", "roughness", "metallic", "emissive", "materialOpacity", "normal", "vertexColor",
                                         "id",        "wireframe", "islandBorder", "uvIslands", "error", "alpha"};
     const Baked cpu = bakeWith(p, maps, "cpu");

@@ -84,7 +84,7 @@ GpuResident::Kernel GpuResident::makeKernel(size_t m, size_t g)
     k.layout = b.mLayoutSw;
     k.rate = &b.mShadeRate;
     auto normalMaps = [&] {
-        if (!option(o, "highNormalMap", true))
+        if (!option(o, "highNormalMap", false))
             return;
         if (const uint64_t t = normalMapTable(g))
         {

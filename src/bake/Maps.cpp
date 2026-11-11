@@ -376,8 +376,8 @@ void registerBuiltinMaps()
                  .label = "Normal",
                  .suffix = "normal",
                  .doc = "Tangent-space normal in the MikkTSpace per-fragment frame Unreal and the viewport decode. DirectX (green down) by "
-                        "default; options greenUp (OpenGL, Painter) and flipX. highNormalMap (true) applies the high's own normal "
-                        "map where its material has one.",
+                        "default; options greenUp (OpenGL, Painter) and flipX. highNormalMap (off) adds the high's own material "
+                        "normal map; self highs never use it.",
                  .background = {0.5f, 0.5f, 1.0f, 1.0f},
                  .cpu = normalKernel,
                  .finalize = renormalize,
@@ -385,7 +385,7 @@ void registerBuiltinMaps()
     registerMap({.id = "objectNormal",
                  .label = "Object Normal",
                  .suffix = "normalobj",
-                 .doc = "The high's normal in bake (world) space, n * 0.5 + 0.5. option highNormalMap (true) as for normal.",
+                 .doc = "The high's normal in bake (world) space, n * 0.5 + 0.5. option highNormalMap (off) as for normal.",
                  .background = {0.5f, 0.5f, 0.5f, 1.0f},
                  .cpu = objectNormalKernel,
                  .finalize = renormalize,

@@ -313,6 +313,9 @@ TEST_CASE("material transfer: constants, textures, the high's normal map and ORM
     const std::string p = project(dir, 16, 1, "png", "{group}_{map}");
     group(p, "a", lowA, {hiA});
     group(p, "b", lowB, {hiB});
+    const json plain = ops::execute("bake", {{"project", p}, {"groups", {"b"}}, {"maps", {"normal"}}});
+    CHECK(angleDeg(glm::vec3(texel(readImage(outputFor(plain, "normal")), 8, 8)) * 2.0f - 1.0f, glm::vec3(0, 0, 1)) < 0.5f);
+    setMap(p, "normal", {{"highNormalMap", true}});
     const json r = ops::execute("bake", {{"project", p}, {"maps", {"baseColor", "roughness", "metallic", "emissive", "materialOpacity", "orm", "normal"}}});
 
     auto file = [&](const std::string& map, const std::string& grp) {
@@ -545,6 +548,27 @@ TEST_CASE("links: a self high projects only onto its own low; unlinked meshes st
     ops::execute("bakeGroup", {{"args", {"g"}}, {"unlinks", json::array({json{{"lows", {f2}}, {"meshes", {roof}}}})}});
     CHECK(ops::execute("bakeGroup", {{"args", {"g"}}})["unlinks"].size() == 1);
     CHECK(ao() == doctest::Approx(1.0f).epsilon(0.01));
+}
+
+TEST_CASE("a self high ignores its low's normal map, so rebaking doesn't compound the last bake")
+{
+    newScene();
+    const fs::path dir = tempDir("lila_bakemaps_selfnormal");
+    const glm::vec3 tilt(std::sin(glm::radians(30.0f)), 0.0f, std::cos(glm::radians(30.0f)));
+    image::Image nm{2, 2, {}};
+    for (int i = 0; i < 4; ++i)
+        nm.rgba.insert(nm.rgba.end(), {tilt.x * 0.5f + 0.5f, 0.5f, tilt.z * 0.5f + 0.5f, 1.0f});
+    image::write(dir / "n.png", nm, 16);
+    ops::execute("createMaterial", {{"args", {"M_Baked"}}, {"normalMap", (dir / "n.png").generic_string()}});
+    geo::Mesh flat = plane(4);
+    scene::materials::assign(flat, "M_Baked", {});
+    const std::string low = addMesh("low", std::move(flat));
+    const std::string p = project(dir, 16, 1, "png", "{group}_{map}");
+    ops::execute("bakeGroup", {{"args", {"g"}}, {"project", p}, {"lows", {low}}, {"self", true}, {"frontal", 1.0}, {"rear", 1.0}});
+    setMap(p, "normal", {{"highNormalMap", true}});
+    const json r = ops::execute("bake", {{"project", p}, {"maps", {"normal"}}, {"backend", "cpu"}});
+    const glm::vec3 n = glm::vec3(texel(readImage(outputFor(r, "normal")), 8, 8)) * 2.0f - 1.0f;
+    CHECK(angleDeg(n, glm::vec3(0, 0, 1)) < 0.5f);
 }
 
 TEST_CASE("material slots of one low with overlapping UVs each fill their own texture")
