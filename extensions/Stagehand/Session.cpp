@@ -147,8 +147,9 @@ void Session::sweep(const glm::dvec3& center, const glm::dvec3& motion, double r
         else
             want = glm::normalize(along) * speed;
         const double fall = 1.0 - 0.5 * d / std::max(radius, 1e-6);
-        // Steers the sideways velocity toward the broom's, leaving falling and toppling to the simulation.
-        s.kick(int(i), (want - flat(s.velocity(int(i)))) * 0.25 * fall);
+        // Takes on the broom's sideways velocity (half of it at the rim), so what it catches travels with it; falling
+        // and toppling stay with the simulation.
+        s.kick(int(i), (want - flat(s.velocity(int(i)))) * fall);
     }
 }
 
