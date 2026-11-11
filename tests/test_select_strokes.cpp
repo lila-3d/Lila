@@ -5,6 +5,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <cmath>
 
 using namespace lila;
 
@@ -53,6 +54,30 @@ TEST_CASE("lasso extend skips points too close to the last")
     auto [lo, hi] = geo::lasso::bounds({{3, -1}, {-2, 4}, {1, 1}});
     CHECK(lo == glm::dvec2(-2, -1));
     CHECK(hi == glm::dvec2(3, 4));
+}
+
+TEST_CASE("screen distance to a segment clamps to its ends")
+{
+    using geo::lasso::segmentDistance;
+    CHECK(segmentDistance({5, 3}, {0, 0}, {10, 0}) == doctest::Approx(3.0));
+    CHECK(segmentDistance({-3, 4}, {0, 0}, {10, 0}) == doctest::Approx(5.0));
+    CHECK(segmentDistance({13, -4}, {0, 0}, {10, 0}) == doctest::Approx(5.0));
+    CHECK(segmentDistance({1, 1}, {2, 2}, {2, 2}) == doctest::Approx(std::sqrt(2.0)));
+}
+
+TEST_CASE("a segment touches a box it crosses even with both ends outside")
+{
+    using geo::lasso::segmentTouchesBox;
+    const glm::dvec2 lo(0, 0), hi(10, 10);
+    CHECK(segmentTouchesBox({-50, 5}, {50, 5}, lo, hi));
+    CHECK(segmentTouchesBox({-5, -5}, {15, 15}, lo, hi));
+    CHECK(segmentTouchesBox({2, 2}, {3, 3}, lo, hi));
+    CHECK(segmentTouchesBox({5, 5}, {50, 50}, lo, hi));
+    CHECK_FALSE(segmentTouchesBox({-50, 20}, {50, 20}, lo, hi));
+    // Its bounds overlap the box but the line passes the corner.
+    CHECK_FALSE(segmentTouchesBox({-5, 8}, {8, 21}, lo, hi));
+    CHECK_FALSE(segmentTouchesBox({20, 0}, {20, 10}, lo, hi));
+    CHECK(geo::lasso::touches(geo::lasso::box(lo, hi), {{-50, 5}, {50, 5}}));
 }
 
 TEST_CASE("tab select mode is decided by what is under the press")

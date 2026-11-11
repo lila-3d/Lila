@@ -5,6 +5,7 @@
 #include "core/Profile.h"
 #include "curve/CurveNodes.h"
 #include "curve/Tessellate.h"
+#include "geo/Lasso.h"
 #include "ops/Command.h"
 #include "ops/CommandOptions.h"
 #include "scene/Components.h"
@@ -432,33 +433,37 @@ void drawCurve(drawOverrides::DrawContext& c)
     }
 }
 
+/** Clicks take the screen distance to the nearest drawn segment; a marquee or lasso takes any segment crossing it. */
 std::optional<double> pickCurve(const drawOverrides::PickContext& c)
 {
-    QRectF box = QRectF(c.a, c.b).normalized();
+    const glm::dvec2 lo(std::min(c.a.x(), c.b.x()), std::min(c.a.y(), c.b.y())), hi(std::max(c.a.x(), c.b.x()), std::max(c.a.y(), c.b.y()));
+    const glm::dvec2 at(c.a.x(), c.a.y());
     std::optional<double> best;
-    for (const curve::Polyline& pl : linesOf(c.node))
-    {
-        size_t segs = pl.closed ? pl.size() : (pl.size() ? pl.size() - 1 : 0);
-        for (size_t i = 0; i < segs; ++i)
+    auto test = [&](const std::vector<curve::Polyline>& lines, const glm::dmat4& world) {
+        for (const curve::Polyline& pl : lines)
         {
-            auto p0 = c.view.project(xf(c.world, pl.points[i])), p1 = c.view.project(xf(c.world, pl.points[(i + 1) % pl.size()]));
-            if (!p0 || !p1)
-                continue;
-            if (!c.click)
+            size_t segs = pl.closed ? pl.size() : (pl.size() ? pl.size() - 1 : 0);
+            for (size_t i = 0; i < segs; ++i)
             {
-                if (box.contains(*p0) || box.contains(*p1))
-                    return 0.0;
-                continue;
+                auto q0 = c.view.project(xf(world, pl.points[i])), q1 = c.view.project(xf(world, pl.points[(i + 1) % pl.size()]));
+                if (!q0 || !q1)
+                    continue;
+                const glm::dvec2 p0(q0->x(), q0->y()), p1(q1->x(), q1->y());
+                if (c.click)
+                {
+                    const double d = geo::lasso::segmentDistance(at, p0, p1);
+                    if (!best || d < *best)
+                        best = d;
+                }
+                else if (geo::lasso::segmentTouchesBox(p0, p1, lo, hi) && (!c.lasso || geo::lasso::touches(*c.lasso, {p0, p1})))
+                    return true;
             }
-            QPointF d = *p1 - *p0;
-            double len2 = QPointF::dotProduct(d, d);
-            double t = len2 > 0 ? std::clamp(QPointF::dotProduct(c.a - *p0, d) / len2, 0.0, 1.0) : 0.0;
-            QPointF q = *p0 + d * t - c.a;
-            double dist = std::hypot(q.x(), q.y());
-            if (!best || dist < *best)
-                best = dist;
         }
-    }
+        return false;
+    };
+    // Symmetry copies are drawn in world space and pick as the curve.
+    if (test(linesOf(c.node), c.world) || test(mirrorLinesOf(c.node), glm::dmat4(1.0)))
+        return 0.0;
     return best;
 }
 
@@ -623,7 +628,7 @@ bool drawStrandsFor(render::FrameState& frame, const scene::Node& n, const glm::
 void registerCurveUi()
 {
     if (!drawOverrides::registry().find("lila.curve"))
-        drawOverrides::add({.id = "lila.curve", .nodeType = "curve", .draw = drawCurve, .pick = pickCurve});
+        drawOverrides::add({.id = "lila.curve", .nodeType = "curve", .draw = drawCurve, .pick = pickCurve, .picksLasso = true});
     registerCurveActions();
     registerCurveTools();
     registerEzCurveTool();
