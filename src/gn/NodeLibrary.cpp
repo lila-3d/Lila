@@ -32,6 +32,8 @@ void registerNodeLibrary()
     nodes::registerDataNodes();
     nodes::registerProceduralNodes();
     nodes::registerVolumeNodes();
+    nodes::registerGridNodes();
+    nodes::registerToolNodes();
     nodes::registerWrangleNode();
     nodes::registerZoneNodes();
     nodes::registerMatrixNodes();

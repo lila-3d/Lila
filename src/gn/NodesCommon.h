@@ -252,6 +252,8 @@ void registerGameNodes();
 void registerDataNodes();
 void registerProceduralNodes();
 void registerVolumeNodes();
+void registerGridNodes();
+void registerToolNodes();
 void registerWrangleNode();
 void registerZoneNodes();
 void registerMatrixNodes();

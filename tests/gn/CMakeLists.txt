@@ -5,6 +5,7 @@ add_executable(lila_gn_tests
     test_gn_groups.cpp
     test_gn_relocate.cpp
     test_gn_sim.cpp
+    test_gn_tool.cpp
     test_gn_voronoi.cpp
     test_nodes.cpp
     test_nodes_meshops.cpp
@@ -16,6 +17,7 @@ add_executable(lila_gn_tests
     test_nodes_game.cpp
     test_nodes_procedural.cpp
     test_nodes_volume.cpp
+    test_nodes_grid.cpp
     test_nodes_wrangle.cpp
     test_nodes_zones.cpp
     test_nodes_canvas_zones.cpp

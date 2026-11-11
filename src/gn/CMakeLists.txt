@@ -36,6 +36,9 @@ lila_module(lila_gn Scene
     NodesData.cpp
     NodesProcedural.cpp
     NodesVolume.cpp
+    NodesGrid.cpp
+    NodesTool.cpp
+    Tool.cpp
     NodesWrangle.cpp
     NodesZones.cpp
     NodesMatrix.cpp
