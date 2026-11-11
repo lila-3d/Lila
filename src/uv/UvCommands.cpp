@@ -930,18 +930,44 @@ namespace
 /**
  * When the faces lie on both sides of the symmetry plane: those on the side holding more of them, plus any across the plane.
  * The projection fits and maps these and the other side mirrors them; a fit through both halves averages their normals away.
+ * Empty when a connected piece of the faces spans the plane (a ring around it): that piece projects whole, as one island.
  */
 std::vector<Index> oneSide(const geo::Mesh& m, const geo::SymmetryMap& map, std::span<const Index> faces)
 {
     std::vector<Index> pos, neg, across;
+    std::vector<int8_t> side(m.faceCapacity(), 2); // 2: not among the faces
     for (Index f : liveFaces(m, faces))
     {
         int sum = 0;
         m.forEachFaceCorner(f, [&](Index c) { sum += map.side(m.cornerPoint(c)); });
         (sum > 0 ? pos : sum < 0 ? neg : across).push_back(f);
+        side[f] = int8_t(sum > 0 ? 1 : sum < 0 ? -1 : 0);
     }
     if (pos.empty() || neg.empty())
         return {};
+    std::vector<uint8_t> seen(m.faceCapacity(), 0);
+    for (Index start : pos)
+    {
+        if (seen[start])
+            continue;
+        std::vector<Index> stack = {start};
+        seen[start] = 1;
+        while (!stack.empty())
+        {
+            const Index f = stack.back();
+            stack.pop_back();
+            if (side[f] < 0)
+                return {};
+            m.forEachFaceCorner(f, [&](Index c) {
+                const Index o = m.oppositeFace(m.cornerEdge(c), f);
+                if (o != kInvalid && side[o] != 2 && !seen[o])
+                {
+                    seen[o] = 1;
+                    stack.push_back(o);
+                }
+            });
+        }
+    }
     std::vector<Index>& out = pos.size() >= neg.size() ? pos : neg;
     out.insert(out.end(), across.begin(), across.end());
     std::sort(out.begin(), out.end());

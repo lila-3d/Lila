@@ -570,6 +570,38 @@ TEST_CASE("planar projection with symmetry fits one side, not both")
     CHECK(info["areaDistortion"]["max"].get<double>() < 0.1);
 }
 
+TEST_CASE("planar projection with symmetry keeps a ring across the plane whole")
+{
+    run("newScene");
+    std::string ring = run("polyCylinder", {{"radius", 10}, {"height", 2}, {"subdivisionsAxis", 24}, {"caps", false}})[0];
+    run("setSymmetry", {{"args", {ring}}, {"axis", "x"}});
+    // Stacked halves first, as Hose UVs leave a symmetric ring: the projection must not keep that pairing.
+    run("select", {{"args", {ring}}});
+    run("uvHose");
+    run("select", {{"args", {ring}}});
+    run("uvProject", {{"type", "planar"}, {"axis", "y"}});
+    scene::MeshPtr m = cageOf(ring);
+    std::span<const glm::vec2> uv = std::as_const(*m).cornerAttrs().get<glm::vec2>("uv0");
+    REQUIRE(!uv.empty());
+    // A whole ring seen from above: points at +x and -x land on opposite sides in u, not on top of each other.
+    double plus = 0.0, minus = 0.0, lo = 1e9, hi = -1e9;
+    int np = 0, nm = 0;
+    for (geo::Index c = 0; c < m->cornerCapacity(); ++c)
+        if (m->cornerValid(c))
+        {
+            lo = std::min(lo, double(uv[c].x));
+            hi = std::max(hi, double(uv[c].x));
+            const double x = m->position(m->cornerPoint(c)).x;
+            if (x > 5.0)
+                plus += uv[c].x, ++np;
+            else if (x < -5.0)
+                minus += uv[c].x, ++nm;
+        }
+    REQUIRE(np > 0);
+    REQUIRE(nm > 0);
+    CHECK(std::abs(plus / np - minus / nm) > 0.5 * (hi - lo));
+}
+
 TEST_CASE("projection under an auto bevel splits the bevelled result too")
 {
     run("newScene");
