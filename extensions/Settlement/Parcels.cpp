@@ -897,6 +897,76 @@ std::vector<double> streetAccess(const StreetGraph& g)
     return out;
 }
 
+/**
+ * Lots from index first on that share area with a lot of another block are left out, the smaller of two new ones, and
+ * said so in the warnings: where two blocks' insets meet at a sharp junction, their lots can reach into each other.
+ * Lots before first are never removed, so their ids stay. Returns how many went.
+ */
+size_t dropOverlappingLots(Layout& l, size_t first, std::vector<char>* fresh)
+{
+    if (first >= l.lots.size())
+        return 0;
+    auto bounds = [](const Polygon& p) {
+        Vec2 lo(std::numeric_limits<double>::max()), hi(-std::numeric_limits<double>::max());
+        for (const Vec2& q : p.pts)
+            lo = glm::min(lo, q), hi = glm::max(hi, q);
+        return std::pair{lo, hi};
+    };
+    Vec2 all0(std::numeric_limits<double>::max()), all1(-std::numeric_limits<double>::max());
+    for (size_t k = first; k < l.lots.size(); ++k)
+    {
+        const auto [lo, hi] = bounds(l.lots[k].outline);
+        all0 = glm::min(all0, lo), all1 = glm::max(all1, hi);
+    }
+    const double cell = std::max(2000.0, l.profile.lotDepth);
+    std::unordered_map<int64_t, std::vector<size_t>> bins;
+    auto key = [](int x, int y) { return (int64_t(x) << 32) ^ int64_t(uint32_t(y)); };
+    for (size_t k = 0; k < l.lots.size(); ++k)
+    {
+        const auto [lo, hi] = bounds(l.lots[k].outline);
+        if (hi.x < all0.x || lo.x > all1.x || hi.y < all0.y || lo.y > all1.y)
+            continue;
+        for (int y = int(std::floor(lo.y / cell)); y <= int(std::floor(hi.y / cell)); ++y)
+            for (int x = int(std::floor(lo.x / cell)); x <= int(std::floor(hi.x / cell)); ++x)
+                bins[key(x, y)].push_back(k);
+    }
+    std::vector<char> drop(l.lots.size(), 0);
+    for (const auto& [k, list] : bins)
+        for (size_t m = 0; m < list.size(); ++m)
+            for (size_t n = m + 1; n < list.size(); ++n)
+            {
+                size_t a = std::min(list[m], list[n]), b = std::max(list[m], list[n]);
+                if (b < first || drop[a] || drop[b] || l.lots[a].block == l.lots[b].block)
+                    continue;
+                if (l.lots[a].outline.pts.size() < 3 || l.lots[b].outline.pts.size() < 3 || !polygonsShareArea(l.lots[a].outline, l.lots[b].outline, 2.0))
+                    continue;
+                drop[a >= first && l.lots[a].area < l.lots[b].area ? a : b] = 1;
+            }
+    size_t gone = 0, w = first;
+    for (size_t k = first; k < l.lots.size(); ++k)
+    {
+        if (drop[k])
+        {
+            l.parcelWarnings.push_back("lot of block " + std::to_string(l.blocks[size_t(l.lots[k].block)].key) +
+                                       " overlapped the next block's lots at a sharp junction and was left open");
+            ++gone;
+            continue;
+        }
+        if (w != k)
+        {
+            l.lots[w] = std::move(l.lots[k]);
+            if (fresh)
+                (*fresh)[w] = (*fresh)[k];
+        }
+        l.lots[w].id = int(w);
+        ++w;
+    }
+    l.lots.resize(w);
+    if (fresh)
+        fresh->resize(w);
+    return gone;
+}
+
 void planParcels(Layout& l, const Site& site, const Ground& g, const Options& o)
 {
     LILA_ZONE();
@@ -929,6 +999,7 @@ void planParcels(Layout& l, const Site& site, const Ground& g, const Options& o)
         }
     }
 
+    dropOverlappingLots(l, 0, nullptr);
     placeLandmarks(l, g, era);
     assignUses(l, g, era);
     applyLotOverrides(l, site);
@@ -1076,6 +1147,7 @@ int replanParcels(Layout& l, const Site& site, const Ground& g, const Options& o
     typeBlocks(l, g, site, era, firstFresh);
 
     int cut = 0;
+    const size_t firstFreshLot = l.lots.size();
     for (Block& b : std::span(l.blocks).subspan(firstFresh))
     {
         ++cut;
@@ -1101,6 +1173,7 @@ int replanParcels(Layout& l, const Site& site, const Ground& g, const Options& o
         }
     }
 
+    dropOverlappingLots(l, firstFreshLot, &fresh);
     // New lots rank against the cuts the whole town's ranking made; a layout made before them is ranked again whole.
     if (l.useCuts.set)
         assignUses(l, g, era, &fresh);
