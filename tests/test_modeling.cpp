@@ -327,6 +327,91 @@ TEST_CASE("bounding mesh: fitted collision named and parented for Unreal")
     CHECK(run("ls", {{"type", "polyCapsule"}}).empty());
 }
 
+TEST_CASE("bounding mesh: collision hull from a component selection, one per mesh")
+{
+    run("newScene");
+    std::string crate = run("polyCube", {{"name", "Crate"}, {"width", 100}, {"height", 100}, {"depth", 100}, {"position", {0, 0, 0}}})[0];
+    std::string barrel = run("polyCube", {{"name", "Barrel"}, {"width", 100}, {"height", 100}, {"depth", 100}, {"position", {300, 0, 0}}})[0];
+    // The (+,+,+) corner and its three neighbours: a tetrahedron.
+    auto corner = [](const std::string& name) {
+        scene::Graph& g = scene::Graph::current();
+        g.evaluate();
+        scene::MeshPtr m = g.find(name)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+        json ids = json::array();
+        for (geo::Index p = 0; p < m->pointCapacity(); ++p)
+            if (m->pointValid(p))
+            {
+                glm::dvec3 q = m->position(p);
+                if ((q.x > 0) + (q.y > 0) + (q.z > 0) >= 2)
+                    ids.push_back(p);
+            }
+        return ids;
+    };
+    run("boundingMesh", {{"args", {crate}}, {"shape", "hull"}});
+    REQUIRE(corner(crate).size() == 4);
+    run("selectComponents", {{"args", {crate}}, {"vertices", corner(crate)}});
+    run("selectComponents", {{"args", {barrel}}, {"vertices", corner(barrel)}, {"add", true}});
+
+    json made = run("boundingMesh", {{"shape", "hull"}});
+    REQUIRE(made.size() == 2);
+    CHECK(made[0] == "UCX_Crate_01");
+    CHECK(made[1] == "UCX_Barrel");
+    CHECK(run("listRelatives", {{"args", {made[0]}}, {"parent", true}}) == json::array({crate}));
+    CHECK(run("listRelatives", {{"args", {made[1]}}, {"parent", true}}) == json::array({barrel}));
+    json info = run("meshInfo", {{"args", {made[1]}}});
+    CHECK(info["points"] == 4);
+    CHECK(info["worldBoundsMin"][0].get<double>() == doctest::Approx(250.0));
+    CHECK(info["worldBoundsMax"][1].get<double>() == doctest::Approx(50.0));
+
+    run("undo");
+    CHECK(run("ls", {{"args", {"UCX_Barrel"}}}).empty());
+
+    // A face's vertices are flat: a clear error, nothing created.
+    run("selectComponents", {{"args", {barrel}}, {"faces", {0}}});
+    CHECK_THROWS_WITH(run("boundingMesh", {{"shape", "hull"}}), doctest::Contains("lie on one plane"));
+    CHECK(run("ls", {{"args", {"UCX_Barrel"}}}).empty());
+}
+
+TEST_CASE("bounding mesh: hulls from a symmetric component selection")
+{
+    run("newScene");
+    std::string cube = run("polyCube", {{"name", "Hull"}, {"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"subdivisionsX", 4}})[0];
+    run("setSymmetry", {{"args", {cube}}, {"axis", "x"}});
+    geo::Mesh m = meshOf(cube);
+    scene::components::Ids pts;
+    for (geo::Index p = 0; p < m.pointCapacity(); ++p)
+        if (m.pointValid(p) && m.position(p).x > 20.0)
+            pts.push_back(p);
+    auto select = [&] { run("selectComponents", {{"args", {cube}}, {"vertices", pts}, {"symmetric", true}}); };
+
+    select();
+    json perSide = run("boundingMesh", {{"shape", "hull"}});
+    REQUIRE(perSide.size() == 2);
+    double minX = 1e9, maxX = -1e9;
+    for (const json& h : perSide)
+    {
+        json info = run("meshInfo", {{"args", {h}}});
+        CHECK(info["worldBoundsMax"][0].get<double>() - info["worldBoundsMin"][0].get<double>() == doctest::Approx(25.0));
+        minX = std::min(minX, info["worldBoundsMin"][0].get<double>());
+        maxX = std::max(maxX, info["worldBoundsMax"][0].get<double>());
+    }
+    CHECK(minX == doctest::Approx(-50.0));
+    CHECK(maxX == doctest::Approx(50.0));
+    run("undo");
+
+    select();
+    json clicked = run("boundingMesh", {{"shape", "hull"}, {"symmetry", "clickedSide"}});
+    REQUIRE(clicked.size() == 1);
+    run("undo");
+
+    select();
+    json merged = run("boundingMesh", {{"shape", "hull"}, {"symmetry", "selection"}});
+    REQUIRE(merged.size() == 1);
+    json info = run("meshInfo", {{"args", {merged[0]}}});
+    CHECK(info["worldBoundsMin"][0].get<double>() == doctest::Approx(-50.0));
+    CHECK(info["worldBoundsMax"][0].get<double>() == doctest::Approx(50.0));
+}
+
 TEST_CASE("component normals are area weighted and selection aware")
 {
     geo::Mesh cube = geo::makeCube({});

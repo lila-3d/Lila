@@ -161,6 +161,7 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"mesh.extract", "box-model"},
     {"mesh.duplicateFaces", "copy"},
     {"mesh.boundingMesh", "box"},
+    {"mesh.collisionHull", "hexagon-3d"},
     {"mesh.multiBoxBounds", "box-multiple"},
     {"mesh.mirror", "flip-vertical"},
     {"mesh.toggleSymmetry", "flip-vertical"},

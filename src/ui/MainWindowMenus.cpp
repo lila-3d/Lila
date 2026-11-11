@@ -146,7 +146,7 @@ void MainWindow::buildMenus()
                           "select.edgesByCenter", "select.facesByCenter"});
 
     menu("Mesh", "Mesh", Area::MenuBar, {}, "", {"Model", "Sculpt", "Level"});
-    menus::addActions("Mesh", {"#Combine", "mesh.combine", "mesh.smartJoin", "mesh.separate", "mesh.splitMeshTool", "mesh.extract", "mesh.duplicateFaces", "mesh.boundingMesh", "mesh.multiBoxBounds",
+    menus::addActions("Mesh", {"#Combine", "mesh.combine", "mesh.smartJoin", "mesh.separate", "mesh.splitMeshTool", "mesh.extract", "mesh.duplicateFaces", "mesh.boundingMesh", "mesh.collisionHull", "mesh.multiBoxBounds",
                                "#Mirror", "mesh.mirror", "#Booleans", "mesh.booleanUnion", "mesh.booleanDifference", "mesh.booleanIntersection"});
     addSubmenu("Mesh", "Clay");
     menus::addActions("Mesh/Clay", {"clay.create", "clay.tool", "clay.addShape", "clay.addCut", "clay.group", "", "clay.refresh", "clay.convert"});
