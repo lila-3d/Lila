@@ -550,6 +550,23 @@ TEST_CASE("links: a self high projects only onto its own low; unlinked meshes st
     CHECK(ao() == doctest::Approx(1.0f).epsilon(0.01));
 }
 
+TEST_CASE("AO: a point buried inside another high isn't black")
+{
+    newScene();
+    const fs::path dir = tempDir("lila_bakemaps_buried");
+    // The floor's middle runs through a closed 30 cm box, like a strand entering a scalp.
+    const std::string floor = addMesh("floor", plane(1));
+    const std::string box = addMesh("box", geo::makeCube({.width = 30.0, .height = 30.0, .depth = 30.0}));
+    const std::string p = project(dir, 16, 1, "exr");
+    ops::execute("bakeGroup", {{"args", {"g"}}, {"project", p}, {"lows", {floor}}, {"self", true}, {"addHigh", {box}}, {"frontal", 2.0}, {"rear", 2.0}});
+    setMap(p, "ao", {{"rays", 64}, {"distance", 100.0}});
+    const json out = ops::execute("bake", {{"project", p}, {"maps", {"ao"}}, {"backend", "cpu"}});
+    const image::Image img = readImage(outputFor(out, "ao"));
+    CHECK(texel(img, 8, 8).r > 0.9f);
+    // Beside the box the floor still darkens toward it.
+    CHECK(texel(img, 5, 8).r < 0.9f);
+}
+
 TEST_CASE("a self high ignores its low's normal map, so rebaking doesn't compound the last bake")
 {
     newScene();

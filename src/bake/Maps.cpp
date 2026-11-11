@@ -257,6 +257,31 @@ void islandKernel(const MapContext& ctx, std::span<const TexelSample> samples, s
     }
 }
 
+/** A front-facing surface within tMax, stepping through back faces on the way. */
+bool frontOccluded(const MapContext& ctx, OccluderScope scope, uint32_t high, uint32_t low, glm::vec3 o, const glm::vec3& d, float tMax)
+{
+    const float step = std::max(1e-4f * glm::length(ctx.group.highMax - ctx.group.highMin), 1e-4f);
+    for (int crossings = 0; crossings < 16 && tMax > 0.0f; ++crossings)
+    {
+        TraceHit th;
+        if (!ctx.tracer->closestHit(ctx.groupIndex, scope, high, low, RayKind::Occlusion, o, d, tMax, th))
+            return false;
+        if (!th.backface)
+            return true;
+        o += d * (th.distance + step);
+        tMax -= th.distance + step;
+    }
+    return false;
+}
+
+/** The surface met along n is a back face of a high that also closes behind the point (along -n): an open lid doesn't. */
+bool aoBuried(const MapContext& ctx, OccluderScope scope, uint32_t low, const glm::vec3& o, const glm::vec3& n, float tMax)
+{
+    TraceHit up, down;
+    return ctx.tracer->closestHit(ctx.groupIndex, scope, kNoHit, low, RayKind::Occlusion, o, n, tMax, up) && up.backface && up.high != kNoHit &&
+           ctx.tracer->closestHit(ctx.groupIndex, OccluderScope::Self, up.high, kNoHit, RayKind::Occlusion, o, -n, tMax, down) && down.backface;
+}
+
 void aoKernel(const MapContext& ctx, std::span<const TexelSample> samples, std::span<const HitRecord> hits, std::span<glm::vec4> out,
               std::span<uint8_t> valid)
 {
@@ -283,16 +308,32 @@ void aoKernel(const MapContext& ctx, std::span<const TexelSample> samples, std::
         const glm::vec3 o = v3(h.position) + n * eps;
         const uint32_t seed = hashBits(samples[i].texel * 64u + samples[i].sub) ^ hashBits(samples[i].tile);
         const float r1 = float(seed & 0xffff) / 65536.0f, r2 = float(seed >> 16) / 65536.0f;
-        int blocked = 0;
-        for (int k = 0; k < rays; ++k)
-        {
+        auto direction = [&](int k) {
             const float u = std::fmod((float(k) + 0.5f) / float(rays) + r1, 1.0f);
             const float v = std::fmod(radicalInverse(uint32_t(k)) + r2, 1.0f);
             // Cosine-weighted hemisphere.
             const float r = std::sqrt(u), phi = 6.28318530718f * v;
-            const glm::vec3 d = unit(t * (r * std::cos(phi)) + b * (r * std::sin(phi)) + n * std::sqrt(std::max(0.0f, 1.0f - u)));
-            if (ctx.tracer->occluded(ctx.groupIndex, scope, h.high, samples[i].low, o, d, dist))
+            return unit(t * (r * std::cos(phi)) + b * (r * std::sin(phi)) + n * std::sqrt(std::max(0.0f, 1.0f - u)));
+        };
+        int blocked = 0, backs = 0;
+        for (int k = 0; k < rays; ++k)
+        {
+            const glm::vec3 d = direction(k);
+            TraceHit th;
+            if (scope == OccluderScope::Self)
+                blocked += ctx.tracer->occluded(ctx.groupIndex, scope, h.high, samples[i].low, o, d, dist) ? 1 : 0;
+            else if (ctx.tracer->closestHit(ctx.groupIndex, scope, h.high, samples[i].low, RayKind::Occlusion, o, d, dist, th))
+            {
                 ++blocked;
+                backs += th.backface ? 1 : 0;
+            }
+        }
+        // Buried inside another high (where parts meet): only front faces occlude it.
+        if (backs * 4 >= rays * 3 && aoBuried(ctx, scope, samples[i].low, o, n, dist))
+        {
+            blocked = 0;
+            for (int k = 0; k < rays; ++k)
+                blocked += frontOccluded(ctx, scope, h.high, samples[i].low, o, direction(k), dist) ? 1 : 0;
         }
         const float ao = 1.0f - float(blocked) / float(rays);
         out[i] = glm::vec4(ao, ao, ao, 1.0f);
@@ -433,8 +474,9 @@ void registerBuiltinMaps()
     registerMap({.id = "ao",
                  .label = "Ambient Occlusion",
                  .suffix = "ao",
-                 .doc = "Cosine-weighted occlusion from the high's surface. options rays (64), distance (cm, 0 = the group's high bounds), "
-                        "scope (self, group, all; default the group's aoScope).",
+                 .doc = "Cosine-weighted occlusion from the high's surface; a point buried inside another high (where parts meet) "
+                        "is occluded only by front faces, so it never turns black. options rays (64), distance (cm, 0 = the "
+                        "group's high bounds), scope (self, group, all; default the group's aoScope).",
                  .secondaryRays = true,
                  .cpu = aoKernel});
     registerSurfaceMaps();

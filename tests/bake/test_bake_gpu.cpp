@@ -295,6 +295,20 @@ TEST_CASE("GPU bake matches the CPU: isolated groups, AO scopes and backfaces")
         }
     }
 
+    // A floor running through a closed box: the buried texels see only front faces, on the GPU too.
+    newScene();
+    const std::string floor = addMesh("d_low", plane(1));
+    const std::string box = addMesh("d_box", geo::makeCube({.width = 30.0, .height = 30.0, .depth = 30.0}));
+    const std::string p3 = project(dir, 32, 4);
+    ops::execute("bakeGroup", {{"args", {"d"}}, {"project", p3}, {"lows", {floor}}, {"self", true}, {"addHigh", {box}}, {"frontal", 2.0}, {"rear", 2.0}});
+    ops::execute("setBakeMap", {{"args", {"ao"}}, {"project", p3}, {"options", {{"rays", 32}, {"distance", 100.0}}}});
+    const Baked cpuBuried = bakeWith(p3, {"ao"}, "cpu");
+    for (const std::string& be : gpuBackends())
+    {
+        INFO("backend " << be);
+        compare(cpuBuried, bakeWith(p3, {"ao"}, be), "ao", 0.02f, 0.1f, 0.01);
+    }
+
     // A high facing away: every ray meets a back face, and the GPU must call it one too.
     newScene();
     const std::string low = addMesh("c_low", plane(1));
