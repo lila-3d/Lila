@@ -9,10 +9,13 @@
 #include "Stagehand.h"
 
 #include <lila/Command.h>
+#include <lila/Curves.h>
 #include <lila/Extension.h>
 #include <lila/Mesh.h>
 #include <lila/Profile.h>
 #include <lila/Transform.h>
+
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
 #include <cctype>
@@ -677,6 +680,107 @@ void registerArrangeCommands(ext::Context& ctx)
             return out;
         },
         .examples = {"stackProps(items=['Kitchen/Plate'], at=[30, 90, 0], onto=['Counter'], count=8)"},
+    });
+
+    std::vector<FlagDef> pathFlags;
+    for (FlagDef& f : commonFlags(false))
+        if (f.name != "realize" && f.name != "variants")
+            pathFlags.push_back(std::move(f));
+    const std::vector<FlagDef> pathFlagsExtra = {
+        {"spacing", "sp", T::Float, 100.0, "Distance between items along the curve, cm.", {}, {}, 1.0},
+        {"spacingJitter", "sj", T::Float, 0.3, "0 to 1: how much each gap varies.", {}, {}, 0.0, 0.95},
+        {"offset", "of", T::Float, 0.0, "Distance to the curve's right, cm (negative: its left)."},
+        {"spread", "sd", T::Float, 0.0, "Random sideways wander either way, cm.", {}, {}, 0.0},
+        {"turn", "tu", T::Float, 15.0, "Random turn about up either way, degrees.", {}, {}, 0.0, 180.0},
+        {"along", "al", T::Bool, true, "Items face along the curve; off turns each at random."},
+        {"scaleMin", "smn", T::Float, 0.9, "Smallest scale.", {}, {}, 0.0},
+        {"scaleMax", "smx", T::Float, 1.1, "Largest scale.", {}, {}, 0.0},
+        {"snap", "sn", T::Bool, true, "Stand each item on the surface below the curve (looked for from 50 cm above it)."},
+        nodeFlag({"onto", "on", T::List, nullptr, "Meshes they settle on; default a floor plane at the curve's lowest point."}, "mesh")};
+    pathFlags.insert(pathFlags.end(), pathFlagsExtra.begin(), pathFlagsExtra.end());
+    ctx.registerCommand({
+        .name = "pathProps",
+        .doc = "Place items along curves: litter along a kerb, cones down a road, posts along a fence, cable drums by a "
+               "track. Spaced along each curve, offset or wandering to the side, turned a little, stood on the surface below "
+               "and optionally settled. Places scene instances (mode='copy' for copies) in one group. Returns the same as "
+               "fillShelf with realize=True.",
+        .positionalDoc = "curves (default the selection)",
+        .flags = pathFlags,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            Graph& g = Graph::current();
+            const std::vector<ItemSource> items = itemsArg(g, a, "pathProps");
+            std::vector<std::string> curves = a.objects();
+            if (curves.empty())
+                throw CommandError("pathProps: give curves");
+            g.evaluate();
+            arrange::PathOptions o;
+            o.spacing = a.get<double>("spacing", 100.0);
+            o.spacingJitter = a.get<double>("spacingJitter", 0.3);
+            o.offset = a.get<double>("offset", 0.0);
+            o.spread = a.get<double>("spread", 0.0);
+            o.turn = a.get<double>("turn", 15.0);
+            o.along = a.get<bool>("along", true);
+            o.scaleMin = a.get<double>("scaleMin", 0.9);
+            o.scaleMax = a.get<double>("scaleMax", 1.1);
+            std::vector<arrange::Item> bounds;
+            for (const ItemSource& it : items)
+                bounds.push_back(arrange::itemOf(meshOf(g, it.mesh, false)));
+            std::vector<arrange::Placed> placed;
+            double lowest = 1e300;
+            uint32_t seed = uint32_t(a.get<int64_t>("seed", 1));
+            for (const std::string& c : curves)
+            {
+                json data;
+                try
+                {
+                    data = ops::execute("curveData", {{"args", {c}}, {"worldSpace", true}});
+                }
+                catch (const std::exception&)
+                {
+                    throw CommandError("pathProps: " + c + " is not a curve");
+                }
+                for (const json& sp : data.is_array() ? data : json::array())
+                {
+                    curve::Polyline pl;
+                    try
+                    {
+                        pl = curve::tessellate(curve::splineFromJson(sp));
+                    }
+                    catch (const std::exception& e)
+                    {
+                        throw CommandError("pathProps: " + c + ": " + e.what());
+                    }
+                    std::vector<glm::dvec3> line = pl.points;
+                    if (pl.closed && !line.empty())
+                        line.push_back(line.front());
+                    for (const glm::dvec3& p : line)
+                        lowest = std::min(lowest, p.y);
+                    // Each spline gets its own seed so two curves don't repeat the same pattern.
+                    o.seed = seed++;
+                    for (arrange::Placed& x : arrange::path(line, bounds, o))
+                        placed.push_back(x);
+                }
+            }
+            if (placed.empty())
+                throw CommandError("pathProps: nothing placed: the curves have no length");
+            if (a.get<bool>("snap", true))
+                for (arrange::Placed& x : placed)
+                {
+                    const glm::dvec3 at(x.transform[3]);
+                    if (const auto hit = surfaceUnder(g, at, {}, 50.0))
+                        x.transform = glm::translate(glm::dmat4(1.0), glm::dvec3(0.0, hit->point.y - at.y, 0.0)) * x.transform;
+                }
+            const std::vector<NodeId> onto = meshListArg(g, a, "onto", "pathProps");
+            arrange::SettleOptions so = settleOptions(a);
+            so.ground = onto.empty();
+            so.groundHeight = lowest;
+            const Result r = settleIf(std::move(placed), g, items, onto, so, a.get<bool>("settle", false));
+            return finishRealized(g, a, r, items, a.get<std::string>("name", "PathProps"));
+        },
+        .examples = {"pathProps('Kerb', items=['Debris/Rebar', 'Debris/RebarBent'], spacing=60, offset=40, spread=20, along=False)",
+                     "pathProps('Road_Edge', items=['Road/Delineator'], spacing=500, offset=-150, turn=0)"},
     });
 }
 } // namespace stagehand

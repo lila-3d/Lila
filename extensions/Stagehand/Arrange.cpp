@@ -387,6 +387,35 @@ std::vector<Placed> scatter(const Mesh& m, std::span<const Item> items, const Sc
     return out;
 }
 
+std::vector<Placed> path(std::span<const glm::dvec3> line, std::span<const Item> items, const PathOptions& o)
+{
+    LILA_ZONE();
+
+    std::vector<Placed> out;
+    if (line.size() < 2 || items.empty() || o.spacing <= 0.0)
+        return out;
+    const Polyline pl(line);
+    Rng rng(o.seed);
+    for (double s = 0.0; s <= pl.length() + 1e-9;)
+    {
+        glm::dvec3 p, t;
+        pl.sample(s, p, t);
+        const int k = rng.pick(items.size());
+        const Item& it = items[size_t(k)];
+        const double scale = rng.range(o.scaleMin, o.scaleMax);
+        const double side = o.offset + rng.signedUnit() * o.spread;
+        const double turn = o.along ? rng.signedUnit() * o.turn : rng.range(-180.0, 180.0);
+        // Bottom centre on the line, then out to the side.
+        const glm::dvec3 c = (it.lo + it.hi) * 0.5;
+        const glm::dvec3 bottom(c.x, it.lo.y, c.z);
+        const glm::dmat4 xf = frameAt(p, t) * glm::translate(glm::dmat4(1.0), glm::dvec3(0.0, 0.0, side)) * glm::dmat4(rotY(turn)) *
+                              glm::scale(glm::dmat4(1.0), glm::dvec3(scale)) * glm::translate(glm::dmat4(1.0), -bottom);
+        out.push_back({xf, k, Pose::Upright, float(rng.u())});
+        s += o.spacing * (1.0 + rng.signedUnit() * std::clamp(o.spacingJitter, 0.0, 0.95));
+    }
+    return out;
+}
+
 Settled settle(std::span<const glm::dmat4> transforms, std::span<const int> items, std::span<const Mesh* const> itemMeshes,
                std::span<const Mesh* const> colliders, const SettleOptions& o)
 {

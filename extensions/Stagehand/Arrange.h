@@ -61,6 +61,21 @@ struct RowOptions
 /** Items packed along a polyline (Y up), their bottoms on it. */
 std::vector<Placed> row(std::span<const glm::dvec3> line, std::span<const Item> items, const RowOptions& o);
 
+struct PathOptions
+{
+    double spacing = 100.0;     // cm between items along the line
+    double spacingJitter = 0.3; // 0 to 1 of spacing, either way
+    double offset = 0.0;        // cm to the line's right (negative: left)
+    double spread = 0.0;        // cm of random sideways wander, either way
+    double turn = 15.0;         // degrees of random turn about up, either way
+    bool along = true;          // items' X along the line; false turns each at random all the way round
+    double scaleMin = 0.9, scaleMax = 1.1;
+    uint32_t seed = 1;
+};
+
+/** Items spaced along a polyline (litter along a kerb, posts along a fence), their bottoms on it. */
+std::vector<Placed> path(std::span<const glm::dvec3> line, std::span<const Item> items, const PathOptions& o);
+
 struct StackOptions
 {
     int count = 6;

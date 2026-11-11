@@ -528,6 +528,7 @@ void registerUi(ext::Context& ctx)
         {"stagehand.pileProps", "Pile Props", "pileProps", "Heap items up in a footprint and settle them.",
          "pileProps(items=['Debris/Brick'], at=[0, 0, 0], count=40)"},
         {"stagehand.stackProps", "Stack Props", "stackProps", "Stack items one on another.", "stackProps(items=['Kitchen/Plate'], at=[0, 90, 0])"},
+        {"stagehand.pathProps", "Props Along Curve", "pathProps", "Place items along the selected curves.", "pathProps('Kerb', items=['Debris/Rebar'], spacing=60)"},
     };
     menus::addItem(ctx, {.id = "stagehand.menu.arrange", .menu = levelToolkit::kMenu, .kind = menus::Kind::Submenu, .label = "Arrange",
                          .before = levelToolkit::kAssetsSection});
@@ -564,7 +565,7 @@ void registerUi(ext::Context& ctx)
     levelToolkit::add(ctx, {.id = "stagehand.arrange",
                             .title = "Arrange",
                             .items = {{"stagehand.fillShelf", "books", "Fill Shelf"}, {"stagehand.scatterProps", "grain", "Scatter", "Scatter"},
-                                      {"stagehand.pileProps", "stack-2", "Pile"}, {"stagehand.stackProps", "stack", "Stack"}},
+                                      {"stagehand.pileProps", "stack-2", "Pile"}, {"stagehand.stackProps", "stack", "Stack"}, {"stagehand.pathProps", "route", "Along Curve"}},
                             .order = 41, .docs = "stagehand"});
     levelToolkit::add(ctx, {.id = "stagehand.kit",
                             .title = "Level Kit",
