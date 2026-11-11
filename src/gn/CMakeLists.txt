@@ -24,6 +24,9 @@ lila_module(lila_gn Scene
     NodesUtility.cpp
     NodesMeshOps.cpp
     NodesTopology.cpp
+    NodesTopology2.cpp
+    NodesSelection.cpp
+    NodesRemesh.cpp
     NodesAnalysis.cpp
     NodesField.cpp
     NodesPatterns.cpp
