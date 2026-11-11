@@ -141,6 +141,7 @@ std::vector<lila::scene::NodeId> liveGarments();
 
 bool registerNodes(lila::ext::Context& ctx);
 void registerCommands(lila::ext::Context& ctx);
+void registerDrapeMesh(lila::ext::Context& ctx);
 void registerUi(lila::ext::Context& ctx);
 void registerPatternEditor(lila::ext::Context& ctx);
 void registerToolkit(lila::ext::Context& ctx);

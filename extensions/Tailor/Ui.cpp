@@ -121,6 +121,10 @@ void registerUi(ext::Context& ctx)
     actions::add(ctx, {.id = "tailor.simulate", .label = "Drape", .category = "Tailor",
                        .doc = "Run the cloth solver on the selected garment until it settles.", .python = "tailorSimulate('Garment', frames=200)",
                        .command = "tailorSimulate", .call = nlohmann::json::object()});
+    actions::add(ctx, {.id = "tailor.drapeMesh", .label = "Drape Mesh", .category = "Tailor",
+                       .doc = "Drop the selected mesh as cloth onto the meshes under it (or the other selected meshes) and keep the settled shape.",
+                       .python = "tailorDrapeMesh('Plane')", .command = "tailorDrapeMesh", .call = nlohmann::json::object(),
+                       .icon = "arrow-wave-right-down", .keywords = {"drape", "cloth", "throw", "tablecloth", "sheet", "shrinkwrap", "fall"}});
     actions::add(ctx, {.id = "tailor.setFabric", .label = "Set Fabric", .category = "Tailor",
                        .doc = "Set the selected garment's fabric preset.", .python = "tailorSetFabric('Garment', fabric='Wool')",
                        .command = "tailorSetFabric", .call = nlohmann::json::object()});
@@ -190,7 +194,7 @@ void registerUi(ext::Context& ctx)
     registerAnimation(ctx);
     menus::addMenu(ctx, {.id = "Tailor", .title = "Tailor", .before = "Rig", .sets = {"Cloth"}});
     int sep = 0;
-    for (const char* a : {"tailor.mannequin", "tailor.createBlock", "tailor.drawPanel", "tailor.importGarmentCode", "", "tailor.simulate", "tailor.setFabric",
+    for (const char* a : {"tailor.mannequin", "tailor.createBlock", "tailor.drawPanel", "tailor.importGarmentCode", "", "tailor.simulate", "tailor.drapeMesh", "tailor.setFabric",
                           "tailor.sew", "tailor.autoSew", "tailor.check", "window.tailorPatternEditor", "", "tailor.live", "tailor.stopLive", "tailor.grab",
                           "tailor.pin", "tailor.fold", "tailor.shrink", "tailor.steam", "tailor.clearBrush", "", "tailor.freeze", "tailor.unfreeze", "", "tailor.addStitching",
                           "tailor.bake", "tailor.sendToUnreal", "window.tailorToolkit", "layout.apply.Tailor"})
@@ -200,6 +204,8 @@ void registerUi(ext::Context& ctx)
         else
             menus::addItem(ctx, {.id = "tailor.menu.sep" + std::to_string(sep++), .menu = "Tailor", .kind = menus::Kind::Separator});
     }
+
+    menus::addItem(ctx, {.id = "tailor.menu.meshDrape", .menu = "Mesh", .action = "tailor.drapeMesh"});
 
     attributeEditor::addSection(ctx, kGarmentType, "Panels and Seams", [](scene::NodeId id) { return garmentSection(id); });
 
@@ -211,6 +217,7 @@ void registerUi(ext::Context& ctx)
                                        {"Auto-Sew", "needle-thread", "tailor.autoSew"},
                                        {"Check", "checklist", "tailor.check"},
                                        {"Drape", "player-play", "tailor.simulate"},
+                                       {"Drape Mesh", "arrow-wave-right-down", "tailor.drapeMesh"},
                                        {"Live", "bolt", "tailor.live"},
                                        {"Grab", "hand-grab", "tailor.grab"},
                                        {"Pin", "pinned", "tailor.pin"},

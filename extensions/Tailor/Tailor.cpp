@@ -1054,6 +1054,7 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(lila::ext::Context& ctx)
     if (!tailor::registerNodes(ctx))
         return 1;
     tailor::registerCommands(ctx);
+    tailor::registerDrapeMesh(ctx);
     tailor::registerUi(ctx);
     return 0;
 }

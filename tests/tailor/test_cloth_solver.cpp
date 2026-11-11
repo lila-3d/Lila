@@ -300,3 +300,42 @@ TEST_CASE("crossing edges collide where no vertex meets a triangle")
     CHECK(lowest > -0.15f);
     CHECK(lowest < 0.02f);
 }
+
+TEST_CASE("plain mesh with no pattern drapes at its own edge lengths")
+{
+    const float radius = 0.3f;
+    std::vector<Vec3> points;
+    std::vector<std::array<int, 3>> tris;
+    clothSphere(radius, 24, 48, points, tris);
+    const Sdf sdf = sdfFromMesh(points, tris, 0.02f, 0.1f);
+
+    const int nu = 21, nv = 21;
+    ClothMesh mesh;
+    clothGrid(mesh, 0, nu, nv, 0.8f, 0.8f, {-0.4f, 0.36f, -0.4f}, {1.f, 0.f, 0.f}, {0.f, 0.f, 1.f});
+    mesh.uv.clear();
+    mesh.vertPanel.clear();
+    mesh.triPanel.clear();
+    const ClothMesh rest = mesh;
+    Garment g;
+
+    ClothSolver solver;
+    SolverSettings s;
+    s.substeps = 4;
+    solver.reset(mesh, g, s);
+    solver.setColliders({&sdf});
+    for (int frame = 0; frame < 150; ++frame)
+        solver.step();
+    const std::vector<Vec3>& x = solver.positions();
+    REQUIRE(allFinite(x));
+    for (const Vec3& p : x)
+        CHECK(vLen(p) > radius - 0.01f);
+    CHECK(x[0][1] < 0.2f);
+    float worst = 0.f;
+    for (const auto& t : rest.tris)
+        for (int k = 0; k < 3; ++k)
+        {
+            const float r = vDist(rest.rest3d[t[k]], rest.rest3d[t[(k + 1) % 3]]);
+            worst = std::max(worst, vDist(x[t[k]], x[t[(k + 1) % 3]]) / r);
+        }
+    CHECK(worst < 1.15f);
+}
