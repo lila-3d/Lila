@@ -12,6 +12,7 @@
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "ScopedTransaction.h"
 #include "Misc/PackageName.h"
+#include "ObjectTools.h"
 #include "UObject/SoftObjectPath.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogLilaLinkSettlementCells, Log, All);
@@ -30,6 +31,9 @@ FString CellPrefix(const FString& Id)
 {
 	return TEXT("LilaLink.SettlementCell:") + (Id + TEXT("/")).Right(900);
 }
+
+/** The cell actor carries its data asset's path, so removing the cell removes the asset too. */
+const FString CellAssetPrefix(TEXT("LilaLink.SettlementCellAsset:"));
 
 UWorld* CellsEditorWorld()
 {
@@ -133,6 +137,8 @@ TSharedPtr<FJsonValue> SetSettlementCell(const TSharedPtr<FJsonObject>& Params, 
 		bSpawned = true;
 	}
 	Actor->Modify();
+	Actor->Tags.RemoveAll([](const FName& T) { return T.ToString().StartsWith(CellAssetPrefix); });
+	Actor->Tags.Add(FName(*(CellAssetPrefix + AssetPath)));
 	Actor->SetActorLocation(Center);
 	if (UBoxComponent* Box = Actor->FindComponentByClass<UBoxComponent>())
 	{
@@ -224,13 +230,41 @@ TSharedPtr<FJsonValue> RemoveSettlementCells(const TSharedPtr<FJsonObject>& Para
 			}
 		}
 	}
+	TSet<FString> AssetPaths;
+	for (AActor* Actor : Doomed)
+	{
+		for (const FName& Tag : Actor->Tags)
+		{
+			const FString T = Tag.ToString();
+			if (T.StartsWith(CellAssetPrefix))
+			{
+				AssetPaths.Add(T.RightChop(CellAssetPrefix.Len()));
+			}
+		}
+	}
 	int32 Removed = 0;
 	for (AActor* Actor : Doomed)
 	{
 		Removed += World->EditorDestroyActor(Actor, true) ? 1 : 0;
 	}
+	// The data assets go with their cells; nothing else in the level reads them.
+	TArray<UObject*> Assets;
+	TArray<TSharedPtr<FJsonValue>> Deleted;
+	for (const FString& Path : AssetPaths)
+	{
+		const FString ObjectPath = Path + TEXT(".") + FPackageName::GetShortName(Path);
+		if (UObject* Asset = LoadObject<UObject>(nullptr, *ObjectPath, nullptr, LOAD_NoWarn | LOAD_Quiet))
+		{
+			Assets.Add(Asset);
+			Deleted.Add(MakeShared<FJsonValueString>(Path));
+		}
+	}
+	const int32 AssetsDeleted = Assets.Num() > 0 ? ObjectTools::ForceDeleteObjects(Assets, false) : 0;
+	UE_LOG(LogLilaLinkSettlementCells, Log, TEXT("removeSettlementCells: %s: %d cells, %d data assets"), *Id, Removed, AssetsDeleted);
 	TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
 	Out->SetNumberField(TEXT("removed"), Removed);
+	Out->SetNumberField(TEXT("assetsDeleted"), AssetsDeleted);
+	Out->SetArrayField(TEXT("assets"), Deleted);
 	return MakeShared<FJsonValueObject>(Out);
 }
 } // namespace
