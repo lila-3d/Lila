@@ -287,6 +287,32 @@ TEST_CASE("bakeAutoPaintCage: a low baking onto itself ignores its other shells 
     CHECK(most < 3.0);
 }
 
+TEST_CASE("bakeAutoPaintCage: a low baking onto itself doesn't push out through its own fold")
+{
+    newScene();
+    // A bar folded back over itself, 1 unit up, as a pipe's too-tight bend folds: each half's walk out crosses the
+    // other half, though its smoothed self lies within a triangle of it.
+    geo::CubeOptions barO;
+    barO.width = 80.0;
+    barO.height = barO.depth = 6.0;
+    barO.subdivX = 32;
+    barO.subdivY = barO.subdivZ = 2;
+    geo::Mesh bar = geo::makeCube(barO);
+    for (geo::Index q = 0; q < bar.pointCapacity(); ++q)
+        if (bar.pointValid(q))
+            if (const glm::dvec3 at = bar.position(q); at.x > 0.0)
+                bar.setPosition(q, {-at.x, at.y + 1.0 * at.x / 40.0, at.z});
+    const std::string low = addMesh("folded_low", std::move(bar));
+    const std::string p = ops::execute("createBakeProject", {{"name", "P"}}).get<std::string>();
+    ops::execute("setBakeOutput", {{"project", p}, {"folder", tempDir("lila_cage_fold").generic_string()}, {"resolution", 64}, {"supersampling", 1}});
+    ops::execute("bakeGroup", {{"args", {"g"}}, {"project", p}, {"lows", {low}}, {"self", true}, {"preset", "Smooth x2"}});
+
+    const json r = ops::execute("bakeAutoPaintCage", {{"args", {"g"}}, {"resolution", 128}});
+    const double most = mostPush(low, r);
+    MESSAGE("most push " << most);
+    CHECK(most < 2.5);
+}
+
 TEST_CASE("bakeAutoPaintCage: an open sheet seen from behind doesn't read as material the low starts in")
 {
     newScene();

@@ -138,21 +138,22 @@ public:
     /** shells[h] holds high h's triangle shells when it is a low baking onto itself, else nothing. */
     Walker(const Tracer& tracer, size_t group, const std::vector<std::vector<uint32_t>>& shells) : mTracer(tracer), mGroup(group), mShells(shells) {}
 
-    /** cap bounds the walk: far layers of the same mesh would otherwise read as material the low starts inside. */
-    Need at(uint32_t low, const glm::vec3& p, const glm::vec3& dir, float mCap, float mEps) const
+    /** The shell of a self high a sample lies on: hits on that high's other shells are skipped. */
+    struct Own
+    {
+        uint32_t high = kNoHit;
+        uint32_t shell = kNoHit;
+    };
+
+    /**
+     * cap bounds the walk: far layers of the same mesh would otherwise read as material the low starts inside. own is
+     * the sample's shell when the low bakes onto itself: its other shells hide what they cross.
+     */
+    Need at(uint32_t low, const glm::vec3& p, const glm::vec3& dir, float mCap, float mEps, const Own& own = {}) const
     {
         Need n;
         // A ray through a shared edge or vertex meets each triangle there: hits this close repeat one crossing.
         const float same = 4.0f * mEps;
-        // A low baking onto itself only answers to the shell it lies on: its other shells hide what they cross.
-        Own own;
-        {
-            TraceHit up, down;
-            const bool u = trace(low, p, dir, mCap, up), d = trace(low, p, -dir, mCap, down);
-            const TraceHit* near = d && (!u || down.distance <= up.distance) ? &down : u ? &up : nullptr;
-            if (near && near->high < mShells.size() && near->triangle < mShells[near->high].size())
-                own = {near->high, mShells[near->high][near->triangle]};
-        }
         // Parity from below, reaching past the walk so a large body still shows its far side: only a back face under the
         // low means it starts inside. Otherwise (outside, or an open mesh seen from behind) an exit ahead is a missed entry.
         TraceHit h;
@@ -197,12 +198,6 @@ public:
     }
 
 private:
-    struct Own
-    {
-        uint32_t high = kNoHit;
-        uint32_t shell = kNoHit;
-    };
-
     bool trace(uint32_t low, const glm::vec3& o, const glm::vec3& dir, float tMax, TraceHit& h) const
     {
         return mTracer.closestHit(mGroup, OccluderScope::Group, kNoHit, low, RayKind::Projection, o, dir, tMax, h);
@@ -262,7 +257,74 @@ struct LowState
     float cap = 0.0f;
     float eps = 0.0f;
     float spacing = 1.0f;
+    /** The low bakes onto itself. */
+    bool self = false;
+
+    /**
+     * How far out of its high a sample in triangle t can need to start: unbounded unless the low bakes onto itself,
+     * where the high strays from the low only by smoothing, about a triangle's size. An exit further out crosses the
+     * low's own fold or tight bend.
+     */
+    float reach(size_t t) const
+    {
+        if (!self)
+            return std::numeric_limits<float>::max();
+        const glm::vec3* p = &input.soup.positions[t * 3];
+        return kSelfReach * (glm::length(p[1] - p[0]) + glm::length(p[2] - p[1]) + glm::length(p[0] - p[2])) / 3.0f;
+    }
+
+    /** A self-baking low's reach in mean triangle edges. */
+    static constexpr float kSelfReach = 1.0f;
+
+    /** Its self high and, per triangle, the shell of that high it smooths into. */
+    uint32_t selfHigh = kNoHit;
+    std::vector<uint32_t> highShell;
+
+    Walker::Own own(size_t t) const { return t < highShell.size() ? Walker::Own{selfHigh, highShell[t]} : Walker::Own{}; }
 };
+
+/**
+ * Fills s's highShell: each of its shells takes the shell of its self high (shells per high triangle) whose bounds
+ * match its own best, since smoothing keeps a shell in place and only rounds it.
+ */
+void matchShells(LowState& s, uint32_t high, const MeshSoup& soup, std::span<const uint32_t> shells)
+{
+    struct Box
+    {
+        glm::vec3 lo{std::numeric_limits<float>::max()};
+        glm::vec3 hi{std::numeric_limits<float>::lowest()};
+    };
+    auto boxes = [](const MeshSoup& m, std::span<const uint32_t> ids) {
+        std::unordered_map<uint32_t, Box> out;
+        for (size_t t = 0; t < ids.size(); ++t)
+        {
+            Box& b = out[ids[t]];
+            for (int k = 0; k < 3; ++k)
+            {
+                b.lo = glm::min(b.lo, m.positions[t * 3 + size_t(k)]);
+                b.hi = glm::max(b.hi, m.positions[t * 3 + size_t(k)]);
+            }
+        }
+        return out;
+    };
+    const std::vector<uint32_t> lowShells = soupShells(s.input.soup);
+    const auto lowBoxes = boxes(s.input.soup, lowShells), highBoxes = boxes(soup, shells);
+    std::unordered_map<uint32_t, uint32_t> match;
+    for (const auto& [ls, lb] : lowBoxes)
+    {
+        float best = std::numeric_limits<float>::max();
+        for (const auto& [hs, hb] : highBoxes)
+            if (const float d = glm::length(lb.lo - hb.lo) + glm::length(lb.hi - hb.hi); d < best)
+            {
+                best = d;
+                match[ls] = hs;
+            }
+    }
+    s.selfHigh = high;
+    s.highShell.resize(lowShells.size());
+    for (size_t t = 0; t < lowShells.size(); ++t)
+        s.highShell[t] = match[lowShells[t]];
+}
 
 /** The smallest per-point push (from push as it stands) meeting every constraint, by repeated projection. */
 void solve(LowState& s, float floor)
@@ -517,6 +579,7 @@ CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& se
     // Sampling, the first coverage check, then each refining pass.
     progress::Scope whole("Estimating cage", 2.0 + double(options.iterations));
 
+    const GroupInputs& gi = inputs.groups[group];
     std::vector<LowState> states(lows.size());
     float margin = 0.0f;
     for (size_t i = 0; i < lows.size(); ++i)
@@ -535,17 +598,20 @@ CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& se
         s.cap = 0.25f * diag;
         s.eps = 1e-5f * diag;
         s.spacing = diag / 128.0f;
+        s.self = std::ranges::find(gi.highSelfLow, int32_t(i)) != gi.highSelfLow.end();
         margin = std::max(margin, s.margin);
     }
     if (std::ranges::none_of(states, [](const LowState& s) { return s.input.soup.triangleCount() > 0; }))
         throw std::runtime_error("cage estimate: the lows have no faces");
     // Shells of the highs that are lows baking onto themselves.
-    const GroupInputs& gi = inputs.groups[group];
     std::vector<std::vector<uint32_t>> shells(gi.highs.size());
     tbb::parallel_for(size_t(0), gi.highs.size(), [&](size_t h) {
         if (h < gi.highSelfLow.size() && gi.highSelfLow[h] >= 0)
             shells[h] = soupShells(gi.highs[h].soup);
     });
+    for (size_t h = 0; h < gi.highSelfLow.size(); ++h)
+        if (const int32_t k = gi.highSelfLow[h]; k >= 0 && size_t(k) < states.size() && !shells[h].empty())
+            matchShells(states[size_t(k)], uint32_t(h), gi.highs[h].soup, shells[h]);
     const Walker walk(*tracer, group, shells);
     addTiming(est.timings, "lowInputs", t0);
     t0 = Clock::now();
@@ -620,8 +686,8 @@ CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& se
                             const glm::dvec3 w(double(n - a - b) / n, double(a) / n, double(b) / n);
                             const glm::vec3 P = mix3(p, w);
                             const glm::vec3 dir = cageDirection(li, t, w, skew);
-                            const Need need = walk.at(lowIndex, P, dir, s.cap, s.eps);
-                            s.constraints[slot] = {uint32_t(t), glm::vec3(w), need.outward + s.margin};
+                            const Need need = walk.at(lowIndex, P, dir, s.cap, s.eps, s.own(t));
+                            s.constraints[slot] = {uint32_t(t), glm::vec3(w), (need.outward <= s.reach(t) ? need.outward : 0.0f) + s.margin};
                             if (clearance)
                             {
                                 const int k = w.x >= w.y && w.x >= w.z ? 0 : w.y >= w.z ? 1 : 2;
@@ -738,7 +804,7 @@ CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& se
                     const size_t t = miss[k].lowTriangle;
                     bary[k] = sampleBary(li, miss[k]);
                     const glm::vec3 P = mix3(&li.soup.positions[t * 3], bary[k]);
-                    needs[k] = walk.at(uint32_t(i), P, cageDirection(li, t, bary[k], skew), s.cap, s.eps);
+                    needs[k] = walk.at(uint32_t(i), P, cageDirection(li, t, bary[k], skew), s.cap, s.eps, s.own(t));
                 }
             });
             for (size_t k = 0; k < miss.size(); ++k)
@@ -755,9 +821,10 @@ CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& se
                     continue;
                 }
                 // A ray that met a back face started inside the high: push past it. A plain miss fell short of the high below.
-                float want = need.outward + s.margin;
+                float want = (need.outward <= s.reach(t) ? need.outward : 0.0f) + s.margin;
                 if (m.sub)
                     want = std::max(want, push * 1.25f + s.margin);
+                want = std::min({want, s.reach(t) + s.margin, std::max(clampAt, s.margin * 2.0f)});
                 if (want > push)
                 {
                     s.constraints.push_back({uint32_t(t), glm::vec3(w), want});
