@@ -385,9 +385,10 @@ void PlaceActors(UWorld* World, const FString& Group, const FString& Label, USta
 		Actor->GetStaticMeshComponent()->SetStaticMesh(Mesh);
 		SetCollides(Actor->GetStaticMeshComponent(), bCollide);
 		const TArray<float> Custom = CustomDataOf(*P);
+		// The defaults are what the level saves; SetCustomPrimitiveDataFloat only writes the transient runtime copy.
 		for (int32 K = 0; K < Custom.Num(); ++K)
 		{
-			Actor->GetStaticMeshComponent()->SetCustomPrimitiveDataFloat(K, Custom[K]);
+			Actor->GetStaticMeshComponent()->SetDefaultCustomPrimitiveDataFloat(K, Custom[K]);
 		}
 		if (const TOptional<FLightingChannels> Channels = ChannelsOf(*P))
 		{
