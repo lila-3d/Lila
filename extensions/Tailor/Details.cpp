@@ -135,7 +135,7 @@ int addPocket(Garment& g, int host, const Vec2& at, float width, float height, b
     const float rc = 0.2f * std::min(width, height);
     p.outline.push_back({width, height});
     p.outline.push_back({0.f, height});
-    for (int k = 0; k <= 4; ++k)
+    for (int k = 4; k >= 0; --k)
     {
         const float t = 1.5707963f * float(k) / 4.f;
         p.outline.push_back({rc - rc * std::sin(t), rc - rc * std::cos(t)});
@@ -145,7 +145,6 @@ int addPocket(Garment& g, int host, const Vec2& at, float width, float height, b
         const float t = 1.5707963f * float(k) / 4.f;
         p.outline.push_back({width - rc + rc * std::sin(t), rc - rc * std::cos(t)});
     }
-    std::reverse(p.outline.begin(), p.outline.end());
     p.fabric = hostPanel.fabric;
     p.layer = hostPanel.layer + 1;
     p.particleDistance = std::min(hostPanel.particleDistance, 0.25f * std::min(width, height));
