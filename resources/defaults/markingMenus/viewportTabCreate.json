@@ -1,8 +1,10 @@
 {
+  "N": { "label": "Locator", "action": "create.locator" },
   "NE": { "label": "Cylinder", "action": "createAt.cylinder" },
   "E": { "label": "Plane", "action": "createAt.plane" },
   "SE": { "label": "Torus", "action": "createAt.torus" },
   "S": { "label": "Cube", "action": "createAt.cube" },
+  "SW": { "label": "Joint", "action": "rig.jointTool" },
   "W": { "label": "Quad Sphere", "action": "createAt.quadSphere" },
   "NW": { "label": "Cone", "action": "createAt.cone" },
   "outer": {
