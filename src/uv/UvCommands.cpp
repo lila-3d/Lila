@@ -6,11 +6,15 @@
 #include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "core/Log.h"
+#include "bake/BakeCommon.h"
+#include "bake/BakeNodes.h"
+#include "bake/Naming.h"
 #include "scene/Camera.h"
 #include "scene/Components.h"
 #include "scene/DeformEval.h"
 #include "scene/Graph.h"
 #include "scene/Instancing.h"
+#include "scene/Materials.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "geo/Symmetry.h"
@@ -27,6 +31,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <set>
 #include <unordered_set>
 
 namespace lila::uv
@@ -651,7 +656,8 @@ Stack exportStack(Node& n)
     return out;
 }
 
-json refineOnExport(geo::Mesh& m, std::span<const Index> faces, std::string_view uvSet, Node& n, const FinalSolveOptions& opts, bool on)
+json refineOnExport(geo::Mesh& m, std::span<const Index> faces, std::string_view uvSet, Node& n, const FinalSolveOptions& opts, bool on,
+                    std::shared_ptr<const FinalMap>* usedMap)
 {
     if (!on)
         return nullptr;
@@ -660,6 +666,8 @@ json refineOnExport(geo::Mesh& m, std::span<const Index> faces, std::string_view
         return nullptr;
     LILA_ZONE_N("refineOnExport");
     const FinalRefineResult r = refineFinal(m, faces, uvSet, stack, opts);
+    if (usedMap)
+        *usedMap = r.map;
     if (!r.warning.empty())
     {
         log::warn("{}: {}", n.name(), r.warning);
@@ -672,6 +680,102 @@ json refineOnExport(geo::Mesh& m, std::span<const Index> faces, std::string_view
             {"failed", r.failed},
             {"collapsed", {r.collapsedBefore, r.collapsedAfter}},
             {"angleDistortion", {r.distortionBefore, r.distortionAfter}}};
+}
+
+namespace
+{
+/** A mesh's faces as uv triangles, those whose material slot share(slot name) accepts. */
+template <class Share>
+void appendSharedFaces(const geo::Mesh& om, std::string_view uvSet, Share&& share, std::vector<std::array<glm::dvec2, 3>>& out)
+{
+    const std::span<const glm::vec2> uv = om.cornerAttrs().get<glm::vec2>(uvSet);
+    if (uv.empty())
+        return;
+    const std::span<const int32_t> mat = om.faceAttrs().get<int32_t>(geo::attr::kMaterial);
+    std::map<int32_t, bool> shared;
+    for (Index f = 0; f < om.faceCapacity(); ++f)
+    {
+        if (!om.faceValid(f))
+            continue;
+        const int32_t k = f < mat.size() ? mat[f] : 0;
+        auto [it, added] = shared.try_emplace(k, false);
+        if (added)
+            it->second = share(scene::materials::slotName(om, k));
+        if (!it->second)
+            continue;
+        const std::vector<Index> cs = om.faceCorners(f);
+        for (size_t i = 1; i + 1 < cs.size(); ++i)
+            out.push_back({glm::dvec2(uv[cs[0]]), glm::dvec2(uv[cs[i]]), glm::dvec2(uv[cs[i + 1]])});
+    }
+}
+} // namespace
+
+std::vector<std::array<glm::dvec2, 3>> sharedTextureTriangles(Node& n, const geo::Mesh& m, std::string_view uvSet)
+{
+    std::vector<std::array<glm::dvec2, 3>> out;
+    Graph& g = graph();
+    const NodeId self = scene::instancing::root(g, n.id());
+    std::vector<std::string> slots;
+    for (const auto& [slot, count] : scene::materials::slotUsage(m))
+        if (count > 0)
+            slots.push_back(slot);
+
+    // A baked mesh shares a texture with the lows whose faces the bake writes to the same file (as bake lint reads it).
+    struct Low
+    {
+        NodeId id;
+        const bake::ProjectSettings* settings;
+        std::string project, group;
+    };
+    std::vector<Low> lows;
+    std::vector<bake::ProjectSettings> settings;
+    const std::vector<NodeId> projects = bake::projects(g);
+    settings.reserve(projects.size());
+    for (NodeId p : projects)
+    {
+        settings.push_back(bake::projectSettings(*g.node(p)));
+        for (NodeId gid : bake::groupsOf(g, p))
+            for (const std::string& path : bake::groupSettings(*g.node(gid)).lows)
+                if (Node* low = bake::detail::meshByName(g, path))
+                    lows.push_back({low->id(), &settings.back(), g.node(p)->name(), g.node(gid)->name()});
+    }
+    auto fileOf = [&](const Low& l, std::string_view slot) {
+        bake::NameTokens tok;
+        tok.project = l.project;
+        tok.group = l.group;
+        tok.mesh = bake::detail::shortName(g.node(l.id)->path());
+        tok.material = std::string(slot);
+        tok.map = "*";
+        tok.ext = "x";
+        return bake::expandName(l.settings->output.name, tok, true);
+    };
+    std::set<std::string> files;
+    for (const Low& l : lows)
+        if (scene::instancing::root(g, l.id) == self)
+            for (const std::string& s : slots)
+                files.insert(fileOf(l, s));
+    if (!files.empty())
+    {
+        for (const Low& l : lows)
+            if (scene::instancing::root(g, l.id) != self)
+                if (const MeshPtr om = bake::detail::exportedMesh(g, l.id))
+                    appendSharedFaces(*om, uvSet, [&](std::string_view slot) { return files.contains(fileOf(l, slot)); }, out);
+        return out;
+    }
+
+    // Otherwise by material: meshes on the same named material share its texture; the default slot is each mesh's own.
+    std::erase(slots, std::string(scene::materials::kDefaultSlot));
+    if (slots.empty())
+        return out;
+    for (NodeId id : g.nodes())
+    {
+        Node* o = g.node(id);
+        if (!o || !o->type().isA("mesh") || scene::instancing::root(g, id) == self)
+            continue;
+        if (const MeshPtr om = bake::detail::exportedMesh(g, id))
+            appendSharedFaces(*om, uvSet, [&](std::string_view slot) { return std::ranges::find(slots, slot) != slots.end(); }, out);
+    }
+    return out;
 }
 
 FinalMap exportTraceOf(const geo::Mesh& m, Node& n, bool on)

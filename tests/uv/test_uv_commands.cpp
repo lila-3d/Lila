@@ -1,4 +1,5 @@
 #include "TestUtil.h"
+#include "bake/BakeNodes.h"
 #include "geo/Topology.h"
 #include "ops/Command.h"
 #include "ops/CommandOptions.h"
@@ -10,6 +11,7 @@
 #include "uv/Guided.h"
 #include "uv/Uv.h"
 #include "uv/UvCommands.h"
+#include "uv/UvEdit.h"
 
 #include <doctest/doctest.h>
 
@@ -932,4 +934,34 @@ TEST_CASE("refineBorders smooths doubtful island borders and keeps confident one
     for (geo::Index f = 0; f < m.faceCapacity(); ++f)
         if (m.faceValid(f))
             CHECK(label[f] == (m.faceCentroid(f).x < 0.0 ? 0u : 1u));
+}
+
+TEST_CASE("islands keep off the uvs of meshes baked into the same texture")
+{
+    bake::registerTypes();
+    run("newScene");
+    std::vector<std::string> cubes;
+    for (int i = 0; i < 3; ++i)
+    {
+        cubes.push_back(run("polyCube")[0]);
+        run("select", {{"args", {cubes.back()}}});
+        run("uvProject", {{"type", "box"}});
+    }
+    scene::Graph& g = scene::Graph::current();
+    bake::ProjectSettings ps = bake::ProjectSettings::defaults();
+    scene::Node* project = bake::createProject(g, "Bakes", ps);
+    bake::GroupSettings gs;
+    gs.lows = {cubes[0], cubes[1]};
+    bake::setGroupSettings(g, bake::createGroup(g, project->id(), "Props")->id(), gs);
+    auto shared = [&](const std::string& name) { return uv::sharedTextureTriangles(*g.find(name), *meshOf(name), "uv0").size(); };
+
+    // The two lows have no materials: the default name gives both one texture. The third isn't baked.
+    CHECK(shared(cubes[0]) == 12);
+    CHECK(shared(cubes[1]) == 12);
+    CHECK(shared(cubes[2]) == 0);
+
+    // A texture per mesh.
+    ps.output.name = "T_{mesh}_{map}";
+    bake::setProjectSettings(g, project->id(), ps);
+    CHECK(shared(cubes[0]) == 0);
 }

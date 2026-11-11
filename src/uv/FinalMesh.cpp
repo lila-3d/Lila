@@ -860,10 +860,14 @@ FinalMap buildFinalMap(const geo::Mesh& cage, std::string_view uvSet, const Stac
 
 std::vector<glm::dvec2> exportedUvs(const FinalMap& map, const geo::Mesh& cage, std::string_view uvSet)
 {
+    return exportedUvs(map, cage.cornerAttrs().get<glm::vec2>(uvSet));
+}
+
+std::vector<glm::dvec2> exportedUvs(const FinalMap& map, std::span<const glm::vec2> cageUv)
+{
     std::vector<glm::dvec2> out;
-    if (!map.active() || !map.exported)
+    if (!map.active() || !map.exported || cageUv.empty())
         return out;
-    const std::span<const glm::vec2> cageUv = cage.cornerAttrs().get<glm::vec2>(uvSet);
     out.assign(map.exported->cornerCapacity(), glm::dvec2(0.0));
     for (size_t c = 0; c + 1 < map.rowStart.size(); ++c)
         for (Index k = map.rowStart[c]; k < map.rowStart[c + 1]; ++k)
@@ -2145,7 +2149,9 @@ FinalRefineResult refineRounds(geo::Mesh& cage, std::span<const Index> faces, st
             }
         return w > 0.0 ? d / w : 0.0;
     };
-    const FinalMap map = buildFinalMap(cage, uvSet, stack);
+    const auto shared = std::make_shared<const FinalMap>(buildFinalMap(cage, uvSet, stack));
+    const FinalMap& map = *shared;
+    out.map = shared;
     out.method = map.method;
     out.warning = map.warning;
     if (!map.active())

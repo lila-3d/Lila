@@ -8,6 +8,7 @@ lila_module(lila_uv Scene
     Guided.cpp
     Hose.cpp
     Hotspot.cpp
+    KeepApart.cpp
     Layout.cpp
     LiveSolver.cpp
     Metrics.cpp

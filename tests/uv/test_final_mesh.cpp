@@ -12,6 +12,7 @@
 #include <chrono>
 #include <map>
 #include <cmath>
+#include <set>
 #include <string>
 #include <utility>
 
@@ -608,6 +609,118 @@ TEST_CASE("final mesh: islands stay where they were")
         CHECK(glm::length(before[i].uvCentroid() - after[i].uvCentroid()) < 0.2);
         CHECK(glm::all(glm::greaterThanEqual(after[i].uvMin(), glm::dvec2(-1e-6))));
         CHECK(glm::all(glm::lessThanEqual(after[i].uvMax(), glm::dvec2(1.0 + 1e-6))));
+    }
+}
+
+/** Raster cells (1024 per uv unit) the exported islands share with another island, counted at cell centres as bake lint does. */
+size_t exportOverlap(const uv::FinalMap& map, const geo::Mesh& cage)
+{
+    const std::vector<uv::Chart> charts = islandsOf(cage);
+    std::vector<int> islandOf(cage.faceCapacity(), -1);
+    for (size_t i = 0; i < charts.size(); ++i)
+        for (Index f : charts[i].faces)
+            islandOf[f] = int(i);
+    const std::vector<glm::dvec2> uv = uv::exportedUvs(map, cage, "uv0");
+    std::map<std::pair<int, int>, int> owner;
+    size_t shared = 0;
+    const geo::Mesh& ex = *map.exported;
+    for (Index f = 0; f < ex.faceCapacity(); ++f)
+    {
+        if (!ex.faceValid(f))
+            continue;
+        const int island = islandOf[map.sourceFace[f]];
+        const std::vector<Index> cs = ex.faceCorners(f);
+        for (size_t k = 1; k + 1 < cs.size(); ++k)
+        {
+            const glm::dvec2 p[3] = {uv[cs[0]] * 1024.0, uv[cs[k]] * 1024.0, uv[cs[k + 1]] * 1024.0};
+            auto side = [](const glm::dvec2& s, const glm::dvec2& t, const glm::dvec2& q) { return (t.x - s.x) * (q.y - s.y) - (t.y - s.y) * (q.x - s.x); };
+            const double sign = side(p[0], p[1], p[2]) > 0.0 ? 1.0 : -1.0;
+            const glm::dvec2 lo = glm::floor(glm::min(p[0], glm::min(p[1], p[2]))), hi = glm::ceil(glm::max(p[0], glm::max(p[1], p[2])));
+            for (int y = int(lo.y); y < int(hi.y); ++y)
+                for (int x = int(lo.x); x < int(hi.x); ++x)
+                {
+                    const glm::dvec2 q(x + 0.5, y + 0.5);
+                    if (sign * side(p[0], p[1], q) < 0.0 || sign * side(p[1], p[2], q) < 0.0 || sign * side(p[2], p[0], q) < 0.0)
+                        continue;
+                    auto [it, added] = owner.try_emplace({x, y}, island);
+                    shared += !added && it->second != island;
+                }
+        }
+    }
+    return shared;
+}
+
+TEST_CASE("final mesh: an island moved onto another comes back clear at its size and shape, the rest untouched")
+{
+    const uv::Stack stack = bevelSubdivStack();
+    for (const bool boxedIn : {false, true})
+    {
+        CAPTURE(boxedIn);
+        geo::Mesh m = plate();
+        const uv::FinalMap map = uv::buildFinalMap(m, "uv0", stack);
+        REQUIRE(map.active());
+        REQUIRE(exportOverlap(map, m) == 0);
+        const std::span<const glm::vec2> was = std::as_const(m).cornerAttrs().get<glm::vec2>("uv0");
+        const std::vector<glm::vec2> before(was.begin(), was.end());
+
+        // A thin side strip, moved just into its nearest neighbour or into the middle of the biggest island.
+        std::vector<uv::Chart> charts = islandsOf(m);
+        size_t strip = 0, big = 0;
+        for (size_t i = 1; i < charts.size(); ++i)
+        {
+            if (charts[i].areaUv() < charts[strip].areaUv())
+                strip = i;
+            if (charts[i].areaUv() > charts[big].areaUv())
+                big = i;
+        }
+        size_t near = strip == 0 ? 1 : 0;
+        for (size_t i = 0; i < charts.size(); ++i)
+            if (i != strip && glm::length(charts[i].uvCentroid() - charts[strip].uvCentroid()) <
+                                  glm::length(charts[near].uvCentroid() - charts[strip].uvCentroid()))
+                near = i;
+        const glm::dvec2 to = charts[boxedIn ? big : near].uvCentroid(), from = charts[strip].uvCentroid();
+        glm::dvec2 shift = to - from;
+        if (!boxedIn)
+        {
+            const glm::dvec2 step = glm::normalize(shift) * 0.002;
+            shift = glm::dvec2(0.0);
+            uv::Chart moved = charts[strip];
+            for (int k = 0; k < 400 && exportOverlap(map, m) < 20; ++k)
+            {
+                shift += step;
+                for (size_t v = 0; v < moved.uv.size(); ++v)
+                    moved.uv[v] = charts[strip].uv[v] + shift;
+                uv::writeCharts(m, std::span(&moved, 1), "uv0");
+            }
+        }
+        else
+        {
+            uv::Chart moved = charts[strip];
+            for (glm::dvec2& p : moved.uv)
+                p += shift;
+            uv::writeCharts(m, std::span(&moved, 1), "uv0");
+        }
+        REQUIRE(exportOverlap(map, m) > 0);
+        const std::span<const glm::vec2> placed = std::as_const(m).cornerAttrs().get<glm::vec2>("uv0");
+        const std::vector<glm::vec2> onTop(placed.begin(), placed.end());
+
+        CHECK(uv::keepIslandsApart(m, map, "uv0", before) == 1);
+        CHECK(exportOverlap(map, m) == 0);
+        const std::span<const glm::vec2> now = std::as_const(m).cornerAttrs().get<glm::vec2>("uv0");
+        std::set<Index> stripCorners(charts[strip].corners.begin(), charts[strip].corners.end());
+        const Index first = charts[strip].corners[0];
+        const glm::dvec2 moveBy = glm::dvec2(now[first] - onTop[first]);
+        for (Index c = 0; c < now.size(); ++c)
+            if (stripCorners.count(c))
+                CHECK(glm::length(glm::dvec2(now[c] - onTop[c]) - moveBy) < 1e-5);
+            else
+                CHECK(now[c] == onTop[c]);
+        // A short move clears an island just into its neighbour.
+        if (!boxedIn)
+            CHECK(glm::length(moveBy) < glm::length(shift));
+        const uv::Chart after = islandsOf(m)[strip];
+        CHECK(glm::all(glm::greaterThanEqual(after.uvMin(), glm::dvec2(0.0))));
+        CHECK(glm::all(glm::lessThanEqual(after.uvMax(), glm::dvec2(1.0))));
     }
 }
 

@@ -154,12 +154,12 @@ RelaxStats relaxIslands(geo::Mesh& m, std::span<const Index> faces, std::string_
  * The relax reads a fit's respacing as it was; where the new uvs respace the border into slivers, those islands solve
  * again on the export.
  */
-void repairRelaxed(geo::Mesh& m, std::span<const Index> faces, std::string_view set, bool usePins, const Stack& stack)
+std::shared_ptr<const FinalMap> repairRelaxed(geo::Mesh& m, std::span<const Index> faces, std::string_view set, bool usePins, const Stack& stack)
 {
     FinalSolveOptions fo;
     fo.usePins = usePins;
     fo.iterations = kRepairIterations;
-    repairFinal(m, islandFacesOf(m, faces, set), set, stack, fo);
+    return repairFinal(m, islandFacesOf(m, faces, set), set, stack, fo).map;
 }
 
 LiveOptions optionsArgs(const Args& a)
@@ -252,6 +252,9 @@ void registerLiveCommands()
             std::string set = setArg(a);
             return editUvMeshes("UV Live Relax", ComponentMode::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
                 const Stack stack = final ? exportStack(n) : Stack{};
+                const std::span<const glm::vec2> was = m.cornerAttrs().get<glm::vec2>(set);
+                const std::vector<glm::vec2> before(was.begin(), was.end());
+                std::shared_ptr<const FinalMap> map;
                 RelaxStats st;
                 withUvSymmetry(m, n, set, UvSymmetry::Absolute, {}, [&] {
                     st = relaxIslands(m, f, set, o, iterations, flatten, pins, stack);
@@ -260,9 +263,11 @@ void registerLiveCommands()
                 // After the symmetry pass, which rewrites mirrored islands the repair has to see.
                 if (st.exported)
                     withUvSymmetry(m, n, set, UvSymmetry::Absolute, {}, [&] {
-                        repairRelaxed(m, f, set, pins, stack);
+                        map = repairRelaxed(m, f, set, pins, stack);
                         return json();
                     });
+                if (map)
+                    keepIslandsApart(m, *map, set, before, sharedTextureTriangles(n, m, set));
                 if (!st.warning.empty())
                     log::warn("{}: {}", n.name(), st.warning);
                 return st.toJson();
