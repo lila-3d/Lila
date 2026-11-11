@@ -128,14 +128,16 @@ const Pairs kMonotone = {
     {"componentWire", "#73c7ff"}, {"componentPoint", "#f26bc7"}, {"componentSelected", "#fff226"}, {"componentHover", "#ff2e2e"},
     {"axisX", "#d96666"},         {"axisY", "#80cc6b"},         {"axisZ", "#6b8fe6"},          {"manipNeutral", "#b3b3b3"},
     {"manipActive", "#ffffff"},   {"hudText", "#ffffff"},       {"keyTick", "#db5c5c"},        {"nodeBody", "#3a3a3a"},
-    {"nodeHeader", "#4c4c4c"},    {"nodeSelected", "#ebebeb"},  {"nodeGroupIo", "#5c5c5c"},    {"nodeGeometry", "#4c4c4c"},
-    {"nodeMesh", "#4c4c4c"},      {"nodeCurve", "#4c4c4c"},     {"nodePoint", "#4c4c4c"},      {"nodeInstances", "#4c4c4c"},
-    {"nodeAttribute", "#4c4c4c"}, {"nodeInput", "#4c4c4c"},     {"nodeOutput", "#4c4c4c"},     {"nodeUtilities", "#4c4c4c"},
-    {"nodeColor", "#4c4c4c"},     {"nodeTexture", "#4c4c4c"},   {"socketGeometry", "#ebebeb"}, {"socketFloat", "#b9b9b9"},
-    {"socketInt", "#b9b9b9"},     {"socketBool", "#696969"},    {"socketString", "#7d7d7d"},   {"socketVector", "#969696"},
-    {"socketRotation", "#969696"}, {"socketColor", "#d2d2d2"},   {"socketMatrix", "#a0a0a0"},   {"socketBundle", "#8c8c8c"},
-    {"socketClosure", "#bcbcbc"},  {"zoneRepeat", "#5a5a5a"},    {"zoneForEach", "#5a5a5a"},    {"zoneSimulation", "#5a5a5a"},
-    {"zoneClosure", "#5a5a5a"},
+    {"nodeHeader", "#4c4c4c"},    {"nodeSelected", "#ebebeb"},
+    // Node headers: muted tints at one lightness (OKLCH 0.40, chroma 0.055), one hue per family of categories.
+    {"nodeGroupIo", "#533f5c"},   {"nodeGeometry", "#235146"},  {"nodeMesh", "#235146"},       {"nodeCurve", "#235146"},
+    {"nodePoint", "#235146"},     {"nodeInstances", "#235146"}, {"nodeAttribute", "#3c4666"},  {"nodeInput", "#623c39"},
+    {"nodeOutput", "#5e3b4c"},    {"nodeUtilities", "#274c61"}, {"nodeColor", "#574423"},      {"nodeTexture", "#574423"},
+    // Socket and wire colour says the data type.
+    {"socketGeometry", "#00d6a3"}, {"socketFloat", "#a1a1a1"},  {"socketInt", "#598c5c"},      {"socketBool", "#cca6d6"},
+    {"socketString", "#70b2ff"},  {"socketVector", "#6363c7"},  {"socketRotation", "#a663c7"}, {"socketColor", "#c7c729"},
+    {"socketMatrix", "#7a4ad6"},  {"socketBundle", "#3fa59a"},  {"socketClosure", "#d6604a"},
+    {"zoneRepeat", "#63506b"},    {"zoneForEach", "#386156"},   {"zoneSimulation", "#675537"}, {"zoneClosure", "#724d4a"},
 };
 
 // Monotone's neutrals with hue where it helps scanning: selection, active state, axes and node categories.
@@ -420,7 +422,7 @@ const std::vector<Theme>& builtIns()
     static const std::vector<Theme> themes = [] {
         std::vector<Theme> out;
         out.push_back(make("Monotone", "dark",
-                           "Neutral grey. Coloured interfaces bleed into your vision, affecting your colour perception, and reducing accuracy.",
+                           "Neutral grey, with colour only where it means something: axes, components, node types. Coloured interfaces bleed into your vision, affecting your colour perception, and reducing accuracy.",
                            kMonotone));
         out.push_back(make("Colour", "dark", "Dark, with colour for selection, active tools, axes and node categories. Friendlier and easier to scan.",
                            kColour));
@@ -599,12 +601,15 @@ Rgba grayOf(Rgba c)
     return {v, v, v, c.a};
 }
 
-/** Every token Monotone draws grey goes grey at its own lightness; the few Monotone keeps hued (axes, components) stay. */
+/**
+ * Every token Monotone draws grey, and the node editor's type colours, go grey at their own lightness; the few hues
+ * that must survive (axes, components, issue badges) stay. Sockets still differ by shape and mark.
+ */
 Theme monotoneOf(Theme t)
 {
     const Theme& mono = *builtIn(kDefaultTheme);
     for (const TokenInfo& info : tokens())
-        if (Rgba m = mono.color(info.id); m.r == m.g && m.g == m.b)
+        if (Rgba m = mono.color(info.id); (m.r == m.g && m.g == m.b) || std::string_view(info.group) == "Node Editor")
             t.colors[info.id] = grayOf(t.color(info.id));
     return t;
 }

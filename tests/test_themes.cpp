@@ -150,12 +150,24 @@ TEST_CASE("the Monotone pref greys a hued theme except where Monotone keeps hue"
     CHECK(hi.r == hi.g);
     CHECK(hi.g == hi.b);
     CHECK(t->color("axisX") == themes::builtIn("Colour")->color("axisX"));
+    themes::Rgba sock = t->color("socketVector");
+    CHECK(sock.r == sock.g);
+    CHECK(sock.g == sock.b);
 
     PrefStore::get().set("general", themes::kMonotonePref, false);
     themes::invalidate();
     CHECK(themes::current()->color("highlight") == themes::builtIn("Colour")->color("highlight"));
     PrefStore::get().remove("general", themes::kMonotonePref);
     clearSaved();
+}
+
+TEST_CASE("Monotone tells socket types and node families apart")
+{
+    const themes::Theme& mono = *themes::builtIn("Monotone");
+    CHECK(mono.color("socketFloat") != mono.color("socketInt"));
+    CHECK(mono.color("socketVector") != mono.color("socketRotation"));
+    CHECK(mono.color("nodeInput") != mono.color("nodeGeometry"));
+    CHECK(mono.color("nodeMesh") == mono.color("nodeGeometry"));
 }
 
 TEST_CASE("theme commands save, switch, rename and delete")
