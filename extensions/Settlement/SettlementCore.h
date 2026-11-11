@@ -6,6 +6,7 @@
 
 #include <glm/glm.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <numbers>
@@ -321,6 +322,7 @@ struct Profile
     double minAngle = 35.0;   // degrees between streets at a junction
     double spacing = 2200.0;  // streets closer than this side by side are refused
     double maxGrade = 0.12;   // rise over run; steeper streets turn along the slope
+    double terraceGrade = 0.5; // rise over run: streets and lots up to this are still laid, cut into terraces
     double density = 1.0;     // street length per area, relative to the pattern's own
     double falloff = 1.6;     // how fast streets and heights thin out from the centre
     double maxBlock = 6000.0; // m2: larger blocks are cut by a lane
@@ -352,6 +354,9 @@ struct Profile
     double targetFourWayMin = 0.0, targetFourWayMax = 1.0; // share of intersections where four or more streets meet
     double targetBlockMin = 0.0, targetBlockMax = 1.0e9;    // median block area, m2
 };
+
+/** Steepest ground a street or lot is laid on: mult times the style's maxGrade, or its terraceGrade where that is more. */
+inline double steepLimit(const Profile& p, double mult) { return std::max(mult * p.maxGrade, p.terraceGrade); }
 
 /** The built-in styles, by name. */
 std::vector<std::string> profileNames();

@@ -213,10 +213,10 @@ void typeBlocks(Layout& l, const Ground& g, const Site& site, const std::string&
             b.type = BlockType::Park;
             b.reasons.push_back("on flood ground within " + metres(floodMargin(p)) + " of the water");
         }
-        else if (grade > 2.0 * p.maxGrade)
+        else if (grade > steepLimit(p, 2.0))
         {
             b.type = BlockType::Park;
-            b.reasons.push_back("slope " + percent(grade) + ", past twice the style's " + percent(p.maxGrade));
+            b.reasons.push_back("slope " + percent(grade) + ", past the style's steepest " + percent(steepLimit(p, 2.0)));
         }
         else if (era == "medieval" && dist > fieldStart && b.area > 3.0 * p.lotWidth * p.lotDepth / kM2)
         {
@@ -226,6 +226,8 @@ void typeBlocks(Layout& l, const Ground& g, const Site& site, const std::string&
         else
         {
             ordinary = true;
+            if (grade > 2.0 * p.maxGrade)
+                b.reasons.push_back("terraced: slope " + percent(grade) + ", past twice the style's " + percent(p.maxGrade));
             if (fixedType)
                 b.type = profileType;
             else if (era == "medieval")
@@ -602,7 +604,7 @@ void assignUses(Layout& l, const Ground& g, const std::string& era)
                 lot.use = Use::Farm;
             else if (!buildable(lot, p))
                 lot.use = Use::Open;
-            else if (bank < floodMargin(p) || g.grade(c) > 2.0 * p.maxGrade)
+            else if (bank < floodMargin(p) || g.grade(c) > steepLimit(p, 2.0))
                 lot.use = Use::Park;
             else if (b.water && bank < 1.5 * p.lotDepth && normDist(l, c) < 0.85 && era != "future")
                 lot.use = Use::Port;

@@ -453,7 +453,7 @@ void joinComponents(Layout& l, const Ground& g)
         const Vec2 pa = graph.nodes[size_t(from)].p, pb = graph.nodes[size_t(to)].p;
         const Vec2 ends[] = {pa, pb};
         const bool dry = l.water.empty() || cutAtWater(std::vector<Vec2>(ends, ends + 2), l.water).size() == 1;
-        if (gap < 3.0 * p.segment && dry && g.gradeAlong(pa, pb) <= p.maxGrade * 1.5 && !crossesExclusion(l, pa, pb))
+        if (gap < 3.0 * p.segment && dry && g.gradeAlong(pa, pb) <= steepLimit(p, 1.5) && !crossesExclusion(l, pa, pb))
             graph.addStreet(pa, pb, StreetClass::Local);
         else if (length >= p.segment)
         {
@@ -591,7 +591,7 @@ void pullBackFromWater(Layout& l)
 void layLine(Layout& l, const Ground& g, const Profile& p, std::span<const Vec2> pts, StreetClass cls, int era, double inner, double step)
 {
     for (const std::vector<Vec2>& run : clipPolyline(pts, l.outline, l.center, inner, 0.0, l.exclusions))
-        for (const std::vector<Vec2>& part : climbable(run, g, p.maxGrade * 1.5, step))
+        for (const std::vector<Vec2>& part : climbable(run, g, steepLimit(p, 1.5), step))
         {
             if (cls == StreetClass::Arterial)
                 l.graph.addPolyline(part, cls, era);
@@ -740,7 +740,7 @@ std::vector<Vec2> route(const Layout& l, const Ground& g, const Profile& p, Vec2
                     continue;
                 const double run = cell * std::sqrt(double(dx * dx + dy * dy));
                 const double grade = std::abs(height[size_t(j)] - height[size_t(i)]) / run;
-                if (grade > 2.5 * p.maxGrade)
+                if (grade > steepLimit(p, 2.5))
                     continue;
                 const double r = grade / std::max(p.maxGrade, 1e-3);
                 // Water costs a bridge: roads cross rivers rarely, and straight across.
@@ -1034,7 +1034,7 @@ void cutLargeBlocks(Layout& l, const Ground& g, const Options& o)
             // The piece of the cut line that lies in this block.
             for (const std::vector<Vec2>& run : clipPolyline(line, poly, c, 0.0, 0.0))
             {
-                if (run.size() < 2 || g.gradeAlong(run.front(), run.back()) > p.maxGrade * 1.5)
+                if (run.size() < 2 || g.gradeAlong(run.front(), run.back()) > steepLimit(p, 1.5))
                     continue;
                 // A block on the river: the lane stops short of the bank.
                 for (const std::vector<Vec2>& dry : cutAtWater(run, l.water))

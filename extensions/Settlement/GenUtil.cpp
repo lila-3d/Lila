@@ -218,7 +218,7 @@ std::vector<int> lay(Layout& l, const Ground& g, const Profile& p, std::span<con
     std::vector<int> made;
     const double step = std::max(p.segment * 0.25, 200.0);
     for (const std::vector<Vec2>& run : clip(pts, l.outline, l.center, inner, outer, l.exclusions))
-        for (const std::vector<Vec2>& part : climbable(run, g, p.maxGrade * 1.5, step))
+        for (const std::vector<Vec2>& part : climbable(run, g, steepLimit(p, 1.5), step))
         {
             if (cls == StreetClass::Arterial)
             {
@@ -349,7 +349,7 @@ void closeEnds(Layout& l, const Ground& g, const Profile& p, std::span<const int
             double s = 0.0;
             const int crossed = l.graph.firstCrossing(at + u * 1.0, at + u * reach, &hit, &s, end);
             if (crossed < 0 || l.graph.edges[size_t(crossed)].cls == StreetClass::Water || crossesExclusion(l, at, hit) ||
-                !contains(l.outline.pts, (at + hit) * 0.5) || g.gradeAlong(at, hit) > p.maxGrade * 1.5)
+                !contains(l.outline.pts, (at + hit) * 0.5) || g.gradeAlong(at, hit) > steepLimit(p, 1.5))
                 continue;
             l.graph.addStreet(at, hit, x);
         }
