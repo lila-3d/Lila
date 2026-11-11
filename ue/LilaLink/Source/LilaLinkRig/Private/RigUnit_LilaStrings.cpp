@@ -199,6 +199,15 @@ bool ProblemOf(URigHierarchy* H, const FRuleWeb& W, FProblem& Out, FRules& Rules
 }
 
 /** Writes the pose into the hierarchy, parents first, as each bone's local transform. */
+/** Sets a bone's local transform even when it moved less than the hierarchy's 1e-4 change test, as a limb held at a limit can. */
+void SetLocalForced(URigHierarchy* H, const FRigElementKey& Key, const FTransform& Local)
+{
+	if (FRigTransformElement* E = H->Find<FRigTransformElement>(Key))
+	{
+		H->SetTransform(E, Local, ERigTransformType::CurrentLocal, true, false, true);
+	}
+}
+
 void ApplyPose(URigHierarchy* H, const FRuleWeb& W, const FProblem& P, const FPose& S)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaStrings::ApplyPose);
@@ -208,7 +217,7 @@ void ApplyPose(URigHierarchy* H, const FRuleWeb& W, const FProblem& P, const FPo
 		const FBone& B = P.Bones[I];
 		const FVector Lengthen = (S.Stretch[I] - 1.0) * B.Before.GetOrigin();
 		const FMatrix Local = Mul(Mul(Mul(FTranslationMatrix(S.Offset[I] + Lengthen), B.Before), FQuatRotationMatrix(S.Rotation[I])), B.After);
-		H->SetLocalTransform(BoneKey(W.Bones[I]), FTransform(Local), false, true);
+		SetLocalForced(H, BoneKey(W.Bones[I]), FTransform(Local));
 	}
 }
 
@@ -235,7 +244,7 @@ struct FPoseBlend
 		{
 			FTransform Blended;
 			Blended.Blend(B.Value, H->GetLocalTransform(BoneKey(B.Key)), FMath::Clamp(Alpha, 0.0f, 1.0f));
-			H->SetLocalTransform(BoneKey(B.Key), Blended, false, true);
+			SetLocalForced(H, BoneKey(B.Key), Blended);
 		}
 	}
 };
