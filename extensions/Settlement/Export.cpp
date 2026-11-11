@@ -791,6 +791,7 @@ json toGeoJson(const Layout& l, const RoadNetwork& net, const std::string& name)
                                     {"control", controlName(j.control)},
                                     {"approaches", j.ends.size()},
                                     {"phases", j.phases},
+                                    {"walks", j.walks},
                                     {"radius", j.radius},
                                     {"height", j.p.y}}));
     for (const Block& b : l.blocks)
@@ -1043,7 +1044,7 @@ json toEngineJson(const Layout& l, const Ground& ground, const RoadNetwork& net,
     }
     json junctions = json::array();
     for (const Junction& j : net.junctions)
-        junctions.push_back({{"key", junctionKey(j)}, {"control", controlName(j.control)}, {"approaches", int(j.ends.size())}, {"position", es.vec(j.p)}});
+        junctions.push_back({{"key", junctionKey(j)}, {"control", controlName(j.control)}, {"approaches", int(j.ends.size())}, {"position", es.vec(j.p)}, {"phases", j.phases}, {"walks", j.walks}});
     json blocks = json::array();
     for (const Block& b : l.blocks)
         blocks.push_back({{"id", b.id}, {"use", useName(b.use)}, {"area", b.area / kM2}, {"outline", es.flatPoints(flat(b.outline, lowestGround(ground, b.outline)))}});

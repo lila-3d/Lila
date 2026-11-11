@@ -56,6 +56,8 @@ func _run() -> void:
 		var m := _marker(junctions, scene_root, "%s_%s" % [j.get("key", ""), j.get("control", "")], _vec(j.get("position", []), Vector3.ZERO))
 		m.set_meta("control", j.get("control", ""))
 		m.set_meta("approaches", j.get("approaches", 0))
+		m.set_meta("phases", j.get("phases", []))
+		m.set_meta("walks", j.get("walks", []))
 
 	var placed := _group(root, scene_root, "Placements")
 	var placement_list: Array = info.get("placements", [])

@@ -915,9 +915,17 @@ struct Junction
     double radius = 0.0;
     std::vector<RoadEnd> ends;
     Control control = Control::None;
-    /** Signalised: groups of ends that get green together (opposite approaches), never two that cross. */
+    /**
+     * Signalised: groups of ends that get green together (opposite approaches), never two that cross. A skewed junction
+     * gives a through movement that would cross another one a phase of its own; an empty group is a pedestrian-only phase.
+     */
     std::vector<std::vector<int>> phases;
     std::vector<Crosswalk> crosswalks;
+    /**
+     * Per phase, the crosswalks people cross on during it: those over an approach whose traffic is held and that no
+     * through movement of the phase leaves by. Turns across a walking crosswalk give way to the people on it.
+     */
+    std::vector<std::vector<int>> walks;
 };
 
 /** An on-street parking space beside a road with a parking lane. */

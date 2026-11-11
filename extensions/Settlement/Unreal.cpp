@@ -294,6 +294,7 @@ json zoneData(const Rebuilt& r, const RoadNetwork& net)
                              {"tags", tags},
                              {"control", controlName(j.control)},
                              {"phases", j.phases},
+                             {"walks", j.walks},
                              {"crosswalks", crosswalks}});
     }
     json parking = json::array();
