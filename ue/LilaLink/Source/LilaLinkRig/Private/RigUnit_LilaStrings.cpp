@@ -293,7 +293,14 @@ bool Run(URigHierarchy* H, const EMode Mode, const FAsk& Ask, float& OutError, c
 		return false;
 	}
 	const FRigElementKey ControlKey(Ask.Control, ERigElementType::Control);
-	const FTransform Goal = !Ask.Control.IsNone() && H->Contains(ControlKey) ? H->GetGlobalTransform(ControlKey) : Ask.Target;
+	const bool bControl = !Ask.Control.IsNone() && H->Contains(ControlKey);
+	const FTransform Goal = bControl ? H->GetGlobalTransform(ControlKey) : Ask.Target;
+	// A control left where it started asks for nothing: posing toward it would undo what the dragged controls' units did.
+	if (bControl && FRigComputedTransform::Equals(Goal, H->GetGlobalTransform(ControlKey, true), 1e-9f))
+	{
+		OutError = 0.0f;
+		return true;
+	}
 	const FTransform Now = H->GetGlobalTransform(BoneKey(Ask.Bone));
 
 	FRequest R;
