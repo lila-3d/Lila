@@ -76,6 +76,22 @@ struct PathOptions
 /** Items spaced along a polyline (litter along a kerb, posts along a fence), their bottoms on it. */
 std::vector<Placed> path(std::span<const glm::dvec3> line, std::span<const Item> items, const PathOptions& o);
 
+struct DebrisOptions
+{
+    double amount = 6.0;      // chips per piece of median size, on average; bigger pieces shed more
+    double size = 0.12;       // chip size as a fraction of its piece's size
+    double minSize = 2.0, maxSize = 40.0; // cm
+    double spread = 1.0;      // how far out they land, in piece radii beyond the piece
+    uint32_t seed = 1;
+};
+
+/**
+ * Chips around and beside broken pieces (fracture pieces, a ruin's stones), sized from the piece they came off and
+ * stacked loosely above the ground next to it, ready to drop: settle() lands them against the pieces. pieces holds each
+ * piece's world bounds (lo, hi).
+ */
+std::vector<Placed> debris(std::span<const std::pair<glm::dvec3, glm::dvec3>> pieces, std::span<const Item> items, const DebrisOptions& o);
+
 struct StackOptions
 {
     int count = 6;

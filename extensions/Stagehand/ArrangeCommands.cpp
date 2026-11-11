@@ -782,5 +782,103 @@ void registerArrangeCommands(ext::Context& ctx)
         .examples = {"pathProps('Kerb', items=['Debris/Rebar', 'Debris/RebarBent'], spacing=60, offset=40, spread=20, along=False)",
                      "pathProps('Road_Edge', items=['Road/Delineator'], spacing=500, offset=-150, turn=0)"},
     });
+
+    std::vector<FlagDef> debrisFlags;
+    for (FlagDef& f : commonFlags(true))
+        if (f.name != "realize" && f.name != "variants" && f.name != "items" && f.name != "density")
+            debrisFlags.push_back(std::move(f));
+    const std::vector<FlagDef> debrisFlagsExtra = {
+        {"items", "it", T::List, nullptr, "Chips: library asset ids and/or scene meshes (default the starter library's stone chunks)."},
+        {"amount", "a", T::Float, 6.0, "Chips per piece of median size, on average; bigger pieces shed more.", {}, {}, 0.0, 1000.0},
+        {"size", "sz", T::Float, 0.12, "Chip size as a fraction of the piece it comes off.", {}, {}, 0.001, 1.0},
+        {"minSize", "mns", T::Float, 2.0, "Smallest chip, cm.", {}, {}, 0.1},
+        {"maxSize", "mxs", T::Float, 40.0, "Largest chip, cm.", {}, {}, 0.1},
+        {"spread", "sd", T::Float, 1.0, "How far out they land, in piece radii beyond each piece.", {}, {}, 0.0},
+        {"density", "", T::Float, 2400.0, "kg/m3 of the chips, for the settle.", {}, {}, 1.0},
+        nodeFlag({"onto", "on", T::List, nullptr, "Meshes they land on besides the pieces; default a floor plane at the pieces' lowest point."}, "mesh")};
+    debrisFlags.insert(debrisFlags.end(), debrisFlagsExtra.begin(), debrisFlagsExtra.end());
+    ctx.registerCommand({
+        .name = "debrisProps",
+        .doc = "Strew debris around broken things: chips sized from each piece of a fracture, ruin or wall (bigger pieces shed "
+               "more and bigger chips), dropped beside it and settled against the pieces and the ground. Places scene "
+               "instances (mode='copy' for copies) in one group. Returns the same as fillShelf with realize=True.",
+        .positionalDoc = "broken objects: their meshes are the pieces (default the selection)",
+        .flags = debrisFlags,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            Graph& g = Graph::current();
+            std::vector<ItemSource> items;
+            if (a.has("items"))
+                items = itemsArg(g, a, "debrisProps");
+            else
+            {
+                library::Query q;
+                q.tags = {"debris", "stone"};
+                json ids = json::array();
+                for (const library::Asset& x : library::search(q))
+                    if (x.id.find("StoneChunk") != std::string::npos)
+                        ids.push_back(x.id);
+                if (ids.empty())
+                    throw CommandError("debrisProps: no stone chunks in the library (libraryStarter builds them); give items=[...]");
+                Args withItems = a;
+                withItems.flags["items"] = ids;
+                items = itemsArg(g, withItems, "debrisProps");
+            }
+            const std::vector<std::string> sources = a.objects();
+            if (sources.empty())
+                throw CommandError("debrisProps: give the broken objects");
+            g.evaluate();
+            std::vector<NodeId> pieceMeshes;
+            std::vector<std::pair<glm::dvec3, glm::dvec3>> pieces;
+            double lowest = 1e300;
+            for (const std::string& name : sources)
+            {
+                Node* n = g.find(name);
+                if (!n)
+                    throw CommandError("debrisProps: no node named '" + name + "'");
+                for (NodeId m : meshesOf(g, n->id()))
+                {
+                    const geo::Mesh w = meshOf(g, m, true);
+                    glm::dvec3 lo(1e300), hi(-1e300);
+                    for (geo::Index p = 0; p < w.pointCapacity(); ++p)
+                        if (w.pointValid(p))
+                        {
+                            lo = glm::min(lo, w.position(p));
+                            hi = glm::max(hi, w.position(p));
+                        }
+                    if (lo.x > hi.x)
+                        continue;
+                    pieceMeshes.push_back(m);
+                    pieces.emplace_back(lo, hi);
+                    lowest = std::min(lowest, lo.y);
+                }
+            }
+            if (pieces.empty())
+                throw CommandError("debrisProps: the objects have no meshes");
+            arrange::DebrisOptions o;
+            o.amount = a.get<double>("amount", 6.0);
+            o.size = a.get<double>("size", 0.12);
+            o.minSize = a.get<double>("minSize", 2.0);
+            o.maxSize = std::max(o.minSize, a.get<double>("maxSize", 40.0));
+            o.spread = a.get<double>("spread", 1.0);
+            o.seed = uint32_t(a.get<int64_t>("seed", 1));
+            std::vector<arrange::Item> bounds;
+            for (const ItemSource& it : items)
+                bounds.push_back(arrange::itemOf(meshOf(g, it.mesh, false)));
+            std::vector<NodeId> colliders = meshListArg(g, a, "onto", "debrisProps");
+            const bool floor = colliders.empty();
+            colliders.insert(colliders.end(), pieceMeshes.begin(), pieceMeshes.end());
+            arrange::SettleOptions so = settleOptions(a);
+            so.density = a.get<double>("density", 2400.0);
+            so.ground = floor;
+            so.groundHeight = lowest;
+            const Result r = settleIf(arrange::debris(pieces, bounds, o), g, items, colliders, so, a.get<bool>("settle", true));
+            if (r.placed.empty())
+                throw CommandError("debrisProps: nothing placed (amount is 0?)");
+            return finishRealized(g, a, r, items, a.get<std::string>("name", "Debris"));
+        },
+        .examples = {"debrisProps('Wall_fractured')", "debrisProps('RuinedArch', amount=12, size=0.08, onto=['Terrain'])"},
+    });
 }
 } // namespace stagehand

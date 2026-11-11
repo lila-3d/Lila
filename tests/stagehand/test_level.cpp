@@ -584,3 +584,43 @@ TEST_CASE("stagehand: terrain roads stand the starter library's road props, turn
     }
     run("newScene");
 }
+
+TEST_CASE("arrange: debrisProps strews chips sized from the pieces beside them, at rest, in one undo step")
+{
+    load();
+    run("newScene");
+    run("libraryStarter", {{"thumbnails", false}});
+    const std::string big = cube("BigPiece", {0, 0, 0}, {100, 100, 100});
+    const std::string small = cube("SmallPiece", {300, 0, 0}, {25, 25, 25});
+    run("group", {{"args", {big, small}}, {"name", "Broken"}});
+    const json r = run("debrisProps", {{"args", {"Broken"}}, {"amount", 6.0}});
+    REQUIRE(r["nodes"].is_array());
+    const size_t chips = r["nodes"].size();
+    CHECK(chips >= 4);
+    CHECK(r["atRest"].get<int64_t>() == int64_t(chips));
+    int nearBig = 0, nearSmall = 0;
+    json chipMeshes = json::array();
+    double biggest = 0.0;
+    for (const json& n : r["nodes"])
+    {
+        json info;
+        for (const json& d : run("listRelatives", {{"args", {n}}, {"allDescendents", true}}))
+            if (run("nodeType", {{"args", {d}}}) == "mesh")
+                info = run("dressInfo", {{"args", {d}}})[0];
+        REQUIRE(info.is_object());
+        chipMeshes.push_back(info["node"]);
+        const glm::dvec3 lo(info["boundsMin"][0].get<double>(), info["boundsMin"][1].get<double>(), info["boundsMin"][2].get<double>());
+        const glm::dvec3 hi(info["boundsMax"][0].get<double>(), info["boundsMax"][1].get<double>(), info["boundsMax"][2].get<double>());
+        biggest = std::max(biggest, std::max({hi.x - lo.x, hi.y - lo.y, hi.z - lo.z}));
+        const glm::dvec3 c = (lo + hi) * 0.5;
+        (glm::length(glm::dvec2(c.x, c.z)) < glm::length(glm::dvec2(c.x - 300.0, c.z)) ? nearBig : nearSmall) += 1;
+    }
+    // Resting on the ground or the pieces: nothing floats or sinks in.
+    CHECK(run("dressCheck", {{"args", chipMeshes}})["ok"].get<bool>());
+    // Chips are a fraction of their piece, and the big piece sheds more of them.
+    CHECK(biggest < 50.0);
+    CHECK(nearBig > nearSmall);
+    run("undo");
+    CHECK_FALSE(run("objExists", {{"args", {r["group"]}}}).get<bool>());
+    CHECK_THROWS(run("debrisProps", {{"args", {"NoSuchWall"}}}));
+}
