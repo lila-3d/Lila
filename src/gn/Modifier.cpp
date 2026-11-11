@@ -3,6 +3,7 @@
 #include "gn/InstanceView.h"
 #include "gn/NodesCommon.h"
 #include "gn/Stateful.h"
+#include "gn/Tool.h"
 #include "gn/Viewer.h"
 
 #include "core/Log.h"
@@ -144,6 +145,7 @@ public:
             noteViewModifier(id(), false);
             clearInstanceView(id());
             setOutputGeometry(id(), nullptr);
+            setModifierGizmos(id(), nullptr);
             setOutput(outAttr, in);
             return;
         }
@@ -174,6 +176,7 @@ public:
         {
             clearInstanceView(id());
             setOutputGeometry(id(), nullptr);
+            setModifierGizmos(id(), nullptr);
             setOutput(outAttr, in);
             return;
         }
@@ -215,7 +218,11 @@ public:
             ViewerSink sink;
             if (mPlan->viewerStep >= 0)
                 env.viewer = &sink;
+            auto gizmos = std::make_shared<GizmoList>();
+            if (!mPlan->gizmoSteps.empty())
+                env.gizmos = gizmos.get();
             GeometryPtr result = execute(*mPlan, env);
+            setModifierGizmos(id(), std::move(gizmos));
             setOutputGeometry(id(), result);
             scene::MeshPtr out = std::make_shared<geo::Mesh>(toOutputMesh(*result));
             if (InstanceViewPtr view = makeInstanceView(*result, out))
@@ -235,6 +242,7 @@ public:
             clearViewerData(id());
             clearInstanceView(id());
             setOutputGeometry(id(), nullptr);
+            setModifierGizmos(id(), nullptr);
         }
     }
 
@@ -274,6 +282,7 @@ public:
         noteViewModifier(id(), false);
         clearInstanceView(id());
         setOutputGeometry(id(), nullptr);
+        setModifierGizmos(id(), nullptr);
     }
 
 private:

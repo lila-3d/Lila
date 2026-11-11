@@ -127,6 +127,8 @@ LILA_SCENE_API std::string compatibleSocket(const Group& g, const NodeDecl& d, S
 struct Bundle;
 struct Closure;
 struct Plan;
+struct ToolContext;
+struct GizmoSpec;
 
 /** What a socket carries during evaluation. Which member is used follows the socket type. */
 struct Value
@@ -207,6 +209,10 @@ struct ExecEnv
     bool sampleOnly = false;
     /** Results of time-independent steps, kept by the modifier between evaluations (gn/Exec.h). */
     StepCache* cache = nullptr;
+    /** Set while the group runs as a tool (gn/Tool.h): the pointer, view and active element its tool nodes read. */
+    const ToolContext* tool = nullptr;
+    /** Where gizmo nodes record their handles; null skips them. Nested groups run without one. */
+    std::vector<GizmoSpec>* gizmos = nullptr;
 };
 
 /** Turns a JSON value (node value, exposed default) into a socket value. Rotations are given in degrees. */
