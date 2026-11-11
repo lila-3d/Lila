@@ -283,6 +283,14 @@ json bindNet(Graph& g, NodeId hubId, NodeId bodyId, Node& layoutNode, BindOption
         };
         for (size_t k = 0; k < net.knots.size(); ++k)
             add(net.knots[k].origin, {.run = -1, .knot = int(k)});
+        if (isBody)
+            for (size_t r = 0; r < lines.size(); ++r)
+            {
+                std::vector<sn::SurfacePoint>& drawn = b.lines.emplace_back();
+                for (const glm::dvec3& p : resample(lines[r].run->path.points, std::min(step * 0.25, b.edge)))
+                    if (sn::SurfacePoint sp; surface.sample(p, sp))
+                        drawn.push_back(sp);
+            }
         for (size_t r = 0; r < lines.size(); ++r)
         {
             const Path& path = lines[r].run->path;

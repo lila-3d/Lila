@@ -41,6 +41,8 @@ struct LILA_SCENE_API MeshBind
     std::vector<deform::softnet::Run> runs;
     std::vector<int> tangentKnot;
     std::vector<glm::dvec3> tangentRest;
+    /** The body's only: each run's path on the surface, finely, for drawing the lines as they bend. */
+    std::vector<std::vector<deform::softnet::SurfacePoint>> lines;
     nlohmann::json toJson() const;
     static MeshBind fromJson(const std::string& text);
 };

@@ -156,7 +156,20 @@ json MeshBind::toJson() const
         r.push_back({x.knot[0], x.knot[1], x.tangent[0], x.tangent[1]});
     for (size_t i = 0; i < tangentRest.size(); ++i)
         t.push_back({tangentKnot[i], tangentRest[i].x, tangentRest[i].y, tangentRest[i].z});
-    return {{"points", points}, {"knots", knots}, {"edge", edge}, {"autoReach", autoReach}, {"samples", s}, {"runs", r}, {"tangents", t}};
+    json out = {{"points", points}, {"knots", knots}, {"edge", edge}, {"autoReach", autoReach}, {"samples", s}, {"runs", r}, {"tangents", t}};
+    if (!lines.empty())
+    {
+        json l = json::array();
+        for (const std::vector<sn::SurfacePoint>& line : lines)
+        {
+            json pts = json::array();
+            for (const sn::SurfacePoint& p : line)
+                pts.push_back(pointJson(p));
+            l.push_back(pts);
+        }
+        out["lines"] = l;
+    }
+    return out;
 }
 
 MeshBind MeshBind::fromJson(const std::string& text)
@@ -181,6 +194,13 @@ MeshBind MeshBind::fromJson(const std::string& text)
             b.tangentKnot.push_back(t[0].get<int>());
             b.tangentRest.push_back({t[1].get<double>(), t[2].get<double>(), t[3].get<double>()});
         }
+    for (const json& l : j.value("lines", json::array()))
+    {
+        std::vector<sn::SurfacePoint>& line = b.lines.emplace_back();
+        for (const json& p : l)
+            if (p.is_array() && p.size() >= 6)
+                line.push_back(pointFrom(p));
+    }
     return b;
 }
 
