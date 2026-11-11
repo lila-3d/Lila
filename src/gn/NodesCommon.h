@@ -266,6 +266,9 @@ void registerFieldStatsNodes();
 void registerRotationNodes2();
 void registerStringNodes2();
 void registerSceneInfoNodes();
+void registerTopology2Nodes();
+void registerSelectionNodes();
+void registerRemeshNodes();
 
 /** A link between two pieces (b = -1: the world) at an anchor, as the Rigid Body Solver reads them. */
 struct PieceLink
