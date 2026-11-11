@@ -591,7 +591,10 @@ json sendToUnreal(const Args& a)
             params["center"] = ue({mid.x, r.ground.height(mid), mid.y});
             params["size"] = cellSize;
             if (!graph.empty())
+            {
                 params["graph"] = graph;
+                params["makeGraph"] = a.get<bool>("makeGraph", false);
+            }
             return call(*c, "setSettlementCell", params, cmd);
         }
         if (i.kind == "pcg")
@@ -744,6 +747,7 @@ void registerUnrealCommands(ext::Context& ctx)
                   {"pcg", "pc", Arg::Bool, true, "Lots, envelopes and roads as PCG data."},
                   {"partition", "pt", Arg::Bool, true, "PCG data per cell (a data asset and a cell actor each); off for one asset."},
                   {"pcgGraph", "pg", Arg::String, nullptr, "PCG graph each cell actor runs; it reads the cell's data asset from its SettlementData parameter."},
+                  {"makeGraph", "mg", Arg::Bool, false, "Make pcgGraph when the project has none: an empty PCG graph with the SettlementData parameter, ready for its nodes."},
                   {"zoneGraph", "zg", Arg::Bool, true, "Lanes as ZoneGraph shapes, for Mass traffic and crowds."},
                   {"placeMode", "pm", Arg::String, "hism", "How placements go.", {"hism", "ism", "actors"}},
                   {"placements", "pl", Arg::Any, nullptr,

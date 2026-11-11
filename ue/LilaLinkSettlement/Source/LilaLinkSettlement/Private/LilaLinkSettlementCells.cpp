@@ -13,6 +13,10 @@
 #include "ScopedTransaction.h"
 #include "Misc/PackageName.h"
 #include "ObjectTools.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "UObject/Package.h"
+#include "UObject/SavePackage.h"
+#include "StructUtils/PropertyBag.h"
 #include "UObject/SoftObjectPath.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogLilaLinkSettlementCells, Log, All);
@@ -72,6 +76,35 @@ bool SetDataParameter(UPCGComponent* Component, const FString& AssetPath)
 	}
 	UObject* Loaded = Path.TryLoad();
 	return Loaded && Instance->SetGraphParameter<UObject*>(SettlementDataParameter, Loaded) == EPropertyBagResult::Success;
+}
+
+/** An empty PCG graph with the SettlementData parameter cells bind their data asset to, made and saved at Path. */
+UPCGGraphInterface* MakeSettlementGraph(const FString& Path, FString& OutError)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkSettlementCells::MakeSettlementGraph);
+
+	const FString PackageName = Path.Contains(TEXT(".")) ? Path.Left(Path.Find(TEXT("."))) : Path;
+	UPackage* Package = CreatePackage(*PackageName);
+	if (!Package)
+	{
+		OutError = TEXT("setSettlementCell: could not make the package ") + PackageName;
+		return nullptr;
+	}
+	UPCGGraph* Graph = NewObject<UPCGGraph>(Package, *FPackageName::GetShortName(PackageName), RF_Public | RF_Standalone | RF_Transactional);
+	TArray<FPropertyBagPropertyDesc> Params;
+	Params.Emplace(SettlementDataParameter, EPropertyBagPropertyType::SoftObject, UObject::StaticClass());
+	Graph->AddUserParameters(Params);
+	FAssetRegistryModule::AssetCreated(Graph);
+	Package->MarkPackageDirty();
+	FSavePackageArgs Save;
+	Save.TopLevelFlags = RF_Public | RF_Standalone;
+	const FString File = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
+	if (!UPackage::SavePackage(Package, Graph, *File, Save))
+	{
+		UE_LOG(LogLilaLinkSettlementCells, Warning, TEXT("setSettlementCell: made %s but could not save it"), *PackageName);
+	}
+	UE_LOG(LogLilaLinkSettlementCells, Log, TEXT("setSettlementCell: made PCG graph %s with a SettlementData parameter"), *PackageName);
+	return Graph;
 }
 
 TSharedPtr<FJsonValue> SetSettlementCell(const TSharedPtr<FJsonObject>& Params, FString& OutError)
@@ -160,6 +193,17 @@ TSharedPtr<FJsonValue> SetSettlementCell(const TSharedPtr<FJsonObject>& Params, 
 		{
 			Graph = LoadObject<UPCGGraphInterface>(nullptr, *(GraphPath + TEXT(".") + FPackageName::GetShortName(GraphPath)), nullptr, LOAD_NoWarn | LOAD_Quiet);
 		}
+		bool bMakeGraph = false;
+		Params->TryGetBoolField(TEXT("makeGraph"), bMakeGraph);
+		if (!Graph && bMakeGraph)
+		{
+			FString MakeError;
+			Graph = MakeSettlementGraph(GraphPath, MakeError);
+			if (!Graph)
+			{
+				Warnings.Add(MakeShared<FJsonValueString>(MakeError));
+			}
+		}
 		if (!Graph)
 		{
 			Warnings.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("no PCG graph at %s; the cell has its data but no graph"), *GraphPath)));
@@ -186,6 +230,12 @@ TSharedPtr<FJsonValue> SetSettlementCell(const TSharedPtr<FJsonObject>& Params, 
 	Out->SetStringField(TEXT("actor"), Actor->GetActorLabel());
 	Out->SetBoolField(TEXT("spawned"), bSpawned);
 	Out->SetBoolField(TEXT("generated"), bGenerated);
+	if (Component && !GraphPath.IsEmpty() && Component->GetGraphInstance())
+	{
+		const TValueOrError<TSoftObjectPtr<UObject>, EPropertyBagResult> Read =
+			Component->GetGraphInstance()->GetGraphParameter<TSoftObjectPtr<UObject>>(SettlementDataParameter);
+		Out->SetStringField(TEXT("boundData"), Read.HasValue() ? Read.GetValue().ToSoftObjectPath().ToString() : FString());
+	}
 	Out->SetArrayField(TEXT("warnings"), Warnings);
 	return MakeShared<FJsonValueObject>(Out);
 }
