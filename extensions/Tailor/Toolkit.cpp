@@ -85,7 +85,7 @@ QWidget* makeToolkit(QWidget* parent)
                                 {{"tailor.addStitching", "needle", "Stitching"},
                                  {"tailor.freeze", "snowflake", "Freeze"},
                                  {"tailor.bake", "package-export", "Bake"}},
-                                {"tailor.unfreeze"}, body));
+                                {"tailor.unfreeze", "tailor.sendToUnreal"}, body));
     v->addStretch(1);
     scroll->setWidget(body);
     controls::fitScrollWidth(scroll);

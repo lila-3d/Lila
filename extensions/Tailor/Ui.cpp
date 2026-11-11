@@ -13,6 +13,7 @@
 #include <lila/Log.h>
 #include <lila/Menus.h>
 #include <lila/Node.h>
+#include <lila/OptionBox.h>
 #include <lila/Shelves.h>
 #include <lila/ViewportTool.h>
 
@@ -137,6 +138,15 @@ void registerUi(ext::Context& ctx)
     actions::add(ctx, {.id = "tailor.bake", .label = "Bake to Game Mesh", .category = "Tailor",
                        .doc = "Make a plain mesh from the selected garment's drape, skinned like its collider when that is skinned.",
                        .python = "tailorBake('Garment')", .command = "tailorBake", .call = nlohmann::json::object()});
+    actions::add(ctx, {.id = "tailor.sendToUnreal", .label = "Send to Unreal", .category = "Tailor",
+                       .doc = "Send the selected garment to Unreal as a Chaos Cloth asset, a skeletal mesh with clothing, or a skinned mesh with no cloth.",
+                       .python = "tailorSendToUnreal('Garment', as='skinnedMesh')", .command = "tailorSendToUnreal",
+                       .call = nlohmann::json::object(), .icon = "cube-send"});
+    ops::options::setOverride("tailorSendToUnreal",
+                              {.order = {"as", "contentPath", "skeleton", "skeletalMesh", "material"},
+                               .labels = {{"as", "Send As"}},
+                               .choices = {{"as", {{"clothAsset", "Cloth Asset"}, {"skeletalMesh", "Skeletal Mesh + Cloth"}, {"skinnedMesh", "Skinned Mesh, No Cloth"}}}}});
+    ops::options::setOverride("tailorBake", {.labels = {{"clothMask", "Cloth Mask"}}});
     actions::add(ctx, {.id = "tailor.live", .label = "Live Drape", .category = "Tailor",
                        .doc = "Keep the selected garment simulating in real time.", .python = "tailorLive('Garment')",
                        .command = "tailorLive", .call = nlohmann::json::object()});
@@ -183,7 +193,7 @@ void registerUi(ext::Context& ctx)
     for (const char* a : {"tailor.mannequin", "tailor.createBlock", "tailor.drawPanel", "tailor.importGarmentCode", "", "tailor.simulate", "tailor.setFabric",
                           "tailor.sew", "tailor.autoSew", "tailor.check", "window.tailorPatternEditor", "", "tailor.live", "tailor.stopLive", "tailor.grab",
                           "tailor.pin", "tailor.fold", "tailor.shrink", "tailor.steam", "tailor.clearBrush", "", "tailor.freeze", "tailor.unfreeze", "", "tailor.addStitching",
-                          "tailor.bake", "window.tailorToolkit", "layout.apply.Tailor"})
+                          "tailor.bake", "tailor.sendToUnreal", "window.tailorToolkit", "layout.apply.Tailor"})
     {
         if (*a)
             menus::addItem(ctx, {.id = std::string("tailor.menu.") + a, .menu = "Tailor", .action = a});
@@ -207,7 +217,8 @@ void registerUi(ext::Context& ctx)
                                        {"Fold", "fold", "tailor.fold"},
                                        {"Shrink", "arrows-minimize", "tailor.shrink"},
                                        {"Steam", "ironing-steam", "tailor.steam"},
-                                       {"Bake", "package-export", "tailor.bake"}})
+                                       {"Bake", "package-export", "tailor.bake"},
+                                       {"Unreal", "cube-send", "tailor.sendToUnreal"}})
         items.push_back({{"label", label}, {"icon", icon}, {"target", target}});
     shelves::add(ctx, {"Tailor", std::move(items)});
     layouts::add(ctx, "Tailor",
