@@ -643,7 +643,8 @@ void registerBuiltins()
     cmd("mesh.spin", "Spin Edge", "Mesh", "polySpinEdge", json::object(), "Turns the selected edges to join the next corners of their two faces.");
     cmd("mesh.fillHole", "Fill Hole", "Mesh", "polyFillHole", json::object(), "Caps the selected open borders with a face.");
     cmd("mesh.gridFill", "Grid Fill", "Mesh", "polyGridFill", json::object(), "Rebuilds the selected fans or faces, or fills the selected holes, as a quad grid inside a ring of quads.");
-    cmd("mesh.flip", "Flip Normals", "Mesh", "polyFlip", json::object(), "Reverses the selected faces so they point the other way.");
+    add({.id = "mesh.flip", .label = "Flip Normals", .category = "Mesh", .doc = "Reverses the selected faces so they point the other way.",
+         .python = ops::toPython("polyFlip", json::object()), .command = "polyFlip", .call = json::object(), .keywords = {"reverse"}});
     cmd("mesh.conform", "Conform Normals", "Mesh", "polyConform", json::object(), "Turns faces to agree with their neighbours, so the whole shell faces one way.");
     cmd("mesh.triangulate", "Triangulate", "Mesh", "polyTriangulate", json::object(), "Splits the selected faces into triangles.");
     cmd("mesh.quadrangulate", "Quadrangulate", "Mesh", "polyQuadrangulate", json::object(), "Joins pairs of triangles into quads where they make good ones.");

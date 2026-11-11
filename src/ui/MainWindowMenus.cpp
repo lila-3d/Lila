@@ -147,11 +147,12 @@ void MainWindow::buildMenus()
 
     menu("Mesh", "Mesh", Area::MenuBar, {}, "", {"Model", "Sculpt", "Level"});
     menus::addActions("Mesh", {"#Combine", "mesh.combine", "mesh.smartJoin", "mesh.separate", "mesh.splitMeshTool", "mesh.extract", "mesh.duplicateFaces", "mesh.boundingMesh", "mesh.collisionHull", "mesh.multiBoxBounds",
-                               "#Mirror", "mesh.mirror", "#Booleans", "mesh.booleanUnion", "mesh.booleanDifference", "mesh.booleanIntersection"});
+                               "#Booleans", "mesh.booleanUnion", "mesh.booleanDifference", "mesh.booleanIntersection", "#Construct"});
     addSubmenu("Mesh", "Clay");
     menus::addActions("Mesh/Clay", {"clay.create", "clay.tool", "clay.addShape", "clay.addCut", "clay.group", "", "clay.refresh", "clay.convert"});
     addSubmenu("Mesh", "Plating");
     menus::addActions("Mesh/Plating", {"layout.pencil", "layout.plates", "layout.fasteners", "layout.patterns", "", "layout.loosen", "layout.deleteLines", "layout.clear"});
+    menus::addActions("Mesh", {"#Mirror", "mesh.mirror"});
     addSubmenu("Mesh", "Symmetry");
     menus::addActions("Mesh/Symmetry", {"mesh.toggleSymmetry", "mesh.symmetryX", "mesh.symmetryY", "mesh.symmetryZ", "mesh.symmetryRadial", "mesh.symmetryOff", "viewport.toggleSymmetryLine", "",
                                  "mesh.symmetryCheck", "mesh.symmetrizePositive", "mesh.symmetrizeNegative", "mesh.symmetryRebuild", "mesh.symmetrizeRadial",
