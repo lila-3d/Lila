@@ -20,7 +20,7 @@ func _run() -> void:
 	if info.get("format", "") != "lila.settlement.engine" or info.get("target", "") != "godot":
 		push_error("Lila: %s isn't a Lila Godot settlement export" % dir.path_join(SETTLEMENT_JSON))
 		return
-	var scene_root := get_scene()
+	var scene_root := EditorInterface.get_edited_scene_root()
 	if scene_root == null:
 		push_error("Lila: open the scene to import the settlement into first")
 		return
