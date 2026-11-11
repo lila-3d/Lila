@@ -275,6 +275,8 @@ struct Face
 
 /** Every bounded face, dead-end spikes removed. */
 std::vector<Face> planarFaces(const StreetGraph& g);
+/** The bounded faces either side of the given edges only (each once). */
+std::vector<Face> planarFaces(const StreetGraph& g, const std::vector<int>* fromEdges);
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Profiles: what makes a medieval town different from Manhattan
@@ -770,6 +772,12 @@ struct Layout
     std::unordered_map<uint64_t, std::string> streetNames; // by stable street id
     std::vector<District> districts;
     std::vector<double> edgeAccess;       // per graph edge, 0 to 1 (streetAccess)
+    /** Where the town's ranking of lots put its cuts, so lots cut again after an edit rank the same way. */
+    struct UseCuts
+    {
+        bool set = false;
+        double industry = 1e300, q60 = 1.0, q92 = 1.0, wealth1 = 0.0, wealth2 = 0.0;
+    } useCuts;
     std::vector<std::string> parcelWarnings; // what blocks, lots and envelopes fell back to and why
     std::vector<std::string> streetWarnings; // what the street network fell back to and why
     std::shared_ptr<RouteBook> routeBook;
