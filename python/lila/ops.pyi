@@ -4021,6 +4021,22 @@ def gnRenameInput(*objects: Any, output: bool | None = None) -> Any:
         output: Rename a group output instead. Default False.
     """
 
+def gnRunTool(*objects: Any, targets: Sequence[Any] | None = None, mouse: Sequence[Any] | None = None, region: Sequence[Any] | None = None, rayOrigin: Sequence[float] | None = None, rayDirection: Sequence[float] | None = None, view: Sequence[Any] | None = None, projection: Sequence[Any] | None = None, orthographic: bool | None = None, values: Any | None = None) -> Any:
+    """Run a tool group on meshes (the selected ones by default), replacing each base mesh with what the group makes. In a component mode the selection reaches the group's Selection node and Set Selection writes it back; the pointer and view flags feed Mouse Position and Viewport Transform. Returns the meshes edited.
+
+    Args:
+        objects: group.
+        targets: Mesh names; the selected meshes when left out.
+        mouse: [x, y] pointer position in viewport pixels from the top-left.
+        region: [width, height] of the viewport in pixels.
+        rayOrigin: World-space start of the pointer's ray.
+        rayDirection: World-space direction of the pointer's ray.
+        view: World-to-camera matrix, 16 numbers column by column.
+        projection: Camera-to-clip matrix, 16 numbers column by column.
+        orthographic: The view is orthographic. Default False.
+        values: Group input values by name, as a modifier attr holds them (angles in degrees).
+    """
+
 def gnSaveGroup(*objects: Any, scope: str | None = None) -> Any:
     """Save a group to the user library (prefs folder) or the workspace's .lila/geometryNodes. Returns the file path.
 
@@ -4110,6 +4126,14 @@ def gnSetTies(*objects: Any) -> Any:
 
     Args:
         objects: group ties.
+    """
+
+def gnSetTool(*objects: Any, tool: bool | None = None) -> Any:
+    """Flag a geometry-nodes group as a tool, so it runs on the selected meshes from the Mesh Tools menu and search, or clear the flag.
+
+    Args:
+        objects: group.
+        tool: On makes it a tool; off makes it a modifier group only. Default True.
     """
 
 def gnSetValue(*objects: Any) -> Any:
