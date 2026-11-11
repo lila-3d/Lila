@@ -405,14 +405,14 @@ TEST_CASE("settlement streetscape: lane graph is strongly connected per mode, gr
         if (j.control != Control::Signal)
             continue;
         REQUIRE(j.walks.size() == j.phases.size());
-        for (size_t c = 0; c < j.crosswalks.size(); ++c)
+        for (size_t w = 0; w < j.crosswalks.size(); ++w)
         {
             bool walks = false;
             for (size_t p = 0; p < j.phases.size(); ++p)
-                if (std::ranges::find(j.walks[p], int(c)) != j.walks[p].end())
+                if (std::ranges::find(j.walks[p], int(w)) != j.walks[p].end())
                 {
                     walks = true;
-                    CHECK(std::ranges::find(j.phases[p], j.crosswalks[c].end) == j.phases[p].end());
+                    CHECK(std::ranges::find(j.phases[p], j.crosswalks[w].end) == j.phases[p].end());
                 }
             CHECK(walks);
         }
