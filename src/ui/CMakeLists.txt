@@ -92,6 +92,7 @@ lila_module(lila_ui UI
     PythonViewport.cpp
     Owner.h
     SpinScrub.cpp SpinScrub.h
+    NumberExpr.cpp NumberExpr.h
     PanelFilter.cpp PanelFilter.h
     PanelDefaults.cpp PanelDefaults.h
     ValueReset.h

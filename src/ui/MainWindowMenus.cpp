@@ -8,6 +8,7 @@
 #include "ui/HeightfieldDisplay.h"
 #include "ui/LicensesDialog.h"
 #include "ui/MenuSets.h"
+#include "ui/NumberExpr.h"
 #include "ui/Shelf.h"
 #include "ui/TearOffLogic.h"
 
@@ -557,6 +558,7 @@ void MainWindow::buildStatusBar()
         connect(output, &QDockWidget::visibilityChanged, line, qOverload<>(&QWidget::update));
     }
     installSpinScrub(this);
+    installSpinMath(this);
     installWheelGuard(this);
 
     mWorkspaceLabel = new QToolButton(this);

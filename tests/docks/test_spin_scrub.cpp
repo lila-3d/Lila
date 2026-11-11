@@ -1,10 +1,13 @@
 #include <doctest/doctest.h>
 
+#include "ui/NumberExpr.h"
 #include "ui/SpinScrub.h"
 
 #include <QApplication>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
+#include <QKeyEvent>
+#include <QLineEdit>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QWidget>
@@ -114,4 +117,24 @@ TEST_CASE("a middle-drag scrub through the window lets the mouse go on release")
     other->installEventFilter(&seen);
     windowMouse(window, QEvent::MouseMove, other->mapTo(&panel, QPoint(4, 4)), Qt::NoButton, Qt::NoButton);
     CHECK(seen.moved);
+}
+
+TEST_CASE("a spin box takes math typed into it")
+{
+    QWidget host;
+    auto* box = new QDoubleSpinBox(&host);
+    box->setRange(0.0, 100000.0);
+    box->setValue(2052.0);
+    host.show();
+    QObject owner;
+    lila::ui::installSpinMath(&owner);
+    QFocusEvent in(QEvent::FocusIn);
+    QApplication::sendEvent(box, &in);
+    auto* edit = box->findChild<QLineEdit*>();
+    REQUIRE(edit);
+    edit->setText("*=3");
+    CHECK(edit->text() == "*=3");
+    QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QApplication::sendEvent(box, &enter);
+    CHECK(box->value() == doctest::Approx(6156.0));
 }
