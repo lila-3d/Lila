@@ -27,3 +27,6 @@ lila_module(lila_layout Scene
     Surface.cpp
     Surface.h)
 target_link_libraries(lila_layout PUBLIC lila_geo lila_scene TBB::tbb PRIVATE lila_bake lila_link lila_deform lila_curve Eigen3::Eigen)
+if(MSVC)
+    set_source_files_properties(SoftNetExport.cpp PROPERTIES COMPILE_OPTIONS /bigobj)
+endif()
