@@ -158,6 +158,8 @@ bool CpuBackend::closestHit(size_t group, OccluderScope scope, uint32_t high, ui
     out.distance = float(best.t);
     out.normal = l > 0.0f ? nrm / l : glm::vec3(0.0f);
     out.backface = !best.frontFacing;
+    out.high = bestGroup == group ? uint32_t(bestHigh) : kNoHit;
+    out.triangle = bestGroup == group ? t : kNoHit;
     return true;
 }
 

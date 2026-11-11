@@ -22,13 +22,17 @@
 #include <tbb/parallel_for.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <limits>
 #include <mutex>
+#include <numeric>
 #include <stdexcept>
 #include <tuple>
+#include <unordered_map>
 
 namespace lila::bake
 {
@@ -93,51 +97,145 @@ struct Need
     bool anyHit = false;
 };
 
+/** Per triangle of a soup, its shell: triangles joined through corners at the same position share one id. */
+std::vector<uint32_t> soupShells(const MeshSoup& soup)
+{
+    const size_t tris = soup.triangleCount();
+    std::vector<uint32_t> parent(tris);
+    std::iota(parent.begin(), parent.end(), 0u);
+    auto find = [&](uint32_t x) {
+        while (parent[x] != x)
+            x = parent[x] = parent[parent[x]];
+        return x;
+    };
+    struct Key
+    {
+        std::array<uint32_t, 3> bits;
+        bool operator==(const Key&) const = default;
+    };
+    struct Hash
+    {
+        size_t operator()(const Key& k) const { return size_t(k.bits[0]) * 73856093u ^ size_t(k.bits[1]) * 19349663u ^ size_t(k.bits[2]) * 83492791u; }
+    };
+    std::unordered_map<Key, uint32_t, Hash> seen;
+    seen.reserve(tris * 2);
+    for (uint32_t t = 0; t < tris; ++t)
+        for (int k = 0; k < 3; ++k)
+        {
+            const glm::vec3& q = soup.positions[size_t(t) * 3 + size_t(k)];
+            const auto [it, fresh] = seen.try_emplace(Key{{std::bit_cast<uint32_t>(q.x), std::bit_cast<uint32_t>(q.y), std::bit_cast<uint32_t>(q.z)}}, t);
+            if (!fresh)
+                parent[find(t)] = find(it->second);
+        }
+    for (uint32_t t = 0; t < tris; ++t)
+        parent[t] = find(t);
+    return parent;
+}
+
 class Walker
 {
 public:
-    Walker(const Tracer& tracer, size_t group) : mTracer(tracer), mGroup(group) {}
+    /** shells[h] holds high h's triangle shells when it is a low baking onto itself, else nothing. */
+    Walker(const Tracer& tracer, size_t group, const std::vector<std::vector<uint32_t>>& shells) : mTracer(tracer), mGroup(group), mShells(shells) {}
 
     /** cap bounds the walk: far layers of the same mesh would otherwise read as material the low starts inside. */
     Need at(uint32_t low, const glm::vec3& p, const glm::vec3& dir, float mCap, float mEps) const
     {
         Need n;
-        // Exits pair off with the entries before them: an unpaired exit leaves material the walk started in.
-        float travelled = 0.0f;
-        int entered = 0;
-        glm::vec3 o = p;
-        for (int k = 0; k < 16 && travelled < mCap; ++k)
+        // A ray through a shared edge or vertex meets each triangle there: hits this close repeat one crossing.
+        const float same = 4.0f * mEps;
+        // A low baking onto itself only answers to the shell it lies on: its other shells hide what they cross.
+        Own own;
         {
-            TraceHit h;
-            if (!mTracer.closestHit(mGroup, OccluderScope::Group, kNoHit, low, RayKind::Projection, o, dir, mCap - travelled, h))
-                break;
-            n.anyHit = true;
-            travelled += h.distance;
-            if (h.backface)
-            {
-                if (entered > 0)
-                    --entered;
-                else
-                    n.outward = travelled;
-            }
-            else
-                ++entered;
-            travelled += mEps;
-            o = p + dir * travelled;
+            TraceHit up, down;
+            const bool u = trace(low, p, dir, mCap, up), d = trace(low, p, -dir, mCap, down);
+            const TraceHit* near = d && (!u || down.distance <= up.distance) ? &down : u ? &up : nullptr;
+            if (near && near->high < mShells.size() && near->triangle < mShells[near->high].size())
+                own = {near->high, mShells[near->high][near->triangle]};
         }
+        // Parity from below, reaching past the walk so a large body still shows its far side: only a back face under the
+        // low means it starts inside. Otherwise (outside, or an open mesh seen from behind) an exit ahead is a missed entry.
         TraceHit h;
-        if (mTracer.closestHit(mGroup, OccluderScope::Group, kNoHit, low, RayKind::Projection, p, -dir, mCap, h))
+        const bool below = next(low, p, -dir, 4.0f * mCap, mEps, own, h);
+        if (below && h.distance <= mCap)
         {
             n.anyHit = true;
             if (!h.backface)
                 n.inward = h.distance;
         }
+        const bool outside = !below || !h.backface;
+        bool left = false;
+        // Exits pair off with the entries before them: an unpaired exit leaves material the walk started in.
+        float travelled = 0.0f, last = -1.0f;
+        bool lastBack = false;
+        int entered = 0;
+        for (int k = 0; k < 16 && travelled < mCap; ++k)
+        {
+            if (!next(low, p + dir * travelled, dir, mCap - travelled, mEps, own, h))
+                break;
+            n.anyHit = true;
+            travelled += h.distance;
+            const bool repeat = last >= 0.0f && travelled - last < same && h.backface == lastBack;
+            last = travelled;
+            lastBack = h.backface;
+            if (!repeat)
+            {
+                if (!h.backface)
+                    ++entered;
+                else if (entered > 0)
+                    --entered;
+                else if (!left && (!outside || travelled < same))
+                {
+                    // Past the first unpaired exit the walk is outside; another one is an entry the ray slipped past.
+                    n.outward = travelled;
+                    left = true;
+                }
+            }
+            travelled += mEps;
+        }
         return n;
     }
 
 private:
+    struct Own
+    {
+        uint32_t high = kNoHit;
+        uint32_t shell = kNoHit;
+    };
+
+    bool trace(uint32_t low, const glm::vec3& o, const glm::vec3& dir, float tMax, TraceHit& h) const
+    {
+        return mTracer.closestHit(mGroup, OccluderScope::Group, kNoHit, low, RayKind::Projection, o, dir, tMax, h);
+    }
+
+    /** Cosine below which a hit grazes the surface. */
+    static constexpr float kGrazing = 0.1f;
+
+    /** The nearest hit within tMax, stepping past the own high's other shells and grazing hits; distance is from o. */
+    bool next(uint32_t low, const glm::vec3& o, const glm::vec3& dir, float tMax, float eps, const Own& own, TraceHit& h) const
+    {
+        float skipped = 0.0f;
+        for (int k = 0; k < 32 && skipped < tMax; ++k)
+        {
+            if (!trace(low, o + dir * skipped, dir, tMax - skipped, h))
+                return false;
+            const bool foreign = own.shell != kNoHit && h.high == own.high && h.triangle < mShells[own.high].size() &&
+                                 mShells[own.high][h.triangle] != own.shell;
+            // A ray sliding along a surface (a thin part's rim walking its own face) crosses nothing it can count.
+            const bool grazing = glm::dot(h.normal, h.normal) > 0.0f && std::abs(glm::dot(h.normal, dir)) < kGrazing;
+            if (!foreign && !grazing)
+            {
+                h.distance += skipped;
+                return true;
+            }
+            skipped += h.distance + eps;
+        }
+        return false;
+    }
+
     const Tracer& mTracer;
     size_t mGroup;
+    const std::vector<std::vector<uint32_t>>& mShells;
 };
 
 /** Every triangle's interpolated push must reach need. */
@@ -404,7 +502,7 @@ CageCoverage cageCoverage(const LowInput& low, uint32_t lowIndex, const CagePara
     return out;
 }
 
-CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& settings, const BakeInputs&, size_t group, const Backend& backend,
+CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& settings, const BakeInputs& inputs, size_t group, const Backend& backend,
                           const CageEstimateOptions& options)
 {
     LILA_ZONE();
@@ -441,7 +539,14 @@ CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& se
     }
     if (std::ranges::none_of(states, [](const LowState& s) { return s.input.soup.triangleCount() > 0; }))
         throw std::runtime_error("cage estimate: the lows have no faces");
-    const Walker walk(*tracer, group);
+    // Shells of the highs that are lows baking onto themselves.
+    const GroupInputs& gi = inputs.groups[group];
+    std::vector<std::vector<uint32_t>> shells(gi.highs.size());
+    tbb::parallel_for(size_t(0), gi.highs.size(), [&](size_t h) {
+        if (h < gi.highSelfLow.size() && gi.highSelfLow[h] >= 0)
+            shells[h] = soupShells(gi.highs[h].soup);
+    });
+    const Walker walk(*tracer, group, shells);
     addTiming(est.timings, "lowInputs", t0);
     t0 = Clock::now();
 
@@ -772,6 +877,17 @@ std::vector<float> fitBaseOffsets(scene::Graph& g, scene::NodeId mesh, const sce
         if (best[p] >= 0.0f)
             values[p] = best[p];
 
+    // Growth stops at twice the most any nearby exported point needs: a point that barely feeds a short exported
+    // point would otherwise climb to the attribute's max and tent the cage around it.
+    std::vector<float> ceiling(values.size(), 0.0f);
+    for (geo::Index p = 0; p < base->pointCapacity(); ++p)
+    {
+        if (!base->pointValid(p))
+            continue;
+        float most = best[p];
+        base->forEachPointEdge(p, [&](geo::Index e) { most = std::max(most, best[base->edgeOtherPoint(e, p)]); });
+        ceiling[p] = std::max(values[p], 2.0f * most);
+    }
     constexpr int kPasses = 6;
     for (int pass = 0; pass < kPasses; ++pass)
     {
@@ -788,13 +904,13 @@ std::vector<float> fitBaseOffsets(scene::Graph& g, scene::NodeId mesh, const sce
         for (size_t i = 0; i < need.size(); ++i)
             if (source[i] != geo::kInvalid && got[i] > 0.0f && need[i] > got[i] * 1.01f)
             {
-                grow[source[i]] = std::max(grow[source[i]], need[i] / got[i]);
+                grow[source[i]] = std::max(grow[source[i]], std::min(need[i] / got[i], 2.0f));
                 shortfall = true;
             }
         if (!shortfall)
             break;
         for (size_t p = 0; p < values.size(); ++p)
-            values[p] = std::min(values[p] * grow[p], attr.max);
+            values[p] = std::min({values[p] * grow[p], ceiling[p], attr.max});
     }
     return values;
 }

@@ -49,6 +49,9 @@ struct TraceHit
     glm::vec3 normal{0.0f};
     /** The ray met the surface's back. */
     bool backface = false;
+    /** The high (in the ray's group) and its soup triangle, kNoHit when the tracer can't tell or it lies in another group. */
+    uint32_t high = kNoHit;
+    uint32_t triangle = kNoHit;
 };
 
 /** Secondary-ray queries a backend offers kernels. */

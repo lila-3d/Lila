@@ -9,6 +9,7 @@
 #include "core/Progress.h"
 #include "geo/Bvh.h"
 #include "geo/Mesh.h"
+#include "geo/Ops.h"
 #include "geo/Primitives.h"
 #include "geo/Triangulate.h"
 #include "ops/Command.h"
@@ -244,6 +245,67 @@ TEST_CASE("bakeAutoPaintCage: a low's cage stops short of another low lying on i
     MESSAGE("skirt push under the ribbon " << under << " cm, away from it " << open << " cm");
     CHECK(under < 5.0);
     CHECK(open > 15.0);
+}
+
+namespace
+{
+/** The most push (offset times frontal) on a low's base points after an auto paint. */
+double mostPush(const std::string& low, const json& r)
+{
+    const auto offsets = baseMesh(low)->pointAttrs().get<float>(bake::kOffsetAttr);
+    double most = 0.0;
+    for (float o : offsets)
+        most = std::max(most, double(o) * r["frontal"].get<double>());
+    return most;
+}
+} // namespace
+
+TEST_CASE("bakeAutoPaintCage: a low baking onto itself ignores its other shells where they cross")
+{
+    newScene();
+    // A block with a bar run through it, one mesh baking onto its own smoothed self: where each shell sits inside the
+    // other, walking out would cross the other's whole length.
+    geo::CubeOptions blockO;
+    blockO.width = blockO.height = blockO.depth = 20.0;
+    blockO.subdivX = blockO.subdivY = blockO.subdivZ = 4;
+    geo::CubeOptions barO;
+    barO.width = 80.0;
+    barO.height = barO.depth = 6.0;
+    barO.subdivX = 16;
+    barO.subdivY = barO.subdivZ = 2;
+    const geo::Mesh block = geo::makeCube(blockO), bar = geo::makeCube(barO);
+    const geo::Mesh* parts[] = {&block, &bar};
+    const std::string low = addMesh("crossed_low", geo::combine(parts));
+    const std::string p = ops::execute("createBakeProject", {{"name", "P"}}).get<std::string>();
+    ops::execute("setBakeOutput", {{"project", p}, {"folder", tempDir("lila_cage_shells").generic_string()}, {"resolution", 64}, {"supersampling", 1}});
+    ops::execute("bakeGroup", {{"args", {"g"}}, {"project", p}, {"lows", {low}}, {"self", true}, {"preset", "Smooth x2"}});
+
+    const json r = ops::execute("bakeAutoPaintCage", {{"args", {"g"}}, {"resolution", 128}});
+    const double most = mostPush(low, r);
+    MESSAGE("most push " << most << ", miss rate " << r["after"]["missRate"].get<double>() * 100.0 << "%");
+    // The bar runs 30 past each block face; a cage that tracks the smoothed surface stays within a few units of it.
+    CHECK(most < 3.0);
+}
+
+TEST_CASE("bakeAutoPaintCage: an open sheet seen from behind doesn't read as material the low starts in")
+{
+    newScene();
+    geo::PlaneOptions lowO;
+    lowO.subdivX = lowO.subdivZ = 8;
+    const std::string low = addMesh("floor_low", geo::makePlane(lowO));
+    // The high under the low, and an open sheet facing away 10 above it: walking up meets the sheet's back.
+    geo::PlaneOptions sheetO;
+    sheetO.subdivX = sheetO.subdivZ = 8;
+    const std::string under = addMesh("floor_high", geo::makePlane(sheetO), glm::dvec3(0.0, -0.5, 0.0));
+    const std::string sheet = addMesh("sheet_high", geo::makePlane(sheetO), glm::dvec3(0.0, 10.0, 0.0));
+    const std::string p = ops::execute("createBakeProject", {{"name", "P"}}).get<std::string>();
+    ops::execute("setBakeOutput", {{"project", p}, {"folder", tempDir("lila_cage_sheet").generic_string()}, {"resolution", 64}, {"supersampling", 1}});
+    ops::execute("bakeGroup", {{"args", {"g"}}, {"project", p}, {"lows", {low}}, {"highs", {under, sheet}}});
+
+    const json r = ops::execute("bakeAutoPaintCage", {{"args", {"g"}}, {"resolution", 128}, {"iterations", 0}});
+    const double most = mostPush(low, r);
+    MESSAGE("most push " << most);
+    CHECK(most < 2.0);
 }
 
 namespace
