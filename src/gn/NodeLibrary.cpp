@@ -36,6 +36,9 @@ void registerNodeLibrary()
     nodes::registerZoneNodes();
     nodes::registerMatrixNodes();
     nodes::registerBundleNodes();
+    nodes::registerCurveNodes2();
+    nodes::registerCurveSurfaceNodes();
+    nodes::registerCurveBooleanNodes();
     registerBakeNode();
 }
 } // namespace lila::gn

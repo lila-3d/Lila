@@ -284,7 +284,13 @@ CurveSet CurveSet::evaluated(const curve::TessOptions& o) const
         size_t p0 = offsets[c], n = curveSize(c);
         if (!curve::isValid(sp) || n == 0)
             continue;
-        curve::Polyline pl = sp.kind == curve::Kind::Poly ? curve::polylineFrom(sp.points, sp.closed) : curve::tessellate(sp, o);
+        curve::TessOptions co = o;
+        if (auto res = curveAttrs.get<int32_t>("resolution"); !res.empty() && res[c] > 0)
+        {
+            co.mode = curve::TessMode::Fixed;
+            co.perSpan = res[c];
+        }
+        curve::Polyline pl = sp.kind == curve::Kind::Poly ? curve::polylineFrom(sp.points, sp.closed) : curve::tessellate(sp, co);
         size_t q0 = out.positions.size();
         out.addCurve(pl.points, sp.closed);
         out.curveAttrs.copyFrom(curveAttrs, out.numCurves() - 1, c);

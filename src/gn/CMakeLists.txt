@@ -37,6 +37,9 @@ lila_module(lila_gn Scene
     NodesZones.cpp
     NodesMatrix.cpp
     NodesBundle.cpp
+    NodesCurve2.cpp
+    NodesCurveSurface.cpp
+    NodesCurveBoolean.cpp
     Zones.cpp
     GeometryIO.cpp
     Bake.cpp
