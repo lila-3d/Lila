@@ -5903,6 +5903,8 @@ def orientPivot(aim: str | None = None, up: str | None = None, upReference: str 
 
     The component selection splits into connected pieces (two edge loops are two pieces); with exactly two components picked, each is its own piece. With several pieces the aim runs from the first picked piece's centre to the last's. One piece aims along itself: a face or face region along its normal (up from the first face's longest edge), an edge from its first point to its second (up from its faces' normal), a closed loop through its plane (up toward its first picked point), an open chain from the end nearer the first pick to the other, a vertex along its normal (up along its longest edge).
 
+    A curve point aims along the curve, up along its normal. Picks on a mesh reached through a selected group turn the group. In object mode the other selected objects take the first one's pivot axes and position.
+
     Args:
         aim: Pivot axis that points along the aim. One of 'x', '-x', 'y', '-y', 'z', '-z'. Default 'x'.
         up: Pivot axis that points toward the up reference. One of 'x', '-x', 'y', '-y', 'z', '-z'. Default 'y'.

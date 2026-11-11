@@ -559,7 +559,8 @@ void registerBuiltins()
         setEnabledWhen(id, [] { return scene::Graph::current().selection().size() >= 2; });
     cmd("modify.orientPivot", "Orient Pivot", "Modify", "orientPivot", json::object(),
         "Turns the object so its X aims from the first picked component to the second, or along a single face, edge or loop, "
-        "leaving the mesh where it is. Adjust the axes, up and mode in the popup after.");
+        "leaving the mesh where it is. With objects selected, the others take the first one's pivot. Adjust the axes, up and mode in "
+        "the popup after.");
     cmd("modify.pinComponentPivot", "Pin Component Pivot", "Modify", "pinComponentPivot", json::object(),
         "Keeps the component manipulator's axes, and its position once moved with Edit Pivot, through selection changes until "
         "reset. Click its label in the viewport to reset.");
