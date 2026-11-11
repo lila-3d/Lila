@@ -382,7 +382,7 @@ void MainWindow::buildMenus()
     menus::addActions("Help", {"#Learn", "help.docs"});
     addSubmenu("Help", "Docs Topics", [](QMenu* m) { docs::attachTopicsMenu(m); });
     menus::addActions("Help", {"help.hotkeyCheatSheet", "viewport.toggleKeys", "help.updateDocs", "#Search", "window.searchMenus", "window.searchScene", "window.searchTearOffs",
-                               "#Problems", "help.reportIssue", "help.myReports", "help.perfTrace", "help.supportBundle", "help.copyLastCrash",
+                               "#Feedback", "help.reportIssue", "help.requestFeature", "help.myReports", "#Problems", "help.perfTrace", "help.supportBundle", "help.copyLastCrash",
                                "help.crashReports", "#Setup", "help.agentSetup", "help.telemetry", "help.checkUpdates", "help.prefsFolder", "",
                                "help.licenses", "help.credits", "help.about"});
 
