@@ -396,9 +396,15 @@ TEST_CASE("settlement streetscape: lane graph is strongly connected per mode, gr
     CHECK_FALSE(cb["conflictingGreens"].empty());
     CHECK(cb["ok"] == false);
 
-    // A one-way street cut off at a dead end: its lanes cannot get out.
+    // A one-way street off a two-way one, cut off at a dead end: its lanes cannot get out.
     Options o = styled("europeanCity", false);
+    o.profile.pattern = Pattern::None;
     Site oneWay{.size = 160000.0};
+    SitePath main;
+    main.id = 2;
+    main.cls = StreetClass::Collector;
+    main.pts = {{-30000, std::nan(""), 3000}, {30000, std::nan(""), 3000}};
+    oneWay.paths.push_back(main);
     SitePath spur;
     spur.id = 1;
     spur.cls = StreetClass::Local;
