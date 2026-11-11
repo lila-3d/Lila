@@ -230,7 +230,7 @@ void MainWindow::buildMenus()
 
     menu("UV", "UV", Area::MenuBar, {}, "", {"UV", "Texture"});
     menus::addActions("UV", {"window.uvEditor", "uv.auto", "uv.autoSeams", "uv.unwrap", "uv.projectPlanar", "uv.projectBox", "uv.projectSpherical", "uv.hose",
-                      "uv.projectCylindrical", "uv.projectCamera", "uv.cut", "uv.sew", "uv.straighten", "uv.orient", "uv.rotateLeft", "uv.rotateRight", "uv.flipX", "uv.flipY", "uv.pack", "uv.lightmap", "uv.delete", "uv.seamView", "", "uv.autoSeams2",
+                      "uv.projectCylindrical", "uv.projectCamera", "uv.cut", "uv.sew", "uv.straighten", "uv.orient", "uv.rotateLeft", "uv.rotateRight", "uv.flipX", "uv.flipY", "uv.pack", "uv.lightmap", "uv.delete", "uv.seamView", "uv.seamViewPlane", "uv.seamViewOverride", "uv.seamViewOverrideClear", "", "uv.autoSeams2",
                       "uv.bff", "uv.bffDisk", "uv.bffRectangle", "uv.bffCones", "uv.unwrapSymmetric", "uv.unwrapSymmetricStack"});
     addSubmenu("UV", "Pack");
     menus::addActions("UV/Pack", {"uv.pack", "uv.packAroundSelected", "uv.packSelectionOnly", "uv.packStacked", "uv.packPerObject", "uv.packPerMaterial", "uv.packUdimByMaterial", "uv.selectStacks"});

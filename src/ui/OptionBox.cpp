@@ -4,6 +4,7 @@
 #include "ops/Command.h"
 #include "ops/CommandOptions.h"
 #include "ops/OptionPresets.h"
+#include "scene/Graph.h"
 #include "core/ExtensionContext.h"
 #include "core/Log.h"
 #include "core/Paths.h"
@@ -165,6 +166,11 @@ public:
         more->setMenu(menu);
         header->addWidget(more, 0, Qt::AlignTop);
         root->addLayout(header);
+        auto* warningRow = new QHBoxLayout();
+        warningRow->setContentsMargins(12, 0, 12, 0);
+        mWarning = controls::warningBanner(this);
+        warningRow->addWidget(mWarning);
+        root->addLayout(warningRow);
 
         auto* scroll = new QScrollArea(this);
         scroll->setWidgetResizable(true);
@@ -216,6 +222,7 @@ public:
                         mPresetMenu->setCurrentIndex(-1);
                 }, body);
                 mSetters[flag] = w.set;
+                mFieldWidgets[flag] = {w.label, w.field};
                 if (w.label)
                 {
                     grid->addWidget(w.label, row, 0, Qt::AlignRight | Qt::AlignVCenter);
@@ -230,6 +237,17 @@ public:
         }
         grid->setRowStretch(row, 1);
         rebuildPresets();
+        refreshWarning();
+        if (over && over->warning)
+            mGraphListener = scene::Graph::current().addListener([this](scene::Change c, scene::NodeId) {
+                if (c == scene::Change::Selection || mWarningQueued)
+                    return;
+                mWarningQueued = true;
+                QTimer::singleShot(0, this, [this] {
+                    mWarningQueued = false;
+                    refreshWarning();
+                });
+            });
 
         // Apply is the primary action and Enter's default; Esc or the window's close button closes.
         auto* buttons = new QHBoxLayout();
@@ -253,7 +271,44 @@ public:
         resize(std::max(420, body->sizeHint().width() + 40), std::min(720, body->sizeHint().height() + 140));
     }
 
+    ~OptionsDialog() override
+    {
+        if (mGraphListener >= 0)
+            scene::Graph::current().removeListener(mGraphListener);
+    }
+
 private:
+    /** Shows the override's warning, if any, and disables the fields it replaces. */
+    void refreshWarning()
+    {
+        const opt::Override* o = opt::findOverride(mCommand);
+        std::string text;
+        if (o && o->warning)
+        {
+            try
+            {
+                text = o->warning();
+            }
+            catch (const std::exception& e)
+            {
+                log::warn("{}", e.what());
+            }
+        }
+        controls::setWarning(mWarning, QString::fromStdString(text));
+        if (!o)
+            return;
+        for (const std::string& flag : o->warned)
+            if (auto it = mFieldWidgets.find(flag); it != mFieldWidgets.end())
+                for (QWidget* w : {it->second.first, it->second.second})
+                    if (w)
+                    {
+                        if (!w->property("lilaFieldTip").isValid())
+                            w->setProperty("lilaFieldTip", w->toolTip());
+                        w->setEnabled(text.empty());
+                        w->setToolTip(text.empty() ? w->property("lilaFieldTip").toString() : QString::fromStdString(text));
+                    }
+    }
+
     static std::string title(const Action& a)
     {
         std::string t = a.label;
@@ -500,6 +555,10 @@ private:
     /** The fields' values, stored only by Apply or Save Settings so Close leaves the remembered ones alone. */
     json mValues;
     std::map<std::string, std::function<void(const json&)>> mSetters;
+    std::map<std::string, std::pair<QWidget*, QWidget*>> mFieldWidgets; // flag -> label, field
+    QWidget* mWarning = nullptr;
+    int mGraphListener = -1;
+    bool mWarningQueued = false;
     QLabel* mPresetLabel = nullptr;
     QWidget* mPresetHost = nullptr;
     QPointer<QComboBox> mPresetMenu;

@@ -2,6 +2,7 @@
 
 #include "ops/Command.h"
 #include "ui/Overlay.h"
+#include "ui/Theme.h"
 #include "ui/ViewInfo.h"
 #include "ui/ViewportTool.h"
 
@@ -108,14 +109,15 @@ void registerCommands()
                    .doc = "Seconds before it is gone, including the fade.",
                    .min = 0.1,
                    .max = 60.0},
-                  {.name = "error", .shortName = "e", .type = ArgType::Bool, .doc = "Mark it as a failure, with a red accent."}},
+                  {.name = "error", .shortName = "e", .type = ArgType::Bool, .doc = "Mark it as a failure, with a red accent."},
+                  {.name = "warning", .shortName = "w", .type = ArgType::Bool, .doc = "Mark it as a warning, with a warning accent and triangle."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             if (a.positional.empty() || !a.positional[0].is_string() || a.positional[0].get<std::string>().empty())
                 throw CommandError("viewportToast: text expected");
             const QString text = QString::fromStdString(a.positional[0].get<std::string>());
             const int ms = int(a.get<double>("duration") * 1000.0);
-            const Kind kind = a.get<bool>("error") ? Kind::Error : Kind::Info;
+            const Kind kind = a.get<bool>("error") ? Kind::Error : a.get<bool>("warning") ? Kind::Warning : Kind::Info;
             if (a.get<bool>("all"))
                 show(text, nullptr, ms, kind);
             else
@@ -135,7 +137,9 @@ void draw(OverlayPainter& p, const ViewInfo& info, const QWidget* view, const st
         if (it->expires <= now || (!it->everyView && it->view != view))
             continue;
         const float alpha = float(std::clamp((it->expires - now) / kFadeMs, 0.0, 1.0));
-        const double w = OverlayPainter::textWidth(it->text) + 20.0;
+        const bool warning = it->kind == Kind::Warning;
+        const QString& text = it->text;
+        const double w = OverlayPainter::textWidth(text) + 20.0;
         QRectF r(info.width - kMargin - w, bottom - kHeight, w, kHeight);
         for (bool moved = true; moved;)
         {
@@ -148,9 +152,16 @@ void draw(OverlayPainter& p, const ViewInfo& info, const QWidget* view, const st
                 }
         }
         p.rect(r, {0.08f, 0.08f, 0.08f, 0.82f * alpha});
-        const bool error = it->kind == Kind::Error;
-        p.rect(QRectF(r.left(), r.top(), 3.0, r.height()), error ? glm::vec4(1.0f, 0.35f, 0.3f, alpha) : glm::vec4(0.35f, 0.65f, 1.0f, alpha));
-        p.text(QPointF(r.left() + 11.0, r.top() + 17.5), it->text, {0.95f, 0.95f, 0.95f, alpha});
+        glm::vec4 accent(0.35f, 0.65f, 1.0f, alpha);
+        if (it->kind == Kind::Error)
+            accent = {1.0f, 0.35f, 0.3f, alpha};
+        else if (warning)
+        {
+            const QColor c = themeColor("issueWarning");
+            accent = {float(c.redF()), float(c.greenF()), float(c.blueF()), alpha};
+        }
+        p.rect(QRectF(r.left(), r.top(), warning ? 4.0 : 3.0, r.height()), accent);
+        p.text(QPointF(r.left() + 11.0, r.top() + 17.5), text, warning ? glm::vec4(accent.r, accent.g, accent.b, alpha) : glm::vec4(0.95f, 0.95f, 0.95f, alpha));
         bottom = r.top() - kGap;
     }
 }

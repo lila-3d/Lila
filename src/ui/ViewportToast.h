@@ -24,7 +24,8 @@ namespace viewportToast
 enum class Kind
 {
     Info,
-    Error, // red accent: something failed
+    Warning, // warning accent: it worked, but not the way the options said
+    Error,   // red accent: something failed
 };
 
 /** Shows text in view, or in every viewport when view is null. A toast with the same text restarts instead of stacking. */

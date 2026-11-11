@@ -1,6 +1,7 @@
 #include "TestUtil.h"
 #include "geo/Topology.h"
 #include "ops/Command.h"
+#include "ops/CommandOptions.h"
 #include "scene/Graph.h"
 #include "scene/LastOp.h"
 #include "scene/MeshNodes.h"
@@ -445,6 +446,69 @@ TEST_CASE("seam views keep auto seams out of their sight")
     run("uvAutoSeams");
     CHECK(seamX(tube) > 4.0);
     run("uvAutoSeams", {{"views", {view}}, {"useViews", false}});
+}
+
+TEST_CASE("the seam view override replaces the views a command is given")
+{
+    run("newScene");
+    std::string tube = run("polyCylinder", {{"radius", 5}, {"height", 40}, {"subdivisionsAxis", 24}, {"subdivisionsHeight", 4}, {"caps", false}})[0];
+    std::string east = run("uvSeamView", {{"position", {200.0, 0.0, 0.0}}}).get<std::string>();
+    std::string west = run("uvSeamView", {{"position", {-200.0, 0.0, 0.0}}, {"override", true}}).get<std::string>();
+    const ops::options::Override* box = ops::options::findOverride("uvAuto");
+    REQUIRE(box);
+    REQUIRE(box->warning);
+    CHECK(box->warning().find(west) != std::string::npos);
+
+    // Named views and useViews=False alike give way to the override.
+    for (const json& flags : {json{{"views", {east}}}, json{{"useViews", false}}})
+    {
+        run("select", {{"args", {tube}}});
+        json r = run("uvAutoSeams", flags);
+        CHECK(r["seamViewOverride"] == west);
+        CHECK(seamX(tube) > 4.0);
+    }
+
+    // One override at a time: setting another replaces it.
+    CHECK(run("uvSeamViewOverride", {{"args", {east}}}) == east);
+    run("select", {{"args", {tube}}});
+    CHECK(run("uvAutoSeams")["seamViewOverride"] == east);
+    CHECK(seamX(tube) < -4.0);
+
+    // Cleared, the command's own views count again and its result says nothing of an override.
+    CHECK(run("uvSeamViewOverride") == "");
+    CHECK(box->warning().empty());
+    run("undo");
+    CHECK(box->warning().find(east) != std::string::npos);
+    run("uvSeamViewOverride");
+    run("select", {{"args", {tube}}});
+    json r = run("uvAutoSeams", {{"views", {west}}});
+    CHECK(!r.contains("seamViewOverride"));
+    CHECK(seamX(tube) > 4.0);
+}
+
+TEST_CASE("a plane seam view and an orthographic camera see along their axis")
+{
+    run("newScene");
+    std::string tube = run("polyCylinder", {{"radius", 5}, {"height", 40}, {"subdivisionsAxis", 24}, {"subdivisionsHeight", 4}, {"caps", false}})[0];
+    // Close in, but facing along +x: a point view this near would see the sides as well; a plane sees the +x half only.
+    std::string plane = run("uvSeamView", {{"position", {20.0, 0.0, 0.0}}, {"normal", {1.0, 0.0, 0.0}}}).get<std::string>();
+    run("select", {{"args", {tube}}});
+    run("uvAutoSeams", {{"views", {plane}}});
+    CHECK(seamX(tube) < -4.0);
+    run("move", {{"args", {plane}}, {"to", {-20.0, 0.0, 0.0}}});
+    run("select", {{"args", {tube}}});
+    run("uvAutoSeams", {{"views", {plane}}});
+    CHECK(seamX(tube) > 4.0);
+
+    // Looking down -x from the +x side.
+    std::string cam = run("createNode", {{"args", {"camera"}}}).get<std::string>();
+    run("setAttr", {{"args", {cam + ".orthographic", true}}});
+    run("move", {{"args", {cam}}, {"to", {300.0, 0.0, 0.0}}});
+    run("setAttr", {{"args", {cam + ".rotateY", 90.0}}});
+    run("uvSeamViewOverride", {{"args", {cam}}});
+    run("select", {{"args", {tube}}});
+    CHECK(run("uvAutoSeams")["seamViewOverride"].is_string());
+    CHECK(seamX(tube) < -4.0);
 }
 
 TEST_CASE("uvHose straightens a tube and hides its rail from a camera or a plane")

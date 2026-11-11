@@ -187,6 +187,7 @@ lila_module(lila_ui UI
     UvLive.cpp UvLive.h
     UvPackPanel.cpp UvPackPanel.h
     UvProjectTool.cpp UvProjectTool.h
+    UvSeamOverride.cpp UvSeamOverride.h
     FlowLayout.cpp FlowLayout.h
     FixedRowLayout.cpp FixedRowLayout.h
     MenuButtons.cpp MenuButtons.h

@@ -311,14 +311,100 @@ void packOnExport(geo::Mesh& m, std::span<const Index> faces, std::string_view u
 /** The attr marking a transform as a seam view: its weight. */
 constexpr const char* kSeamViewAttr = "seamView";
 
-/** Seam views in world space, for seamViewsIn to bring into each mesh's space. */
-std::vector<SeamView> seamViewArgs(const Args& a)
+/** Gives a transform the seamView weight attr. */
+void addSeamViewAttr(const std::string& path, double weight)
+{
+    ops::execute("addAttr", {{"args", {path}},
+                             {"longName", kSeamViewAttr},
+                             {"attributeType", "double"},
+                             {"defaultValue", 1.0},
+                             {"minValue", -1.0},
+                             {"maxValue", 4.0},
+                             {"keyable", true},
+                             {"doc", "How hard Auto UV keeps seams out of this view's sight; negative draws them towards it."}});
+    graph().setValue(graph().plug(path + "." + kSeamViewAttr), weight);
+}
+
+/** The attr marking the one seam view that every seam command uses instead of the views its flags give. */
+constexpr const char* kSeamViewOverrideAttr = "seamViewOverride";
+/** On a seam view: it is a plane facing along this local direction, not a point. */
+constexpr const char* kSeamViewNormalAttr = "seamViewNormal";
+
+template <class T> const T* attrValue(const Node& n, const char* attr)
+{
+    const int i = n.type().attrIndex(attr);
+    return i >= 0 ? std::get_if<T>(&n.value(i)) : nullptr;
+}
+
+/** A transform as a seam view, in world space. */
+SeamView seamViewOf(Graph& g, const Node& n)
+{
+    SeamView v;
+    const glm::dmat4 world = n.as<glm::dmat4>(scene::Transform::kWorldMatrix);
+    const glm::dmat3 normalMatrix = glm::transpose(glm::inverse(glm::dmat3(world)));
+    v.position = glm::dvec3(world[3]);
+    auto facing = [&](const glm::dvec3& local) {
+        if (const glm::dvec3 d = normalMatrix * local; glm::length(d) > 1e-12)
+            v.planeNormal = glm::normalize(d);
+    };
+    if (const glm::dvec3* local = attrValue<glm::dvec3>(n, kSeamViewNormalAttr))
+        facing(*local);
+    else if (n.type().isA("camera"))
+    {
+        // An orthographic camera sees along its axis from everywhere; a perspective one from its eye.
+        if (const bool* ortho = std::get_if<bool>(&n.value(scene::Camera::kOrthographic)); ortho && *ortho)
+            facing({0.0, 0.0, 1.0});
+    }
+    // A mesh is a plane: it sees along its average normal.
+    else if (MeshPtr mesh = cageOf(g, n.id()))
+    {
+        glm::dvec3 normal(0.0), center(0.0);
+        double area = 0.0;
+        for (Index f = 0; f < mesh->faceCapacity(); ++f)
+            if (mesh->faceValid(f))
+            {
+                normal += mesh->faceAreaVector(f);
+                center += mesh->faceCentroid(f) * mesh->faceArea(f);
+                area += mesh->faceArea(f);
+            }
+        normal = normalMatrix * normal;
+        if (area > 0.0 && glm::length(normal) > 1e-12)
+        {
+            v.position = glm::dvec3(world * glm::dvec4(center / area, 1.0));
+            v.planeNormal = glm::normalize(normal);
+        }
+    }
+    if (const double* w = attrValue<double>(n, kSeamViewAttr))
+        v.weight = *w;
+    return v;
+}
+
+Node* seamViewOverride(Graph& g)
+{
+    for (NodeId id : g.nodes())
+        if (Node* n = g.node(id); n && n->type().isA("transform"))
+            if (const bool* on = attrValue<bool>(*n, kSeamViewOverrideAttr); on && *on)
+                return n;
+    return nullptr;
+}
+
+/**
+ * Seam views in world space, for viewsIn to bring into each mesh's space. The seam view override, when one is set,
+ * replaces whatever the flags say; overridden then gets its name.
+ */
+std::vector<SeamView> seamViewArgs(const Args& a, std::string* overridden = nullptr)
 {
     std::vector<SeamView> out;
-    if (!a.get<bool>("useViews", true))
-        return out;
     Graph& g = graph();
     g.evaluate();
+    if (Node* o = seamViewOverride(g))
+    {
+        if (overridden)
+            *overridden = o->name();
+        return {seamViewOf(g, *o)};
+    }
+    if (!a.get<bool>("useViews", true))
+        return out;
     std::vector<Node*> nodes;
     if (a.has("views"))
         for (const json& name : a.flags["views"])
@@ -333,34 +419,7 @@ std::vector<SeamView> seamViewArgs(const Args& a)
             if (Node* n = g.node(id); n && n->type().isA("transform") && n->type().attrIndex(kSeamViewAttr) >= 0)
                 nodes.push_back(n);
     for (Node* n : nodes)
-    {
-        SeamView v;
-        const glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
-        v.position = glm::dvec3(world[3]);
-        // A mesh is a plane: it sees along its average normal.
-        if (MeshPtr mesh = cageOf(g, n->id()))
-        {
-            glm::dvec3 normal(0.0), center(0.0);
-            double area = 0.0;
-            for (Index f = 0; f < mesh->faceCapacity(); ++f)
-                if (mesh->faceValid(f))
-                {
-                    normal += mesh->faceAreaVector(f);
-                    center += mesh->faceCentroid(f) * mesh->faceArea(f);
-                    area += mesh->faceArea(f);
-                }
-            normal = glm::transpose(glm::inverse(glm::dmat3(world))) * normal;
-            if (area > 0.0 && glm::length(normal) > 1e-12)
-            {
-                v.position = glm::dvec3(world * glm::dvec4(center / area, 1.0));
-                v.planeNormal = glm::normalize(normal);
-            }
-        }
-        if (int i = n->type().attrIndex(kSeamViewAttr); i >= 0)
-            if (const double* w = std::get_if<double>(&n->value(i)))
-                v.weight = *w;
-        out.push_back(v);
-    }
+        out.push_back(seamViewOf(g, *n));
     return out;
 }
 
@@ -392,7 +451,7 @@ AutoSeamOptions seamsIn(AutoSeamOptions o, Node& node, const geo::Mesh& m, const
     return o;
 }
 
-AutoSeamOptions seamArgs(const Args& a)
+AutoSeamOptions seamArgs(const Args& a, std::string* overridden = nullptr)
 {
     AutoSeamOptions o;
     o.hardAngle = a.get<double>("hardAngle", 60.0);
@@ -407,8 +466,21 @@ AutoSeamOptions seamArgs(const Args& a)
     o.method = method == "optcuts" ? SeamMethod::OptCuts : SeamMethod::Split;
     o.distortionBound = std::max(0.0, a.get<double>("distortionBound", 0.05));
     o.seamWeight = std::max(0.0, a.get<double>("seamWeight", 0.5));
-    o.views = seamViewArgs(a);
+    o.views = seamViewArgs(a, overridden);
     return o;
+}
+
+/** Says the seam view override replaced the command's seam views: in its result, the log and a toast. */
+json reportOverride(json r, const std::string& overridden)
+{
+    if (overridden.empty() || r.is_null())
+        return r;
+    if (r.is_object())
+        r["seamViewOverride"] = overridden;
+    log::warn("Seam view override {} used instead of the seam views in the options", overridden);
+    if (ops::find("viewportToast"))
+        ops::execute("viewportToast", {{"args", {"Seam view override: " + overridden}}, {"warning", true}, {"duration", 3.5}});
+    return r;
 }
 
 FlagDef viewsFlag()
@@ -1193,8 +1265,9 @@ void registerCommands()
                "split it where it would stretch.",
         .flags = seamFlagDefs(),
         .run = [](const Args& a) -> json {
-            AutoSeamOptions o = seamArgs(a);
-            return editUv("UV Auto Seams", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
+            std::string overridden;
+            AutoSeamOptions o = seamArgs(a, &overridden);
+            return reportOverride(editUv("UV Auto Seams", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
                 std::optional<geo::SymmetryMap> map = uvSymmetryMap(n, m);
                 AutoSeamResult r = autoSeams(m, f, seamsIn(o, n, m, map));
                 if (!map)
@@ -1203,7 +1276,7 @@ void registerCommands()
                 const Index added = symmetricSeams(m, *map, f);
                 ChartOptions co;
                 return {{"islands", islandFaces(m, f, co).size()}, {"seams", r.seamEdges + added}};
-            });
+            }), overridden);
         },
     });
 
@@ -1215,11 +1288,12 @@ void registerCommands()
         .run = [](const Args& a) -> json {
             const bool final = a.get<bool>("finalMesh", true);
             AutoUvOptions o;
-            o.seams = seamArgs(a);
+            std::string overridden;
+            o.seams = seamArgs(a, &overridden);
             o.unwrap.iterations = std::clamp(a.get<int>("iterations", 12), 0, 200);
             o.pack = packArgs(a);
             std::string set = uvSetArg(a);
-            return editUv("Auto UV", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
+            return reportOverride(editUv("Auto UV", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
                 std::optional<geo::SymmetryMap> map = uvSymmetryMap(n, m);
                 AutoUvOptions mo = o;
                 mo.seams = seamsIn(o.seams, n, m, map);
@@ -1232,7 +1306,7 @@ void registerCommands()
                 if (json fm = finishOnExport(m, f, set, n, final, &mo.pack); !fm.is_null())
                     j["finalMesh"] = std::move(fm);
                 return j;
-            });
+            }), overridden);
         },
     });
 
@@ -1258,11 +1332,12 @@ void registerCommands()
             o.maxLength = std::max(0.0, a.get<double>("maxLength", 0.0));
             o.visibility = a.get<bool>("visibility", true);
             o.keepSeams = a.get<bool>("keepSeams", false);
-            o.views = seamViewArgs(a);
+            std::string overridden;
+            o.views = seamViewArgs(a, &overridden);
             const bool pack = a.get<bool>("pack", true);
             const PackOptions packing = packArgs(a);
             std::string set = uvSetArg(a);
-            return editUv("UV Hose", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
+            return reportOverride(editUv("UV Hose", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
                 HoseOptions mo = o;
                 mo.views = viewsIn(o.views, n);
                 HoseResult r = hoseUv(m, f, set, mo);
@@ -1280,32 +1355,43 @@ void registerCommands()
                     j["pack"] = packJson(packMeshes(std::span<PackTarget>(&t, 1), set, packing));
                 }
                 return j;
-            });
+            }), overridden);
         },
     });
 
     ops::registerCommand({
         .name = "uvSeamView",
-        .doc = "Create a seam view: a locator that uvAuto and uvAutoSeams keep seams out of sight of, such as where a first person "
-               "camera sits or where a character's face is seen from. Move it and run Auto UV again to see the seams move. Its "
-               "seamView attribute is the weight: higher hides seams harder, negative draws them towards it. Returns its path.",
+        .doc = "Create a seam view: a locator that uvAuto, uvAutoSeams and uvHose keep seams out of sight of, such as where a first "
+               "person camera sits or where a character's face is seen from. With normal it is a plane instead, seeing along its local "
+               "direction like an orthographic camera (a game's fixed side or top view). Move or rotate it and run Auto UV again to see "
+               "the seams move. Its seamView attribute is the weight: higher hides seams harder, negative draws them towards it. "
+               "Returns its path.",
         .flags = {{"position", "p", T::Vec3, nullptr, "World position."},
+                  {"normal", "nm", T::Vec3, nullptr, "Makes it a plane through position with this world normal: it sees along that axis from its own side, like an orthographic camera."},
                   {"weight", "w", T::Float, 1.0, "How hard seams avoid what it sees; negative draws them towards it.", {}, {}, -1.0, 4.0},
+                  {"override", "o", T::Bool, false, "Make it the seam view override (uvSeamViewOverride)."},
                   {"name", "n", T::String, "seamView", "Name; made unique among its siblings."}},
         .run = [](const Args& a) -> json {
             json call = {{"name", a.get<std::string>("name", "seamView")}};
             if (a.has("position"))
                 call["position"] = a.flags["position"];
             const std::string path = ops::execute("spaceLocator", call).get<std::string>();
-            ops::execute("addAttr", {{"args", {path}},
-                                     {"longName", kSeamViewAttr},
-                                     {"attributeType", "double"},
-                                     {"defaultValue", 1.0},
-                                     {"minValue", -1.0},
-                                     {"maxValue", 4.0},
-                                     {"keyable", true},
-                                     {"doc", "How hard Auto UV keeps seams out of this view's sight; negative draws them towards it."}});
-            graph().setValue(graph().plug(path + "." + kSeamViewAttr), std::clamp(a.get<double>("weight", 1.0), -1.0, 4.0));
+            addSeamViewAttr(path, std::clamp(a.get<double>("weight", 1.0), -1.0, 4.0));
+            if (a.has("normal"))
+            {
+                const json& nj = a.flags["normal"];
+                const glm::dvec3 n(nj[0].get<double>(), nj[1].get<double>(), nj[2].get<double>());
+                if (glm::length(n) < 1e-12)
+                    throw CommandError("uvSeamView: normal must not be zero");
+                ops::execute("addAttr", {{"args", {path}},
+                                         {"longName", kSeamViewNormalAttr},
+                                         {"attributeType", "double3"},
+                                         {"doc", "Local direction this plane view faces; seams hide from that side of it."}});
+                // The new locator is unrotated, so its local axes are the world's.
+                graph().setValue(graph().plug(path + "." + kSeamViewNormalAttr), glm::normalize(n));
+            }
+            if (a.get<bool>("override", false))
+                ops::execute("uvSeamViewOverride", {{"args", {path}}});
             return path;
         },
     });
@@ -1365,6 +1451,43 @@ void registerCommands()
                 return {{"faces", faces.size()}};
             });
         },
+    });
+
+    ops::registerCommand({
+        .name = "uvSeamViewOverride",
+        .doc = "Make a camera, locator or plane the seam view override: uvAuto, uvAutoSeams and uvHose then hide seams from it alone, "
+               "whatever seam views their options or flags name, and say so in their result and a toast. A perspective camera sees "
+               "from its eye, an orthographic one along its axis. With no node, clears the override. Returns the override's name, or "
+               "an empty string when cleared.",
+        .positionalDoc = "node",
+        .run = [](const Args& a) -> json {
+            Graph& g = graph();
+            Node* target = nullptr;
+            if (!a.positional.empty() && a.positional[0].is_string() && !a.positional[0].get<std::string>().empty())
+            {
+                const std::string name = a.positional[0].get<std::string>();
+                target = g.find(name);
+                if (!target || !target->type().isA("transform"))
+                    throw CommandError("uvSeamViewOverride: " + name + " is not a camera, locator or mesh");
+            }
+            for (NodeId id : g.nodes())
+                if (Node* n = g.node(id); n && n != target)
+                    if (const bool* on = attrValue<bool>(*n, kSeamViewOverrideAttr); on && *on)
+                        ops::execute("setAttr", {{"args", {n->path() + "." + kSeamViewOverrideAttr, false}}});
+            if (!target)
+                return "";
+            const std::string path = target->path();
+            if (target->type().attrIndex(kSeamViewAttr) < 0)
+                addSeamViewAttr(path, 1.0);
+            if (target->type().attrIndex(kSeamViewOverrideAttr) < 0)
+                ops::execute("addAttr", {{"args", {path}},
+                                         {"longName", kSeamViewOverrideAttr},
+                                         {"attributeType", "bool"},
+                                         {"doc", "Auto UV, Auto Seams and Hose UVs hide seams from this view alone, whatever their options say."}});
+            ops::execute("setAttr", {{"args", {path + "." + kSeamViewOverrideAttr, true}}});
+            return target->name();
+        },
+        .examples = {"uvSeamViewOverride(\"camera1\")", "uvSeamViewOverride()"},
     });
 
     ops::registerCommand({
@@ -1856,6 +1979,20 @@ void registerCommands()
         if (const ops::options::Override* had = ops::options::findOverride(cmd))
             o = *had;
         o.labels["finalMesh"] = "After Modifiers";
+        ops::options::setOverride(cmd, std::move(o));
+    }
+    for (const char* cmd : {"uvAuto", "uvAutoSeams", "uvHose"})
+    {
+        ops::options::Override o;
+        if (const ops::options::Override* had = ops::options::findOverride(cmd))
+            o = *had;
+        o.warning = []() -> std::string {
+            const Node* n = seamViewOverride(graph());
+            return n ? "Seam view override: " + n->name() + ". Seams hide from it alone; Use Views and Views here are ignored. "
+                       "Clear it in the UV Toolkit."
+                     : std::string();
+        };
+        o.warned = {"useViews", "views"};
         ops::options::setOverride(cmd, std::move(o));
     }
 }

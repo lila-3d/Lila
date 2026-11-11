@@ -88,6 +88,13 @@ struct Override
     std::vector<Fill> fills;
     /** Text under a flag's field, worked out each time the box opens (what the flag would act on right now). */
     std::map<std::string, std::function<std::string()>> notes;
+    /**
+     * A warning above the fields while it returns text, for something outside the box that replaces some of its settings
+     * (a scene override). Worked out when the box opens and again as the scene changes; the flags in warned are disabled
+     * while it shows.
+     */
+    std::function<std::string()> warning;
+    std::vector<std::string> warned;
     /** Docs page the option box's help button opens ("curves?id=text"); empty for none. */
     std::string docs;
 };
