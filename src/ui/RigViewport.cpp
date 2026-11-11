@@ -13,6 +13,7 @@
 #include "ui/CursorBadges.h"
 #include "ui/DominantInfluenceUi.h"
 #include "ui/RigHandles.h"
+#include "ui/SoftNetDraw.h"
 #include "ui/SpacesUi.h"
 #include "ui/ViewportDisplay.h"
 #include "ui/ViewportHooks.h"
@@ -552,5 +553,6 @@ void registerRigViewport()
     registerDominantInfluenceUi();
     registerAnimProxyUi();
     registerSpacesUi();
+    registerSoftNetDraw();
 }
 } // namespace lila::ui

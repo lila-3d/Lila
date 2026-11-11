@@ -134,7 +134,7 @@ lila_module(lila_ui UI
     LayoutPencil.cpp LayoutPencil.h
     ConformTool.cpp ConformTool.h
     PythonBridge.cpp PythonBridge.h
-    RigViewport.cpp RigViewport.h WeightPaintTool.cpp WeightPaintTool.h RigHandles.cpp RigHandles.h
+    RigViewport.cpp RigViewport.h SoftNetDraw.cpp SoftNetDraw.h WeightPaintTool.cpp WeightPaintTool.h RigHandles.cpp RigHandles.h
     SpacesUi.cpp SpacesUi.h
     InstancingUi.cpp InstancingUi.h
     TurntableUi.cpp TurntableUi.h
