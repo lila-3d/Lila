@@ -475,6 +475,7 @@ TEST_CASE("library: starter thumbnails are drawn without leaving anything in the
                                     {"isolate", "", ArgType::Bool, nullptr, ""},
                                     {"frameSelection", "", ArgType::Bool, nullptr, ""},
                                     {"grid", "", ArgType::Bool, nullptr, ""},
+                                    {"label", "", ArgType::Bool, nullptr, ""},
                                     {"showSelection", "", ArgType::Bool, nullptr, ""}},
                           .undoable = false,
                           .run = [&calls](const Args& a) -> json {

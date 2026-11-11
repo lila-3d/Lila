@@ -470,6 +470,7 @@ json renderStarterThumbnails(Graph& g, bool force)
                                          {"isolate", true},
                                          {"frameSelection", true},
                                          {"grid", false},
+                                         {"label", false},
                                          {"showSelection", false}});
             ops::execute("delete", {{"args", names}});
             ++rendered;
@@ -716,6 +717,7 @@ void registerLibraryCommands(ext::Context& ctx)
                                                  {"isolate", true},
                                                  {"frameSelection", true},
                                                  {"grid", false},
+                                                 {"label", false},
                                                  {"showSelection", false}});
                 }
                 catch (const std::exception& e)
