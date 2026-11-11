@@ -378,7 +378,7 @@ FRigUnit_LilaStringsFullBody_Execute()
 }
 
 TMap<FName, FTransform> ULilaStringsLibrary::SolveOnMesh(USkeletalMesh* Mesh, const FString& RuleWeb, const FString& Mode, const FName Bone, const FTransform& Target,
-														 const bool bRotate, const bool bHoldContacts, const int32 ChainLength, float& Error)
+														 const bool bRotate, const bool bHoldContacts, const int32 ChainLength, const FVector TurnVector, float& Error)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaStringsLibrary::SolveOnMesh);
 
@@ -397,7 +397,12 @@ TMap<FName, FTransform> ULilaStringsLibrary::SolveOnMesh(USkeletalMesh* Mesh, co
 	}
 	URigHierarchy* H = NewObject<URigHierarchy>(GetTransientPackage());
 	H->GetController(true)->ImportBones(Mesh->GetRefSkeleton(), NAME_None, true, true, false, false);
-	if (Run(H, *Found, {RuleWeb, Bone, NAME_None, Target, bHoldContacts, 1.0f, bRotate, ChainLength}, Error,
+	FTransform Goal = Target;
+	if (const double Angle = TurnVector.Size(); Angle > 0.0)
+	{
+		Goal.SetRotation(FQuat(TurnVector / Angle, Angle) * H->GetGlobalTransform(FRigElementKey(Bone, ERigElementType::Bone)).GetRotation());
+	}
+	if (Run(H, *Found, {RuleWeb, Bone, NAME_None, Goal, bHoldContacts, 1.0f, bRotate, ChainLength}, Error,
 			[](const FString& Message) { UE_LOG(LogTemp, Warning, TEXT("Lila Strings: %s"), *Message); }))
 	{
 		H->ForEach<FRigBoneElement>([&](FRigBoneElement* E) {

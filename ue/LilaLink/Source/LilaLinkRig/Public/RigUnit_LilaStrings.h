@@ -106,12 +106,14 @@ class LILALINKRIG_API ULilaStringsLibrary : public UBlueprintFunctionLibrary
 public:
 	/**
 	 * Runs a Strings unit's solve on the mesh's reference pose, without a rig: Mode is forward, backward, ik or fullBody,
-	 * Target the bone's goal (component space), the rest as the units take them. Returns every bone's component space
-	 * transform after the pose, with Error the largest hold error left (-1 when it couldn't run). For comparing with Lila.
+	 * Target the bone's goal (component space), the rest as the units take them. TurnVector, when not zero, is the turn
+	 * (axis times radians, component space) the bone's goal rotation takes from its current one, in place of Target's
+	 * rotation: script quaternions are single precision. Returns every bone's component space transform after the pose,
+	 * with Error the largest hold error left (-1 when it couldn't run). For comparing with Lila.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Lila|Strings")
 	static TMap<FName, FTransform> SolveOnMesh(USkeletalMesh* Mesh, const FString& RuleWeb, const FString& Mode, FName Bone, const FTransform& Target, bool bRotate,
-											  bool bHoldContacts, int32 ChainLength, float& Error);
+											  bool bHoldContacts, int32 ChainLength, FVector TurnVector, float& Error);
 
 	/**
 	 * Runs a Control Rig class once with Control at Target (global) and returns every bone's global transform after its
