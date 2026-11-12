@@ -951,6 +951,9 @@ NodeId record(Graph& g, NodeId node, const RecordOptions& o)
             continue;
         const double t = double(start + int64_t(f)) / fps();
         g.setTime(t);
+        // One evaluation per frame: keys at one time on the layer don't change what is below it.
+        g.evaluate();
+        anim::KeyBatch batch;
         for (size_t c = 0; c < chosen.size(); ++c)
         {
             const NodeId id = outputs[chosen[c]];

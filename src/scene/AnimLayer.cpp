@@ -676,6 +676,24 @@ PlugRef keyInput(Graph& g, const PlugRef& plug)
     return {chain.back(), BlendNode::kInputA, plug.component};
 }
 
+namespace
+{
+/** The open KeyBatch's members and the values the keys so far give them. */
+struct KeyBatchState
+{
+    int depth = 0;
+    std::vector<std::pair<PlugRef, glm::dvec3>> wanted;
+};
+thread_local KeyBatchState tBatch;
+} // namespace
+
+KeyBatch::KeyBatch() { ++tBatch.depth; }
+KeyBatch::~KeyBatch()
+{
+    if (--tBatch.depth == 0)
+        tBatch.wanted.clear();
+}
+
 std::optional<KeyRedirect> redirectKey(Graph& g, const PlugRef& plug, double value)
 {
     LILA_ZONE();
@@ -689,6 +707,7 @@ std::optional<KeyRedirect> redirectKey(Graph& g, const PlugRef& plug, double val
     NodeId target = kNoNode;
     int input = BlendNode::kInputA;
     std::string suffix;
+    bool added = false;
     if (layer)
     {
         Node& l = *g.node(layer);
@@ -699,6 +718,7 @@ std::optional<KeyRedirect> redirectKey(Graph& g, const PlugRef& plug, double val
         {
             target = addMember(g, layer, member);
             chain = blendChain(g, member);
+            added = true;
         }
         input = BlendNode::kInputB;
         suffix = "_" + l.name();
@@ -706,10 +726,19 @@ std::optional<KeyRedirect> redirectKey(Graph& g, const PlugRef& plug, double val
     else
         target = chain.back();
 
-    g.evaluate();
+    auto pending = std::find_if(tBatch.wanted.begin(), tBatch.wanted.end(), [&](const auto& w) { return w.first == member; });
+    if (tBatch.depth == 0 || added)
+        g.evaluate();
     const int comp = plug.component >= 0 ? plug.component : 0;
-    glm::dvec3 o = vecOf(g.storedValue(member));
+    glm::dvec3 o = tBatch.depth > 0 && pending != tBatch.wanted.end() ? pending->second : vecOf(g.storedValue(member));
     o[comp] = value;
+    if (tBatch.depth > 0)
+    {
+        if (pending != tBatch.wanted.end())
+            pending->second = o;
+        else
+            tBatch.wanted.push_back({member, o});
+    }
     glm::dvec3 result = o;
     for (NodeId b : chain)
     {
