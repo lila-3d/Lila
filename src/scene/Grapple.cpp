@@ -991,9 +991,15 @@ struct PinRig
     NodeId axis = kNoNode, pivot = kNoNode, target = kNoNode, anchor = kNoNode;
     AimStyle style = AimStyle::Turn;
     double reach = 50.0, drop = 0.0;
-    /** Shoulder: the joint carrying the anchor, held as animated so the stock and the shoulder stay together. */
+    /** The joint carrying the anchor, whose solved pose moves it: the aim is solved again from where it ends up. */
     int anchorBone = -1;
+    NodeId anchorJoint = kNoNode;
 };
+
+/** An anchored aim's own inputs after the pin's: the animated holder and axis, the pivot, target and the anchor on its bone. */
+constexpr size_t kAimInputs = 16 + 16 + 3 + 3 + 3;
+/** Solves of a frame with anchored aims: each places the aim from where the last one left the anchor. */
+constexpr int kAimPasses = 4;
 
 constexpr size_t kPinInputs = 8;
 
@@ -1209,10 +1215,13 @@ public:
             if (p.reach <= 0.0 && p.anchor)
                 p.reach = 0.9 * chainLength(g, p.anchor, p.joint);
             p.drop = num(an, "drop", 0.0);
-            if (p.style == AimStyle::Shoulder)
+            if (p.style != AimStyle::Turn)
                 for (NodeId j = p.anchor; j && p.anchorBone < 0; j = g.parent(j))
                     if (const auto it = std::find(fs.joints.begin(), fs.joints.end(), j); it != fs.joints.end())
+                    {
                         p.anchorBone = int(it - fs.joints.begin());
+                        p.anchorJoint = j;
+                    }
             for (const char* k : {"joint", "axis", "target", "pivot", "anchor"})
             {
                 const std::string v = text(an, k);
@@ -1305,6 +1314,14 @@ public:
             const glm::dvec3 at = glm::mix(glm::dvec3(now[3]), glm::dvec3(want[3]), w);
             const glm::dquat q = glm::normalize(glm::slerp(rotationOf(now), rotationOf(want), w));
             in.insert(in.end(), {at.x, at.y, at.z, q.w, q.x, q.y, q.z, w});
+            if (p.aim && p.anchorBone >= 0)
+            {
+                putMatrix(in, now);
+                putMatrix(in, rigid(worldOf(*g.node(p.axis))));
+                const glm::dvec3 pv = positionOf(*g.node(p.pivot)), tg = positionOf(*g.node(p.target));
+                const glm::dvec3 an = pointOn(glm::inverse(worldOf(*g.node(p.anchorJoint))), positionOf(*g.node(p.anchor)));
+                in.insert(in.end(), {pv.x, pv.y, pv.z, tg.x, tg.y, tg.z, an.x, an.y, an.z});
+            }
         }
     }
 
@@ -1408,36 +1425,85 @@ private:
             size_t figure, bone;
             glm::dvec3 position;
         };
+        /** An aim placed again after each pass, from where its anchor's bone went. */
+        struct Anchored
+        {
+            size_t figure;
+            int bone, anchorBone;
+            double weight;
+            Aim aim;
+            glm::dvec3 anchorLocal;
+        };
         std::vector<Pinned> pinned;
+        std::vector<Anchored> anchored;
         for (const PinRig& p : mPins)
         {
             const double w = mEnabled ? in[at + 7] : 0.0;
+            const bool isAnchored = p.aim && p.anchorBone >= 0;
             if (w > 1e-9)
             {
-                const glm::dvec3 pos(in[at], in[at + 1], in[at + 2]);
-                figures[size_t(p.figure)].problem.effectors.push_back(
-                    {.bone = p.bone, .position = pos, .rotation = glm::normalize(glm::dquat(in[at + 3], in[at + 4], in[at + 5], in[at + 6]))});
-                pinned.push_back({size_t(p.figure), size_t(p.bone), pos});
-                if (p.anchorBone >= 0)
+                if (isAnchored)
                 {
-                    const fbik::Problem& fp = figures[size_t(p.figure)].problem;
-                    std::vector<glm::dquat> rot;
-                    for (const fbik::Bone& b : fp.bones)
-                        rot.push_back(b.rotation);
-                    const glm::dmat4 shoulder = fbik::forward(fp, rot, std::vector<glm::dvec3>(rot.size(), glm::dvec3(0.0)))[size_t(p.anchorBone)];
-                    figures[size_t(p.figure)].problem.effectors.push_back({.bone = p.anchorBone, .position = glm::dvec3(shoulder[3]), .rotation = rotationOf(shoulder), .weight = w});
+                    const double* x = &in[at + kPinInputs];
+                    Anchored an{size_t(p.figure), p.bone, p.anchorBone, w, {}, glm::dvec3(x[38], x[39], x[40])};
+                    an.aim.holder = getMatrix(x);
+                    an.aim.axis = getMatrix(x + 16);
+                    an.aim.pivot = glm::dvec3(x[32], x[33], x[34]);
+                    an.aim.target = glm::dvec3(x[35], x[36], x[37]);
+                    an.aim.style = p.style;
+                    an.aim.reach = p.reach;
+                    an.aim.drop = p.drop;
+                    an.aim.up = math::axisBasis().up;
+                    anchored.push_back(an);
+                }
+                else
+                {
+                    const glm::dvec3 pos(in[at], in[at + 1], in[at + 2]);
+                    figures[size_t(p.figure)].problem.effectors.push_back(
+                        {.bone = p.bone, .position = pos, .rotation = glm::normalize(glm::dquat(in[at + 3], in[at + 4], in[at + 5], in[at + 6]))});
+                    pinned.push_back({size_t(p.figure), size_t(p.bone), pos});
                 }
                 // A bone an aim pins carries what it holds where the aim says, so contacts riding it reach the rest of the way.
                 for (Link& k : links)
                     if (k.target == p.figure && k.targetBone == p.bone)
                         k.share *= 1.0 - w;
             }
-            at += kPinInputs;
+            at += kPinInputs + (isAnchored ? kAimInputs : 0);
         }
         Result r;
-        const bool any = mEnabled && (!pinned.empty() || std::ranges::any_of(links, [](const Link& l) { return l.weight > 1e-9; }));
+        const bool any = mEnabled && (!pinned.empty() || !anchored.empty() || std::ranges::any_of(links, [](const Link& l) { return l.weight > 1e-9; }));
         if (mEnabled && (any || mOptions.collide))
-            r = solve(figures, links, mOptions);
+        {
+            const std::vector<Figure> base = figures;
+            const size_t fixedPins = pinned.size();
+            for (int pass = 0; pass < (anchored.empty() ? 1 : kAimPasses); ++pass)
+            {
+                figures = base;
+                pinned.resize(fixedPins);
+                for (const Anchored& an : anchored)
+                {
+                    const fbik::Problem& fp = figures[an.figure].problem;
+                    std::vector<glm::dmat4> world;
+                    if (pass == 0 || an.figure >= r.poses.size())
+                    {
+                        std::vector<glm::dquat> rot;
+                        for (const fbik::Bone& b : fp.bones)
+                            rot.push_back(b.rotation);
+                        world = fbik::forward(fp, rot, std::vector<glm::dvec3>(rot.size(), glm::dvec3(0.0)));
+                    }
+                    else
+                        world = fbik::forward(fp, r.poses[an.figure].rotation, r.poses[an.figure].offset, r.poses[an.figure].stretch);
+                    Aim a = an.aim;
+                    a.anchor = pointOn(world[size_t(an.anchorBone)], an.anchorLocal);
+                    const glm::dmat4 want = aimHolder(a);
+                    const glm::dvec3 pos = glm::mix(glm::dvec3(a.holder[3]), glm::dvec3(want[3]), an.weight);
+                    const glm::dquat q = glm::normalize(glm::slerp(rotationOf(a.holder), rotationOf(want), an.weight));
+                    figures[an.figure].problem.effectors.push_back({.bone = an.bone, .position = pos, .rotation = q});
+                    pinned.push_back({an.figure, size_t(an.bone), pos});
+                }
+                r = solve(figures, links, mOptions);
+            }
+        }
         size_t o = 0;
         for (size_t i = 0; i < figures.size(); ++i)
         {

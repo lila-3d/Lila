@@ -272,6 +272,7 @@ TEST_CASE("props: a greatsword held in both hands, the arms sharing the reach")
     CHECK(info.at("contactError").get<double>() < 0.5);
     const double movedR = glm::length(pos(handR) - rBefore), movedL = glm::length(pos(handL) - lBefore);
     CHECK(movedR > 2.0);
+    CHECK(std::abs(glm::length(pos(offPt) - pos(handL)) - glm::length(pos(mainPt) - pos(handR))) < 1.0);
     CHECK(movedL > 2.0);
     // Holding it with one hand lets the left go.
     run("puppeteerPropHold", {{"args", {"sword"}}, {"hands", 1}, {"time", 5.0 / 30.0}, {"blend", 3.0 / 30.0}});
@@ -291,11 +292,13 @@ TEST_CASE("props: handing a pistol from the right hand to the left never pops")
     const std::string handR = jointPath("hand_r"), handL = jointPath("hand_l");
     const json held = run("puppeteerPropHold", {{"args", {"pistol"}}, {"hand", "left"}, {"time", 4.0 / 30.0}, {"blend", 4.0 / 30.0}, {"solve", false}});
     CHECK(held.at("main") == handL);
+    // The group's origin is far from its meshes, so its grip is what is followed.
+    const std::string grip = pointNamed(held, "main");
     std::vector<glm::dvec3> path;
     for (int f = 0; f <= 10; ++f)
     {
         at(f / 30.0);
-        path.push_back(pos("pistol"));
+        path.push_back(pos(grip));
     }
     // At the switch the pistol is where it was; it then travels to the left hand over the blend.
     CHECK(glm::length(path[4] - path[3]) < 1e-6);
@@ -338,6 +341,10 @@ TEST_CASE("props: a rifle aimed at a target, shouldered, the body following")
     const double deg = glm::degrees(std::acos(std::clamp(glm::dot(glm::normalize(glm::dvec3(m[0])), toTarget), -1.0, 1.0)));
     CHECK(deg < 2.0);
     INFO("solve error " << run("grappleInfo", {{"args", {"manny_props"}}}).dump());
+    // The off hand still holds its grip, as far from it as the right hand is from the main grip.
+    const double offGap = glm::length(pos(pointNamed(p, "off")) - pos(jointPath("hand_l")));
+    const double mainGap = glm::length(pos(pointNamed(p, "main")) - pos(jointPath("hand_r")));
+    CHECK(std::abs(offGap - mainGap) < 1.0);
     // The stock sits at the shoulder pocket.
     CHECK(glm::length(pos(stock) - pos(jointPath("propShoulder_r"))) < 2.0);
     // Weight 0 later lets the aim go.

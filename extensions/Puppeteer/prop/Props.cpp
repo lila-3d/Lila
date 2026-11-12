@@ -299,13 +299,16 @@ std::vector<glm::dvec3> meshPointsIn(Graph& g, const Prop& p)
     return out;
 }
 
+/** A point's node name: after its prop, so points of several props read apart in the outliner and never take a mesh's name. */
+std::string pointName(Graph& g, const Prop& p, const std::string& name) { return g.node(p.root)->name() + "_" + name + "_point"; }
+
 /** Makes or moves a point under the prop node to frame (prop root space). */
 NodeId writePoint(Graph& g, const Prop& p, const PointDef& d, NodeId existing = kNoNode)
 {
     NodeId id = existing;
     if (!id)
     {
-        Node* n = g.createNode(*types::find(kPointType), g.node(p.root)->name() + "_" + d.name, p.node);
+        Node* n = g.createNode(*types::find(kPointType), pointName(g, p, d.name), p.node);
         id = n->id();
     }
     setPlug(g, id, "role", int64_t(d.role));
@@ -331,7 +334,7 @@ json fitProp(Graph& g, Prop& p)
         byName[g.node(pt)->name()] = pt;
     for (const PointDef& d : fit.points)
     {
-        const std::string name = g.node(p.root)->name() + "_" + d.name;
+        const std::string name = pointName(g, p, d.name);
         const auto it = byName.find(name);
         writePoint(g, p, d, it == byName.end() ? kNoNode : it->second);
     }
@@ -437,7 +440,7 @@ NodeId gripPoint(Graph& g, const Prop& p, const std::string& name, Role fallback
         for (NodeId pt : p.points)
         {
             const std::string& n = g.node(pt)->name();
-            if (n == name || n == g.node(p.root)->name() + "_" + name || roleId(roleOf(*g.node(pt))) == name)
+            if (n == name || n == pointName(g, p, name) || roleId(roleOf(*g.node(pt))) == name)
                 return pt;
         }
         throw CommandError(std::format("{}: {} has no point named {}", cmd, g.node(p.root)->name(), name));
@@ -473,7 +476,32 @@ void keyRootAt(Graph& g, NodeId root, const glm::dmat4& world, double t)
     g.evaluate();
 }
 
-/** The bake layers of the character's prop grapple are dropped before edits, so edits read the animation itself. */
+/**
+ * Keys the prop settling from where it is at t into `end` (the point's frame in the space's frame) by t + blend: every
+ * frame between, the point's frame against the space eases there rigidly about the point itself. Interpolating the
+ * root's own channels instead swings a prop whose origin is far from its mesh through a wide arc.
+ */
+void settleInto(Graph& g, const Prop& p, NodeId point, NodeId spaceTarget, const glm::dmat4& end, double t, double blend)
+{
+    const glm::dmat4 local = pointLocal(g, p, point);
+    auto spaceAt = [&](double time) {
+        at(g, time);
+        return rigidOf(worldOf(g, spaceTarget));
+    };
+    const glm::dmat4 start = glm::inverse(spaceAt(t)) * rigidOf(worldOf(g, point));
+    const glm::dquat q0 = glm::quat_cast(glm::dmat3(start)), q1 = glm::quat_cast(glm::dmat3(end));
+    const long long frames = std::max<long long>(1, std::llround(blend * fps()));
+    for (long long f = 1; f <= frames; ++f)
+    {
+        const double time = blend <= 0.0 ? t : t + blend * double(f) / double(frames);
+        const double u = double(f) / double(frames), e = u * u * (3.0 - 2.0 * u);
+        glm::dmat4 rel = glm::dmat4(glm::mat3_cast(glm::slerp(q0, q1, e)));
+        rel[3] = glm::dvec4(glm::mix(glm::dvec3(start[3]), glm::dvec3(end[3]), e), 1.0);
+        keyRootAt(g, p.root, placeOn(spaceAt(time) * rel, local), time);
+    }
+}
+
+/** Drops the bake layers of the character's prop grapple, leaving the animation itself. */
 void dropSolve(Graph& g, NodeId grapple)
 {
     if (!grapple)
@@ -745,7 +773,11 @@ json finish(Graph& g, const Prop& p, NodeId grapple, const Args& a, json extra)
     if (a.get<bool>("solve", true) && grapple)
         extra["solve"] = solveGrapple(g, grapple, a);
     else if (grapple)
+    {
+        // Unsolved, the scene shows the animation itself rather than a solve of the holds before this edit.
+        dropSolve(g, grapple);
         extra["solve"] = nullptr;
+    }
     json out = propJson(g, *load(g, p.node));
     for (auto& [k, v] : extra.items())
         out[k] = v;
@@ -789,7 +821,6 @@ json holdCmd(const Args& a)
     const double t = a.has("time") ? a.get<double>("time") : g.time();
     const double blend = blendArg(a);
     const NodeId grapple = propGrapple(g, character, true);
-    dropSolve(g, grapple);
     const std::set<NodeId> before = handsHolding(g, grapple, p, t);
 
     // The switch keeps the prop where it is at t; by t + blend it sits in the grip.
@@ -800,9 +831,7 @@ json holdCmd(const Args& a)
     so.key = true;
     sp::switchSpace(g, p.root, space, so);
     const double settle = t + blend;
-    at(g, settle);
-    const glm::dmat4 grip = rigidOf(worldOf(g, main.h.joint)) * gripOf(g, main.h, mainPt);
-    keyRootAt(g, p.root, placeOn(grip, pointLocal(g, p, mainPt)), settle);
+    settleInto(g, p, mainPt, main.h.joint, gripOf(g, main.h, mainPt), t, blend);
 
     // Contacts: the off hand on its grip, riding the main hand; every other contact of this prop lets go.
     NodeId offContact = kNoNode;
@@ -810,6 +839,20 @@ json holdCmd(const Args& a)
         offContact = contactFor(g, grapple, p, off->h, main.h.joint, offPt);
     for (const PropContact& c : propContacts(g, grapple, p))
         rampWeight(g, c.node, t, blend, c.node == offContact ? 1.0 : 0.0);
+    std::set<std::string> using_{g.path(main.h.joint)};
+    if (off)
+        using_.insert(g.path(off->h.joint));
+    for (const NodeId other : props(g))
+        if (const std::optional<Prop> op = load(g, other); op && op->node != p.node)
+        {
+            for (const PropContact& c : propContacts(g, grapple, *op))
+                if (Node* s = named(g, c.source); s && using_.count(g.path(s->id())) && weightAt(g, c.node, t) > 1e-6)
+                    rampWeight(g, c.node, t, blend, 0.0);
+            at(g, settle);
+            if (const NodeId h = holderNow(g, *op); h && using_.count(g.path(h)))
+                log::write(LogLevel::Warning, std::format("{}: {} is still in {} at frame {:g}; holster or drop it", cmd, g.node(op->root)->name(),
+                                                          g.node(h)->name(), settle * fps()));
+        }
 
     // Fingers: the holding hands close over the blend, a hand that let go opens.
     std::set<NodeId> after{main.h.joint};
@@ -870,7 +913,6 @@ json dropCmd(const Args& a)
         if (h.target && !character)
             character = characterFor(g, h.target);
     const NodeId grapple = character ? propGrapple(g, character, false) : kNoNode;
-    dropSolve(g, grapple);
     release(g, grapple, p, t, blendArg(a), a.get<bool>("fingers", true));
     at(g, t);
     sp::SwitchOptions so;
@@ -904,15 +946,13 @@ json holsterCmd(const Args& a)
     if (!mainPt)
         throw CommandError(std::string(cmd) + ": " + g.node(p.root)->name() + " has no main grip point");
     const NodeId grapple = propGrapple(g, character, true);
-    dropSolve(g, grapple);
     release(g, grapple, p, t, blend, a.get<bool>("fingers", true));
     at(g, t);
     sp::SwitchOptions so;
     so.time = t;
     so.key = true;
     sp::switchSpace(g, p.root, ensureSpace(g, p.root, holster), so);
-    at(g, t + blend);
-    keyRootAt(g, p.root, placeOn(rigidOf(worldOf(g, holster)), pointLocal(g, p, mainPt)), t + blend);
+    settleInto(g, p, mainPt, holster, glm::dmat4(1.0), t, blend);
     return finish(g, p, grapple, a, {{"holster", g.path(holster)}});
 }
 
@@ -939,7 +979,6 @@ json aimCmd(const Args& a)
     const double t = a.has("time") ? a.get<double>("time") : g.time();
     const double blend = blendArg(a);
     const NodeId grapple = propGrapple(g, character, true);
-    dropSolve(g, grapple);
     at(g, t + blend);
     const NodeId holder = holderNow(g, p);
     if (!holder)
