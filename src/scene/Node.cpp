@@ -28,6 +28,7 @@
 #include "scene/Rig.h"
 #include "scene/Modifiers.h"
 #include "scene/Spaces.h"
+#include "scene/Grapple.h"
 #include "scene/Transform.h"
 
 #include "core/Log.h"
@@ -254,6 +255,7 @@ void registerBuiltins()
     media::registerMediaTypes();
     media::registerSoundCueTypes();
     spaces::registerTypes();
+    grapple::registerTypes();
     displayLayers::registerTypes();
     objectSets::registerTypes();
     turntable::registerTypes();
