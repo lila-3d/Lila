@@ -374,7 +374,7 @@ void registerModeBundles(ext::Context& ctx)
 void registerModes(ext::Context& ctx)
 {
     // Shift+right-click while animating: keys and poses rather than modelling tools.
-    const json keysMenu = {{"N", {{"label", "Set Key"}, {"action", "anim.setKey"}}},
+    const json keysMenu = {{"N", {{"label", "Set Key"}, {"action", "puppeteer.anim.setKey"}}},
                            {"S", {{"label", "Delete Keys"}, {"action", "anim.deleteKeys"}}},
                            {"E", {{"label", "Next Key"}, {"action", "anim.nextKey"}}},
                            {"W", {{"label", "Previous Key"}, {"action", "anim.prevKey"}}},
@@ -385,6 +385,9 @@ void registerModes(ext::Context& ctx)
                            {"overflow", json::array({{{"label", "Key Translate"}, {"action", "anim.setKeyTranslate"}},
                                                      {{"label", "Key Rotate"}, {"action", "anim.setKeyRotate"}},
                                                      {{"label", "Key Scale"}, {"action", "anim.setKeyScale"}},
+                                                     {{"separator", true}},
+                                                     {{"label", "Key Target"}, {"action", "puppeteer.keys.target"}},
+                                                     {{"label", "Control Tracks On"}, {"action", "puppeteer.tracks.toggle"}},
                                                      {{"separator", true}},
                                                      {{"label", "Lock Key"}, {"action", "puppeteer.anim.lock"}}})}};
     for (const char* name : {"viewportShift", "viewportShiftObject"})
