@@ -1,6 +1,7 @@
 // Puppeteer's entry point: one registration call per subsystem, scene first so the UI can find its types and commands.
 
 #include "Puppeteer.h"
+#include "motion/PuppeteerMotion.h"
 
 using namespace lila;
 
@@ -27,5 +28,7 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
     // Animate-mode panels (anim/): add further anim registration calls here.
     puppeteer::registerAnimPanels(ctx);
     puppeteer::registerHandUi(ctx);
+    puppeteer::motionfill::registerCommands(ctx);
+    puppeteer::motionui::registerUi(ctx);
     return 0;
 }

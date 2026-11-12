@@ -7,8 +7,10 @@ set(PUPPETEER_RIG_SOURCES
 # Animate-mode panels (Stacker, Mixer, Anim Bank, Cycle Maker, Poses): list their sources here.
 set(PUPPETEER_ANIM_SOURCES
     anim/AnimPanels.cpp anim/CurveOverlay.cpp anim/AnimCommands.cpp anim/AnimCommands.h anim/AnimOps.cpp anim/AnimOps.h anim/KeyMath.h anim/WalkCycle.h anim/PanelModels.h anim/Tracks.cpp anim/Tracks.h)
+# Generated motion: fill between keys, paths, spots, live driving and the Motion panel.
+set(PUPPETEER_MOTION_SOURCES motion/PuppeteerMotion.h motion/MotionFill.cpp motion/MotionUi.cpp)
 lila_add_extension(lila_puppeteer_extension ID Puppeteer MANIFEST extension.json UI
-    SOURCES ${PUPPETEER_RIG_SOURCES} ${PUPPETEER_ANIM_SOURCES})
+    SOURCES ${PUPPETEER_RIG_SOURCES} ${PUPPETEER_ANIM_SOURCES} ${PUPPETEER_MOTION_SOURCES})
 target_include_directories(lila_puppeteer_extension PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 foreach(_host lila lilabatch)
     if(TARGET ${_host})
