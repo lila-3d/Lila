@@ -685,6 +685,24 @@ void applyLimits(Graph& g, NodeId marker, const LimitFit& f)
 }
 
 /** Makes a marker on a joint under the solver, shape fitted, limits from the animation or defaults. */
+/** Joints whose shapes the running command sized from the skeleton for want of a skinned mesh, for reportBoneSized. */
+std::vector<std::string> sBoneSized;
+
+/** Tells the user which markers were sized from the skeleton rather than fitted to a mesh, then forgets them. */
+void reportBoneSized(const char* cmd)
+{
+    if (sBoneSized.empty())
+        return;
+    std::string list;
+    for (size_t i = 0; i < sBoneSized.size() && i < 6; ++i)
+        list += (i ? ", " : "") + sBoneSized[i];
+    if (sBoneSized.size() > 6)
+        list += ", ...";
+    log::write(LogLevel::Warning, std::string(cmd) + ": " + std::to_string(sBoneSized.size()) + " marker shapes have no skinned faces of their own to fit (" + list +
+                                      "); they are sized from the skeleton's proportions. Fit Physics Marker refits them once the mesh is skinned to them.");
+    sBoneSized.clear();
+}
+
 NodeId makeMarker(Graph& g, NodeId solver, NodeId joint, Behaviour behaviour, ShapeKind shape, std::optional<LabelDefaults> defaults,
                   bool fitShapeToMesh, bool fitLimitsToAnim, std::pair<int64_t, int64_t> range)
 {
@@ -711,6 +729,8 @@ NodeId makeMarker(Graph& g, NodeId solver, NodeId joint, Behaviour behaviour, Sh
         setAttr(g, m, "poseSpace", int64_t(PoseSpace::Both));
     setAttr(g, m, "behaviour", int64_t(behaviour));
     ShapeDesc s = fitShapeToMesh ? fitShape(g, joint, shape) : shapeOf(*g.node(m));
+    if (s.fromBones)
+        sBoneSized.push_back(jointName);
     s.kind = shape;
     writeShape(g, m, s);
     if (fitLimitsToAnim && rotates(g, joint, range.first, range.second))
@@ -847,6 +867,7 @@ void registerCommands(ext::Context& ctx)
                 made.push_back(makeMarker(g, solver, j, behaviourArg(a.get<std::string>("behaviour", "poseMatch")),
                                           shapeArg(a.get<std::string>("shape", "capsule")), std::nullopt, a.get<bool>("fitShape", true),
                                           a.get<bool>("fitLimits", true), range));
+            reportBoneSized("assignPhysicsMarker");
             g.select(made);
             return names(g, made);
         },
@@ -894,6 +915,7 @@ void registerCommands(ext::Context& ctx)
             std::vector<NodeId> made;
             for (const auto& [j, d] : labelled)
                 made.push_back(makeMarker(g, solver, j, d.behaviour, d.shape, d, true, a.get<bool>("fitLimits", false), range));
+            reportBoneSized("physicsMarkersFromTemplate");
             g.select(made);
             return names(g, made);
         },
@@ -931,7 +953,10 @@ void registerCommands(ext::Context& ctx)
                 if (a.get<bool>("fitShape", true))
                 {
                     const ShapeKind kind = a.has("shape") ? shapeArg(a.get<std::string>("shape")) : shapeOf(*g.node(m)).kind;
-                    writeShape(g, m, fitShape(g, joint, kind));
+                    const ShapeDesc fitted = fitShape(g, joint, kind);
+                    if (fitted.fromBones)
+                        sBoneSized.push_back(g.node(joint)->name());
+                    writeShape(g, m, fitted);
                 }
                 if (a.get<bool>("limits", true))
                 {
@@ -940,6 +965,7 @@ void registerCommands(ext::Context& ctx)
                         applyLimits(g, m, f);
                 }
             }
+            reportBoneSized("fitPhysicsMarker");
             return names(g, markers);
         },
     });
