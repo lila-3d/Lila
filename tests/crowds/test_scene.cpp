@@ -131,3 +131,39 @@ TEST_CASE("crowd scene: spawn sources and errors")
     run("crowdGroups", {{"args", {crowd}}, {"remove", groups[0]["name"]}});
     CHECK(run("crowdGroups", {{"args", {crowd}}}).size() == 1);
 }
+
+TEST_CASE("crowd scene: relocating the scene moves the crowd and its simulation rigidly")
+{
+    loadPackages();
+    run("newScene");
+    run("playbackOptions", {{"minTime", 0.0}, {"maxTime", 3.0}, {"fps", 30.0}});
+    const std::string crowd = run("crowdCreate", {{"startFrame", 0}}).get<std::string>();
+    run("setAttr", {{"args", {crowd + ".detail", 2}}});
+    run("crowdSpawn", {{"args", {crowd}}, {"count", 10}, {"behaviour", "wander"}, {"center", {400.0, 0.0, -300.0}}, {"radius", 600.0}, {"seed", 2}});
+    run("crowdSpawn", {{"args", {crowd}}, {"count", 4}, {"behaviour", "goTo"}, {"goal", {1500.0, 0.0, 800.0}}, {"center", {0.0, 0.0, 0.0}}, {"radius", 200.0}});
+    const json before0 = run("crowdAgents", {{"args", {crowd}}, {"frame", 0}});
+    const json before = run("crowdAgents", {{"args", {crowd}}, {"frame", 75}});
+
+    const glm::dvec3 offset(12000.0, 0.0, -3500.0);
+    run("relocateScene", {{"offset", {offset.x, offset.y, offset.z}}});
+    const json groups = run("crowdGroups", {{"args", {crowd}}});
+    CHECK(groups[0]["center"][0].get<double>() == doctest::Approx(400.0 + offset.x));
+    CHECK(groups[1]["goal"][2].get<double>() == doctest::Approx(800.0 + offset.z));
+
+    const json after0 = run("crowdAgents", {{"args", {crowd}}, {"frame", 0}});
+    const json after = run("crowdAgents", {{"args", {crowd}}, {"frame", 75}});
+    REQUIRE(after.size() == before.size());
+    double worst = 0.0;
+    for (size_t i = 0; i < after.size(); ++i)
+        for (const auto* pair : {&before0, &before})
+        {
+            const json& b = (*pair)[i]["position"];
+            const json& a = (pair == &before0 ? after0 : after)[i]["position"];
+            worst = std::max({worst, std::abs(a[0].get<double>() - b[0].get<double>() - offset.x), std::abs(a[2].get<double>() - b[2].get<double>() - offset.z)});
+        }
+    CHECK(worst < 0.5);
+
+    // Undo puts the groups back where they were.
+    run("undo");
+    CHECK(run("crowdGroups", {{"args", {crowd}}})[0]["center"][0].get<double>() == doctest::Approx(400.0));
+}

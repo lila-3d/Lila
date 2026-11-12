@@ -97,6 +97,8 @@ struct Group
     /** Wander, Idle: centre and radius (meters); Wander picks goals in it, or on the network when it has one. */
     glm::vec2 center{0.0f};
     float radius = 10.0f;
+    /** Turns the random directions agents pick (wander goals, spread round a goal), so a turned crowd decides alike. */
+    float yaw = 0.0f;
     /** Wander: polygon to stay in, when not empty. */
     std::vector<glm::vec2> area;
     float pauseMin = 1.0f, pauseMax = 4.0f;
