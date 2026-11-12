@@ -14,6 +14,7 @@
 #include "ui/Deletion.h"
 #include "ui/Ghosting.h"
 #include "ui/Icons.h"
+#include "ui/MediaLane.h"
 #include "ui/Menus.h"
 #include "ui/SpinScrub.h"
 #include "ui/UiCommands.h"
@@ -392,6 +393,7 @@ private:
             }
         }
         audio::fillMenu(menu.addMenu("Audio"));
+        menus::addActionRow(&menu, "anim.importFootage");
         QMenu* speed = menu.addMenu("Playback Speed");
         for (anim::PlaybackSpeed s : anim::kPlaybackSpeeds)
         {
@@ -539,7 +541,14 @@ TimeSlider::TimeSlider(QWidget* parent) : QWidget(parent)
     auto* top = new QHBoxLayout();
     top->setSpacing(2);
     mRuler = new TimeRuler(this);
-    top->addWidget(mRuler, 1);
+    {
+        // The media lane sits right on the ruler, so its bars line up with the frames.
+        auto* column = new QVBoxLayout();
+        column->setSpacing(0);
+        column->addWidget(new MediaLane(this));
+        column->addWidget(mRuler, 1);
+        top->addLayout(column, 1);
+    }
     top->addSpacing(4);
     top->addWidget(timeDimLabel("Frame", this));
     mFrame = frameField(this, "Current Frame");

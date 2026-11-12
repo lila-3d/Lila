@@ -6,6 +6,7 @@
 #include "ui/CreditsDialog.h"
 #include "ui/LicensesDialog.h"
 #include "ui/AudioUi.h"
+#include "ui/MediaLane.h"
 #include "ui/RenderOutputDialog.h"
 #include "ui/PerfTrace.h"
 #include "ui/ReferenceOverlay.h"
@@ -299,6 +300,7 @@ void MainWindow::registerActions()
                   "Hides the selected objects or components in the active view's isolation."});
     imagePlanes::install([this] { return mViewports->active(); });
     audio::install();
+    mediaLane::install();
     references::install();
     references::windows::install();
     referenceOverlays::install([this] { return mViewports->active(); });

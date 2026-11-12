@@ -120,7 +120,7 @@ void MainWindow::buildMenus()
     addSubmenu("Create", "Polygon Primitives");
     menus::addActions("Create/Polygon Primitives", {"create.cube", "create.sphere", "create.cylinder", "create.capsule", "create.cone", "create.plane", "create.torus",
                                              "create.disc", "create.pipe", "create.quadSphere", "create.icoSphere"});
-    menus::addActions("Create", {"create.locator", "create.camera", "create.cameraFromView", "create.emptyGroup", "create.turntableBase", "create.audio"});
+    menus::addActions("Create", {"create.locator", "create.camera", "create.cameraFromView", "create.emptyGroup", "create.turntableBase", "create.audio", "anim.importFootage"});
     addSubmenu("Create", "Reference Images");
     menus::addActions("Create/Reference Images", {"create.imagePlane", "imagePlane.cut", "imagePlane.guides", "reference.addImages", "referenceOverlay.addImage", "", "referenceOverlay.adjust",
                                                    "referenceOverlay.toggle", "referenceOverlay.next", ""});
@@ -352,7 +352,8 @@ void MainWindow::buildMenus()
     menu("Animation", "Animation", Area::MenuBar, {}, "", {"Animate", "Rig", "Effects"});
     menus::addActions("Animation", {"#Keys", "anim.setKey", "anim.setKeyTranslate", "anim.setKeyRotate", "anim.setKeyScale", "anim.autoKeyToggle", "#Playback",
                              "anim.play", "anim.playBackward", "anim.stop", "anim.firstFrame", "anim.lastFrame", "anim.nextFrame",
-                             "anim.prevFrame", "anim.nextKey", "anim.prevKey", "#Editors", "window.graphEditor", "window.timeSlider"});
+                             "anim.prevFrame", "anim.nextKey", "anim.prevKey", "#Reference", "anim.importFootage", "create.audio",
+                             "#Editors", "window.graphEditor", "window.timeSlider"});
     menus::addActions("Animation", {"#Ghosting and Poses"});
     addGhostingMenu("Animation");
     menus::addActions("Animation", {"window.poseLibrary", "pose.mirror", "window.controlPicker", "picker.editMode"});
