@@ -8,6 +8,7 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
 {
     if (!puppeteer::registerCharacter(ctx) || !puppeteer::registerRigElements(ctx))
         return 1;
+    puppeteer::registerHands(ctx);
     puppeteer::registerControllers(ctx);
     puppeteer::registerJointTools(ctx);
     puppeteer::registerFullBody(ctx);
@@ -25,5 +26,6 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
 
     // Animate-mode panels (anim/): add further anim registration calls here.
     puppeteer::registerAnimPanels(ctx);
+    puppeteer::registerHandUi(ctx);
     return 0;
 }
