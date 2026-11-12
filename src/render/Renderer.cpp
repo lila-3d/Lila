@@ -5613,8 +5613,12 @@ struct Renderer::Impl
             {
                 if (!(d.flags & DrawShaded) || !d.mesh || d.mesh->indices.empty())
                     continue;
-                glm::vec3 lo(FLT_MAX), hi(-FLT_MAX);
-                auto extend = [&](const glm::mat4& world) {
+                // One blob per instance: a blob over all of them would darken the whole area an array or crowd covers.
+                const size_t count = d.instances && !d.instances->empty() ? d.instances->size() : 1;
+                for (size_t k = 0; k < count && blobs.size() < 8192; ++k)
+                {
+                    const glm::mat4 world = d.instances && !d.instances->empty() ? d.world * (*d.instances)[k] : d.world;
+                    glm::vec3 lo(FLT_MAX), hi(-FLT_MAX);
                     for (int c = 0; c < 8; ++c)
                     {
                         glm::vec3 corner((c & 1) ? d.mesh->boundsMax.x : d.mesh->boundsMin.x, (c & 2) ? d.mesh->boundsMax.y : d.mesh->boundsMin.y,
@@ -5623,32 +5627,27 @@ struct Renderer::Impl
                         lo = glm::min(lo, w);
                         hi = glm::max(hi, w);
                     }
-                };
-                if (d.instances && !d.instances->empty())
-                    for (const glm::mat4& placement : *d.instances)
-                        extend(d.world * placement);
-                else
-                    extend(d.world);
-                glm::vec3 half = (hi - lo) * 0.5f;
-                float size = std::max(half[a0], half[a1]);
-                float gap = lo[up];
-                if (size <= 0.0f || hi[up] <= 0.0f)
-                    continue;
-                float opacity = s.groundShadow * (1.0f - std::clamp(gap / size, 0.0f, 1.0f));
-                if (opacity <= 0.0f)
-                    continue;
+                    glm::vec3 half = (hi - lo) * 0.5f;
+                    float size = std::max(half[a0], half[a1]);
+                    float gap = lo[up];
+                    if (size <= 0.0f || hi[up] <= 0.0f)
+                        continue;
+                    float opacity = s.groundShadow * (1.0f - std::clamp(gap / size, 0.0f, 1.0f));
+                    if (opacity <= 0.0f)
+                        continue;
 
-                ContactPush& p = blobs.emplace_back();
-                glm::vec3 center = (lo + hi) * 0.5f;
-                center[up] = 0.0f;
-                p.center = glm::vec4(center, opacity);
-                // The blob reaches past the footprint by a fraction of the object's size so it reads as soft occlusion.
-                glm::vec3 axisA(0.0f), axisB(0.0f);
-                float spread = size * 0.6f;
-                axisA[a0] = half[a0] + spread;
-                axisB[a1] = half[a1] + spread;
-                p.axisA = glm::vec4(axisA, size / (size + spread));
-                p.axisB = glm::vec4(axisB, 0.0f);
+                    ContactPush& p = blobs.emplace_back();
+                    glm::vec3 center = (lo + hi) * 0.5f;
+                    center[up] = 0.0f;
+                    p.center = glm::vec4(center, opacity);
+                    // The blob reaches past the footprint by a fraction of the object's size so it reads as soft occlusion.
+                    glm::vec3 axisA(0.0f), axisB(0.0f);
+                    float spread = size * 0.6f;
+                    axisA[a0] = half[a0] + spread;
+                    axisB[a1] = half[a1] + spread;
+                    p.axisA = glm::vec4(axisA, size / (size + spread));
+                    p.axisB = glm::vec4(axisB, 0.0f);
+                }
             }
             if (v)
             {
