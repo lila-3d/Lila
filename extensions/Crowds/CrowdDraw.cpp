@@ -6,6 +6,7 @@
 #include <lila/Deformer.h>
 #include <lila/Interchange.h>
 #include <lila/Mesh.h>
+#include <lila/Profile.h>
 #include <lila/Rig.h>
 #include <lila/SimPreview.h>
 #include <lila/Transform.h>
@@ -82,6 +83,7 @@ uint64_t skinKey(Graph& g, const std::vector<NodeId>& skins)
 
 std::shared_ptr<CharacterParts> buildParts(Graph& g, NodeId joint, const std::vector<NodeId>& skins)
 {
+    LILA_ZONE();
     auto parts = std::make_shared<CharacterParts>();
     parts->map.emplace(motion::CharacterMap::forJoint(g, joint));
     const retarget::SceneSkeleton& sk = parts->map->scene();
@@ -229,6 +231,7 @@ enum Quality : int64_t
 
 void drawCrowd(drawOverrides::DrawContext& c)
 {
+    LILA_ZONE();
     Graph& g = Graph::current();
     const Node& n = c.node;
     if (!n.as<bool>(attrOf(n, "preview")) || !n.as<bool>(attrOf(n, "enabled")))

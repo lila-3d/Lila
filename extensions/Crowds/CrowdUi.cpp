@@ -24,6 +24,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <span>
 
 using namespace lila;
@@ -105,7 +106,8 @@ std::string statusText(NodeId id, std::string* warning)
     }
     const Setup& s = v->runtime->setup();
     const sim::Info i = sim::info(g, id);
-    std::string t = std::to_string(s.agents.size()) + " agents, " + std::to_string(s.groups.size()) + " groups";
+    auto count = [](size_t n, const char* one) { return std::to_string(n) + " " + one + (n == 1 ? "" : "s"); };
+    std::string t = count(s.agents.size(), "agent") + ", " + count(s.groups.size(), "group");
     const Stats& st = v->runtime->stats();
     t += "\nMotion: " + (st.device == "none" ? std::string("cycles") : st.device);
     if (i.cachedTo >= i.cachedFrom)
@@ -161,7 +163,6 @@ QWidget* controlsFor(NodeId id, QWidget* parent)
     QVBoxLayout* gl = nullptr;
     QWidget* groupsBox = box(w, &gl);
     auto* groups = new QListWidget(groupsBox);
-    groups->setMaximumHeight(140);
     groups->setContextMenuPolicy(Qt::CustomContextMenu);
     auto* noGroups = new QLabel("No groups. Pick a behaviour under Spawn.", groupsBox);
     noGroups->setWordWrap(true);
@@ -226,6 +227,9 @@ QWidget* controlsFor(NodeId id, QWidget* parent)
             groupsP->clear();
             groupsP->addItems(rows);
         }
+        // As tall as its rows, up to five, so one group doesn't hold a column of empty space.
+        const int rowH = std::max(groupsP->sizeHintForRow(0), groupsP->fontMetrics().height() + 4);
+        groupsP->setFixedHeight(rowH * std::clamp(int(rows.size()), 1, 5) + 2 * groupsP->frameWidth() + 2);
         groupsP->setVisible(!rows.isEmpty());
         noGroupsP->setVisible(rows.isEmpty());
     };
