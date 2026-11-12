@@ -3767,7 +3767,7 @@ def getVertexColorData(*objects: Any, colorSet: str | None = None, base: bool | 
         base: The editable base mesh; False reads the modified result. Default True.
     """
 
-def ghosting(enable: bool | None = None, mode: str | None = None, before: int | None = None, after: int | None = None, step: int | None = None, opacity: float | None = None, show: str | None = None, beforeColor: str | None = None, afterColor: str | None = None, refresh: bool | None = None, *, e: bool | None = None, m: str | None = None, b: int | None = None, a: int | None = None, st: int | None = None, o: float | None = None, sh: str | None = None, bc: str | None = None, ac: str | None = None, r: bool | None = None) -> Any:
+def ghosting(enable: bool | None = None, mode: str | None = None, before: int | None = None, after: int | None = None, step: int | None = None, opacity: float | None = None, show: str | None = None, beforeColor: str | None = None, afterColor: str | None = None, range: bool | None = None, refresh: bool | None = None, *, e: bool | None = None, m: str | None = None, b: int | None = None, a: int | None = None, st: int | None = None, o: float | None = None, sh: str | None = None, bc: str | None = None, ac: str | None = None, rg: bool | None = None, r: bool | None = None) -> Any:
     """Animation ghosting of the selected characters: their meshes or skeletons at the previous and next keys, or every step frames. Sets the given options (user prefs) and returns them all.
 
     Args:
@@ -3780,6 +3780,7 @@ def ghosting(enable: bool | None = None, mode: str | None = None, before: int | 
         show: What to draw. Short form sh. One of 'mesh', 'skeleton', 'both'.
         beforeColor: sRGB #rrggbb tint of ghosts before now. Short form bc.
         afterColor: sRGB #rrggbb tint of ghosts after now. Short form ac.
+        range: While the time slider has a range selected, spread the ghosts across it and its falloff. Short form rg.
         refresh: Recapture every ghost. Short form r. Default False.
     """
 
@@ -10300,13 +10301,17 @@ def textureFolders(include: Sequence[Any] | None = None, exclude: Sequence[Any] 
         clear: Remove the lists at that level (with scene, the scene falls back to the workspace). Short form c. Default False.
     """
 
-def timeRange(start: float | None = None, end: float | None = None, falloff: float | None = None, clear: bool | None = None, *, s: float | None = None, e: float | None = None, fo: float | None = None, c: bool | None = None) -> Any:
-    """The time slider's selected range (Shift + drag on it), which edits across frames act on, such as Strings poses. Give start and end to select, clear to drop it, falloff for the frames edits ease out over either side. Returns {active, start, end, falloff}, times in seconds.
+def timeRange(start: float | None = None, end: float | None = None, falloff: float | None = None, falloffBefore: float | None = None, falloffAfter: float | None = None, falloffType: str | None = None, every: int | None = None, clear: bool | None = None, *, s: float | None = None, e: float | None = None, fo: float | None = None, fob: float | None = None, foa: float | None = None, fot: str | None = None, ev: int | None = None, c: bool | None = None) -> Any:
+    """The time slider's selected range (Shift + drag on it), which edits across frames act on, such as Strings poses and Curve Overlay drags. Give start and end to select, clear to drop it, falloff for the frames edits ease out over either side (falloffBefore and falloffAfter for one side), falloffType for its shape, every to key every n frames. Returns {active, start, end, falloffBefore, falloffAfter, falloffType, every}, times in seconds.
 
     Args:
         start: Seconds. Short form s.
         end: Seconds. Short form e.
         falloff: Frames edits ease out over either side. Short form fo.
+        falloffBefore: Frames edits ease out over before the range. Short form fob.
+        falloffAfter: Frames edits ease out over after the range. Short form foa.
+        falloffType: How edits ease out across the falloff. Short form fot. One of 'smooth', 'linear', 'sharp', 'soft', 'constant'.
+        every: Range edits key every this many frames; 0 only the keyed frames. Short form ev.
         clear: Drop the selection. Short form c. Default False.
     """
 

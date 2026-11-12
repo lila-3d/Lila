@@ -216,17 +216,40 @@ enum class Handle
     Help,
     Proxy,
     Breakdown,
-    // The Strings mode arc, in strings::Mode order.
+    // The Strings mode arc, top to bottom; Forward, Backward and Bidirectional carry their All variant on the right button.
+    ModeDefault,
+    ModeFree,
     ModeForward,
     ModeBackward,
+    ModeBidirectional,
     ModeIk,
     ModeFullBody,
     Trail, // a frame on the motion trail
 };
 
-bool isMode(Handle h) { return h >= Handle::ModeForward && h <= Handle::ModeFullBody; }
-strings::Mode modeOf(Handle h) { return strings::Mode(int(h) - int(Handle::ModeForward)); }
-Handle handleOf(strings::Mode m) { return Handle(int(Handle::ModeForward) + int(m)); }
+constexpr strings::Mode kArcModes[] = {strings::Mode::Default,       strings::Mode::Free, strings::Mode::Forward, strings::Mode::Backward,
+                                       strings::Mode::Bidirectional, strings::Mode::Ik,   strings::Mode::FullBody};
+constexpr int kArcCount = int(std::size(kArcModes));
+
+bool isMode(Handle h) { return h >= Handle::ModeDefault && h <= Handle::ModeFullBody; }
+int slotOf(Handle h) { return int(h) - int(Handle::ModeDefault); }
+/** The arc segment's mode: the All variant when that one is current. */
+strings::Mode modeOf(Handle h)
+{
+    const strings::Mode m = kArcModes[slotOf(h)];
+    return strings::allVariant(m, strings::isAllVariant(stringsMode()) && strings::allVariant(stringsMode(), false) == m);
+}
+/** The segment a mode lights: its own, or its non-All variant's. */
+Handle handleOf(strings::Mode m)
+{
+    const strings::Mode base = strings::allVariant(m, false);
+    for (int i = 0; i < kArcCount; ++i)
+        if (kArcModes[i] == base)
+            return Handle(int(Handle::ModeDefault) + i);
+    return Handle::ModeForward;
+}
+bool hasAllVariant(strings::Mode m) { return strings::allVariant(m, true) != strings::allVariant(m, false); }
+
 
 bool isAxis(Handle h) { return h == Handle::AxisX || h == Handle::AxisY || h == Handle::AxisZ; }
 int axisOf(Handle h) { return h == Handle::AxisX ? 0 : h == Handle::AxisY ? 1 : 2; }
@@ -485,7 +508,10 @@ QString tipFor(Handle h, const Target& t)
     case Handle::Breakdown:
         return "Breakdown: left toward the previous key, right toward the next; down lags hands, feet and head, up leads (Shift: whole character)";
     case Handle::Plate: return "Drag the rim to move the Spinner (reset in its settings)";
-    case Handle::ModeForward: return "Forward: the joint turns, its children follow";
+    case Handle::ModeDefault: return "Default: the rules pick per joint; moves bend the limb, turns are Forward";
+    case Handle::ModeFree: return "Free: the joint alone, its children keep their world rotation";
+    case Handle::ModeForward: return "Forward: the joint turns, its children follow, pins below hold. Right-click: Forward All";
+    case Handle::ModeBidirectional: return "Bidirectional: both sides swing about the joint. Right-click: All";
     case Handle::ModeBackward: return "Backward: what is pinned below holds and the body swings";
     case Handle::ModeIk: return "IK: the limb bends to put the joint where you drag";
     case Handle::ModeFullBody: return "Full Body: the whole body moves, pins holding";
@@ -742,13 +768,22 @@ public:
             if (button == Qt::LeftButton && !offKey(t.names))
                 beginDrag(Kind::Breakdown, h, px, mods, t);
             return true;
+        case Handle::ModeDefault:
+        case Handle::ModeFree:
         case Handle::ModeForward:
         case Handle::ModeBackward:
+        case Handle::ModeBidirectional:
         case Handle::ModeIk:
         case Handle::ModeFullBody:
-            if (button == Qt::LeftButton)
+        {
+            const strings::Mode m = kArcModes[slotOf(h)];
+            // Right button: the All variant, or back from it; left keeps whichever variant is current.
+            if (right && hasAllVariant(m))
+                setStringsMode(strings::allVariant(m, !(strings::isAllVariant(stringsMode()) && strings::allVariant(stringsMode(), false) == m)));
+            else if (!right)
                 setStringsMode(modeOf(h));
             return true;
+        }
         case Handle::Trail:
             if (button == Qt::LeftButton)
                 beginTrailDrag(px);
@@ -875,6 +910,7 @@ private:
         QPointF offset, startOffset;
         int trailFrame = -1;
         bool strung = false; // a breakdown through stringsBreakdown
+        bool tween = false;  // a breakdown with a time range selected: stringsTween across it
         glm::dvec3 trailBy{0.0};
         /** The trail as the drag so far would leave it; empty shows the trail as keyed. */
         std::vector<glm::dvec3> trailLive;
@@ -1254,8 +1290,8 @@ private:
             lila::scene::ghosts::cache().clearPreview();
             return;
         }
-        // Forward has nothing that bends to put a joint somewhere: the trail drags in IK there.
-        const strings::Mode mode = stringsMode() == strings::Mode::Forward ? strings::Mode::Ik : stringsMode();
+        // The modes that only turn the joint have nothing that bends to put it somewhere: the trail drags in IK there.
+        const strings::Mode mode = strings::movesOrigin(stringsMode(), false) ? stringsMode() : strings::Mode::Ik;
         const lila::scene::anim::TimeSelection& sel = lila::scene::anim::timeSelection();
         const double t = mTrail.times[size_t(d.trailFrame)];
         json call = {{"args", {graph().node(mTrail.joint)->path()}},
@@ -1264,8 +1300,7 @@ private:
                      {"stretch", stringsStretch()}};
         if (sel.active && t >= sel.start - 1e-6 && t <= sel.end + 1e-6)
         {
-            call["range"] = json::array({sel.start, sel.end});
-            call["falloff"] = sel.falloff;
+            addRangeFlags(call, sel);
         }
         else
         {
@@ -1325,34 +1360,46 @@ private:
     /** The Strings modes show on joints being animated; controllers and rigging have their own behaviour. */
     bool modeArc(const Target& t) const { return modes::current() != kRigMode && !t.rig && !t.chain && t.character; }
 
-    static std::pair<double, double> modeSpan(strings::Mode m)
+    static std::pair<double, double> modeSpan(int slot)
     {
-        // Forward on top, down to Full Body, in the order the modes widen.
-        const double step = (kModeTo - kModeFrom) / 4.0, gap = degreesFor(kSegmentGap, geo().ring) * 0.5;
-        const double from = kModeTo - step * (int(m) + 1);
+        // Default on top, down to Full Body, in the order the modes widen.
+        const double step = (kModeTo - kModeFrom) / kArcCount, gap = degreesFor(kSegmentGap, geo().ring) * 0.5;
+        const double from = kModeTo - step * (slot + 1);
         return {from + gap, from + step - gap};
     }
 
-    /** One joined strip of four segments, styled as the tool strip; the current mode is the bright one. */
+    /**
+     * One joined strip of segments, styled as the tool strip; the current mode is the bright one. The segments with an
+     * All variant carry the corner mark, and while that variant is current a bar along the segment's outer edge.
+     */
     void drawModes(OverlayPainter& p, QPointF c, Handle hot)
     {
-        static const char* icons[] = {"puppeteer.forward", "puppeteer.backward", "puppeteer.ik", "puppeteer.fullBody"};
+        static const char* icons[] = {"puppeteer.default", "puppeteer.free", "puppeteer.forward", "puppeteer.backward",
+                                      "puppeteer.bidirectional", "puppeteer.ik", "puppeteer.fullBody"};
         const Geo g = geo();
         const strings::Mode current = stringsMode();
-        for (strings::Mode m : {strings::Mode::Forward, strings::Mode::Backward, strings::Mode::Ik, strings::Mode::FullBody})
+        const Handle lit = handleOf(current);
+        for (int i = 0; i < kArcCount; ++i)
         {
-            const auto [from, to] = modeSpan(m);
-            const bool on = m == current, lit = hot == handleOf(m);
-            const glm::vec4 fill = on ? kPal.segmentOn : lit ? kPal.segmentHot : kPal.segment;
+            const Handle h = Handle(int(Handle::ModeDefault) + i);
+            const auto [from, to] = modeSpan(i);
+            const bool on = h == lit, hover = hot == h;
+            const glm::vec4 fill = on ? kPal.segmentOn : hover ? kPal.segmentHot : kPal.segment;
             p.sector(c, g.ring - kBandHalf, g.ring + kBandHalf, from, to, fill, fill, 4.0);
-            iconAt(p, at(c, g.ring, (from + to) * 0.5), kIcon, icons[int(m)], on ? kPal.iconOnSegment : lit ? kPal.iconHot : kPal.icon);
+            const glm::vec4 ink = on ? kPal.iconOnSegment : hover ? kPal.iconHot : kPal.icon;
+            iconAt(p, at(c, g.ring, (from + to) * 0.5), kIcon, icons[i], ink);
+            if (hasAllVariant(kArcModes[i]))
+            {
+                cornerMark(p, at(c, g.ring - kBandHalf + 3.0, from + degreesFor(3.0, g.ring - kBandHalf)), 5.0, ink);
+                if (on && strings::isAllVariant(current))
+                    p.sector(c, g.ring - kBandHalf, g.ring - kBandHalf + 3.0, from, to, kPal.iconOnSegment, kPal.iconOnSegment, 1.0);
+            }
         }
         // The current mode by name beside the arc, so it reads without learning the icons.
-        static const char* names[] = {"Forward", "Backward", "IK", "Full Body"};
-        const auto [from, to] = modeSpan(current);
+        const auto [from, to] = modeSpan(slotOf(lit));
         const QPointF tag = at(c, g.plate + 8.0, (from + to) * 0.5);
         p.setShadow(true);
-        p.text(QPointF(tag.x(), tag.y() + 4.5), names[int(current)], gray(0.92f), OverlayPainter::Right);
+        p.text(QPointF(tag.x(), tag.y() + 4.5), stringsModeLabel(current), gray(0.92f), OverlayPainter::Right);
         p.setShadow(false);
     }
 
@@ -1530,7 +1577,7 @@ private:
         {
             const double around = a < 0.0 ? a + 360.0 : a;
             if (around >= kModeFrom && around <= kModeTo)
-                return handleOf(strings::Mode(std::clamp(int((kModeTo - around) / ((kModeTo - kModeFrom) / 4.0)), 0, 3)));
+                return Handle(int(Handle::ModeDefault) + std::clamp(int((kModeTo - around) / ((kModeTo - kModeFrom) / kArcCount)), 0, kArcCount - 1));
         }
         if (!t.rig && modes::current() != kRigMode && inBand && a >= kBreakdownFrom && a <= kBreakdownTo)
             return Handle::Breakdown;
@@ -1621,9 +1668,12 @@ private:
         g.evaluate();
         if (kind == Kind::Breakdown)
         {
-            // In a Strings mode the breakdown is the space-aware one: the whole character blends, feet in world.
-            if (posesStrings(t) && t.character)
+            // In a Strings mode the breakdown is the space-aware one: the whole character blends, feet in world. With a
+            // time range selected it tweens the range instead, whatever the mode.
+            const bool tween = t.character && !t.rig && lila::scene::anim::timeSelection().active;
+            if ((posesStrings(t) || tween) && t.character)
             {
+                d.tween = tween;
                 for (NodeId j : fullBodyJoints(g, g.find(t.names.front())->id()))
                     d.saved.push_back({j, {{int(Transform::kTranslate), g.value({j, Transform::kTranslate, -1})},
                                            {int(Transform::kRotate), g.value({j, Transform::kRotate, -1})}}});
@@ -1841,16 +1891,17 @@ private:
     /** Whether a drag on these joints poses through Strings rather than the plain move and turn. */
     static bool posesStrings(const Target& t)
     {
-        return !t.rig && !t.chain && ((t.character && stringsMode() != strings::Mode::Forward) || t.related);
+        // Forward All is the plain turn, except across a time range, where each frame needs its own solve.
+        return !t.rig && !t.chain &&
+               ((t.character && (stringsMode() != strings::Mode::ForwardAll || lila::scene::anim::timeSelection().active)) || t.related);
     }
 
     /** The drag as a stringsPose call in the current mode; the readout names the mode. */
     std::pair<const char*, json> stringsCall(json call)
     {
-        static const char* labels[] = {"Forward", "Backward", "IK", "Full Body"};
         call["mode"] = strings::modeName(stringsMode());
         call["stretch"] = stringsStretch();
-        mDrag->readout += QString("  %1").arg(labels[int(stringsMode())]);
+        mDrag->readout += QString("  %1").arg(stringsModeLabel(stringsMode()));
         if (stringsMode() == strings::Mode::Ik && mDrag->chainLength > 0)
             call["chainLength"] = mDrag->chainLength;
         return {"stringsPose", call};
@@ -1910,6 +1961,36 @@ private:
             d.weight = math::breakdownWeight(d.current.x() - d.start.x(), s.breakdownDeadZone, s.breakdownFull);
             d.readout = d.weight < 0.0 ? QString("Previous key %1%").arg(int(std::round(-d.weight * 100.0)))
                                        : QString("Next key %1%").arg(int(std::round(d.weight * 100.0)));
+            if (d.tween)
+            {
+                // Right takes the range toward the inbetween of the poses either side of it, left pushes it away.
+                d.readout = d.weight < 0.0 ? QString("Exaggerate range %1%").arg(int(std::round(-d.weight * 100.0)))
+                                           : QString("Tween range %1%").arg(int(std::round(d.weight * 100.0)));
+                restore();
+                if (d.weight == 0.0)
+                {
+                    lila::scene::ghosts::cache().clearPreview();
+                    return;
+                }
+                json call = {{"args", namesJson(d.target.names)}, {"amount", d.weight}};
+                if (commit)
+                {
+                    lila::scene::ghosts::cache().clearPreview();
+                    if (const std::string layer = stringsLayer(); !layer.empty())
+                        call["layer"] = layer;
+                    runCommand("stringsTween", call);
+                }
+                else
+                {
+                    call["preview"] = true;
+                    if (std::string error = quietly([&] { ops::execute("stringsTween", call, CallSource::Script); }); !error.empty() && !d.warned)
+                    {
+                        d.warned = true;
+                        log::write(LogLevel::Warning, "Spinner: " + error);
+                    }
+                }
+                return;
+            }
             if (d.strung)
             {
                 // Down lags the hands, feet and head behind the body, up leads them, past a small dead zone.
@@ -1967,8 +2048,7 @@ private:
         {
             if (range.active && std::string_view(name) == "stringsPose")
             {
-                call["range"] = json::array({range.start, range.end});
-                call["falloff"] = range.falloff;
+                addRangeFlags(call, range);
                 if (const std::string layer = stringsLayer(); !layer.empty())
                     call["layer"] = layer;
             }
@@ -1978,8 +2058,7 @@ private:
         if (range.active && std::string_view(name) == "stringsPose")
         {
             json across = call;
-            across["range"] = json::array({range.start, range.end});
-            across["falloff"] = range.falloff;
+            addRangeFlags(across, range);
             previewAcross(across);
         }
         // A failing preview says why once per drag rather than doing nothing silently.
@@ -2005,6 +2084,9 @@ private:
                 d.readout += QString("  from %1").arg(QString::fromStdString(result["anchor"].get<std::string>()).section('|', -1).section(':', -1));
             if (result.contains("fallback"))
                 d.readout += QString("  (%1)").arg(QString::fromStdString(result["fallback"].get<std::string>()));
+            if (result.contains("resolved"))
+                if (const auto m = strings::modeFromName(result["resolved"].get<std::string>()))
+                    d.readout += QString(" (%1)").arg(stringsModeLabel(*m));
         }
     }
 
@@ -2125,7 +2207,8 @@ void registerIcons(ext::Context& ctx)
         {"puppeteer.sticky", "target-arrow"},      {"puppeteer.sticky2nd", "vector-bezier"}, {"puppeteer.keepDirection", "direction"},
         {"puppeteer.foot", "shoe"},                {"puppeteer.footAlign", "line"},          {"puppeteer.pole", "target"},
         {"puppeteer.proxy", "puzzle"},             {"puppeteer.forward", "arrow-down-tail"}, {"puppeteer.backward", "arrow-up-tail"},
-        {"puppeteer.ik", "hand-grab"},             {"puppeteer.fullBody", "man"},
+        {"puppeteer.ik", "hand-grab"},             {"puppeteer.fullBody", "man"},            {"puppeteer.default", "wand"},
+        {"puppeteer.free", "feather"},             {"puppeteer.bidirectional", "arrows-down-up"},
     };
     for (const auto& [id, tabler] : icons)
         overlayIcons::add(ctx, id, {.tabler = tabler});
