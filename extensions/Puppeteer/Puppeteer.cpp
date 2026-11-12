@@ -22,6 +22,7 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
     puppeteer::registerCurveOverlay(ctx);
     puppeteer::registerModes(ctx);
     puppeteer::registerAnimProxy(ctx);
+    puppeteer::registerGrapple(ctx);
 
     // Animate-mode panels (anim/): add further anim registration calls here.
     puppeteer::registerAnimPanels(ctx);
