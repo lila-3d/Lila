@@ -582,7 +582,7 @@ size_t applyUvFollow(std::span<const UvFollow> rules, std::span<const glm::vec2>
         if (r.corner >= uv.size() || r.source >= uv.size() || r.corner >= before.size() || r.source >= before.size())
             continue;
         glm::dvec2 delta = glm::dvec2(uv[r.source]) - glm::dvec2(before[r.source]);
-        glm::vec2 next(glm::dvec2(before[r.corner]) + r.linear * delta);
+        const glm::vec2 next = glm::vec2(glm::dvec2(before[r.corner]) + r.linear * delta);
         if (next != uv[r.corner])
         {
             uv[r.corner] = next;

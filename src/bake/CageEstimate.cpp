@@ -132,24 +132,24 @@ std::vector<uint32_t> soupShells(const MeshSoup& soup)
     return parent;
 }
 
+/** The shell of a self high a sample lies on: hits on that high's other shells are skipped. */
+struct SelfShell
+{
+    uint32_t high = kNoHit;
+    uint32_t shell = kNoHit;
+};
+
 class Walker
 {
 public:
     /** shells[h] holds high h's triangle shells when it is a low baking onto itself, else nothing. */
     Walker(const Tracer& tracer, size_t group, const std::vector<std::vector<uint32_t>>& shells) : mTracer(tracer), mGroup(group), mShells(shells) {}
 
-    /** The shell of a self high a sample lies on: hits on that high's other shells are skipped. */
-    struct Own
-    {
-        uint32_t high = kNoHit;
-        uint32_t shell = kNoHit;
-    };
-
     /**
      * cap bounds the walk: far layers of the same mesh would otherwise read as material the low starts inside. own is
      * the sample's shell when the low bakes onto itself: its other shells hide what they cross.
      */
-    Need at(uint32_t low, const glm::vec3& p, const glm::vec3& dir, float mCap, float mEps, const Own& own = {}) const
+    Need at(uint32_t low, const glm::vec3& p, const glm::vec3& dir, float mCap, float mEps, const SelfShell& own = {}) const
     {
         Need n;
         // A ray through a shared edge or vertex meets each triangle there: hits this close repeat one crossing.
@@ -207,7 +207,7 @@ private:
     static constexpr float kGrazing = 0.1f;
 
     /** The nearest hit within tMax, stepping past the own high's other shells and grazing hits; distance is from o. */
-    bool next(uint32_t low, const glm::vec3& o, const glm::vec3& dir, float tMax, float eps, const Own& own, TraceHit& h) const
+    bool next(uint32_t low, const glm::vec3& o, const glm::vec3& dir, float tMax, float eps, const SelfShell& own, TraceHit& h) const
     {
         float skipped = 0.0f;
         for (int k = 0; k < 32 && skipped < tMax; ++k)
@@ -280,7 +280,7 @@ struct LowState
     uint32_t selfHigh = kNoHit;
     std::vector<uint32_t> highShell;
 
-    Walker::Own own(size_t t) const { return t < highShell.size() ? Walker::Own{selfHigh, highShell[t]} : Walker::Own{}; }
+    SelfShell own(size_t t) const { return t < highShell.size() ? SelfShell{selfHigh, highShell[t]} : SelfShell{}; }
 };
 
 /**

@@ -1,0 +1,16 @@
+# Chainloaded by vcpkg's toolchain on Linux. C++20 <format> needs GCC 13+; Enterprise Linux ships GCC 11, so without an
+# explicit compiler (CC/CXX or -DCMAKE_CXX_COMPILER) take the newest Red Hat gcc-toolset that has one.
+if(NOT CMAKE_CXX_COMPILER AND NOT DEFINED ENV{CXX})
+    execute_process(COMMAND g++ -dumpversion OUTPUT_VARIABLE _lila_gcc OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    if(NOT _lila_gcc OR _lila_gcc VERSION_LESS 13)
+        file(GLOB _lila_toolsets LIST_DIRECTORIES true /opt/rh/gcc-toolset-*)
+        list(SORT _lila_toolsets COMPARE NATURAL ORDER DESCENDING)
+        foreach(_toolset IN LISTS _lila_toolsets)
+            if(EXISTS ${_toolset}/root/usr/bin/g++)
+                set(CMAKE_C_COMPILER ${_toolset}/root/usr/bin/gcc)
+                set(CMAKE_CXX_COMPILER ${_toolset}/root/usr/bin/g++)
+                break()
+            endif()
+        endforeach()
+    endif()
+endif()

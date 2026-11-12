@@ -6,6 +6,11 @@ lila_add_extension(lila_nanovdb_extension ID NanoVDB MANIFEST extension.json SOU
 target_include_directories(lila_nanovdb_extension SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb)
 target_compile_definitions(lila_nanovdb_extension PRIVATE NANOVDB_USE_ZIP)
 target_link_libraries(lila_nanovdb_extension PRIVATE ZLIB::ZLIB OpenVDB::openvdb)
+if(NOT WIN32)
+    # FindOpenVDB passes Blosc on only for a shared OpenVDB, and the Linux triplet's is static.
+    find_package(blosc CONFIG REQUIRED)
+    target_link_libraries(lila_nanovdb_extension PRIVATE blosc_static)
+endif()
 foreach(_host lila lilabatch)
     if(TARGET ${_host})
         add_dependencies(${_host} lila_nanovdb_extension)

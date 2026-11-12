@@ -7,6 +7,9 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <vulkan/vulkan_win32.h>
+#else
+#include <xcb/xcb.h>
+#include <vulkan/vulkan_xcb.h>
 #endif
 
 namespace lila::render
@@ -22,9 +25,22 @@ VkSurfaceKHR createSurface(VkInstance instance, uintptr_t nativeWindow)
     if (!create || create(instance, &ci, nullptr, &surface) != VK_SUCCESS)
         log::error("vulkan: failed to create a window surface");
 #else
-    (void)instance;
-    (void)nativeWindow;
-    log::error("vulkan: window surfaces are not implemented on this platform yet");
+    // Qt's xcb platform: winId() is an X window, which any connection to that server can target.
+    static xcb_connection_t* connection = [] {
+        xcb_connection_t* c = xcb_connect(nullptr, nullptr);
+        if (!xcb_connection_has_error(c))
+            return c;
+        xcb_disconnect(c);
+        return static_cast<xcb_connection_t*>(nullptr);
+    }();
+    auto create = PFN_vkCreateXcbSurfaceKHR(vkGetInstanceProcAddr(instance, "vkCreateXcbSurfaceKHR"));
+    VkXcbSurfaceCreateInfoKHR ci{VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR};
+    ci.connection = connection;
+    ci.window = xcb_window_t(nativeWindow);
+    if (!connection)
+        log::error("vulkan: no X server connection (run with QT_QPA_PLATFORM=xcb)");
+    else if (!create || create(instance, &ci, nullptr, &surface) != VK_SUCCESS)
+        log::error("vulkan: failed to create a window surface");
 #endif
     return surface;
 }

@@ -586,7 +586,7 @@ TEST_CASE("one group per mesh and Arrange")
     const std::string loner = addMesh("loner", geo::makeCube());
     glm::dvec3 rockOffset(0.0), crateOffset(0.0);
     for (const auto& [name, o] : offsets.items())
-        (name.find("rock") != std::string::npos ? rockOffset : crateOffset) = {o[0].get<double>(), o[1].get<double>(), o[2].get<double>()};
+        (name.find("rock") != std::string::npos ? rockOffset : crateOffset) = glm::dvec3(o[0].get<double>(), o[1].get<double>(), o[2].get<double>());
     CHECK(bake::arrange::displayOffset(g, g.find(rock)->id()) == rockOffset);
     CHECK(bake::arrange::displayOffset(g, g.find(crateLow)->id()) == crateOffset);
     CHECK(bake::arrange::displayOffset(g, g.find(crateHigh)->id()) == crateOffset);

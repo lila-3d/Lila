@@ -22,12 +22,16 @@
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
+#ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
 #undef near
 #undef far
+#else
+#include <unistd.h>
+#endif
 
 #include "../core/test_helpers.h"
 #include "groomlab/display.h"
@@ -259,10 +263,13 @@ GroomData paintedGroom(const std::string& graphJson) {
 // (`tag`: the backend) and process: ctest -j runs the DirectX 11 and OpenGL instances side by
 // side, and one would remove the file while the other reads it.
 std::string stripes(const std::string& tag) {
-    char dir[MAX_PATH];
-    GetTempPathA(MAX_PATH, dir);
+#ifdef _WIN32
+    const auto pid = GetCurrentProcessId();
+#else
+    const auto pid = getpid();
+#endif
     const std::string path =
-        std::string(dir) + "groomlab_gpu_stripes_" + tag + "_" + std::to_string(GetCurrentProcessId()) + ".pgm";
+        (std::filesystem::temp_directory_path() / ("groomlab_gpu_stripes_" + tag + "_" + std::to_string(pid) + ".pgm")).string();
     FILE* f = std::fopen(path.c_str(), "wb");
     if (!f) return path;
     std::fprintf(f, "P5\n64 16\n255\n");
