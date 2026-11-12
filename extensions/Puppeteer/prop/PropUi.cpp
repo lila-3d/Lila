@@ -523,8 +523,7 @@ public:
             mUnreal->setVisible(false);
             return;
         }
-        const Preset& pr = preset(p->cls);
-        mTitle->setText(QString::fromStdString(g.node(p->root)->name()) + "  " + pr.label);
+        mTitle->setText(QString::fromStdString(g.node(p->root)->name()));
         mTiles[size_t(p->cls)]->setChecked(true);
         mHand->setCurrent(p->rightHanded ? 0 : 1);
         mHands->setCurrent(p->twoHanded ? 2 : 1);
@@ -534,6 +533,9 @@ public:
         bool held = false;
         for (const Hold& h : holds)
         {
+            // Where it sat before its first hold is the scene's, not a hold.
+            if (h.kind == "parent" && &h == &holds.front() && holds.size() > 1)
+                continue;
             held |= h.kind == "hand" || h.kind == "holster";
             auto* it = new QTreeWidgetItem(mHolds, {QString::number(h.time * fps, 'f', 0), holdLabel(h)});
             it->setTextAlignment(0, Qt::AlignRight | Qt::AlignVCenter);
@@ -547,10 +549,12 @@ public:
         QString status;
         if (const NodeId gr = ch ? propGrapple(g, ch, false) : kNoNode)
         {
-            if (auto f = sim::cached(g, gr, sim::frameOf(g.time())); f && f->state.size() >= 3)
+            const std::string layers = textOf(*g.node(gr), sim::kRecordingsAttr);
+            const bool solved = !layers.empty() && layers != "[]";
+            if (auto f = sim::cached(g, gr, sim::frameOf(g.time())); solved && f && f->state.size() >= 3)
                 status = QString("Gap %1 cm").arg(f->state[f->state.size() - 3], 0, 'f', 2);
             else
-                status = "Not solved";
+                status = solved ? "Solved" : "Not solved";
         }
         mStatus->setText(status);
         mUnreal->setVisible(true);
@@ -625,7 +629,9 @@ void drawPoint(drawOverrides::DrawContext& c)
     const std::optional<Drawn> d = drawnPoint(c.view, c.node, c.world);
     if (!d)
         return;
-    const bool selected = c.highlight != drawOverrides::Highlight::None;
+    // Only the point itself reads as selected: a selected prop would otherwise whiten every handle on it.
+    const std::vector<NodeId> sel = g.selection();
+    const bool selected = std::find(sel.begin(), sel.end(), c.node.id()) != sel.end();
     const bool aims = d->role == Role::Muzzle || d->role == Role::Tip;
     const glm::vec4 col = selected ? kSelectedPoint : aims ? kAim : isGrip(d->role) ? kGrip : kRest;
     c.painter.smoothLine(d->at, d->axisEnd, selected ? 2.5f : 2.0f, col);

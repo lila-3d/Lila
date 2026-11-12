@@ -388,3 +388,40 @@ TEST_CASE("props: Unreal export attaches to hand_r by default and keys ik bones 
     // Bone names that aren't there: refused, and the default export never needs them.
     CHECK_THROWS(run("puppeteerPropUnreal", {{"args", {"rifle"}}, {"ikBones", true}, {"gunBone", "weapon_ik"}}));
 }
+
+TEST_CASE("props: a greatsword held in guard toward a target")
+{
+    manny();
+    sword();
+    const json p = run("puppeteerPropSetup", {{"args", {"sword"}}, {"kind", "sword2h"}});
+    run("puppeteerPropHold", {{"args", {"sword"}}, {"time", 0.0}, {"blend", 0.0}, {"solve", false}});
+    run("spaceLocator", {{"name", "foe"}});
+    run("setAttr", {{"args", {"foe.translate", 0.0, 150.0, 300.0}}});
+    const json a = run("puppeteerPropAim", {{"args", {"sword"}}, {"target", "foe"}, {"time", 0.0}, {"blend", 0.0}});
+    CHECK(a.at("style") == "guard");
+    at(5.0 / 30.0);
+    const std::string tip = pointNamed(p, "tip");
+    const glm::dmat4 m = world(tip);
+    const glm::dvec3 to = glm::normalize(pos("foe") - glm::dvec3(m[3]));
+    CHECK(glm::degrees(std::acos(std::clamp(glm::dot(glm::normalize(glm::dvec3(m[0])), to), -1.0, 1.0))) < 2.0);
+    CHECK(std::abs(glm::length(pos(pointNamed(p, "off")) - pos(jointPath("hand_l"))) - glm::length(pos(pointNamed(p, "main")) - pos(jointPath("hand_r")))) < 1.0);
+}
+
+TEST_CASE("props: guard aim after a solved hold over a second")
+{
+    manny();
+    run("playbackOptions", {{"minTime", 0.0}, {"maxTime", 1.0}, {"fps", 30.0}});
+    sword();
+    const json p = run("puppeteerPropSetup", {{"args", {"sword"}}, {"kind", "sword2h"}});
+    run("puppeteerPropHold", {{"args", {"sword"}}, {"time", 0.0}, {"blend", 0.0}});
+    run("spaceLocator", {{"name", "foe"}});
+    run("setAttr", {{"args", {"foe.translate", 0.0, 150.0, 300.0}}});
+    const json a = run("puppeteerPropAim", {{"args", {"sword"}}, {"target", "foe"}, {"time", 10.0 / 30.0}, {"blend", 5.0 / 30.0}});
+    CHECK(a.at("style") == "guard");
+    at(20.0 / 30.0);
+    const std::string tip = pointNamed(p, "tip");
+    const glm::dmat4 m = world(tip);
+    const glm::dvec3 to = glm::normalize(pos("foe") - glm::dvec3(m[3]));
+    CHECK(glm::degrees(std::acos(std::clamp(glm::dot(glm::normalize(glm::dvec3(m[0])), to), -1.0, 1.0))) < 2.0);
+    CHECK(std::abs(glm::length(pos(pointNamed(p, "off")) - pos(jointPath("hand_l"))) - glm::length(pos(pointNamed(p, "main")) - pos(jointPath("hand_r")))) < 1.0);
+}
