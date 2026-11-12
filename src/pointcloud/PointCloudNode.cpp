@@ -11,6 +11,7 @@
 #include "ops/Command.h"
 #include "scene/GeoSidecar.h"
 #include "scene/Georef.h"
+#include "scene/Relocate.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 
@@ -385,6 +386,9 @@ void registerTypes()
                    .doc = "The box cuts while on."}};
     c.create = [] { return std::make_unique<PointCloudClip>(); };
     scene::types::registerType(std::move(c));
+    // Points are cloud-local and boxes are transforms, so both follow their own transforms when relocateScene moves them.
+    scene::relocate::registerNeutral("pointCloud");
+    scene::relocate::registerNeutral("pointCloudClip");
 }
 
 void registerCommands()

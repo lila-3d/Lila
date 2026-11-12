@@ -8,6 +8,7 @@
 #include "scene/Georef.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
+#include "scene/Transform.h"
 
 #include <E57Format/E57SimpleWriter.h>
 #include <glm/gtc/matrix_transform.hpp>
@@ -386,4 +387,22 @@ TEST_CASE("E57 files written by other tools read with their scaled-integer coord
     const json r = ops::execute("importPointCloud", {{"args", {(fs::path(LILA_TEST_E57_DATA) / "bunnyInt32.e57").string()}},
                                                      {"cache", (fs::temp_directory_path() / "lila_bunny.lilapc").string()}});
     CHECK(r["points"].get<uint64_t>() == 30571);
+}
+
+TEST_CASE("relocateScene moves a point cloud and its clip box")
+{
+    ops::execute("newScene", json::object());
+    scene::georef::setCurrent(std::nullopt);
+    const json r = ops::execute("importPointCloud", {{"args", {(fs::path(LILA_TEST_E57_DATA) / "bunnyInt32.e57").string()}},
+                                                     {"cache", (fs::temp_directory_path() / "lila_bunny_relocate.lilapc").string()}});
+    const std::string cloud = r["node"].get<std::string>();
+    const std::string box = ops::execute("pointCloudClipBox", {{"args", {cloud}}}).get<std::string>();
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    const glm::dvec3 cloudAt(g.find(cloud)->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]);
+    const glm::dvec3 boxAt(g.find(box)->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]);
+    ops::execute("relocateScene", {{"offset", json::array({1000.0, 0.0, -500.0})}, {"nodes", {cloud, box}}});
+    g.evaluate();
+    CHECK(glm::length(glm::dvec3(g.find(cloud)->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]) - (cloudAt + glm::dvec3(1000, 0, -500))) < 1e-9);
+    CHECK(glm::length(glm::dvec3(g.find(box)->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]) - (boxAt + glm::dvec3(1000, 0, -500))) < 1e-9);
 }
