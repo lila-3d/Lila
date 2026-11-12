@@ -724,7 +724,9 @@ private:
     void applyValues(const json& values)
     {
         mLoading = true;
-        for (const auto& [name, value] : sanitize(values).items())
+        // Range-for keeps only items()'s view alive, not the json it reads.
+        const json clean = sanitize(values);
+        for (const auto& [name, value] : clean.items())
             writeValue(name, value);
         mLoading = false;
         refreshVisibility();
