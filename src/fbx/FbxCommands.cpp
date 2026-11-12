@@ -195,7 +195,7 @@ void registerCommands()
                   {"report", "", T::Bool, false, "Return the import report instead of just the names."},
                   {"select", "", T::Bool, true, "Select the imported roots."},
                   {"georeference", "", T::Bool, true,
-                   "Place it by the georeference files beside it (metadata.xml, _offset.xyz, .rcinfo, .prj), as importObj does."}},
+                   "Place it by the georeference it carries (a georeferenced Lila export) or the files beside it (metadata.xml, _offset.xyz, .rcinfo, .prj), as importObj does."}},
         .run = [](const Args& a) -> json {
             if (a.positional.empty() || !a.positional[0].is_string())
                 throw CommandError("importFbx: path required");
@@ -214,11 +214,12 @@ void registerCommands()
             opts.take = a.get<std::string>("take", "");
             opts.setPlayback = a.get<bool>("setPlayback", true);
             opts.instances = a.get<bool>("instances", true);
+            opts.georeference = a.get<bool>("georeference", true);
             ImportResult r = importFbx(g, utf8Path(path), opts);
             if (!r.ok)
                 throw CommandError("importFbx: " + r.error);
             // A georeferenced photogrammetry export: its scene is east, north, up from the sidecar's offset.
-            if (a.get<bool>("georeference", true))
+            if (a.get<bool>("georeference", true) && !r.georeferenced)
                 if (const auto found = scene::geoSidecar::find(utf8Path(path)))
                 {
                     const bool zUp = scene::georef::sceneZUp();

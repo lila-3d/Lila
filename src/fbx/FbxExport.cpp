@@ -848,6 +848,20 @@ void writeHeader(Record& root, const std::string& creator)
     pString(props, "LastSaved|ApplicationVendor", "Lila");
     pString(props, "LastSaved|ApplicationName", "Lila");
     pString(props, "LastSaved|ApplicationVersion", "0.1");
+    // The scene's place on the Earth, as scene info a pipeline can read back (LilaGeoreference*).
+    if (const json geo = scene::georef::exportJson(); !geo.is_null())
+    {
+        pString(props, "LilaGeoreferenceCRS", geo.value("authority", geo["crs"].get<std::string>()));
+        pDouble(props, "LilaGeoreferenceEasting", geo["origin"][0].get<double>());
+        pDouble(props, "LilaGeoreferenceNorthing", geo["origin"][1].get<double>());
+        pDouble(props, "LilaGeoreferenceHeight", geo["origin"][2].get<double>());
+        if (geo.contains("wgs84"))
+        {
+            pDouble(props, "LilaGeoreferenceLatitude", geo["wgs84"]["latitude"].get<double>());
+            pDouble(props, "LilaGeoreferenceLongitude", geo["wgs84"]["longitude"].get<double>());
+            pDouble(props, "LilaGeoreferenceEllipsoidHeight", geo["wgs84"]["height"].get<double>());
+        }
+    }
 
     static constexpr uint8_t kFileId[16] = {0x28, 0xb3, 0x2a, 0xeb, 0xb6, 0x24, 0xcc, 0xc2,
                                             0xbf, 0xc8, 0xb0, 0x2a, 0xa9, 0x2b, 0xfc, 0xf1};
@@ -2291,20 +2305,6 @@ std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
     Record& docProps = doc.add("Properties70");
     docProps.addP("SourceObject", "object", "", "");
     pString(docProps, "ActiveAnimStackName", take ? take->name : "");
-    // The scene's place on the Earth, as document properties a pipeline can read back (LilaGeoreference*).
-    if (const json geo = scene::georef::exportJson(); !geo.is_null())
-    {
-        pString(docProps, "LilaGeoreferenceCRS", geo.value("authority", geo["crs"].get<std::string>()));
-        pDouble(docProps, "LilaGeoreferenceEasting", geo["origin"][0].get<double>());
-        pDouble(docProps, "LilaGeoreferenceNorthing", geo["origin"][1].get<double>());
-        pDouble(docProps, "LilaGeoreferenceHeight", geo["origin"][2].get<double>());
-        if (geo.contains("wgs84"))
-        {
-            pDouble(docProps, "LilaGeoreferenceLatitude", geo["wgs84"]["latitude"].get<double>());
-            pDouble(docProps, "LilaGeoreferenceLongitude", geo["wgs84"]["longitude"].get<double>());
-            pDouble(docProps, "LilaGeoreferenceEllipsoidHeight", geo["wgs84"]["height"].get<double>());
-        }
-    }
     doc.add("RootNode").i64(0);
     root.add("References");
 

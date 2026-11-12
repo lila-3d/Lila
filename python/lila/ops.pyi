@@ -3770,6 +3770,15 @@ def georeferenceConvert(points: Sequence[Any] | None = None, to: str | None = No
         to: scene, projected, geographic or a CRS. Default 'geographic'.
     """
 
+def georeferencePlace(*objects: Any, crs: str | None = None, origin: Sequence[Any] | None = None) -> Any:
+    """Place nodes from a georeferenced file into the scene: the file's CRS and origin set the scene's georeference when it has none, otherwise the nodes are moved and turned into the scene's. Importers call it with what the file carries; returns the message saying which happened.
+
+    Args:
+        objects: nodes: the imported root transforms.
+        crs: The file's CRS: an authority code (EPSG:32632) or WKT.
+        origin: The file's origin in that CRS: [easting, northing, height].
+    """
+
 def georeferenceSearch(*objects: Any, limit: int | None = None) -> Any:
     """Projected CRSs in PROJ's EPSG database whose code or name contains the query: [[code, name], ...].
 
@@ -4733,7 +4742,7 @@ def importFbx(*objects: Any, parent: str | None = None, skins: bool | None = Non
         instances: Objects sharing one geometry come in as instances of the first. Default True.
         report: Return the import report instead of just the names. Default False.
         select: Select the imported roots. Default True.
-        georeference: Place it by the georeference files beside it (metadata.xml, _offset.xyz, .rcinfo, .prj), as importObj does. Default True.
+        georeference: Place it by the georeference it carries (a georeferenced Lila export) or the files beside it (metadata.xml, _offset.xyz, .rcinfo, .prj), as importObj does. Default True.
     """
 
 def importFile(*objects: Any, translator: str | None = None, options: Any | None = None) -> Any:

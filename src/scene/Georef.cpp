@@ -505,6 +505,30 @@ void registerCommands()
         .examples = {"setGeoreference(crs=\"EPSG:32633\", origin=(500000, 4649776, 0))", "setGeoreference(crs=\"EPSG:27700\", llh=(51.5007, -0.1246, 0))"},
     });
     ops::registerCommand({
+        .name = "georeferencePlace",
+        .doc = "Place nodes from a georeferenced file into the scene: the file's CRS and origin set the scene's georeference when "
+               "it has none, otherwise the nodes are moved and turned into the scene's. Importers call it with what the file "
+               "carries; returns the message saying which happened.",
+        .positionalDoc = "nodes: the imported root transforms",
+        .flags = {
+            {"crs", "", T::String, nullptr, "The file's CRS: an authority code (EPSG:32632) or WKT."},
+            {"origin", "", T::List, nullptr, "The file's origin in that CRS: [easting, northing, height]."},
+        },
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            std::vector<uint64_t> roots;
+            for (const json& name : a.positional)
+            {
+                const Node* n = g.find(name.get<std::string>());
+                if (!n)
+                    throw CommandError("georeferencePlace: no node named '" + name.get<std::string>() + "'");
+                roots.push_back(uint64_t(n->id()));
+            }
+            const auto placed = placeImported(g, json{{"crs", a.get<std::string>("crs")}, {"origin", a.flags.at("origin")}}, roots);
+            return placed ? json(*placed) : json();
+        },
+    });
+    ops::registerCommand({
         .name = "georeferenceConvert",
         .doc = "Convert points between scene coordinates (cm), the scene CRS's projected coordinates, latitude/longitude/height, or "
                "another CRS.",
