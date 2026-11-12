@@ -89,8 +89,13 @@ motion::Clip clipOf(Graph& g, NodeId crowd, const CrowdView& v, size_t agent, Ra
         const double fr = t * fps;
         const int64_t f0 = int64_t(std::floor(fr + 1e-9));
         const double w = fr - double(f0);
-        std::shared_ptr<const sim::Frame> fa = sim::simulate(g, crowd, f0, sim::LoopMode::Off);
-        std::shared_ptr<const sim::Frame> fb = w > 1e-6 ? sim::simulate(g, crowd, f0 + 1, sim::LoopMode::Off) : fa;
+        // The range was simulated before baking, so these are cache reads; simulate() would set the crowd up again each time.
+        auto frameAt = [&](int64_t f) {
+            std::shared_ptr<const sim::Frame> fr = sim::cached(g, crowd, f);
+            return fr ? fr : sim::simulate(g, crowd, f, sim::LoopMode::Off);
+        };
+        std::shared_ptr<const sim::Frame> fa = frameAt(f0);
+        std::shared_ptr<const sim::Frame> fb = w > 1e-6 ? frameAt(f0 + 1) : fa;
         const bool aliveA = agentPose(v, fa->state, agent, a);
         const bool aliveB = agentPose(v, fb->state, agent, b);
         if (aliveA && aliveB && w > 1e-6)
@@ -153,6 +158,20 @@ std::vector<Baked> bake(Graph& g, NodeId crowd, const Args& a, const char* cmd, 
         sim::simulate(g, crowd, r.end + 1, sim::LoopMode::Off);
     }
     v = viewOf(g, crowd);
+    // Every clip is read before the first edit: any edit marks the cache unverified until the crowd simulates again.
+    struct Read
+    {
+        motion::Clip clip;
+        int cycleFrames = 0;
+    };
+    std::vector<Read> reads;
+    for (size_t i : agents)
+    {
+        Read rd;
+        int firstAlive = -1;
+        rd.clip = clipOf(g, crowd, *v, i, r, rd.cycleFrames, firstAlive);
+        reads.push_back(std::move(rd));
+    }
     const std::string base = g.node(crowd)->name();
     const NodeId group = g.createNode(*types::find("transform"), a.get<std::string>("group", base + "_baked"))->id();
     motion::KeyOptions ko;
@@ -164,8 +183,9 @@ std::vector<Baked> bake(Graph& g, NodeId crowd, const Args& a, const char* cmd, 
     std::vector<Baked> out;
     progress::Scope bar("Baking crowd agents", double(agents.size()), progress::Cancellable);
     int totalCycle = 0;
-    for (size_t i : agents)
+    for (size_t n = 0; n < agents.size(); ++n)
     {
+        const size_t i = agents[n];
         bar.checkCancel();
         bar.setStatus("Agent " + std::to_string(i));
         const int ch = std::clamp(v->runtime->setup().agents[i].character, 0, int(v->characters.size()) - 1);
@@ -181,12 +201,18 @@ std::vector<Baked> bake(Graph& g, NodeId crowd, const Args& a, const char* cmd, 
         const NodeId joint = characterJoint(g, root);
         if (!joint)
             throw CommandError(std::string(cmd) + ": " + name + " has no skeleton");
-        Baked b{.agent = i, .root = root, .character = ch};
-        int firstAlive = -1;
-        motion::Clip clip = clipOf(g, crowd, *v, i, r, b.cycleFrames, firstAlive);
+        Baked b{.agent = i, .root = root, .character = ch, .cycleFrames = reads[n].cycleFrames};
+        const motion::Clip& clip = reads[n].clip;
         b.frames = int(clip.frames.size());
         const motion::CharacterMap map = motion::CharacterMap::forJoint(g, joint);
         motion::keyClip(g, map, clip, ko);
+        // Keys continue from where the copy stands (at the origin), so the copy moves to where its agent starts.
+        if (!clip.frames.empty())
+        {
+            const motion::Pose& first = clip.frames.front();
+            const double ground = v->ground.at(first[0].p.x, first[0].p.z);
+            g.setValue({root, Transform::kTranslate, -1}, glm::dvec3(first[0].p.x * kCm, ground * kCm, first[0].p.z * kCm));
+        }
         totalCycle += b.cycleFrames;
         out.push_back(b);
         bar.step();
@@ -326,7 +352,7 @@ void registerBake(ext::Context& ctx)
         .flags = {
             {"path", "p", T::String, nullptr, "Folder (one file per agent) or file (combined)."},
             {"format", "fm", T::String, "fbx", "fbx or gltf (.glb).", {"fbx", "gltf"}},
-            {"combined", "cb", T::Bool, false, "Every agent in one file at path."},
+            {"combined", "cb", T::Bool, false, "Every agent in one file at path, each node named with its agent's prefix so names stay unique."},
             {"agents", "a", T::List, nullptr, "Agent indices; default every agent."},
             {"start", "st", T::Int, nullptr, "First frame."},
             {"end", "et", T::Int, nullptr, "Last frame."},
@@ -357,6 +383,13 @@ void registerBake(ext::Context& ctx)
             json files = json::array();
             if (combined)
             {
+                // One file holds every agent, so names (joints included) carry the agent's so they stay unique in it.
+                for (const Baked& b : baked)
+                {
+                    const std::string prefix = g.node(b.root)->name() + "_";
+                    for (NodeId d : g.descendants(b.root))
+                        g.rename(d, prefix + g.node(d)->name());
+                }
                 fs::path file = paths::fromUtf8(a.get<std::string>("path"));
                 if (file.extension().empty())
                     file += ext;

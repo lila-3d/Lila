@@ -6,7 +6,12 @@
 #include "extensions/ExtensionManager.h"
 #include "gn/Gn.h"
 #include "io/SceneFile.h"
+#include "curve/CurveNodes.h"
+#include "fbx/Fbx.h"
+#include "motion/Scene.h"
+#include "retarget/SceneRetarget.h"
 #include "scene/Node.h"
+#include "scene/Rig.h"
 #include "scene/SceneCommands.h"
 
 #include <cstdlib>
@@ -28,7 +33,14 @@ int main(int argc, char** argv)
     lila::ops::registerBuiltins();
     lila::scene::types::registerBuiltins();
     lila::gn::registerTypes();
+    lila::scene::registerRigTypes();
     lila::scene::registerCommands();
+    lila::scene::registerRigCommands();
+    lila::fbx::registerCommands();
+    lila::retarget::registerCommands();
+    lila::motion::registerCommands();
+    lila::curve::registerTypes();
+    lila::curve::registerCommands();
     lila::io::registerCommands();
     lila::extensions::registerCommands();
     lila::gn::registerCommands();

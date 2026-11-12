@@ -684,10 +684,10 @@ std::shared_ptr<const CrowdView> viewOf(Graph& g, NodeId crowd)
     const Node* n = g.node(crowd);
     if (!n || !n->type().isA(kCrowdType))
         return nullptr;
+    // Configuring is what makes the view; simulating the start frame does that and costs only a reset once cached.
     try
     {
-        sim::info(g, crowd);
-        sim::cached(g, crowd, 0);
+        sim::simulate(g, crowd, n->as<int64_t>(n->type().attrIndex("startFrame")), sim::LoopMode::Off);
     }
     catch (const std::exception&)
     {
