@@ -12,6 +12,7 @@
 #include "LilaLinkPanels.h"
 #include "LilaLinkGroom.h"
 #include "LilaLinkSeams.h"
+#include "LilaLinkCrowd.h"
 #include "LilaLinkSequence.h"
 #include "LilaLinkImposter.h"
 #include "LilaLinkLandscape.h"
@@ -431,6 +432,7 @@ TMap<FString, FLilaLinkMethod> LilaLink::MakeMethods()
 	Methods.Add(TEXT("runPython"), LilaLink::Sync(&RunPython));
 	Methods.Add(TEXT("collectGarbage"), LilaLink::Sync(&CollectGarbageNow));
 	LilaLink::AddSequenceMethods(Methods);
+	LilaLink::AddCrowdMethods(Methods);
 	LilaLink::AddVatMethods(Methods);
 	LilaLink::AddClothMethods(Methods);
 	LilaLink::AddClothAssetMethods(Methods);
