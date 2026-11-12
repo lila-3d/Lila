@@ -545,6 +545,9 @@ void registerBuiltins()
         "Puts translate, rotate and scale back to their defaults, moving the object.");
     cmd("modify.resetPivot", "Reset Pivot", "Modify", "resetPivot", json::object(), "Moves the pivot back to the object's origin.");
     cmd("modify.zeroPivot", "Zero Pivot", "Modify", "zeroPivot", json::object(), "Moves the pivot to the world origin.");
+    cmd("modify.zeroPivotX", "Zero Pivot X", "Modify", "zeroPivot", {{"axes", "x"}}, "Moves the pivot to 0 on world X, keeping its other coordinates.");
+    cmd("modify.zeroPivotY", "Zero Pivot Y", "Modify", "zeroPivot", {{"axes", "y"}}, "Moves the pivot to 0 on world Y, keeping its other coordinates.");
+    cmd("modify.zeroPivotZ", "Zero Pivot Z", "Modify", "zeroPivot", {{"axes", "z"}}, "Moves the pivot to 0 on world Z, keeping its other coordinates.");
     cmd("modify.zeroPivotRotation", "Zero Pivot Rotation", "Modify", "zeroPivotRotation", json::object(),
         "Lines the selected objects' pivot axes up with the world, leaving the pivot and the objects where they are.");
     cmd("modify.bakePivot", "Bake Pivot", "Modify", "bakePivot", json::object(),
