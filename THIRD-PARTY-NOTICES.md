@@ -59,6 +59,9 @@ FFmpeg 9.0.2 is dynamically linked (avcodec, avformat, avutil, swscale and swres
 | Dem Bones | BSD-3-Clause | Electronic Arts Inc. | `third_party/dem-bones` (licence in `third_party/dem-bones/LICENSE.md`), from https://github.com/electronicarts/dem-bones at 09b899b |
 | stb_truetype | MIT OR Unlicense | Sean Barrett | `src/curve/third_party/stb` |
 | NanoSVG | Zlib | Mikko Mononen | `src/curve/third_party/nanosvg` |
+| ONNX Runtime 1.24.4 (runs the motion model; DirectML build on Windows) | MIT | Microsoft Corporation | https://github.com/microsoft/onnxruntime (licence in `third_party/onnxruntime/LICENSE`) |
+| DirectML 1.15.4 (Windows, the motion model on the GPU) | Microsoft Software License Terms (redistributable) | Microsoft Corporation | https://www.nuget.org/packages/Microsoft.AI.DirectML (terms in `third_party/onnxruntime/DirectML-LICENSE.txt`) |
+| MotionBricks runtime (input preparation, decoding and endpoint correction adapted in `src/motion`) | Apache-2.0 | NVIDIA Corporation & Affiliates | https://github.com/NVlabs/motionbricks (licence and Notice in `third_party/motionbricks`) |
 
 ## Assets
 
@@ -69,6 +72,16 @@ FFmpeg 9.0.2 is dynamically linked (avcodec, avformat, avutil, swscale and swres
 | JetBrains Mono | OFL-1.1 | The JetBrains Mono Project Authors | `resources/fonts/JetBrainsMono-LICENSE.txt` |
 | Tabler Icons | MIT | Paweł Kuna | `resources/icons/tabler/LICENSE` |
 | Studio Small 09 HDRI | CC0-1.0 | Sergej Majboroda, Poly Haven | https://polyhaven.com/a/studio_small_09 |
+| SOMA skeleton (`resources/motion/soma_skeleton.json`, converted from MotionBricks `soma_base_skel_minimal_no_root.usd`) | CC-BY-4.0 | NVIDIA Corporation & Affiliates | https://github.com/NVlabs/motionbricks |
+| Gait and spot poses (`resources/motion/gaits.json`, `resources/motion/spots`), retargeted from the Open Motion Project | CC-BY-3.0 | ACCAD, The Ohio State University | https://accad.ohio-state.edu/research/motion-lab/mocap-system-and-data |
+
+## Models
+
+| Model | License | Copyright | Source |
+|---|---|---|---|
+| MotionBricks SOMA (`mmm_v6_soma_fp16.onnx`, in `models/motionbricks` beside the executable) | NVIDIA Open Model Agreement | NVIDIA Corporation & Affiliates | https://github.com/NVlabs/motionbricks (agreement and Notice in `third_party/motionbricks`) |
+
+Licensed by NVIDIA Corporation under the NVIDIA Open Model Agreement.
 
 ## Training data
 

@@ -18,7 +18,10 @@ foreach(_pair
         "archivo|resources/fonts/Archivo-LICENSE.txt"
         "inter|resources/fonts/Inter-LICENSE.txt"
         "jetbrains-mono|resources/fonts/JetBrainsMono-LICENSE.txt"
-        "tabler-icons|resources/icons/tabler/LICENSE")
+        "tabler-icons|resources/icons/tabler/LICENSE"
+        "onnx-runtime|third_party/onnxruntime/LICENSE"
+        "directml|third_party/onnxruntime/DirectML-LICENSE.txt"
+        "motionbricks-soma-model|third_party/motionbricks/NVIDIA-Open-Model-Agreement.txt")
     string(REPLACE "|" ";" _parts "${_pair}")
     list(GET _parts 0 _id)
     list(GET _parts 1 _file)
@@ -30,3 +33,7 @@ endforeach()
 file(READ "${SOURCE_DIR}/src/groom/groomlab/LICENSE" _groomlab)
 file(READ "${SOURCE_DIR}/src/groom/groomlab/NOTICE" _groomlab_notice)
 file(WRITE "${OUT_DIR}/licenses/groomlab.txt" "${_groomlab}\n\nNOTICE\n\n${_groomlab_notice}")
+# MotionBricks code (Apache-2.0) with its Notice after it; the model's agreement is its own entry above.
+file(READ "${SOURCE_DIR}/third_party/motionbricks/LICENSE" _mb)
+file(READ "${SOURCE_DIR}/third_party/motionbricks/Notice.txt" _mb_notice)
+file(WRITE "${OUT_DIR}/licenses/motionbricks.txt" "${_mb}\n\nNotice\n\n${_mb_notice}")

@@ -104,6 +104,7 @@ find_package(doctest CONFIG REQUIRED)
 find_package(Git QUIET)
 
 include(LilaDeps)
+include(LilaOnnxRuntime)
 include(LilaShaders)
 include(LilaExtension)
 include(LilaBuildSpeed)
