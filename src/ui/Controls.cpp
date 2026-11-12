@@ -79,7 +79,7 @@ protected:
 
         const int left = iconRect.right() + 1 + kRowGap;
         const int right = width() - (popupMode() != DelayedPopup && menu() ? kRowArrow : kRowPad);
-        p.setPen(!isEnabled() ? themeColor("disabled") : isChecked() ? themeColor("highlightText") : themeColor("text"));
+        p.setPen(!isEnabled() ? themeColor("disabled") : isChecked() ? themeColor("checkedText") : themeColor("text"));
         p.drawText(QRect(left, 0, std::max(0, right - left), height()), Qt::AlignLeft | Qt::AlignVCenter,
                    fontMetrics().elidedText(text(), Qt::ElideRight, std::max(0, right - left)));
     }

@@ -121,6 +121,8 @@ TEST_CASE("built-in themes keep text readable (WCAG AA)")
         }
         CHECK(themes::contrast(t.color("tooltipText"), t.color("tooltip")) >= 4.5);
         CHECK(themes::contrast(t.color("highlightText"), t.color("highlight")) >= 4.5);
+        CHECK(themes::contrast(t.color("checkedText"), t.color("checked")) >= 4.5);
+        CHECK(themes::contrast(t.color("text"), t.color("hover")) >= 4.5);
         // Secondary text: WCAG's 3:1 for large or incidental text.
         CHECK(themes::contrast(t.color("dimText"), t.color("window")) >= 3.0);
         CHECK(themes::contrast(t.color("dimText"), t.color("base")) >= 3.0);

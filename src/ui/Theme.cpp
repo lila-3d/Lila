@@ -386,7 +386,7 @@ QString appStyleSheet(const themes::Theme& t)
         {"hover", QString::fromStdString(hex("hover"))},
         {"pressed", QString::fromStdString(hex("pressed"))},
         {"sel", QString::fromStdString(hex("checked"))},
-        {"selText", QString::fromStdString(hex("highlightText"))},
+        {"selText", QString::fromStdString(hex("checkedText"))},
         {"rule", QString::fromStdString(hex("rule"))},
         {"dim", QString::fromStdString(hex("dimText"))},
         {"text", QString::fromStdString(hex("text"))},
