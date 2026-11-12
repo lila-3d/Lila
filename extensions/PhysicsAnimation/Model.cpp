@@ -5,6 +5,7 @@
 #include "World.h"
 
 #include <lila/Graph.h>
+#include <lila/Grapple.h>
 #include <lila/Rig.h>
 #include <lila/Simulation.h>
 #include <lila/Transform.h>
@@ -574,6 +575,7 @@ RigDef buildRig(Graph& g, NodeId solver)
             if (auto it = bodyOf.find(a); it != bodyOf.end())
                 b.parent = it->second;
         b.frameInChild = boneFrame(g, b.joint);
+        b.skeleton = lila::scene::grapple::skeletonRoot(g, b.joint);
         if (b.parent >= 0)
         {
             const NodeId pj = rig.bodies[size_t(b.parent)].joint;
@@ -658,6 +660,53 @@ RigDef buildRig(Graph& g, NodeId solver)
         fd.seed = uint64_t(integer(f, "seed"));
         fd.magnitudeAttr = attr(f, "magnitude");
         rig.fields.push_back(fd);
+    }
+    if (Node* gr = named(g, text(*s, "grapple")); gr && gr->type().isA(lila::scene::grapple::kType))
+    {
+        namespace gp = lila::scene::grapple;
+        rig.figures = true;
+        // The body a joint rides: its own, else the nearest one above it.
+        auto bodyFor = [&](NodeId joint) {
+            for (NodeId j = joint; j; j = g.parent(j))
+                if (auto it = bodyOf.find(j); it != bodyOf.end())
+                    return it->second;
+            return -1;
+        };
+        auto rotationOf = [](const glm::dmat4& m) { return glm::normalize(glm::quat_cast(glm::dmat3(rigid(m)))); };
+        for (NodeId cid : gp::contactsOf(g, gr->id()))
+        {
+            const Node& c = *g.node(cid);
+            h = hashOwn(g, c, h);
+            const auto [sj, tj] = gp::contactJoints(g, cid);
+            if (!flag(c, "enabled") || !sj || !tj)
+                continue;
+            ContactDef cd;
+            cd.node = cid;
+            cd.a = bodyFor(sj);
+            cd.b = bodyFor(tj);
+            if (cd.a < 0 || cd.b < 0 || cd.a == cd.b)
+                continue;
+            const auto [ps, pt] = gp::contactPoints(g, cid);
+            const glm::dmat4 wa = g.node(rig.bodies[size_t(cd.a)].joint)->as<glm::dmat4>(Transform::kWorldMatrix);
+            const glm::dmat4 wb = g.node(rig.bodies[size_t(cd.b)].joint)->as<glm::dmat4>(Transform::kWorldMatrix);
+            cd.pointA = glm::dvec3(glm::inverse(rigid(wa)) * glm::dvec4(ps, 1.0));
+            cd.pointB = glm::dvec3(glm::inverse(rigid(wb)) * glm::dvec4(pt, 1.0));
+            if (flag(c, "orient"))
+            {
+                const glm::dquat held = glm::normalize(glm::quat_cast(glm::dmat3(eulerToMatrix(vec(c, "rotation"), RotateOrder::XYZ))));
+                const glm::dmat4 ws = g.node(sj)->as<glm::dmat4>(Transform::kWorldMatrix), wt = g.node(tj)->as<glm::dmat4>(Transform::kWorldMatrix);
+                const glm::dquat towardTarget = glm::conjugate(rotationOf(wb)) * rotationOf(wt);
+                const glm::dquat fromSource = glm::conjugate(rotationOf(ws)) * rotationOf(wa);
+                cd.rotation = glm::normalize(towardTarget * held * fromSource);
+            }
+            cd.weightAttr = attr(c, "weight");
+            cd.stiffnessAttr = attr(c, "stiffness");
+            h = hashPod(cd.a, h);
+            h = hashPod(cd.b, h);
+            for (double v : {cd.pointA.x, cd.pointA.y, cd.pointA.z, cd.pointB.x, cd.pointB.y, cd.pointB.z})
+                h = hashPod(v, h);
+            rig.contacts.push_back(cd);
+        }
     }
     rig.hash = h;
     return rig;
