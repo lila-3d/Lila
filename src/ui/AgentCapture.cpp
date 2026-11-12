@@ -23,6 +23,11 @@
 #include "ui/ImagePlaneUi.h"
 #include "ui/PointCloudDisplay.h"
 #include "ui/ViewInfo.h"
+#include "scene/Georef.h"
+#include "ui/ViewportHud.h"
+#include "ui/DroneCamera.h"
+#include "ui/SurfaceSnap.h"
+#include "ui/GizmoMath.h"
 #include "ui/MaterialDraw.h"
 #include "ui/MeshCache.h"
 #include "ui/Overlay.h"
@@ -180,6 +185,31 @@ void addSelection(render::FrameState& s, scene::NodeId id)
                 s.linesOnTop.push_back({wp(p) - d, hot});
                 s.linesOnTop.push_back({wp(p) + d, hot});
             }
+}
+
+/** The HUD readouts with the cursor at the view's centre (on the surface there, else the ground), and the Drone Camera banner. */
+void drawHud(OverlayPainter& painter, const ViewInfo& view, scene::Graph& g, ViewportWidget* widget)
+{
+    hud::Context ctx;
+    ctx.view = view;
+    const QPointF centre(view.width * 0.5, view.height * 0.5);
+    if (const std::optional<surfaceSnap::Hit> hit = surfaceSnap::underCursor(centre, view))
+    {
+        ctx.cursorWorld = hit->position;
+        ctx.cursorOnSurface = true;
+    }
+    else
+    {
+        glm::dvec3 o, d;
+        view.ray(centre, o, d);
+        const glm::dvec3 up = scene::georef::sceneZUp() ? glm::dvec3(0, 0, 1) : glm::dvec3(0, 1, 0);
+        if (glm::dvec3 ground; gizmo::rayPlane(o, d, glm::dvec3(0.0), up, ground) && glm::dot(ground - o, d) > 0.0)
+            ctx.cursorWorld = ground;
+    }
+    ctx.shownNode = [&g](scene::NodeId id) { return scene::effectivelyVisible(g, id); };
+    hud::draw(painter, ctx);
+    if (widget)
+        drone::draw(painter, widget);
 }
 
 /** The viewport's draw overrides (selected last, as it draws them) and extension drawers, into a capture's frame. */
@@ -467,6 +497,12 @@ QImage render(const Options& o, Timing* timing, int repeat)
         imagePlanes::drawInto(s, view);
         if (o.overlays && qobject_cast<QGuiApplication*>(QCoreApplication::instance()))
             drawOverlays(s, view, g);
+        if (o.hud && qobject_cast<QGuiApplication*>(QCoreApplication::instance()))
+        {
+            OverlayPainter painter(s.overlayTris, 1.0);
+            drawHud(painter, view, g, o.view == "active" ? activeViewport() : nullptr);
+            s.atlas = overlayAtlas();
+        }
     }
     if (o.label && qobject_cast<QGuiApplication*>(QCoreApplication::instance()))
     {
@@ -573,6 +609,7 @@ std::vector<FlagDef> optionFlags()
         {"samples", "", T::Int, 1, "Jittered frames averaged into the image: 16 or more gives a supersampled still.", {}, {}, 1.0, 1024.0},
         {"label", "", T::Bool, true, "Write the view's name in the top-left corner."},
         {"overlays", "ov", T::Bool, false, "Draw what the viewport draws over the scene too: locators, curves' draw overrides, Soft Net lines and knots, extension drawers."},
+        {"hud", "", T::Bool, false, "Draw the heads-up readouts the view shows (the cursor taken at the view's centre) and the Drone Camera banner."},
     };
 }
 
@@ -613,6 +650,7 @@ Options optionsFrom(const json& j)
     flag({"showSelection", "show_selection"}, o.showSelection);
     flag({"label"}, o.label);
     flag({"overlays"}, o.overlays);
+    flag({"hud"}, o.hud);
     return o;
 }
 

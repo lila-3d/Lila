@@ -1518,7 +1518,7 @@ def cameraSettings(*objects: Any, filmFit: str | None = None, overscan: float | 
         query: Short form q. Default False.
     """
 
-def captureTurntable(view: str | None = None, lookThrough: str | None = None, yaw: float | None = None, pitch: float | None = None, width: int | None = None, height: int | None = None, display: str | None = None, isolate: bool | None = None, frameSelection: bool | None = None, grid: bool | None = None, showSelection: bool | None = None, samples: int | None = None, label: bool | None = None, overlays: bool | None = None, path: str | None = None, count: int | None = None, columns: int | None = None, views: Sequence[Any] | None = None, *, v: str | None = None, lt: str | None = None, w: int | None = None, h: int | None = None, d: str | None = None, fs: bool | None = None, ov: bool | None = None, p: str | None = None, c: int | None = None) -> Any:
+def captureTurntable(view: str | None = None, lookThrough: str | None = None, yaw: float | None = None, pitch: float | None = None, width: int | None = None, height: int | None = None, display: str | None = None, isolate: bool | None = None, frameSelection: bool | None = None, grid: bool | None = None, showSelection: bool | None = None, samples: int | None = None, label: bool | None = None, overlays: bool | None = None, hud: bool | None = None, path: str | None = None, count: int | None = None, columns: int | None = None, views: Sequence[Any] | None = None, *, v: str | None = None, lt: str | None = None, w: int | None = None, h: int | None = None, d: str | None = None, fs: bool | None = None, ov: bool | None = None, p: str | None = None, c: int | None = None) -> Any:
     """Render several views offscreen and tile them into one PNG contact sheet (row by row): count angles around the subject, or the named views. Returns the path.
 
     Args:
@@ -1536,13 +1536,14 @@ def captureTurntable(view: str | None = None, lookThrough: str | None = None, ya
         samples: Jittered frames averaged into the image: 16 or more gives a supersampled still. Default 1.
         label: Write the view's name in the top-left corner. Default True.
         overlays: Draw what the viewport draws over the scene too: locators, curves' draw overrides, Soft Net lines and knots, extension drawers. Short form ov. Default False.
+        hud: Draw the heads-up readouts the view shows (the cursor taken at the view's centre) and the Drone Camera banner. Default False.
         path: PNG file to write. Short form p.
         count: Views around the up axis, starting at the front. Short form c. Default 4.
         columns: Tiles per row; 0 picks. Default 0.
         views: Named views to tile instead of a turn, e.g. ['front', 'right', 'top', 'persp'].
     """
 
-def captureView(view: str | None = None, lookThrough: str | None = None, yaw: float | None = None, pitch: float | None = None, width: int | None = None, height: int | None = None, display: str | None = None, isolate: bool | None = None, frameSelection: bool | None = None, grid: bool | None = None, showSelection: bool | None = None, samples: int | None = None, label: bool | None = None, overlays: bool | None = None, path: str | None = None, *, v: str | None = None, lt: str | None = None, w: int | None = None, h: int | None = None, d: str | None = None, fs: bool | None = None, ov: bool | None = None, p: str | None = None) -> Any:
+def captureView(view: str | None = None, lookThrough: str | None = None, yaw: float | None = None, pitch: float | None = None, width: int | None = None, height: int | None = None, display: str | None = None, isolate: bool | None = None, frameSelection: bool | None = None, grid: bool | None = None, showSelection: bool | None = None, samples: int | None = None, label: bool | None = None, overlays: bool | None = None, hud: bool | None = None, path: str | None = None, *, v: str | None = None, lt: str | None = None, w: int | None = None, h: int | None = None, d: str | None = None, fs: bool | None = None, ov: bool | None = None, p: str | None = None) -> Any:
     """Render the scene offscreen from a named view or angle and save a PNG. Never moves a viewport's camera, works with Lila in the background and in batch mode. Returns the path.
 
     Args:
@@ -1560,6 +1561,7 @@ def captureView(view: str | None = None, lookThrough: str | None = None, yaw: fl
         samples: Jittered frames averaged into the image: 16 or more gives a supersampled still. Default 1.
         label: Write the view's name in the top-left corner. Default True.
         overlays: Draw what the viewport draws over the scene too: locators, curves' draw overrides, Soft Net lines and knots, extension drawers. Short form ov. Default False.
+        hud: Draw the heads-up readouts the view shows (the cursor taken at the view's centre) and the Drone Camera banner. Default False.
         path: PNG file to write. Short form p.
     """
 
@@ -5509,7 +5511,7 @@ def mayaReference(*objects: Any, path: str | None = None, namespace: str | None 
 def measureSelection() -> Any:
     """Measure the selection without making nodes: 2 vertices or objects give distance and dx/dy/dz, 3 an angle, edges total and per-edge length, a closed edge loop or 4+ vertices a best-fit circle, faces area and perimeter, one object its bounding box (and diameter when it is cylinder-like), a measure node its value. Returns a dict: lengths in cm; 'value' and 'text' are the headline in the display unit (/units/linear)."""
 
-def measureView(view: str | None = None, lookThrough: str | None = None, yaw: float | None = None, pitch: float | None = None, width: int | None = None, height: int | None = None, display: str | None = None, isolate: bool | None = None, frameSelection: bool | None = None, grid: bool | None = None, showSelection: bool | None = None, samples: int | None = None, label: bool | None = None, overlays: bool | None = None, frames: int | None = None, ambientOcclusion: bool | None = None, *, v: str | None = None, lt: str | None = None, w: int | None = None, h: int | None = None, d: str | None = None, fs: bool | None = None, ov: bool | None = None, ao: bool | None = None) -> Any:
+def measureView(view: str | None = None, lookThrough: str | None = None, yaw: float | None = None, pitch: float | None = None, width: int | None = None, height: int | None = None, display: str | None = None, isolate: bool | None = None, frameSelection: bool | None = None, grid: bool | None = None, showSelection: bool | None = None, samples: int | None = None, label: bool | None = None, overlays: bool | None = None, hud: bool | None = None, frames: int | None = None, ambientOcclusion: bool | None = None, *, v: str | None = None, lt: str | None = None, w: int | None = None, h: int | None = None, d: str | None = None, fs: bool | None = None, ov: bool | None = None, ao: bool | None = None) -> Any:
     """Draw the scene offscreen several times like captureView and return the median GPU time per frame in ms, with the ambient occlusion share, and the render thread's time recording it: {gpuMs, aoMs, cpuMs, aoCpuMs, frames}. 0 where the GPU has no timestamps.
 
     Args:
@@ -5527,6 +5529,7 @@ def measureView(view: str | None = None, lookThrough: str | None = None, yaw: fl
         samples: Jittered frames averaged into the image: 16 or more gives a supersampled still. Default 1.
         label: Write the view's name in the top-left corner. Default True.
         overlays: Draw what the viewport draws over the scene too: locators, curves' draw overrides, Soft Net lines and knots, extension drawers. Short form ov. Default False.
+        hud: Draw the heads-up readouts the view shows (the cursor taken at the view's centre) and the Drone Camera banner. Default False.
         frames: Frames to draw; the result is their median. Default 20.
         ambientOcclusion: Force ambient occlusion on or off instead of the viewport pref. Short form ao.
     """
