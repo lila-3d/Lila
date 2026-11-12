@@ -1,3 +1,4 @@
+#include "ui/PointCloudDisplay.h"
 #include "ui/ViewportWidgetDetail.h"
 
 #include "render/Surface.h"
@@ -399,6 +400,7 @@ render::FrameState ViewportWidget::buildFrame(const RenderView* rv)
     s.proj = camera.proj(viewAspect);
     s.eye = camera.eye();
     s.zUp = camera.zUp;
+    s.cameraRelative = PrefStore::get().value<bool>("general", viewportDisplay::kCameraRelative, true);
     s.background = viewportBackground();
     {
         LILA_ZONE_N("buildFrame settings");
@@ -472,6 +474,26 @@ render::FrameState ViewportWidget::buildFrame(const RenderView* rv)
         mLodHiddenKey = key;
     }
     drawMeshNodes(s, rv, mLodHidden, underSelection, highlight, aids ? &aidMeshes : nullptr);
+    {
+        ViewInfo cloudView;
+        cloudView.view = s.view;
+        cloudView.proj = s.proj;
+        cloudView.eye = s.eye;
+        cloudView.width = rv ? double(rv->width) : width();
+        cloudView.height = rv ? double(rv->height) : height();
+        cloudView.ortho = camera.ortho;
+        const double heightPx = rv ? double(rv->height) : double(pixelSize().height());
+        const glm::vec3 selected(themeLinear("wireSelected", kSelectedColor)), hot(themeLinear("wirePreselect", kPreselectColor));
+        pointCloudDisplay::draw(
+            s, cloudView, heightPx, g,
+            [&](scene::NodeId id) { return id != mLookThrough && scene::effectivelyVisible(g, id) && mIsolation.shows(id) && !mLodHidden.contains(id); },
+            [&](scene::NodeId id) {
+                if (!highlight)
+                    return glm::vec3(0.0f);
+                return g.isSelected(id) ? selected : mPreselect.mode == scene::ComponentMode::Object && mPreselect.node == id ? hot : glm::vec3(0.0f);
+            },
+            rv != nullptr);
+    }
     // A render is the scene alone: no components, tools, locators, grid or HUD.
     if (rv)
     {
@@ -586,14 +608,14 @@ render::FrameState ViewportWidget::buildFrame(const RenderView* rv)
         for (double x = std::floor((cx - halfW) / step) * step; x <= cx + halfW; x += step)
         {
             glm::vec4 c = lineColor(x, step);
-            s.lines.push_back({glm::vec3(r * x + u * (cy - halfH)), c});
-            s.lines.push_back({glm::vec3(r * x + u * (cy + halfH)), c});
+            s.lines.push_back({glm::dvec3(r * x + u * (cy - halfH)), c});
+            s.lines.push_back({glm::dvec3(r * x + u * (cy + halfH)), c});
         }
         for (double y = std::floor((cy - halfH) / step) * step; y <= cy + halfH; y += step)
         {
             glm::vec4 c = lineColor(y, step);
-            s.lines.push_back({glm::vec3(r * (cx - halfW) + u * y), c});
-            s.lines.push_back({glm::vec3(r * (cx + halfW) + u * y), c});
+            s.lines.push_back({glm::dvec3(r * (cx - halfW) + u * y), c});
+            s.lines.push_back({glm::dvec3(r * (cx + halfW) + u * y), c});
         }
     }
     if (!s.overlayTris.empty())

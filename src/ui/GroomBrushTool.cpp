@@ -350,23 +350,23 @@ public:
             for (const auto& line : mBrush.affectedLines(brushView(view), mHover.x(), mHover.y()))
                 for (size_t i = 1; i < line.size(); ++i)
                 {
-                    f.lines.push_back({glm::vec3(line[i - 1]), hot});
-                    f.lines.push_back({glm::vec3(line[i]), hot});
+                    f.lines.push_back({glm::dvec3(line[i - 1]), hot});
+                    f.lines.push_back({glm::dvec3(line[i]), hot});
                 }
         }
         if (gr && s.mode == "lengths")
             for (const groom::GroomBrush::ColoredLine& line : mBrush.lengthKeyLines(brushView(view), mHover.x(), mHover.y()))
                 for (size_t i = 1; i < line.points.size(); ++i)
                 {
-                    f.lines.push_back({glm::vec3(line.points[i - 1]), glm::vec4(line.color, 1.0f)});
-                    f.lines.push_back({glm::vec3(line.points[i]), glm::vec4(line.color, 1.0f)});
+                    f.lines.push_back({glm::dvec3(line.points[i - 1]), glm::vec4(line.color, 1.0f)});
+                    f.lines.push_back({glm::dvec3(line.points[i]), glm::vec4(line.color, 1.0f)});
                 }
         const std::vector<glm::dvec3> path = mBrush.drawnPath();
         const glm::vec4 drawn(0.4f, 0.8f, 1.0f, 1.0f);
         for (size_t i = 1; i < path.size(); ++i)
         {
-            f.lines.push_back({glm::vec3(path[i - 1]), drawn});
-            f.lines.push_back({glm::vec3(path[i]), drawn});
+            f.lines.push_back({glm::dvec3(path[i - 1]), drawn});
+            f.lines.push_back({glm::dvec3(path[i]), drawn});
         }
         const Qt::KeyboardModifiers mods = QApplication::keyboardModifiers();
         const bool invert = mPressed ? mInvert : (mods & Qt::ControlModifier) != 0;

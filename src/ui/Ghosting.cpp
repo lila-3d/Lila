@@ -62,7 +62,7 @@ void drawGhosts(render::FrameState& s, OverlayPainter&, const ViewInfo&)
                 if (!rm)
                     continue;
                 render::MeshDraw d;
-                d.world = glm::mat4(m.world);
+                d.world = m.world;
                 uint32_t slotCount = 1;
                 for (const render::MeshSection& sec : rm->sections)
                     slotCount = std::max(slotCount, sec.material + 1);
@@ -80,8 +80,8 @@ void drawGhosts(render::FrameState& s, OverlayPainter&, const ViewInfo&)
         if (st.skeleton || !meshes)
             for (const auto& [from, to] : g.frame->bones)
             {
-                s.linesOnTop.push_back({glm::vec3(from), glm::vec4(color, std::min(1.0f, alpha * 2.0f))});
-                s.linesOnTop.push_back({glm::vec3(to), glm::vec4(color, std::min(1.0f, alpha * 2.0f))});
+                s.linesOnTop.push_back({glm::dvec3(from), glm::vec4(color, std::min(1.0f, alpha * 2.0f))});
+                s.linesOnTop.push_back({glm::dvec3(to), glm::vec4(color, std::min(1.0f, alpha * 2.0f))});
             }
     }
 }

@@ -791,6 +791,8 @@ void addBuiltIns(Registry<prefPages::Page>& r)
                "accurate");
         numberField(viewport, "AO radius (cm)", "/viewport/ao/radius", 30.0, 0.1, 10000.0, 1.0, 1);
         numberField(viewport, "AO intensity", "/viewport/ao/intensity", 1.0, 0.0, 4.0, 0.1);
+        sectionHeader(viewport, "Large Worlds");
+        toggleField(viewport, "Camera-relative beyond 1 km", vd::kCameraRelative, true);
         sectionHeader(viewport, "Color");
         numberField(viewport, "Exposure (stops)", vd::kExposure, 0.0, -10.0, 10.0, 0.1);
         numberField(viewport, "Gamma", vd::kGamma, 1.0, 0.1, 4.0, 0.05);

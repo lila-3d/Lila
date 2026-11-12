@@ -9,6 +9,7 @@ lila_module(lila_render UI
     CubeLut.cpp
     ClayGpu.cpp
     DeformGpu.cpp
+    CameraRelative.cpp
     DrawBatches.cpp
     Environment.cpp
     GpuImage.cpp
@@ -68,6 +69,7 @@ lila_add_shaders(lila_render FILES
     shaders/rtshadow.slang
     shaders/points.slang
     shaders/strands.slang
+    shaders/pointcloud.slang
     shaders/points_cull.slang
     shaders/mesh.slang
     shaders/mesh_bindless.slang

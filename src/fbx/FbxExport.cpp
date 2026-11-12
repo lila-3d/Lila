@@ -10,6 +10,7 @@
 #include "geo/Normals.h"
 #include "geo/Triangulate.h"
 #include "scene/Anim.h"
+#include "scene/Georef.h"
 #include "scene/AttrComponents.h"
 #include "scene/ArrayGroup.h"
 #include "scene/Camera.h"
@@ -2290,6 +2291,20 @@ std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
     Record& docProps = doc.add("Properties70");
     docProps.addP("SourceObject", "object", "", "");
     pString(docProps, "ActiveAnimStackName", take ? take->name : "");
+    // The scene's place on the Earth, as document properties a pipeline can read back (LilaGeoreference*).
+    if (const json geo = scene::georef::exportJson(); !geo.is_null())
+    {
+        pString(docProps, "LilaGeoreferenceCRS", geo.value("authority", geo["crs"].get<std::string>()));
+        pDouble(docProps, "LilaGeoreferenceEasting", geo["origin"][0].get<double>());
+        pDouble(docProps, "LilaGeoreferenceNorthing", geo["origin"][1].get<double>());
+        pDouble(docProps, "LilaGeoreferenceHeight", geo["origin"][2].get<double>());
+        if (geo.contains("wgs84"))
+        {
+            pDouble(docProps, "LilaGeoreferenceLatitude", geo["wgs84"]["latitude"].get<double>());
+            pDouble(docProps, "LilaGeoreferenceLongitude", geo["wgs84"]["longitude"].get<double>());
+            pDouble(docProps, "LilaGeoreferenceEllipsoidHeight", geo["wgs84"]["height"].get<double>());
+        }
+    }
     doc.add("RootNode").i64(0);
     root.add("References");
 

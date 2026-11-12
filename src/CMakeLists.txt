@@ -48,6 +48,8 @@ add_subdirectory(groom)
 add_subdirectory(sculpt)
 add_subdirectory(layout)
 add_subdirectory(vcolor)
+add_subdirectory(pointcloud)
+add_subdirectory(ifc)
 add_subdirectory(uv)
 add_subdirectory(vcs)
 add_subdirectory(io)
@@ -81,6 +83,10 @@ endif()
 
 add_library(LilaScene SHARED)
 target_link_libraries(LilaScene PRIVATE ${_scene} PUBLIC LilaFoundation)
+# PROJ's database beside the binaries, where scene/Georef looks for it.
+add_custom_command(TARGET LilaScene POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:LilaScene>/share/proj
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${PROJ_DIR}/proj.db $<TARGET_FILE_DIR:LilaScene>/share/proj/proj.db)
 
 add_library(LilaUI SHARED)
 target_link_libraries(LilaUI PRIVATE ${_ui} PUBLIC LilaScene Qt6::Widgets volk::volk Vulkan::Headers GPUOpen::VulkanMemoryAllocator)

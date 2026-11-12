@@ -17,6 +17,7 @@
 #include "math/Transform.h"
 #include "math/Unreal.h"
 #include "scene/ArrayGroup.h"
+#include "scene/Georef.h"
 #include "scene/AttrComponents.h"
 #include "scene/Graph.h"
 #include "scene/Instancing.h"
@@ -921,12 +922,26 @@ void registerPlacementCommands()
                 plan["lights"] = json::array();
             }
 
+            // The level lands on the globe where the scene is: Unreal's georeferencing takes the scene's origin first.
+            if (json geo = scene::georef::exportJson(); !geo.is_null())
+            {
+                if (hasFeature("georeference"))
+                    plan["georeference"] = std::move(geo);
+                else
+                    log::warn("unrealPlaceInstances: the LilaLink plugin predates georeferencing; rebuild it from Lila's ue/LilaLink so the level lands on the scene's location");
+            }
+
             const std::string hlod = a.get<std::string>("hlodLayer", "");
             auto job = [plan, meshes, alone, withChildren, hlod, dir = cacheDir()]() mutable {
                 LILA_ZONE_N("Unreal placements");
                 std::shared_ptr<RpcClient> client = Link::get().client();
                 if (!client)
                     throw std::runtime_error("not connected");
+                if (plan.contains("georeference"))
+                {
+                    RpcResult geo = client->call("setGeoreference", plan["georeference"], placementTimeoutMs(0));
+                    plan["georeferenced"] = geo.ok ? geo.result : json{{"error", geo.error}};
+                }
                 std::error_code ec;
                 fs::create_directories(dir, ec);
                 for (json& grp : plan["groups"])
@@ -991,6 +1006,13 @@ void registerPlacementCommands()
             Link::get().post([job]() mutable {
                 json done = job();
                 mainq::post([done] {
+                    if (const json& geo = done.value("georeferenced", json()); geo.is_object())
+                    {
+                        if (geo.contains("error"))
+                            log::error("Unreal georeference: {}", geo["error"].get<std::string>());
+                        else
+                            log::info("Unreal georeference: {}", geo.value("message", std::string("set")));
+                    }
                     for (const json& grp : done["groups"])
                     {
                         const std::string source = grp.value("source", std::string());
@@ -1059,6 +1081,36 @@ void registerPlacementCommands()
             return names;
         },
         .examples = {"unrealCustomData(\"Boulder\", data=[\"random\", \"wear\", \"tint\"])"},
+    });
+
+    ops::registerCommand({
+        .name = "unrealSetGeoreference",
+        .doc = "Put Unreal's open level on the scene's place on the Earth: sets the GeoReferencing plugin's GeoReferencingSystem and "
+               "Cesium for Unreal's CesiumGeoreference (whichever the project has) to the scene's georeference, so what Lila places "
+               "lands at the right spot. unrealPlaceInstances does this itself. Returns what was set.",
+        .undoable = false,
+        .run = [](const Args&) -> json {
+            json geo = scene::georef::exportJson();
+            if (geo.is_null())
+                throw CommandError("unrealSetGeoreference: the scene has no georeference (setGeoreference)");
+            try
+            {
+                Link::get().ensureConnected();
+            }
+            catch (const std::runtime_error& e)
+            {
+                throw CommandError(std::string("not connected to Unreal: ") + e.what());
+            }
+            if (!hasFeature("georeference"))
+                throw CommandError("unrealSetGeoreference: the LilaLink plugin predates georeferencing; rebuild it from Lila's ue/LilaLink");
+            std::shared_ptr<RpcClient> client = Link::get().client();
+            if (!client)
+                throw CommandError("not connected to Unreal");
+            RpcResult r = client->call("setGeoreference", geo, placementTimeoutMs(0));
+            if (!r.ok)
+                throw CommandError("unrealSetGeoreference: " + r.error);
+            return r.result;
+        },
     });
 
     ops::registerCommand({

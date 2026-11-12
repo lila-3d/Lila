@@ -21,6 +21,7 @@
 #include "ui/HeightfieldDisplay.h"
 #include "ui/Environments.h"
 #include "ui/ImagePlaneUi.h"
+#include "ui/PointCloudDisplay.h"
 #include "ui/ViewInfo.h"
 #include "ui/MaterialDraw.h"
 #include "ui/MeshCache.h"
@@ -146,7 +147,7 @@ void addSelection(render::FrameState& s, scene::NodeId id)
         return;
     const geo::Mesh& m = *cage;
     glm::dmat4 world = g.node(id)->as<glm::dmat4>(scene::Transform::kWorldMatrix);
-    auto wp = [&](uint32_t p) { return glm::vec3(world * glm::dvec4(m.position(p), 1.0)); };
+    auto wp = [&](uint32_t p) { return glm::dvec3(world * glm::dvec4(m.position(p), 1.0)); };
     // Linear colors; the viewport's own selection colors would vanish on the light default material.
     const glm::vec4 fill(0.9f, 0.9f, 0.9f, 0.45f), hot(1.0f, 1.0f, 1.0f, 1.0f);
     for (uint32_t f : scene::components::selected(id, scene::ComponentMode::Face))
@@ -174,8 +175,8 @@ void addSelection(render::FrameState& s, scene::NodeId id)
         if (m.pointValid(p))
             for (int axis = 0; axis < 3; ++axis)
             {
-                glm::vec3 d(0.0f);
-                d[axis] = float(tick);
+                glm::dvec3 d(0.0);
+                d[axis] = tick;
                 s.linesOnTop.push_back({wp(p) - d, hot});
                 s.linesOnTop.push_back({wp(p) + d, hot});
             }
@@ -395,7 +396,7 @@ QImage render(const Options& o, Timing* timing, int repeat)
         if (terrain.drawsHeightfields())
             if (std::optional<render::HeightfieldDraw> hd = heightfieldDisplay::drawFor(g, id, terrain, showMaterials))
             {
-                hd->world = glm::mat4(n->as<glm::dmat4>(scene::Transform::kWorldMatrix));
+                hd->world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
                 hd->flags = (o.display != "wireframe" ? render::DrawShaded : 0u) | (o.display != "shaded" ? render::DrawWire : 0u);
                 if (o.showSelection && selected.contains(id))
                     hd->flags |= render::DrawSelected;
@@ -412,7 +413,7 @@ QImage render(const Options& o, Timing* timing, int repeat)
         d.mesh = std::move(rm);
         if (textured)
             d.materials = drawMaterials(*shown);
-        d.world = glm::mat4(n->as<glm::dmat4>(scene::Transform::kWorldMatrix));
+        d.world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
         if (viewportDisplay::vertexColorMode() != render::VertexColorMode::Off && !geo::colors::current(*shown).empty())
         {
             d.vertexColors = viewportDisplay::vertexColorMode();
@@ -433,7 +434,7 @@ QImage render(const Options& o, Timing* timing, int repeat)
                 {
                     render::MeshDraw c;
                     c.mesh = std::move(crm);
-                    c.world = glm::mat4(n->as<glm::dmat4>(scene::Transform::kWorldMatrix));
+                    c.world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
                     c.flags = render::DrawWire;
                     s.meshes.push_back(std::move(c));
                 }
@@ -456,6 +457,9 @@ QImage render(const Options& o, Timing* timing, int repeat)
         for (scene::NodeId id : g.nodes())
             if (scene::Node* n = g.node(id); n && n->type().isA("curve") && scene::effectivelyVisible(g, id))
                 drawStrandsFor(s, *n, n->as<glm::dmat4>(scene::Transform::kWorldMatrix), view);
+        // Point clouds at the detail this view needs, waiting for it to load.
+        pointCloudDisplay::draw(
+            s, view, double(h), g, [&](scene::NodeId id) { return scene::effectivelyVisible(g, id); }, [](scene::NodeId) { return glm::vec3(0.0f); }, true);
         // The first pass asks for the planes' pictures; the second draws them once they have loaded.
         imagePlanes::drawInto(s, view);
         textures::waitForLoads(30.0);

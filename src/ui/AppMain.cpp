@@ -1,3 +1,4 @@
+#include "ui/PointCloudDisplay.h"
 #include "ui/AppMain.h"
 
 #include "bake/Bake.h"
@@ -168,6 +169,7 @@ void registerUi()
     registerTargetWeldActions();
     registerArrayToolActions();
     registerCurveUi();
+    pointCloudDisplay::registerUi();
     registerConformActions();
     registerClayUi();
     registerLayoutPencil();

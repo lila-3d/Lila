@@ -1,3 +1,4 @@
+#include "pointcloud/PointCloudNode.h"
 #include "scene/Node.h"
 #include "scene/PostProcess.h"
 #include "media/Media.h"
@@ -239,6 +240,7 @@ void registerBuiltins()
     deformers::registerTypes();
     registerMeasureTypes();
     registerImagePlaneTypes();
+    pointcloud::registerTypes();
     lod::registerTypes();
     proxy::registerTypes();
     arrays::registerTypes();

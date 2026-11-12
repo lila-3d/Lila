@@ -3248,6 +3248,15 @@ def exportPly(*objects: Any, unit: str | None = None, upAxis: str | None = None,
         colors: Write the current color set as 8-bit RGBA. Default True.
     """
 
+def exportPointCloud(*objects: Any, spacing: float | None = None, clip: bool | None = None, s: float | None = None) -> Any:
+    """Write a point cloud to LAS or LAZ (by extension), cut by its clip boxes and thinned to spacing: in the scene's CRS at its real coordinates when the scene is georeferenced (the WKT goes in the file), else in metres Z up. Unreal's LiDAR Point Cloud plugin reads it. Returns {path, points}.
+
+    Args:
+        objects: path pointCloud.
+        spacing: Keep one point per cube this many cm across; 0 keeps every point. Short form s. Default 0.0.
+        clip: Apply the cloud's clip boxes. Default True.
+    """
+
 def exportSoundCues(path: str | None = None, start: float | None = None, end: float | None = None, profile: str | None = None, *, p: str | None = None, s: float | None = None, e: float | None = None, ax: str | None = None) -> Any:
     """Write the sounds the cues fire, to play them in Unreal.
 
@@ -3747,6 +3756,26 @@ def gameExportSavePreset(*objects: Any, path: str | None = None, filename: str |
         embedMedia: Embed textures in the file. The FBX writer doesn't write textures yet, so this has no effect. Short form em.
         settings: The whole settings object; the other flags are laid over it.
         scene: Keep it in the scene (a gameExportPreset node) instead of the prefs. Default False.
+    """
+
+def georeference() -> Any:
+    """The scene's georeference: its CRS, the projected coordinates of the scene origin (origin), that origin's latitude, longitude and height in the CRS's datum (originLatLonHeight) and in WGS 84 with ellipsoidal height (wgs84). None when the scene has none."""
+
+def georeferenceConvert(points: Sequence[Any] | None = None, to: str | None = None, *, p: Sequence[Any] | None = None, **flags: Any) -> Any:
+    """Convert points between scene coordinates (cm), the scene CRS's projected coordinates, latitude/longitude/height, or another CRS.
+
+    Args:
+        points: [[x, y, z], ...] in the from= space. Short form p.
+        from: scene, projected, geographic (latitude, longitude, height) or a CRS. Default 'scene'.
+        to: scene, projected, geographic or a CRS. Default 'geographic'.
+    """
+
+def georeferenceSearch(*objects: Any, limit: int | None = None) -> Any:
+    """Projected CRSs in PROJ's EPSG database whose code or name contains the query: [[code, name], ...].
+
+    Args:
+        objects: query.
+        limit: Most results. Default 50.
     """
 
 def getAttr(*objects: Any, lock: bool | None = None, multiIndices: bool | None = None, l: bool | None = None, mi: bool | None = None) -> Any:
@@ -4691,7 +4720,7 @@ def importDxf(*objects: Any, unit: str | None = None, upAxis: str | None = None,
         name: Name of the group; the file name by default. Short form n.
     """
 
-def importFbx(*objects: Any, parent: str | None = None, skins: bool | None = None, animation: bool | None = None, take: str | None = None, setPlayback: bool | None = None, instances: bool | None = None, report: bool | None = None, select: bool | None = None, p: str | None = None, anim: bool | None = None) -> Any:
+def importFbx(*objects: Any, parent: str | None = None, skins: bool | None = None, animation: bool | None = None, take: str | None = None, setPlayback: bool | None = None, instances: bool | None = None, report: bool | None = None, select: bool | None = None, georeference: bool | None = None, p: str | None = None, anim: bool | None = None) -> Any:
     """Import an FBX file: its node hierarchy as transforms, joints and meshes, converted to the scene's axes and cm. LimbNodes become joints (PreRotation into jointOrient), skins become skinClusters with the file's weights and bind matrices, morph channels become a morph with a target per channel (in-betweens kept), and one take is baked onto the channels. Cameras become camera nodes with their lens, film back and clipping (focal length, film back and clipping curves keyed per frame); lights are reported, not imported. Returns the new node names, or with report=True a dict of nodes, roots, joints, skinClusters, take, fps, skipped and warnings.
 
     Args:
@@ -4704,6 +4733,7 @@ def importFbx(*objects: Any, parent: str | None = None, skins: bool | None = Non
         instances: Objects sharing one geometry come in as instances of the first. Default True.
         report: Return the import report instead of just the names. Default False.
         select: Select the imported roots. Default True.
+        georeference: Place it by the georeference files beside it (metadata.xml, _offset.xyz, .rcinfo, .prj), as importObj does. Default True.
     """
 
 def importFile(*objects: Any, translator: str | None = None, options: Any | None = None) -> Any:
@@ -4747,11 +4777,29 @@ def importGroom(*objects: Any, mesh: str | None = None, strands: bool | None = N
         name: Base name of the new nodes; the file's name when left out. Short form n.
     """
 
-def importObj(*objects: Any) -> Any:
-    """Import an OBJ file; one mesh per object. Returns the new mesh names.
+def importIfc(*objects: Any, georeference: bool | None = None, properties: bool | None = None, circleSegments: int | None = None) -> Any:
+    """Import an IFC file (IFC2x3, IFC4, IFC4x3): each building element a mesh with its colours in the ifcColor set, the spatial structure (project, site, building, storeys, spaces) as groups, and every property set value as an attribute named <set>_<property>, with ifcType and ifcGlobalId.
+
+    IfcMapConversion places it: it sets the scene's georeference or moves the model into it; without one the model is read as metres. The log says which. Returns the counts.
 
     Args:
         objects: path.
+        georeference: Place it by its IfcMapConversion. Default True.
+        properties: Bring the property sets in as attributes. Default True.
+        circleSegments: Segments a full circle is tessellated with. Default 12.
+
+    Examples:
+        importIfc("D:/bim/school.ifc")
+    """
+
+def importObj(*objects: Any, georeference: bool | None = None) -> Any:
+    """Import an OBJ file; one mesh per object. Returns the new mesh names.
+
+    A georeferenced export (metadata.xml, _offset.xyz, .rcinfo or .prj beside it) sets the scene's georeference or is moved into it; the log says which.
+
+    Args:
+        objects: path.
+        georeference: Place it by the georeference files beside it. Default True.
     """
 
 def importPicker(*objects: Any, name: str | None = None, replace: bool | None = None, n: str | None = None, r: bool | None = None) -> Any:
@@ -4763,7 +4811,7 @@ def importPicker(*objects: Any, name: str | None = None, replace: bool | None = 
         replace: Replace a scene picker of the same name. Short form r. Default False.
     """
 
-def importPly(*objects: Any, unit: str | None = None, upAxis: str | None = None, normals: bool | None = None, report: bool | None = None) -> Any:
+def importPly(*objects: Any, unit: str | None = None, upAxis: str | None = None, normals: bool | None = None, georeference: bool | None = None, report: bool | None = None) -> Any:
     """Import a PLY file (ASCII or binary, either byte order) as one mesh: polygons with normals, UVs (per vertex or MeshLab's per-corner texcoord), vertex colors as colorSet and face colors as faceColor. Other numeric vertex and face properties (quality, intensity, confidence...) become float attributes of the same name. A file with only vertices comes in as a point cloud: a mesh of loose points. Returns the new mesh names, or with report=True a dict of nodes, pointCloud, textureFiles and skipped.
 
     Args:
@@ -4771,7 +4819,25 @@ def importPly(*objects: Any, unit: str | None = None, upAxis: str | None = None,
         unit: The file's length unit. Scanners and photogrammetry write metres. One of 'mm', 'cm', 'm', 'in'. Default 'm'.
         upAxis: The file's up axis; converted to the scene's. One of 'y', 'z'. Default 'z'.
         normals: Keep the file's normals. Default True.
+        georeference: Place it by the georeference files beside it (metadata.xml, _offset.xyz, .rcinfo, .prj): it sets the scene's georeference or moves into it, and unit and upAxis are the CRS's. Default True.
         report: Return the import report instead of just the names. Default False.
+    """
+
+def importPointCloud(*objects: Any, name: str | None = None, cache: str | None = None, rebuild: bool | None = None, georeference: bool | None = None, unitScale: float | None = None, n: str | None = None) -> Any:
+    """Import a LAS, LAZ or E57 scan as a point cloud. Its points are sorted into a level-of-detail cache (.lilapc, beside the scan) that the view streams from, so clouds of hundreds of millions of points open at once; a cache newer than the scan is reused.
+
+    A CRS in the file (or a .prj beside it) sets the scene's georeference or moves the cloud into it; without one the cloud is read as metres, Z up, rebased on its centre. The log says which. Returns the node, cache and counts.
+
+    Args:
+        objects: path.
+        name: Node name; the file's by default. Short form n.
+        cache: Where the cache goes, instead of beside the scan.
+        rebuild: Build the cache again even when it is up to date. Default False.
+        georeference: Place it by its CRS. Default True.
+        unitScale: cm per file unit when the file has no CRS. Default 100.0.
+
+    Examples:
+        importPointCloud("D:/scans/site.laz")
     """
 
 def importReference(*objects: Any) -> Any:
@@ -6318,6 +6384,30 @@ def playbackOptions(minTime: float | None = None, maxTime: float | None = None, 
         speedMultiplier: Real-time multiplier of the custom speed, e.g. 0.25 or 1.5. Selects custom unless playbackSpeed is given. Short form sm.
         everyFrame: True plays every frame up to fps (everyFrameMaxRealTime), False real time. Short form ef.
         query: Short form q. Default False.
+    """
+
+def pointCloudClipBox(*objects: Any) -> Any:
+    """Add a clip box to a point cloud, around its middle half, and select it. Move, turn and scale it like any object; clipMode on the cloud keeps the inside or cuts it away. Returns the box's name.
+
+    Args:
+        objects: pointCloud.
+    """
+
+def pointCloudExtract(*objects: Any, spacing: float | None = None, clip: bool | None = None, maxPoints: int | None = None, s: float | None = None) -> Any:
+    """Make a mesh of a point cloud's points (loose vertices with their colours in colorSet), cut by its clip boxes and thinned to one point per spacing cube: for snapping, retopology, or meshing elsewhere. Returns the mesh's name.
+
+    Args:
+        objects: pointCloud.
+        spacing: Keep one point per cube this many cm across; 0 keeps every point. Short form s. Default 5.0.
+        clip: Apply the cloud's clip boxes. Default True.
+        maxPoints: Refuse more than this many points. Default 20000000.
+    """
+
+def pointCloudInfo(*objects: Any) -> Any:
+    """A point cloud's counts, bounds (node space, cm) and source: {points, nodes, depth, color, crs, format, boundsMin, boundsMax}.
+
+    Args:
+        objects: pointCloud.
     """
 
 def pointConstraint(*objects: Any, maintainOffset: bool | None = None, weight: float | None = None, name: str | None = None, offset: Sequence[float] | None = None, skip: Sequence[Any] | None = None, mo: bool | None = None, w: float | None = None, n: str | None = None, o: Sequence[float] | None = None, sk: Sequence[Any] | None = None) -> Any:
@@ -8720,6 +8810,23 @@ def setFieldLayer(*objects: Any, index: int | None = None, params: Any | None = 
         params: The settings to change.
     """
 
+def setGeoreference(crs: str | None = None, origin: Sequence[float] | None = None, latLonHeight: Sequence[float] | None = None, clear: bool | None = None, *, llh: Sequence[float] | None = None) -> Any:
+    """Place the scene on the Earth: a projected CRS and the projected coordinates of the scene origin. Nothing in the scene moves; imports, exports and readouts use it. Saved with the scene.
+
+    Axes match Unreal's georeferencing: a Z-up scene has east +X and north +Y, a Y-up one north +X and east +Z; the up axis is height. Scene cm become the CRS's units.
+
+    Args:
+        crs: EPSG code ("EPSG:32633", or with a vertical CRS "EPSG:32633+5773"), WKT or a PROJ string. Example: `setGeoreference(crs="EPSG:32633", origin=(500000, 4649776, 0))`
+        origin: The scene origin's easting, northing and height, in the CRS's units.
+        latLonHeight: The scene origin as latitude, longitude (degrees) and height instead of origin=. Short form llh.
+        clear: Remove the scene's georeference. Default False.
+
+    Examples:
+        setGeoreference(crs="EPSG:32633", origin=(500000, 4649776, 0))
+
+        setGeoreference(crs="EPSG:27700", llh=(51.5007, -0.1246, 0))
+    """
+
 def setInfinity(*objects: Any, attribute: Any | None = None, preInfinite: str | None = None, postInfinite: str | None = None, query: bool | None = None, at: Any | None = None, pri: str | None = None, poi: str | None = None, q: bool | None = None) -> Any:
     """Curve behaviour outside its keys: constant, linear, cycle, cycleRelative (cycle with offset), oscillate. query=True returns [{curve, pre, post}].
 
@@ -10813,6 +10920,16 @@ def unrealSendGroom(*objects: Any, folder: str | None = None, name: str | None =
         wait: Block until Unreal answers and return its reply. Short form wt. Default False.
     """
 
+def unrealSendPointCloud(*objects: Any, spacing: float | None = None, clip: bool | None = None, folder: str | None = None, s: float | None = None) -> Any:
+    """Send a point cloud to Unreal's open level through its LiDAR Point Cloud plugin: cut by its clip boxes, thinned to spacing, written as LAS in the level's coordinates and shown on a LidarPointCloudActor named after the cloud. A georeferenced scene puts the level on its place on the Earth first. Returns what Unreal made.
+
+    Args:
+        objects: pointCloud.
+        spacing: Keep one point per cube this many cm across; 0 keeps every point. Short form s. Default 2.0.
+        clip: Apply the cloud's clip boxes. Default True.
+        folder: Content folder for the asset. Default '/Game/Lila/PointClouds'.
+    """
+
 def unrealSendTextureSet(*objects: Any, folder: str | None = None, materialParent: str | None = None, materialFolder: str | None = None, exportFolder: str | None = None, preset: str | None = None, all: bool | None = None, remember: bool | None = None, save: bool | None = None, wait: bool | None = None, fo: str | None = None, mp: str | None = None, mf: str | None = None, ef: str | None = None, pr: str | None = None, a: bool | None = None, rm: bool | None = None, sv: bool | None = None, w: bool | None = None) -> Any:
     """Send a texture set to Unreal: exports it through the Unreal preset (only tiles and channels that changed since the last export are rewritten and sent, unless all=True) and updates the textures and the material instance of the set's slot (MI_<slot>), set on the slot of every mapped mesh using it. Painterly and Toon materials become instances of LilaLink's stylised masters with their palette values; others need materialParent (or the unreal pref), else only textures go. The set then also goes on every save. Returns {queued, textures} or, with wait=True, Unreal's {assets, warnings, errors}.
 
@@ -10845,6 +10962,9 @@ def unrealSendTextures(project: str | None = None, folder: str | None = None, ma
         save: Save the packages in Unreal afterwards. Short form sv.
         wait: Block until Unreal finishes and return its reply. Short form w. Default False.
     """
+
+def unrealSetGeoreference() -> Any:
+    """Put Unreal's open level on the scene's place on the Earth: sets the GeoReferencing plugin's GeoReferencingSystem and Cesium for Unreal's CesiumGeoreference (whichever the project has) to the scene's georeference, so what Lila places lands at the right spot. unrealPlaceInstances does this itself. Returns what was set."""
 
 def unrealSoftNet(*objects: Any, start: int | None = None, end: int | None = None, step: int | None = None, skeletalMesh: str | None = None, deformer: str | None = None, dryRun: bool | None = None, sm: str | None = None, df: str | None = None, dry: bool | None = None) -> Any:
     """Run a skinned mesh's Soft Net live in Unreal: its knots and tangent handles become joints keyed over the range (export the skeleton with them, deformOnly off), and LilaLink binds every LOD of the skeletal mesh to the net's precomputed influence (each vertex takes the entries of the point at its place) under the Lila Soft Net Deformer Graph: linear skinning, then the net's offset from the knot bones. Returns {skeletalMesh, deformer, joints, unreal}.
