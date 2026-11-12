@@ -312,6 +312,30 @@ void drawClip(drawOverrides::DrawContext& c)
     }
 }
 
+/**
+ * A click picks the cloud when a loaded point is within kClickPixels of it, by that distance; a marquee when the cloud's
+ * centre (its root octree cell's, through its transform) is inside the box.
+ */
+std::optional<double> pickCloud(const drawOverrides::PickContext& c)
+{
+    scene::Graph& g = scene::Graph::current();
+    if (c.click)
+    {
+        const std::optional<glm::dvec3> p = nearestPoint(g, c.node.id(), c.view, c.a, drawOverrides::kClickPixels);
+        if (!p)
+            return std::nullopt;
+        const auto s = c.view.project(*p);
+        return s ? std::optional<double>(std::hypot(s->x() - c.a.x(), s->y() - c.a.y())) : std::nullopt;
+    }
+    std::shared_ptr<const PointCloudFile> f = pointcloud::cacheOf(c.node);
+    if (!f || f->nodes().empty())
+        return std::nullopt;
+    const pointcloud::OctreeNode& root = f->nodes().front();
+    const glm::dvec3 centre = root.min + glm::dvec3(root.size * 0.5);
+    const auto s = c.view.project(glm::dvec3(c.world * glm::dvec4(centre, 1.0)));
+    return s && QRectF(c.a, c.b).normalized().contains(*s) ? std::optional<double>(0.0) : std::nullopt;
+}
+
 std::optional<double> pickClip(const drawOverrides::PickContext& c)
 {
     std::optional<double> best;
@@ -464,5 +488,7 @@ void registerUi()
 {
     if (!drawOverrides::registry().find("lila.pointCloudClip"))
         drawOverrides::add({.id = "lila.pointCloudClip", .nodeType = "pointCloudClip", .draw = drawClip, .pick = pickClip});
+    if (!drawOverrides::registry().find("lila.pointCloud"))
+        drawOverrides::add({.id = "lila.pointCloud", .nodeType = "pointCloud", .draw = [](drawOverrides::DrawContext&) {}, .pick = pickCloud});
 }
 } // namespace lila::ui::pointCloudDisplay
