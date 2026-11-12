@@ -8523,7 +8523,7 @@ def selectMode(*objects: Any) -> Any:
     """
 
 def selectPathBetween(*objects: Any, kind: str | None = None, to: int | None = None, replace: bool | None = None, deselect: bool | None = None, symmetric: bool | None = None, **flags: Any) -> Any:
-    """Select the components between two of a mesh's vertices, edges or faces: the shorter way along a loop or ring they share, else the shortest path across the surface. Neighbours (vertices on one edge, edges along a loop or across a quad, faces sharing an edge) select the whole loop or ring through both instead, unless deselecting. Adds to the selection unless replace or deselect. Returns the ids in order.
+    """Select the components between two of a mesh's vertices, edges or faces: the shorter way along a loop or ring they share, else the shortest path across the surface. Neighbours (vertices on one edge, edges along a loop or across a quad on no loop they share, faces sharing an edge) select the whole loop or ring through both instead, unless deselecting. Adds to the selection unless replace or deselect. Returns the ids in order.
 
     Args:
         objects: mesh.
@@ -11588,11 +11588,12 @@ def xform(*objects: Any, query: bool | None = None, worldSpace: bool | None = No
         pos = xform("cube1", query=True, worldSpace=True, translation=True)
     """
 
-def zeroPivot(*objects: Any) -> Any:
-    """Move the pivots to the world origin, keeping the object where it is.
+def zeroPivot(*objects: Any, axes: str | None = None, a: str | None = None) -> Any:
+    """Move the pivots to the world origin, keeping the object where it is. axes zeroes only those world axes, so axes="y" drops the pivot to the ground plane.
 
     Args:
         objects: objects.
+        axes: World axes to zero: any of x, y and z. Short form a. Default 'xyz'.
     """
 
 def zeroPivotRotation(*objects: Any, space: str | None = None) -> Any:
