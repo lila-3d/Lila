@@ -1,5 +1,6 @@
 #pragma once
 
+#include <lila/Anim.h>
 #include <lila/Extension.h>
 #include <lila/Strings.h>
 
@@ -52,6 +53,10 @@ void registerRulesEditor(lila::ext::Context& ctx);
 /** The Strings mode Spinner drags pose in. */
 lila::scene::strings::Mode stringsMode();
 void setStringsMode(lila::scene::strings::Mode m);
+/** The mode's name as the Spinner arc, menus and readouts show it ("Forward All"). */
+const char* stringsModeLabel(lila::scene::strings::Mode m);
+/** A pose across the time slider's range: its range, falloff each side, falloff type and every, as stringsPose flags. */
+void addRangeFlags(nlohmann::json& call, const lila::scene::anim::TimeSelection& sel);
 /** How far drags may stretch bones: 1 with Stretch off. */
 double stringsStretch();
 /** The additive layer drags across a time range key onto: StringsEdits while that option is on, else empty (the base). */
