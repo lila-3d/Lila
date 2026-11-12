@@ -77,6 +77,7 @@ lila_module(lila_ui UI
     ImagePlaneUi.cpp ImagePlaneUi.h
     VideoTextures.cpp VideoTextures.h
     AudioUi.cpp AudioUi.h
+    MediaLane.cpp MediaLane.h
     LicensesDialog.cpp LicensesDialog.h
     PaintColor.cpp PaintColor.h
     ReferenceSet.cpp ReferenceSet.h ReferenceWindow.cpp ReferenceWindow.h ReferenceOverlay.cpp ReferenceOverlay.h
