@@ -20,7 +20,9 @@
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <dlfcn.h>
@@ -581,7 +583,7 @@ std::unique_ptr<Engine> Engine::create(const SomaSkeleton& skeleton, const Engin
     if (st.device == "CPU" && !gpuWhy.empty())
         st.message += ": " + gpuWhy;
     else if (st.device == "CPU" && options.device == Device::Cpu)
-        st.message += " (set in Preferences)";
+        st.message += " (Preferences > Motion > Device)";
     m.status = st;
     if (status)
         *status = st;

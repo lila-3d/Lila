@@ -160,9 +160,19 @@ TEST_CASE("motion: a journey walks a path, performs a spot and stops")
     Journey spot = walk;
     spot.legs = {Leg{.path = {{0.0f, 0.0f}, {0.0f, 3.0f}}, .targets = placeSpot(Spot::load(shippedSpots().front().second), {0.0f, 4.0f}, 0.0f)}};
 
-    const Journey batch[] = {walk, run, spot};
+    Journey strafe = walk;
+    strafe.options.style = "strafeLeft";
+    strafe.legs = {Leg{.path = {{0.0f, 0.0f}, {1.5f, 0.0f}}}};
+
+    const Journey batch[] = {walk, run, spot, strafe};
     const std::vector<Clip> clips = followPaths(*engine, batch);
-    REQUIRE(clips.size() == 3);
+    REQUIRE(clips.size() == 4);
+    {
+        // Strafing left along +X faces +Z and ends where the path does.
+        const Pose& last = clips[3].frames.back();
+        CHECK(glm::length(glm::vec2(last[0].p.x, last[0].p.z) - glm::vec2(1.5f, 0.0f)) < 0.3f);
+        CHECK(std::abs(headingOf(last)) < 0.5f);
+    }
     for (size_t i = 0; i < clips.size(); ++i)
     {
         INFO("journey " << i << ": " << clips[i].error);

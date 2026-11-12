@@ -32,7 +32,9 @@
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #include <Xinput.h>
 #endif
@@ -527,7 +529,7 @@ QWidget* fieldRow(const QString& label, QWidget* field, QWidget* parent)
     h->setContentsMargins(0, 0, 0, 0);
     h->setSpacing(6);
     auto* l = new QLabel(label, row);
-    l->setMinimumWidth(56);
+    l->setMinimumWidth(l->fontMetrics().horizontalAdvance("Character") + 4);
     l->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     h->addWidget(l);
     h->addWidget(field, 1);
@@ -595,7 +597,7 @@ QWidget* makePanel(QWidget* parent)
     auto* dv = new QVBoxLayout(driveBox);
     dv->setContentsMargins(0, 0, 0, 0);
     dv->addWidget(controls::grid({controls::row("puppeteer.motion.drive", "steering-wheel", driveBox, "Drive")}, 2, driveBox));
-    v->addWidget(controls::section("Drive", driveBox, w, "puppeteer/motion"));
+    v->addWidget(controls::section("Live", driveBox, w, "puppeteer/motion"));
 
     v->addStretch(1);
     auto* device = new QLabel(w);
@@ -775,6 +777,9 @@ void registerUi(ext::Context& ctx)
             log::write(r.value("ready", false) ? LogLevel::Info : LogLevel::Warning, "Motion: " + r.value("message", std::string()));
     });
 
+    prefPages::add(ctx, {.id = "motion", .title = "Motion", .file = "motion", .build = [](prefPages::PageBuilder& b) {
+                             b.choice("Device", "/device", {{"Auto", "auto"}, {"GPU", "gpu"}, {"CPU", "cpu"}}, "auto");
+                         }});
     panels::add(ctx, {.id = "puppeteerMotion", .title = "Motion", .create = makePanel, .area = Qt::LeftDockWidgetArea, .icon = "walk", .open = false,
                       .keywords = {"motion", "generate", "inbetween", "locomotion", "spots", "drive", "motionbricks"}});
 

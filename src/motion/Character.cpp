@@ -155,7 +155,17 @@ CharacterMap::CharacterMap(const retarget::Skeleton& skeleton, const retarget::R
     retarget::Settings toChar = retarget::autoMap(soma.rig, rig);
     toChar.warp.enabled = false;
     m->rig = rig;
-    m->rig.setRetargetPose(skeleton, retarget::alignRetargetPose(soma.skeleton, soma.rig, soma.reference, skeleton, rig, current, toChar));
+    retarget::Pose aligned = retarget::alignRetargetPose(soma.skeleton, soma.rig, soma.reference, skeleton, rig, current, toChar);
+    // The pelvis stands over the same ground point as SOMA's in the compared poses, wherever the character was posed
+    // when it was characterised, so generated travel lands where the model puts it.
+    if (const int pj = skeleton.find(rig.pelvis); pj >= 0)
+    {
+        const std::vector<glm::dmat4> w = retarget::worldOf(skeleton, aligned);
+        const glm::dvec3 hips = retarget::positionOf(retarget::worldOf(soma.skeleton, soma.reference)[0]);
+        const glm::dvec3 now = retarget::positionOf(w[size_t(pj)]);
+        aligned.translate[size_t(pj)] = retarget::translateFor(retarget::parentWorldOf(skeleton, w, pj), glm::dvec3(hips.x, now.y, hips.z));
+    }
+    m->rig.setRetargetPose(skeleton, aligned);
     m->fromSoma = std::make_unique<retarget::Retargeter>(soma.skeleton, soma.rig, soma.reference, skeleton, m->rig, current, toChar);
     m->scale = m->fromSoma->scale();
 

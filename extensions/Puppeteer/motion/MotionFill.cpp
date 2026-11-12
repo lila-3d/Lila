@@ -185,6 +185,11 @@ json runFill(const Args& a)
         const mo::CharacterMap map = mo::CharacterMap::forJoint(g, joint);
         const retarget::SceneSkeleton& sk = map.scene();
         const retarget::Pose rest = retarget::currentPose(g, sk);
+        // Joints above the pelvis (a root) keep the animator's own motion unless root motion is asked for.
+        std::vector<bool> above(sk.joints.size(), false);
+        if (const int pelvis = sk.skeleton.find(map.rig().pelvis); pelvis >= 0 && !a.get<bool>("rootMotion", false))
+            for (int j = sk.skeleton.parent[size_t(pelvis)]; j >= 0; j = sk.skeleton.parent[size_t(j)])
+                above[size_t(j)] = true;
 
         json report = json::array();
         int keyed = 0;
@@ -255,9 +260,11 @@ json runFill(const Args& a)
                 json pose = json::object();
                 for (size_t j = 0; j < sk.joints.size(); ++j)
                 {
+                    if (above[j])
+                        continue;
                     const glm::dquat q = glm::normalize(p.rotation[j]);
                     json e = {{"rotate", {q.x, q.y, q.z, q.w}}};
-                    if (glm::length(p.translate[j] - rest.translate[j]) > 1e-4 || j == 0)
+                    if (glm::length(p.translate[j] - rest.translate[j]) > 1e-4 || int(j) == sk.skeleton.find(map.rig().pelvis))
                         e["translate"] = {p.translate[j].x, p.translate[j].y, p.translate[j].z};
                     pose[g.node(sk.joints[j])->name()] = e;
                 }

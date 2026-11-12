@@ -141,7 +141,7 @@ std::vector<Waypoint> waypointsArg(Graph& g, const json& j, const char* cmd)
 
 void loadDevicePref()
 {
-    const std::string d = PrefStore::get().value<std::string>(kPrefs, "device", "auto");
+    const std::string d = PrefStore::get().value<std::string>(kPrefs, "/device", "auto");
     Engine::setSharedDevice(d == "gpu" ? Device::Gpu : d == "cpu" ? Device::Cpu : Device::Auto);
 }
 } // namespace
@@ -384,6 +384,7 @@ GaitLibrary buildGaits(Graph& g, const json& spec, std::vector<std::string>& not
     }
     else
         lib.idle = SomaSkeleton::shipped().reference;
+    lib.crouchIdle = crouched(lib.idle, spec.value("crouchIdle", 0.35f));
     return lib;
 }
 
@@ -419,6 +420,10 @@ void registerCommands()
     done = true;
     registerTypes();
     loadDevicePref();
+    PrefStore::get().onChanged([](const std::string& file) {
+        if (file == kPrefs)
+            loadDevicePref();
+    });
 
     ops::registerCommand({
         .name = "motionStatus",
@@ -442,7 +447,7 @@ void registerCommands()
         .run = [](const Args& a) -> json {
             const std::string d = a.get<std::string>("device", "auto");
             Engine::setSharedDevice(deviceFromName(d));
-            PrefStore::get().set(kPrefs, "device", d);
+            PrefStore::get().set(kPrefs, "/device", d);
             return {{"preference", d}};
         },
     });

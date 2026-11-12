@@ -91,12 +91,16 @@ struct LILA_SCENE_API GaitLibrary
 {
     std::vector<Gait> gaits;
     Pose idle;
+    /** Where crouching comes to rest; the idle pose when the library has none. */
+    Pose crouchIdle;
     /** Where the poses came from, as stored with the file. */
     std::string provenance;
 
     /** The gait of a style nearest a speed (0: the style's own), or null. */
     const Gait* find(std::string_view style, double speed = 0.0) const;
     std::vector<std::string> styles() const;
+    /** The pose a style comes to rest in. */
+    const Pose& rest(std::string_view style) const { return style == "crouch" && !crouchIdle.empty() ? crouchIdle : idle; }
     json toJson() const;
     /** Throws std::runtime_error. */
     static GaitLibrary fromJson(const json& j);

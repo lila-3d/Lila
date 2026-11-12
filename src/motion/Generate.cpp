@@ -248,7 +248,10 @@ json GaitLibrary::toJson() const
         }
         gs.push_back({{"name", g.name}, {"style", g.style}, {"speed", g.speed}, {"period", g.period}, {"windows", ws}});
     }
-    return {{"lila", "motionGaits"}, {"version", 1}, {"provenance", provenance}, {"idle", poseToJson(idle)}, {"gaits", gs}};
+    json out = {{"lila", "motionGaits"}, {"version", 1}, {"provenance", provenance}, {"idle", poseToJson(idle)}, {"gaits", gs}};
+    if (!crouchIdle.empty())
+        out["idleCrouch"] = poseToJson(crouchIdle);
+    return out;
 }
 
 GaitLibrary GaitLibrary::fromJson(const json& j)
@@ -258,6 +261,8 @@ GaitLibrary GaitLibrary::fromJson(const json& j)
         GaitLibrary lib;
         lib.provenance = j.value("provenance", "");
         lib.idle = poseFromJson(j.at("idle"));
+        if (j.contains("idleCrouch"))
+            lib.crouchIdle = poseFromJson(j["idleCrouch"]);
         for (const json& g : j.at("gaits"))
         {
             Gait gait;
@@ -332,9 +337,9 @@ json Spot::toJson() const
             if ((t.tokens >> (k - kMinTokens)) & 1)
                 lo = std::min(lo, k), hi = std::max(hi, k);
         json pins = json::array();
-        for (const auto& [bit, name] : {std::pair{kPinLeftHand, "leftHand"}, {kPinRightHand, "rightHand"}, {kPinLeftFoot, "leftFoot"}, {kPinRightFoot, "rightFoot"}})
+        for (const auto& [bit, pin] : {std::pair{kPinLeftHand, "leftHand"}, {kPinRightHand, "rightHand"}, {kPinLeftFoot, "leftFoot"}, {kPinRightFoot, "rightFoot"}})
             if (t.pins & bit)
-                pins.push_back(name);
+                pins.push_back(pin);
         ts.push_back({{"name", t.name}, {"poses", ps}, {"transitionEarly", t.transitionEarly}, {"tokens", {lo, hi}}, {"pins", pins}, {"hold", t.hold}});
     }
     return {{"lila", "motionSpot"}, {"version", 1}, {"name", name}, {"provenance", provenance}, {"targets", ts}};
@@ -489,6 +494,11 @@ std::vector<Clip> followPaths(Engine& engine, std::span<const Journey> journeys,
             a.facing = first && first->path.size() > 1 ? Path(first->path).tangent(0.0f) : glm::vec2(std::sin(headingOf(j.start)), std::cos(headingOf(j.start)));
         }
         a.facing = glm::normalize(a.facing);
+        // Strafing faces across the path, so its sideways step runs along it.
+        if (glm::length(j.options.facing) < 1e-6f && j.options.style == "strafeLeft")
+            a.facing = {-a.facing.y, a.facing.x};
+        else if (glm::length(j.options.facing) < 1e-6f && j.options.style == "strafeRight")
+            a.facing = {a.facing.y, -a.facing.x};
         a.phase = j.legs.empty() ? Phase::Done : j.legs.front().path.size() > 1 ? Phase::Walk : Phase::Target;
         if (a.phase == Phase::Done)
             a.clip.error = "nothing to do: no path or targets";
@@ -532,7 +542,7 @@ std::vector<Clip> followPaths(Engine& engine, std::span<const Journey> journeys,
                         a.phase = Phase::Settle;
                         const glm::vec2 end = path.point(path.length());
                         const glm::vec2 dir = o.style.starts_with("strafe") ? a.facing : o.style == "backward" ? -path.tangent(path.length()) : path.tangent(path.length());
-                        return Next{.target = {placed(gaits.idle, headingFromDir(dir), end)}, .tokens = kDefaultTokens, .early = 0};
+                        return Next{.target = {placed(gaits.rest(o.style), headingFromDir(dir), end)}, .tokens = kDefaultTokens, .early = 0};
                     }
                     if (!last)
                     {
@@ -732,7 +742,7 @@ Request LiveDriver::nextRequest()
     {
         mStill = true;
         mPendingEarly = 0;
-        return mPlayer.request({placed(mGaits.idle, headingOf(now), at)});
+        return mPlayer.request({placed(mGaits.rest(mAsked.style), headingOf(now), at)});
     }
     mStill = false;
     const Gait* gait = mGaits.find(mInput.style);
@@ -745,6 +755,10 @@ Request LiveDriver::nextRequest()
     glm::vec2 face = glm::length(mInput.facing) > 1e-3f ? glm::normalize(mInput.facing) : dir;
     if (mInput.style == "backward" && glm::length(mInput.facing) <= 1e-3f)
         face = -dir;
+    else if (mInput.style == "strafeLeft" && glm::length(mInput.facing) <= 1e-3f)
+        face = {-dir.y, dir.x};
+    else if (mInput.style == "strafeRight" && glm::length(mInput.facing) <= 1e-3f)
+        face = {dir.y, -dir.x};
     constexpr double kLookahead = 0.9;
     const double phase = std::fmod(mCycle + kLookahead / std::max(gait->period, 0.1), 1.0);
     const GaitWindow* win = &gait->windows.front();
