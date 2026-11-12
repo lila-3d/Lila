@@ -396,6 +396,57 @@ void placeRoots(Graph& g, const std::vector<uint64_t>& roots, const glm::dmat4& 
     }
 }
 
+namespace
+{
+/** WGS 84 latitude, longitude (degrees) and ellipsoidal height (m) to Earth-centred coordinates (m). */
+glm::dvec3 wgs84ToEcef(const glm::dvec3& llh)
+{
+    constexpr double a = 6378137.0, f = 1.0 / 298.257223563, e2 = f * (2.0 - f);
+    const double lat = glm::radians(llh.x), lon = glm::radians(llh.y);
+    const double n = a / std::sqrt(1.0 - e2 * std::sin(lat) * std::sin(lat));
+    return {(n + llh.z) * std::cos(lat) * std::cos(lon), (n + llh.z) * std::cos(lat) * std::sin(lon), (n * (1.0 - e2) + llh.z) * std::sin(lat)};
+}
+} // namespace
+
+std::optional<GlobeFrame> globeFrame(const Georeference& g)
+{
+    const auto llh = toWgs84(g.crs, g.origin);
+    if (!llh)
+        return std::nullopt;
+    GlobeFrame f;
+    f.georeference = g;
+    f.originEcef = wgs84ToEcef(*llh);
+    const double lat = glm::radians(llh->x), lon = glm::radians(llh->y);
+    const glm::dvec3 east(-std::sin(lon), std::cos(lon), 0.0);
+    const glm::dvec3 north(-std::sin(lat) * std::cos(lon), -std::sin(lat) * std::sin(lon), std::cos(lat));
+    const glm::dvec3 up(std::cos(lat) * std::cos(lon), std::cos(lat) * std::sin(lon), std::sin(lat));
+    f.ecefToEnu = glm::transpose(glm::dmat3(east, north, up));
+    return f;
+}
+
+glm::dvec3 GlobeFrame::toGlobe(const glm::dvec3& gridCm) const
+{
+    const double perUnit = 100.0 * crsInfo(georeference.crs).unitToMetre;
+    const glm::dvec3 projected = georeference.origin + glm::dvec3(gridCm.x, -gridCm.y, gridCm.z) / perUnit;
+    const auto llh = toWgs84(georeference.crs, projected);
+    if (!llh)
+        return gridCm;
+    const glm::dvec3 enu = ecefToEnu * (wgs84ToEcef(*llh) - originEcef);
+    return glm::dvec3(enu.x, -enu.y, enu.z) * 100.0;
+}
+
+glm::dmat3 GlobeFrame::rotationAt(const glm::dvec3& gridCm) const
+{
+    // The globe image of a metre step along each grid axis, made orthonormal: what a rigid object turns by.
+    constexpr double step = 100.0;
+    const glm::dvec3 at = toGlobe(gridCm);
+    glm::dvec3 x = glm::normalize(toGlobe(gridCm + glm::dvec3(step, 0, 0)) - at);
+    glm::dvec3 z = toGlobe(gridCm + glm::dvec3(0, 0, step)) - at;
+    z = glm::normalize(z - glm::dot(z, x) * x);
+    // A proper rotation of these numbers keeps Y = Z cross X.
+    return glm::dmat3(x, glm::cross(z, x), z);
+}
+
 std::optional<std::string> placeImported(Graph& g, const json& j, const std::vector<uint64_t>& roots)
 {
     if (!j.is_object() || !j.contains("crs") || !j.contains("origin"))

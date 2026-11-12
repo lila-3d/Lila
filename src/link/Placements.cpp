@@ -27,6 +27,8 @@
 #include "scene/MeshNodes.h"
 #include "scene/Transform.h"
 
+#include <glm/gtc/quaternion.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -56,6 +58,42 @@ bool collisionProxy(const std::string& name)
 bool placeable(const scene::Node* n) { return n && n->type().isA("mesh") && !n->type().isA("lattice") && !collisionProxy(n->name()); }
 
 json vec(const math::Vector& v) { return json::array({v.x, v.y, v.z}); }
+
+glm::dvec3 dvec(const json& v) { return {v[0].get<double>(), v[1].get<double>(), v[2].get<double>()}; }
+
+/**
+ * A level that Cesium lays out on the globe: positions move from the scene's grid into the tangent frame at the origin and
+ * rotations turn by the grid's convergence there, so everything lands where it is on the Earth, not just near the origin.
+ */
+void moveOntoGlobe(json& plan)
+{
+    const std::optional<scene::georef::Georeference> geo = scene::georef::current();
+    const std::optional<scene::georef::GlobeFrame> globe = geo ? scene::georef::globeFrame(*geo) : std::nullopt;
+    if (!globe)
+        return;
+    for (json& grp : plan["groups"])
+    {
+        if (!grp.contains("placements"))
+            continue;
+        for (json& p : grp["placements"])
+        {
+            const glm::dvec3 at = dvec(p["location"]);
+            const glm::dquat turn(globe->rotationAt(at));
+            const json& r = p["rotation"];
+            const glm::dquat q = turn * glm::dquat(r[3].get<double>(), r[0].get<double>(), r[1].get<double>(), r[2].get<double>());
+            p["location"] = vec(math::Vector(globe->toGlobe(at)));
+            p["rotation"] = json::array({q.x, q.y, q.z, q.w});
+        }
+    }
+    for (json& l : plan["lights"])
+    {
+        const glm::dvec3 at = dvec(l["location"]);
+        const glm::dmat3 turn = globe->rotationAt(at);
+        l["location"] = vec(math::Vector(globe->toGlobe(at)));
+        l["forward"] = vec(math::Vector(turn * dvec(l["forward"])));
+        l["up"] = vec(math::Vector(turn * dvec(l["up"])));
+    }
+}
 
 json placementAt(const glm::dmat4& world, json id, std::string name)
 {
@@ -941,6 +979,11 @@ void registerPlacementCommands()
                 {
                     RpcResult geo = client->call("setGeoreference", plan["georeference"], placementTimeoutMs(0));
                     plan["georeferenced"] = geo.ok ? geo.result : json{{"error", geo.error}};
+                    if (geo.ok && geo.result.value("cesium", false))
+                    {
+                        moveOntoGlobe(plan);
+                        log::info("Unreal: Cesium lays the level out on the globe; placements moved from the scene's grid onto it");
+                    }
                 }
                 std::error_code ec;
                 fs::create_directories(dir, ec);

@@ -17,6 +17,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <cctype>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <sstream>
@@ -99,6 +100,30 @@ std::string cloudArg(const Args& a, const char* cmd)
 }
 
 /** Every point of the cloud in world space, cut by its clip boxes and thinned to one per spacing cube (0 keeps all). */
+/**
+ * Points in Unreal level coordinates (cm) from the scene's grid onto the globe frame Cesium lays the level out on. One
+ * linear map about the cloud's centre: the grid's convergence and scale there, exact to about 2 cm half a kilometre out.
+ */
+void moveOntoGlobe(std::vector<RawPoint>& pts)
+{
+    const std::optional<scene::georef::Georeference> geo = scene::georef::current();
+    const std::optional<scene::georef::GlobeFrame> globe = geo ? scene::georef::globeFrame(*geo) : std::nullopt;
+    if (!globe || pts.empty())
+        return;
+    glm::dvec3 lo(std::numeric_limits<double>::max()), hi(std::numeric_limits<double>::lowest());
+    for (const RawPoint& p : pts)
+    {
+        lo = glm::min(lo, p.position);
+        hi = glm::max(hi, p.position);
+    }
+    const glm::dvec3 c = (lo + hi) * 0.5, at = globe->toGlobe(c);
+    constexpr double step = 100.0;
+    const glm::dmat3 j((globe->toGlobe(c + glm::dvec3(step, 0, 0)) - at) / step, (globe->toGlobe(c + glm::dvec3(0, step, 0)) - at) / step,
+                       (globe->toGlobe(c + glm::dvec3(0, 0, step)) - at) / step);
+    for (RawPoint& p : pts)
+        p.position = at + j * (p.position - c);
+}
+
 std::vector<RawPoint> gather(Graph& g, const Node& n, double spacing, bool clip)
 {
     LILA_ZONE();
@@ -479,16 +504,6 @@ void registerCommands()
             Graph& g = Graph::current();
             const Node& n = cloudNamed(g, cloudArg(a, "unrealSendPointCloud"), "unrealSendPointCloud");
             std::vector<RawPoint> pts = gather(g, n, a.get<double>("spacing"), a.get<bool>("clip"));
-            // Unreal's axes and metres, from the level's origin (the scene's), as the LiDAR plugin reads LAS.
-            for (RawPoint& p : pts)
-            {
-                const math::Vector u = math::toUnreal(math::Vector(p.position));
-                p.position = glm::dvec3(u.x, u.y, u.z) / 100.0;
-            }
-            const fs::path file = link::cacheDir() / (n.name() + ".las");
-            std::error_code ec;
-            fs::create_directories(file.parent_path(), ec);
-            writeLas(file, pts, std::string());
             try
             {
                 link::Link::get().ensureConnected();
@@ -506,6 +521,21 @@ void registerCommands()
             json out;
             if (json geo = scene::georef::exportJson(); !geo.is_null())
                 out["georeference"] = client->call("setGeoreference", geo, link::placementTimeoutMs(0)).result;
+            // Unreal's axes and metres, from the level's origin (the scene's), as the LiDAR plugin reads LAS.
+            for (RawPoint& p : pts)
+            {
+                const math::Vector u = math::toUnreal(math::Vector(p.position));
+                p.position = glm::dvec3(u.x, u.y, u.z);
+            }
+            if (out.contains("georeference") && out["georeference"].value("cesium", false))
+                moveOntoGlobe(pts);
+            // LAS is X east, Y north: the LiDAR plugin turns Y into Unreal's south itself.
+            for (RawPoint& p : pts)
+                p.position = glm::dvec3(p.position.x, -p.position.y, p.position.z) / 100.0;
+            const fs::path file = link::cacheDir() / (n.name() + ".las");
+            std::error_code ec;
+            fs::create_directories(file.parent_path(), ec);
+            writeLas(file, pts, std::string());
             link::RpcResult r = client->call("importPointCloud",
                                              {{"file", paths::toUtf8(file)}, {"folder", a.get<std::string>("folder")}, {"name", n.name()}, {"label", n.name()}},
                                              link::placementTimeoutMs(pts.size() / 1000));

@@ -11,6 +11,7 @@
 #include "EngineUtils.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "ScopedTransaction.h"
+#include "UObject/Script.h"
 
 #define LOCTEXT_NAMESPACE "LilaLinkGeoreference"
 
@@ -57,6 +58,8 @@ bool CallWithVector(UObject* Object, const TCHAR* Function, const FVector& Value
 		return false;
 	}
 	FVector Params = Value;
+	// Actors skip ProcessEvent in an editor world without the guard.
+	FEditorScriptExecutionGuard ScriptGuard;
 	Object->ProcessEvent(Fn, &Params);
 	return true;
 }
@@ -92,28 +95,33 @@ TSharedPtr<FJsonValue> SetGeoreference(const TSharedPtr<FJsonObject>& Params, FS
 	TArray<FString> Done, Missing;
 	bool bGeoSystem = false, bCesium = false;
 
+	UClass* CesiumClass = FindObject<UClass>(nullptr, CesiumGeoreferenceClass);
 	if (UClass* Class = FindObject<UClass>(nullptr, GeoReferencingSystemClass))
 	{
 		bool bSpawned = false;
 		if (AActor* Actor = FindOrSpawn(World, Class, bSpawned))
 		{
 			Actor->Modify();
-			// Projected coordinates on a flat planet: Lila's scene is laid out on that grid, so the level matches it exactly.
-			bGeoSystem = SetProperty(Actor, TEXT("PlanetShape"), TEXT("FlatPlanet"));
+			// Alone, a flat planet on the projected grid, which Lila's scene is laid out on. Beside Cesium, which lays the
+			// level on the globe's tangent plane at the origin, a round planet with that origin so both agree; Lila then
+			// sends positions in that frame.
+			bGeoSystem = SetProperty(Actor, TEXT("PlanetShape"), CesiumClass ? TEXT("RoundPlanet") : TEXT("FlatPlanet"));
 			bGeoSystem &= SetProperty(Actor, TEXT("ProjectedCRS"), ProjectedCrs);
 			SetProperty(Actor, TEXT("GeographicCRS"), TEXT("EPSG:4326"));
-			SetProperty(Actor, TEXT("bOriginLocationInProjectedCRS"), TEXT("True"));
+			SetProperty(Actor, TEXT("bOriginAtPlanetCenter"), TEXT("False"));
+			SetProperty(Actor, TEXT("bOriginLocationInProjectedCRS"), CesiumClass ? TEXT("False") : TEXT("True"));
 			SetProperty(Actor, TEXT("OriginProjectedCoordinatesEasting"), FString::SanitizeFloat(Easting));
 			SetProperty(Actor, TEXT("OriginProjectedCoordinatesNorthing"), FString::SanitizeFloat(Northing));
 			SetProperty(Actor, TEXT("OriginProjectedCoordinatesUp"), FString::SanitizeFloat(Up));
 			SetProperty(Actor, TEXT("OriginLatitude"), FString::SanitizeFloat(Latitude));
 			SetProperty(Actor, TEXT("OriginLongitude"), FString::SanitizeFloat(Longitude));
 			SetProperty(Actor, TEXT("OriginAltitude"), FString::SanitizeFloat(Height));
+			Actor->PostEditChange();
 			if (UFunction* Apply = Actor->FindFunction(TEXT("ApplySettings")))
 			{
+				FEditorScriptExecutionGuard ScriptGuard;
 				Actor->ProcessEvent(Apply, nullptr);
 			}
-			Actor->PostEditChange();
 			Done.Add(FString::Printf(TEXT("GeoReferencingSystem%s set to %s"), bSpawned ? TEXT(" (new)") : TEXT(""), *ProjectedCrs));
 		}
 	}
@@ -122,7 +130,7 @@ TSharedPtr<FJsonValue> SetGeoreference(const TSharedPtr<FJsonObject>& Params, FS
 		Missing.Add(TEXT("GeoReferencing"));
 	}
 
-	if (UClass* Class = FindObject<UClass>(nullptr, CesiumGeoreferenceClass))
+	if (UClass* Class = CesiumClass)
 	{
 		bool bSpawned = false;
 		if (AActor* Actor = FindOrSpawn(World, Class, bSpawned))
@@ -186,6 +194,21 @@ TSharedPtr<FJsonValue> ImportPointCloud(const TSharedPtr<FJsonObject>& Params, F
 		OutError = TEXT("importPointCloud: no editor world");
 		return nullptr;
 	}
+	// The import runs on a worker by default and fills in the cloud's offsets when it ends: run it here instead, so the
+	// offsets exist when this returns.
+	UObject* Settings = nullptr;
+	FBoolProperty* Async = nullptr;
+	bool bWasAsync = false;
+	if (UClass* SettingsClass = FindObject<UClass>(nullptr, TEXT("/Script/LidarPointCloudRuntime.LidarPointCloudSettings")))
+	{
+		Settings = SettingsClass->GetDefaultObject();
+		Async = CastField<FBoolProperty>(SettingsClass->FindPropertyByName(TEXT("bUseAsyncImport")));
+		if (Async)
+		{
+			bWasAsync = Async->GetPropertyValue_InContainer(Settings);
+			Async->SetPropertyValue_InContainer(Settings, false);
+		}
+	}
 	UAssetImportTask* Task = NewObject<UAssetImportTask>();
 	Task->Filename = File;
 	Task->DestinationPath = Folder;
@@ -194,6 +217,10 @@ TSharedPtr<FJsonValue> ImportPointCloud(const TSharedPtr<FJsonObject>& Params, F
 	Task->bReplaceExisting = true;
 	Task->bSave = false;
 	FAssetToolsModule::GetModule().Get().ImportAssetTasks({Task});
+	if (Async)
+	{
+		Async->SetPropertyValue_InContainer(Settings, bWasAsync);
+	}
 	UObject* Cloud = nullptr;
 	for (UObject* Object : Task->GetObjects())
 	{
@@ -207,7 +234,7 @@ TSharedPtr<FJsonValue> ImportPointCloud(const TSharedPtr<FJsonObject>& Params, F
 		OutError = TEXT("importPointCloud: Unreal made no point cloud from ") + File + TEXT("; see the editor log");
 		return nullptr;
 	}
-	// The file's coordinates are the level's (relative to its georeferenced origin): undo the plugin's centring.
+	// The plugin centres the points for precision; the file's coordinates are the level's, so draw them there.
 	if (UFunction* Restore = Cloud->FindFunction(TEXT("RestoreOriginalCoordinates")))
 	{
 		Cloud->ProcessEvent(Restore, nullptr);

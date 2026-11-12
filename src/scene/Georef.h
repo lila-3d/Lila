@@ -65,6 +65,23 @@ LILA_SCENE_API std::optional<glm::dvec3> toGeographic(const std::string& crs, co
 LILA_SCENE_API std::optional<glm::dvec3> fromGeographic(const std::string& crs, const glm::dvec3& latLonHeight);
 /** Projected coordinates to WGS 84 latitude, longitude and ellipsoidal height, as Cesium and Unreal's georeferencing take them. */
 LILA_SCENE_API std::optional<glm::dvec3> toWgs84(const std::string& crs, const glm::dvec3& projected);
+/**
+ * A level laid out on the globe instead of the grid: Cesium for Unreal and a round-planet GeoReferencing system put a
+ * level's X, Y, Z on the east, south and up of the tangent plane at the origin, where the scene uses the CRS's grid.
+ * Both frames meet at the origin and part by the grid's convergence and scale and the Earth's curvature further out.
+ */
+struct GlobeFrame
+{
+    Georeference georeference;
+    glm::dvec3 originEcef{0.0};
+    glm::dmat3 ecefToEnu{1.0};
+    /** Unreal level coordinates on the grid (cm, X east, Y south, Z up, from the scene origin) to the globe frame's. */
+    LILA_SCENE_API glm::dvec3 toGlobe(const glm::dvec3& gridCm) const;
+    /** Turns directions at gridCm from the grid frame to the globe frame (convergence, tilt). */
+    LILA_SCENE_API glm::dmat3 rotationAt(const glm::dvec3& gridCm) const;
+};
+LILA_SCENE_API std::optional<GlobeFrame> globeFrame(const Georeference& g);
+
 /** The scene georeference as Unreal, USD and glTF carry it: crs, origin, the origin's WGS 84 latitude/longitude/height. Null with none. */
 LILA_SCENE_API nlohmann::json exportJson();
 /** Points from one CRS to another, axes in east/north (or lon/lat) order; nullopt when PROJ can't. */

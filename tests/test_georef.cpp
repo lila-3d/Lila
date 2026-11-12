@@ -139,3 +139,22 @@ TEST_CASE("georeferenceSearch finds CRSs by name and code")
         found = found || code == "EPSG:32633";
     CHECK(found);
 }
+
+TEST_CASE("georef: the globe frame matches where Cesium for Unreal puts a point")
+{
+    // The Asiago survey's origin; Cesium 2.31 in UE 5.8 put this grid position at the globe position below.
+    georef::Georeference g;
+    g.crs = "EPSG:32632";
+    g.origin = {696700.0, 5077800.0, 1300.0};
+    const auto globe = georef::globeFrame(g);
+    REQUIRE(globe);
+    CHECK(glm::length(globe->toGlobe(glm::dvec3(0.0))) < 1e-6);
+    const glm::dvec3 p = globe->toGlobe({2868.0, 1570.0, -3718.0});
+    CHECK(std::abs(p.x - 2817.12) < 1.0);
+    CHECK(std::abs(p.y - 1660.34) < 1.0);
+    CHECK(std::abs(p.z - (-3718.01)) < 1.0);
+    // Grid north turns by the meridian convergence there, about (lon - 9) sin(lat) = 1.82 degrees.
+    const glm::dmat3 r = globe->rotationAt(glm::dvec3(0.0));
+    CHECK(std::abs(glm::degrees(std::atan2(r[0].y, r[0].x))) == doctest::Approx(1.82).epsilon(0.02));
+    CHECK(glm::determinant(r) == doctest::Approx(1.0));
+}
