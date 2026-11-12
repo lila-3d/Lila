@@ -345,7 +345,7 @@ void MainWindow::buildMenus()
     addSubmenu("Display", "Views", syncChecks);
     menus::addActions("Display/Views", {"viewport.view.persp", "viewport.view.top", "viewport.view.front", "viewport.view.right", "viewport.view.left",
                                  "viewport.view.back", "viewport.view.bottom"});
-    menus::addActions("Display", {"viewport.frameSelected", "viewport.frameAll", "viewport.frameUnderCursor", "viewport.cameraUndo", "viewport.cameraRedo", "#Overlays",
+    menus::addActions("Display", {"viewport.frameSelected", "viewport.frameAll", "viewport.frameUnderCursor", "viewport.cameraUndo", "viewport.cameraRedo", "view.drone", "#Overlays",
                            "viewport.toggleGrid", "viewport.toggleResolutionGate", "viewport.toggleFilmGate", "viewport.cameraSettings",
                            "window.renderSettings", "#View", "viewport.toggleToolbar", "window.toggleToolBox", "viewport.resetExposure"});
 
@@ -509,7 +509,7 @@ void MainWindow::buildPanelMenus()
         addMenu({.id = std::string("panel.") + title, .title = title, .area = Area::Hotbox});
     menus::addActions("panel.View", {"viewport.view.persp", "viewport.view.top", "viewport.view.front", "viewport.view.right", "viewport.view.left",
                               "viewport.view.back", "viewport.view.bottom", "", "viewport.frameSelected", "viewport.frameAll",
-                              "viewport.cameraUndo", "viewport.cameraRedo", "", "viewport.toggleResolutionGate", "viewport.toggleFilmGate",
+                              "viewport.cameraUndo", "viewport.cameraRedo", "view.drone", "", "viewport.toggleResolutionGate", "viewport.toggleFilmGate",
                               "viewport.cameraSettings", "", "viewport.imagePlaneImport", "referenceOverlay.addImage", "referenceOverlay.adjust",
                               "referenceOverlay.bindView", "referenceOverlay.goToView", "referenceOverlay.park"});
     menus::addActions("panel.Shading", {"viewport.wireframe", "viewport.shaded", "viewport.textured", "viewport.wireOnShaded", "", "viewport.toggleAO",

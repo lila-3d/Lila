@@ -338,6 +338,8 @@ void ViewportWidget::requestFrame()
 
 void ViewportWidget::updateCursor()
 {
+    if (drone::applyCursor(this))
+        return;
     if (mFramePickArmed)
     {
         if (cursor().shape() != Qt::CrossCursor)

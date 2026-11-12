@@ -138,6 +138,7 @@ lila_module(lila_ui UI
     SpacesUi.cpp SpacesUi.h
     InstancingUi.cpp InstancingUi.h
     TurntableUi.cpp TurntableUi.h
+    DroneCamera.cpp DroneCamera.h
     UnrealMappingUi.cpp UnrealMappingUi.h
     DeformUi.cpp DeformUi.h
     DeformHandles.cpp DeformHandles.h

@@ -579,6 +579,7 @@ void ViewportWidget::drawHud(OverlayPainter& p)
         });
     }
     flushToolMessages(p, ctx.view, drawn);
+    drone::draw(p, this);
     viewportToast::draw(p, ctx.view, this, drawn);
 }
 

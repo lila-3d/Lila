@@ -42,6 +42,8 @@ struct MeshEntry;
 
 namespace lila::ui
 {
+class DroneFlight;
+
 /** Native child window the render thread presents into. Owns the camera and Maya-style navigation. */
 class LILA_UI_API ViewportWidget : public QWidget
 {
@@ -167,6 +169,8 @@ public:
     viewportHooks::DropTarget dropTarget(QPointF px);
 
 private:
+    friend class DroneFlight;
+
     enum class Nav
     {
         None,
