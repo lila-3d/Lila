@@ -274,6 +274,8 @@ std::vector<NodeId> withAncestors(Graph& g, const std::vector<NodeId>& nodes)
 void configure(Graph& g, NodeId node, Sim& s, LoopMode mode)
 {
     Setup su = s.solver->configure(g);
+    if (!su.loops)
+        mode = LoopMode::Off;
     su.substeps = std::max(1, su.substeps);
     su.stepped = std::max(1, su.stepped);
     bool loop = false;
@@ -554,6 +556,15 @@ int64_t indexFor(const Sim& s, int64_t frame)
 
 std::shared_ptr<const Frame> run(Graph& g, NodeId node, int64_t frame, LoopMode mode)
 {
+    // A long run pumps events for its progress card; a redraw or idle timer must not start the same one again inside it.
+    static std::set<NodeId> running;
+    if (!running.insert(node).second)
+        throw std::runtime_error("already simulating");
+    struct Leave
+    {
+        NodeId n;
+        ~Leave() { running.erase(n); }
+    } leave{node};
     Sim& s = simFor(g, node);
     try
     {
