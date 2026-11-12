@@ -3,7 +3,8 @@ set(PUPPETEER_RIG_SOURCES
     Puppeteer.cpp Puppeteer.h Common.h
     rig/RigMath.h rig/Rig.h rig/Character.cpp rig/RigElements.cpp rig/JointTools.cpp rig/Modes.cpp rig/Controllers.cpp rig/FullBody.cpp rig/Strings.cpp rig/AnimProxy.cpp rig/AnimProxy.h
     gizmo/Spinner.h gizmo/Spinner.cpp gizmo/SpinnerOps.cpp gizmo/StringsUi.cpp gizmo/LineOfActionTool.cpp gizmo/BreakdownPartsTool.cpp gizmo/RulesEditor.cpp gizmo/ControllerDraw.h gizmo/ControllerDraw.cpp
-    hand/HandMath.h hand/Hands.h hand/Hands.cpp hand/HandUi.cpp gizmo/GrappleUi.cpp)
+    hand/HandMath.h hand/Hands.h hand/Hands.cpp hand/HandUi.cpp gizmo/GrappleUi.cpp
+    prop/PropMath.h prop/Props.h prop/Props.cpp prop/PropUi.cpp)
 # Animate-mode panels (Stacker, Mixer, Anim Bank, Cycle Maker, Poses): list their sources here.
 set(PUPPETEER_ANIM_SOURCES
     anim/AnimPanels.cpp anim/CurveOverlay.cpp anim/AnimCommands.cpp anim/AnimCommands.h anim/AnimOps.cpp anim/AnimOps.h anim/KeyMath.h anim/WalkCycle.h anim/PanelModels.h anim/Tracks.cpp anim/Tracks.h)

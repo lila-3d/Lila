@@ -85,6 +85,10 @@ void registerHands(lila::ext::Context& ctx);
 void registerHandUi(lila::ext::Context& ctx);
 /** Finds the character's hands and makes a hand node for each, replacing any it had. Returns the new nodes. */
 std::vector<lila::scene::NodeId> setupHands(lila::scene::Graph& g, lila::scene::NodeId character);
+/** Props and weapons: prop and grip point nodes and their commands (prop/Props.cpp). */
+void registerProps(lila::ext::Context& ctx);
+/** The Props palette, grip point handles in the viewport, and the prop actions and menus (prop/PropUi.cpp). */
+void registerPropUi(lila::ext::Context& ctx);
 /** Grapple: the contact tool, its palette, contact drawing, actions and menus (gizmo/GrappleUi.cpp). */
 void registerGrapple(lila::ext::Context& ctx);
 /** Animate-mode panels (anim/). */
