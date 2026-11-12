@@ -240,10 +240,10 @@ void redraw()
 // --- Drawing -------------------------------------------------------------------------------------------------------
 
 /** NDC corners of view-pixel corners. */
-void toNdc(const ViewInfo& view, const std::array<glm::dvec2, 4>& px, glm::vec3 (&out)[4])
+void toNdc(const ViewInfo& view, const std::array<glm::dvec2, 4>& px, glm::dvec3 (&out)[4])
 {
     for (int k = 0; k < 4; ++k)
-        out[k] = glm::vec3(px[size_t(k)].x / view.width * 2.0 - 1.0, px[size_t(k)].y / view.height * 2.0 - 1.0, 0.0);
+        out[k] = glm::dvec3(px[size_t(k)].x / view.width * 2.0 - 1.0, px[size_t(k)].y / view.height * 2.0 - 1.0, 0.0);
 }
 
 constexpr const char* kSnapOverlaysPref = "/references/snapOverlays";

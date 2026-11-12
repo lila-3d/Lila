@@ -10,10 +10,13 @@ Lila includes or links the following third-party components. Each is licensed un
 | PySide6 | LGPL-3.0 | The Qt Company Ltd. | https://www.qt.io/qt-for-python |
 | Eigen | MPL-2.0 | Eigen contributors | https://eigen.tuxfamily.org |
 | FFmpeg (libavcodec, libavformat, libavutil, libswscale, libswresample) | LGPL-2.1-or-later | The FFmpeg developers | https://ffmpeg.org |
+| web-ifc (with the components it bundles: CDT under MPL-2.0; fast_float, spdlog, stduuid and unordered_dense under MIT; tinynurbs under BSD-3-Clause; earcut.hpp under ISC) | MPL-2.0 | That Open Company and the web-ifc contributors | https://github.com/ThatOpen/engine_web-ifc |
 
 Qt and PySide6 are dynamically linked and unmodified. You may replace the Qt and PySide6 libraries shipped with Lila with your own builds of the same versions. Their source code is available from https://download.qt.io. Eigen is used unmodified; its source is available from https://gitlab.com/libeigen/eigen.
 
 FFmpeg 9.0.2 is dynamically linked (avcodec, avformat, avutil, swscale and swresample DLLs beside the executable) and unmodified, built without its GPL and nonfree parts and without its H.264 and HEVC decoders (Windows decodes those through Media Foundation). You may replace those DLLs with your own builds of a compatible version. The corresponding source code is available from https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz, and on request from Lila's maintainers for three years from the date you received this release.
+
+web-ifc 0.78 and the CDT it bundles are statically linked and unmodified; their source code (MPL-2.0 covered files) is available from https://github.com/ThatOpen/engine_web-ifc/tree/0.78, with the exact dependency commits listed in Lila's `vcpkg-ports/web-ifc/portfile.cmake`.
 
 ## Permissive
 
@@ -25,6 +28,11 @@ FFmpeg 9.0.2 is dynamically linked (avcodec, avformat, avutil, swscale and swres
 | Alembic | BSD-3-Clause | Lucasfilm Entertainment Company Ltd. and Sony Pictures Imageworks Inc. | https://github.com/alembic/alembic |
 | OpenUSD (with the components it bundles: RapidJSON, double-conversion, PEGTL and others, listed in its notice) | Tomorrow Open Source Technology License 1.0 (Apache-2.0 with a different trademark section); bundled components under their own permissive licenses | Pixar Animation Studios | https://github.com/PixarAnimationStudios/OpenUSD |
 | Draco | Apache-2.0 | Google LLC | https://github.com/google/draco |
+| PROJ (with its EPSG database, proj.db) | MIT; the EPSG dataset under the EPSG terms of use | Frank Warmerdam, Even Rouault and the PROJ contributors; IOGP | https://proj.org |
+| libE57Format | BSL-1.0 | Andy Maloney and the libE57Format contributors | https://github.com/asmaloney/libE57Format |
+| Xerces-C++ (for libE57Format) | Apache-2.0 | The Apache Software Foundation | https://xerces.apache.org/xerces-c |
+| CRCpp (for libE57Format) | BSD-3-Clause | Daniel Bahr | https://github.com/d-bahr/CRCpp |
+| LASzip | Apache-2.0 | rapidlasso GmbH | https://laszip.org |
 | Imath | BSD-3-Clause | Contributors to the OpenEXR Project | https://github.com/AcademySoftwareFoundation/Imath |
 | Manifold | Apache-2.0 | The Manifold Authors | https://github.com/elalish/manifold |
 | Clipper2 | BSL-1.0 | Angus Johnson | https://github.com/AngusJohnson/Clipper2 (also built with Z values from `src/curve/third_party/clipper2`) |

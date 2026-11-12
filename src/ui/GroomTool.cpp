@@ -650,8 +650,8 @@ public:
         const glm::vec4 col(0.95f, 0.75f, 0.35f, 1.0f);
         for (size_t i = 1; i < mStroke.size(); ++i)
         {
-            f.lines.push_back({glm::vec3(mStroke[i - 1]), col});
-            f.lines.push_back({glm::vec3(mStroke[i]), col});
+            f.lines.push_back({glm::dvec3(mStroke[i - 1]), col});
+            f.lines.push_back({glm::dvec3(mStroke[i]), col});
         }
         Node* gr = groomNode();
         Node* guides = gr ? groom::guidesOf(Graph::current(), *gr) : nullptr;

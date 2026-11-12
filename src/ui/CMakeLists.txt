@@ -43,6 +43,8 @@ lila_module(lila_ui UI
     SketchTool.cpp SketchUi.cpp SketchUi.h CurveSculptTool.cpp GroomBrushTool.cpp GroomGpu.cpp GroomGpu.h GroomTool.cpp
     DisplayLayersPanel.cpp DisplayLayersPanel.h
     AnimLayersPanel.cpp AnimLayersPanel.h
+    SceneSettingsPanel.cpp SceneSettingsPanel.h
+    PointCloudDisplay.cpp PointCloudDisplay.h
     OffsetsPanel.cpp OffsetsPanel.h
     RenamePanel.cpp RenamePanel.h
     RetargetUi.cpp RetargetUi.h

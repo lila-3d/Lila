@@ -351,6 +351,8 @@ struct ImportOptions
     bool setPlayback = true;
     /** Nodes sharing one geometry become instances of the first; off gives each its own mesh (sharing the snapshot). */
     bool instances = true;
+    /** Place the roots by the LilaGeoreference* document properties a georeferenced Lila export carries. */
+    bool georeference = true;
 };
 
 struct ImportResult
@@ -359,6 +361,8 @@ struct ImportResult
     std::string error;
     std::vector<scene::NodeId> roots;
     std::vector<scene::NodeId> nodes; // every node created, parents first
+    /** The roots were placed by the file's own georeference. */
+    bool georeferenced = false;
     /** Things in the file that were not imported, one line each (lights, curves). */
     std::vector<std::string> skipped;
     std::vector<std::string> warnings;
