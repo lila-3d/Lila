@@ -4194,6 +4194,26 @@ def goToBindPose(*objects: Any) -> Any:
         objects: mesh.
     """
 
+def grappleAim(*objects: Any, axis: str | None = None, pivot: str | None = None, style: str | None = None, anchor: str | None = None, reach: float | None = None, drop: float | None = None, grapple: str | None = None, time: float | None = None, blend: float | None = None, name: str | None = None, ax: str | None = None, pv: str | None = None, s: str | None = None, an: str | None = None, r: float | None = None, d: float | None = None, g: str | None = None, t: float | None = None, b: float | None = None, n: str | None = None) -> Any:
+    """Aim what a joint holds at a target: the axis (a muzzle, a blade's tip; its +X) is turned onto the target about the pivot, moving the joint and, through the grapple's solve, the arms and body with it. style places the pivot first: shoulder on the anchor (rifles, launchers), extend out toward the target (pistols), guard below that line (blades). Key weight to blend it. Returns the aim.
+
+    Args:
+        objects: holding joint, target.
+        axis: The transform whose +X is aimed. Short form ax.
+        pivot: The transform turned about. Default: axis. Short form pv.
+        style: turn, shoulder, extend or guard. Short form s. One of 'turn', 'shoulder', 'extend', 'guard'. Default 'turn'.
+        anchor: Shoulder, extend, guard: the joint or point the pivot is placed from. Short form an.
+        reach: Extend, guard: cm from the anchor. 0: 0.9 of the arm. Short form r. Default 0.0.
+        drop: Guard: cm below the line to the target. Short form d. Default 0.0.
+        grapple: The grapple to add it to. Default: the one holding the character, else a new one. Short form g.
+        time: Seconds the aim comes on at. Default: now. Short form t.
+        blend: Seconds it blends in over. 0 makes it on at every time. Short form b. Default 0.2.
+        name: Name for the aim. Short form n.
+
+    Examples:
+        grappleAim("hand_r", "target1", axis="rifle_muzzle", pivot="rifle_stock", style="shoulder", anchor="upperarm_r")
+    """
+
 def grappleContact(*objects: Any, point: Sequence[float] | None = None, kind: str | None = None, orient: bool | None = None, lead: str | None = None, grapple: str | None = None, time: float | None = None, blend: float | None = None, name: str | None = None, p: Sequence[float] | None = None, k: str | None = None, o: bool | None = None, l: str | None = None, g: str | None = None, t: float | None = None, b: float | None = None, n: str | None = None) -> Any:
     """Hold a joint of one character to a point on another (grab a wrist, a collar, an arm round a neck, hands under a body to lift it). The characters are solved together every frame by their grapple; key the contact's weight to blend it in and out. Returns the contact.
 
