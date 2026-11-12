@@ -361,3 +361,77 @@ TEST_CASE("grapple: every weight converges with the feet planted and the bodies 
             CHECK(r.iterations <= 3);
         }
 }
+
+TEST_CASE("grapple: an aim turns the held axis onto the target in every style")
+{
+    grapple::Aim a;
+    a.holder = glm::translate(glm::dmat4(1.0), glm::dvec3(30.0, 120.0, 20.0));
+    // A barrel 6 cm above the pivot, pointing +Z.
+    a.axis = glm::translate(glm::dmat4(1.0), glm::dvec3(30.0, 126.0, 60.0)) * glm::dmat4(glm::mat3_cast(glm::angleAxis(-glm::half_pi<double>(), glm::dvec3(0, 1, 0))));
+    a.pivot = glm::dvec3(30.0, 120.0, 0.0);
+    a.target = glm::dvec3(-200.0, 180.0, 600.0);
+    a.anchor = glm::dvec3(18.0, 140.0, 0.0);
+    a.reach = 55.0;
+    a.drop = 10.0;
+    for (grapple::AimStyle s : {grapple::AimStyle::Turn, grapple::AimStyle::Shoulder, grapple::AimStyle::Extend, grapple::AimStyle::Guard})
+    {
+        a.style = s;
+        const glm::dmat4 h = grapple::aimHolder(a);
+        CHECK(grapple::aimError(a, h) < 1e-3);
+        CHECK(grapple::aimError(a, a.holder) > 10.0);
+        const glm::dvec3 pivot = at(h * glm::inverse(a.holder), a.pivot);
+        if (s == grapple::AimStyle::Turn)
+            CHECK(glm::length(pivot - a.pivot) < 1e-9);
+        if (s == grapple::AimStyle::Shoulder)
+            CHECK(glm::length(pivot - a.anchor) < 1e-9);
+        if (s == grapple::AimStyle::Extend)
+            CHECK(glm::length(pivot - a.anchor) == doctest::Approx(55.0));
+        if (s == grapple::AimStyle::Guard)
+            CHECK(pivot.y < a.anchor.y + (a.target.y - a.anchor.y) * 55.0 / glm::length(a.target - a.anchor) - 9.0);
+    }
+}
+
+TEST_CASE("grapple: a figure's own effectors solve it with no contact")
+{
+    twoBipeds();
+    std::vector<NodeId> ja;
+    grapple::Figure f = figureOf("a_root", ja);
+    const int hand = boneOf(ja, under("a_root", "hand_r"));
+    const glm::dvec3 was = at(animatedOf(f)[size_t(hand)]);
+    const glm::dvec3 want = was + glm::dvec3(5.0, 8.0, 12.0);
+    f.problem.effectors.push_back({.bone = hand, .position = want});
+    grapple::Options o;
+    o.collide = false;
+    o.autoPose = false;
+    const grapple::Result r = grapple::solve({f}, {}, o);
+    REQUIRE(r.poses.size() == 1);
+    CHECK(glm::length(at(posed(f, r.poses[0])[size_t(hand)]) - want) < 0.05);
+}
+
+TEST_CASE("grapple: a frame contact holds the source's grip on a moving transform riding the target")
+{
+    twoBipeds();
+    Graph& g = graph();
+    const std::string handR = under("a_root", "hand_r"), handL = under("a_root", "hand_l");
+    // A point riding the right hand 20 cm in front of it; the left hand's grip held there.
+    run("spaceLocator", {{"name", "grip"}});
+    run("parent", {{"args", {"grip", handR}}});
+    const std::string gripPath = g.path(g.find("grip")->id());
+    run("setAttr", {{"args", {gripPath + ".translate", 0.0, 0.0, 20.0}}});
+    const std::string grapple = run("grappleAim", {{"args", {handR, gripPath}}, {"axis", gripPath}, {"blend", 0.0}}).at("grapple");
+    // Aims are not what this checks: switch it off and make the contact by hand.
+    for (NodeId a : grapple::aimsOf(g, g.find(grapple)->id()))
+        run("setAttr", {{"args", {g.path(a) + ".enabled", false}}});
+    const std::string c = run("grappleContact", {{"args", {handL, handR}}, {"blend", 0.0}, {"grapple", grapple}}).at("contact");
+    run("setAttr", {{"args", {c + ".frame", gripPath}}});
+    const glm::dmat4 offset = glm::translate(glm::dmat4(1.0), glm::dvec3(0.0, -3.0, 0.0));
+    g.setValue(g.plug(c + ".gripOffset"), offset);
+    run("bakeGrapple", {{"args", {grapple}}});
+    g.evaluate();
+    const glm::dmat4 left = world(handL);
+    const glm::dvec3 gripAt = at(left, glm::dvec3(offset[3]));
+    CHECK(glm::length(gripAt - pos(gripPath)) < 0.5);
+    CHECK(grapple::contactFollowsFrame(g, g.find(c)->id()));
+    // Both arms shared the reach: the right hand came toward the left too.
+    CHECK(pos(handR).x > -60.0);
+}

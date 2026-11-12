@@ -7,6 +7,7 @@
 #include "scene/DominantInfluence.h"
 #include "scene/Graph.h"
 #include "geo/Mesh.h"
+#include "math/MathCore.h"
 #include "scene/Rig.h"
 #include "scene/RigElements.h"
 #include "scene/RigUtil.h"
@@ -225,6 +226,75 @@ std::optional<double> rayCapsule(const glm::dvec3& origin, const glm::dvec3& dir
     return best;
 }
 
+namespace
+{
+glm::dquat turnBetween(const glm::dvec3& from, const glm::dvec3& to)
+{
+    const glm::dvec3 a = glm::normalize(from), b = glm::normalize(to);
+    const double d = glm::dot(a, b);
+    if (d > 1.0 - 1e-12)
+        return glm::dquat(1.0, 0.0, 0.0, 0.0);
+    if (d < -1.0 + 1e-12)
+    {
+        glm::dvec3 axis = glm::cross(a, glm::dvec3(1.0, 0.0, 0.0));
+        if (glm::length2(axis) < 1e-8)
+            axis = glm::cross(a, glm::dvec3(0.0, 1.0, 0.0));
+        return glm::angleAxis(3.14159265358979323846, glm::normalize(axis));
+    }
+    return glm::normalize(glm::dquat(1.0 + d, glm::cross(a, b)));
+}
+
+/** Where the pivot goes for the aim's style. */
+glm::dvec3 aimedPivot(const Aim& a)
+{
+    switch (a.style)
+    {
+    case AimStyle::Turn: return a.pivot;
+    case AimStyle::Shoulder: return a.anchor;
+    case AimStyle::Extend:
+    case AimStyle::Guard:
+    {
+        const glm::dvec3 to = a.target - a.anchor;
+        const double l = glm::length(to);
+        glm::dvec3 p = a.anchor + (l > 1e-9 ? to / l : glm::dvec3(0.0)) * a.reach;
+        if (a.style == AimStyle::Guard)
+            p -= glm::normalize(a.up) * a.drop;
+        return p;
+    }
+    }
+    return a.pivot;
+}
+} // namespace
+
+glm::dmat4 aimHolder(const Aim& a)
+{
+    const glm::dvec3 placed = aimedPivot(a);
+    const glm::dvec3 origin(a.axis[3]), axis = glm::normalize(glm::dvec3(a.axis[0]));
+    // The aimed line starts off the pivot (a barrel above a stock), so the turn is refined a few times.
+    glm::dquat turn(1.0, 0.0, 0.0, 0.0);
+    for (int i = 0; i < 6; ++i)
+    {
+        const glm::dvec3 o = placed + turn * (origin - a.pivot);
+        const glm::dvec3 want = a.target - o;
+        if (glm::length2(want) < 1e-12)
+            break;
+        turn = glm::normalize(turnBetween(turn * axis, want) * turn);
+    }
+    const glm::dmat4 move = glm::translate(glm::dmat4(1.0), placed) * glm::dmat4(glm::mat3_cast(turn)) * glm::translate(glm::dmat4(1.0), -a.pivot);
+    return move * a.holder;
+}
+
+double aimError(const Aim& a, const glm::dmat4& holder)
+{
+    const glm::dmat4 move = holder * glm::inverse(a.holder);
+    const glm::dmat4 axis = move * a.axis;
+    const glm::dvec3 want = a.target - glm::dvec3(axis[3]);
+    if (glm::length2(want) < 1e-12)
+        return 0.0;
+    const double c = glm::dot(glm::normalize(glm::dvec3(axis[0])), glm::normalize(want));
+    return glm::degrees(std::acos(std::clamp(c, -1.0, 1.0)));
+}
+
 Result solve(const std::vector<Figure>& figures, const std::vector<Link>& links, const Options& o)
 {
     LILA_ZONE();
@@ -346,6 +416,8 @@ Result solve(const std::vector<Figure>& figures, const std::vector<Link>& links,
         std::vector<bool> moved(n, false);
         for (size_t i = 0; i < n; ++i)
         {
+            // A figure's own effectors (pins and aims the caller set) solve it even with no contact on it.
+            moved[i] = !figures[i].problem.effectors.empty();
             problems[i] = figures[i].problem;
             for (size_t k = 0; k < problems[i].bones.size(); ++k)
             {
@@ -807,6 +879,22 @@ std::vector<NodeId> contactsOf(Graph& g, NodeId grapple)
     return out;
 }
 
+std::vector<NodeId> aimsOf(Graph& g, NodeId grapple)
+{
+    std::vector<NodeId> out;
+    for (NodeId c : g.children(grapple))
+        if (Node* n = g.node(c); n && n->type().isA(kAimType))
+            out.push_back(c);
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+bool contactFollowsFrame(Graph& g, NodeId contact)
+{
+    Node* c = g.node(contact);
+    return c && isContact(*c) && attrIndex(*c, "frame") >= 0 && !text(*c, "frame").empty();
+}
+
 NodeId grappleOf(Graph& g, NodeId node)
 {
     for (NodeId c = node; c; c = g.parent(c))
@@ -828,6 +916,15 @@ std::pair<NodeId, NodeId> contactJoints(Graph& g, NodeId contact)
 std::pair<glm::dvec3, glm::dvec3> contactPoints(Graph& g, NodeId contact)
 {
     const auto [s, t] = contactJoints(g, contact);
+    if (s && contactFollowsFrame(g, contact))
+    {
+        const Node& c = *g.node(contact);
+        Node* f = named(g, text(c, "frame"));
+        if (!f)
+            return {positionOf(*g.node(s)), positionOf(*g.node(s))};
+        const glm::dmat4 grip = c.as<glm::dmat4>(attrIndex(c, "gripOffset"));
+        return {pointOn(worldOf(*g.node(s)), glm::dvec3(grip[3])), positionOf(*f)};
+    }
     if (!s || !t)
         return {glm::dvec3(0.0), glm::dvec3(0.0)};
     return {positionOf(*g.node(s)), pointOn(rigid(worldOf(*g.node(t))), vec(*g.node(contact), "point"))};
@@ -873,7 +970,56 @@ struct LinkRig
     NodeId node = kNoNode;
     int weightAttr = -1;
     Link link;
+    /** Frame mode: the transform the source's grip matches each frame, and that grip in the source joint's space. */
+    NodeId frame = kNoNode;
+    glm::dmat4 grip{1.0};
+    NodeId targetJoint = kNoNode;
 };
+
+/** A pose one bone is pinned to each frame, blended in by a keyable weight: a contact held in the world, or an aim. */
+struct PinRig
+{
+    NodeId node = kNoNode;
+    int weightAttr = -1;
+    int figure = -1, bone = -1;
+    NodeId joint = kNoNode;
+    bool aim = false;
+    // Contact in the world:
+    NodeId frame = kNoNode;
+    glm::dmat4 grip{1.0};
+    // Aim:
+    NodeId axis = kNoNode, pivot = kNoNode, target = kNoNode, anchor = kNoNode;
+    AimStyle style = AimStyle::Turn;
+    double reach = 50.0, drop = 0.0;
+    /** Shoulder: the joint carrying the anchor, held as animated so the stock and the shoulder stay together. */
+    int anchorBone = -1;
+};
+
+constexpr size_t kPinInputs = 8;
+
+enum AimStyleIndex : int64_t
+{
+    kAimTurn,
+    kAimShoulder,
+    kAimExtend,
+    kAimGuard,
+};
+
+/** cm along the joints from anchor down to joint; 0 when anchor isn't above it. */
+double chainLength(Graph& g, NodeId anchor, NodeId joint)
+{
+    double l = 0.0;
+    for (NodeId j = joint; j; j = g.parent(j))
+    {
+        if (j == anchor)
+            return l;
+        const NodeId p = g.parent(j);
+        if (!p || !g.node(p) || g.node(p)->type().attrIndex("worldMatrix") < 0)
+            return 0.0;
+        l += glm::length(positionOf(*g.node(j)) - positionOf(*g.node(p)));
+    }
+    return 0.0;
+}
 
 constexpr size_t kBoneInputs = 36;
 
@@ -931,6 +1077,7 @@ public:
         std::vector<FigureSetup> stored = figuresOf(g, mNode);
         mFigures.clear();
         mLinks.clear();
+        mPins.clear();
         auto figureFor = [&](NodeId joint) -> int {
             const NodeId root = skeletonRoot(g, joint);
             for (size_t i = 0; i < mFigures.size(); ++i)
@@ -958,11 +1105,47 @@ public:
             if (!flag(cn, "enabled", true))
                 continue;
             const auto [s, t] = contactJoints(g, c);
-            if (!s || !t)
+            const bool framed = contactFollowsFrame(g, c);
+            if (!s || (!t && !framed))
                 continue;
+            NodeId frame = kNoNode;
+            glm::dmat4 grip(1.0);
+            if (framed)
+            {
+                Node* f = named(g, text(cn, "frame"));
+                if (!f || attrIndex(*f, "worldMatrix") < 0)
+                    continue;
+                frame = f->id();
+                grip = cn.as<glm::dmat4>(attrIndex(cn, "gripOffset"));
+                const std::string fp = fullPath(g, frame);
+                h = sim::hashBytes(fp.data(), fp.size(), h);
+                h = sim::hashBytes(&grip, sizeof grip, h);
+            }
+            if (framed && !t)
+            {
+                PinRig p;
+                p.node = c;
+                p.weightAttr = attrIndex(cn, "weight");
+                p.figure = figureFor(s);
+                const FigureRig& fs = mFigures[size_t(p.figure)];
+                const auto sb = std::find(fs.joints.begin(), fs.joints.end(), s);
+                if (sb == fs.joints.end())
+                    continue;
+                p.bone = int(sb - fs.joints.begin());
+                p.joint = s;
+                p.frame = frame;
+                p.grip = grip;
+                const std::string sp = text(cn, "source");
+                h = sim::hashBytes(sp.data(), sp.size(), h);
+                mPins.push_back(p);
+                continue;
+            }
             LinkRig l;
             l.node = c;
             l.weightAttr = attrIndex(cn, "weight");
+            l.frame = frame;
+            l.grip = grip;
+            l.targetJoint = t;
             l.link.source = figureFor(s);
             l.link.target = figureFor(t);
             const FigureRig &fs = mFigures[size_t(l.link.source)], &ft = mFigures[size_t(l.link.target)];
@@ -974,7 +1157,9 @@ public:
             // The point rides the target joint rigidly; the solve's bone frames carry the joint's scale.
             const glm::dmat4 tw = worldOf(*g.node(t));
             l.link.targetPoint = pointOn(glm::inverse(tw), pointOn(rigid(tw), vec(cn, "point")));
-            if (flag(cn, "orient"))
+            if (framed)
+                l.link.rotation = glm::dquat(1.0, 0.0, 0.0, 0.0);
+            else if (flag(cn, "orient"))
                 l.link.rotation = glm::normalize(glm::quat_cast(glm::dmat3(eulerToMatrix(vec(cn, "rotation"), RotateOrder::XYZ))));
             const double ms = fs.setup.mass, mt = ft.setup.mass;
             switch (whole(cn, "lead"))
@@ -991,6 +1176,52 @@ public:
                 h = sim::hashBytes(&v, sizeof v, h);
             mLinks.push_back(l);
         }
+        for (NodeId aimNode : aimsOf(g, mNode))
+        {
+            const Node& an = *g.node(aimNode);
+            if (!flag(an, "enabled", true))
+                continue;
+            Node* joint = named(g, text(an, "joint"));
+            Node* axis = named(g, text(an, "axis"));
+            Node* target = named(g, text(an, "target"));
+            if (!joint || !rig::isJoint(*joint) || !axis || !target || attrIndex(*axis, "worldMatrix") < 0 || attrIndex(*target, "worldMatrix") < 0)
+                continue;
+            Node* pivot = named(g, text(an, "pivot"));
+            Node* anchor = named(g, text(an, "anchor"));
+            PinRig p;
+            p.node = aimNode;
+            p.aim = true;
+            p.weightAttr = attrIndex(an, "weight");
+            p.figure = figureFor(joint->id());
+            const FigureRig& fs = mFigures[size_t(p.figure)];
+            const auto jb = std::find(fs.joints.begin(), fs.joints.end(), joint->id());
+            if (jb == fs.joints.end())
+                continue;
+            p.bone = int(jb - fs.joints.begin());
+            p.joint = joint->id();
+            p.axis = axis->id();
+            p.target = target->id();
+            p.pivot = pivot && attrIndex(*pivot, "worldMatrix") >= 0 ? pivot->id() : axis->id();
+            p.anchor = anchor && attrIndex(*anchor, "worldMatrix") >= 0 ? anchor->id() : kNoNode;
+            const int64_t style = std::clamp<int64_t>(whole(an, "style"), kAimTurn, kAimGuard);
+            p.style = p.anchor ? AimStyle(style) : AimStyle::Turn;
+            p.reach = num(an, "reach", 0.0);
+            if (p.reach <= 0.0 && p.anchor)
+                p.reach = 0.9 * chainLength(g, p.anchor, p.joint);
+            p.drop = num(an, "drop", 0.0);
+            if (p.style == AimStyle::Shoulder)
+                for (NodeId j = p.anchor; j && p.anchorBone < 0; j = g.parent(j))
+                    if (const auto it = std::find(fs.joints.begin(), fs.joints.end(), j); it != fs.joints.end())
+                        p.anchorBone = int(it - fs.joints.begin());
+            for (const char* k : {"joint", "axis", "target", "pivot", "anchor"})
+            {
+                const std::string v = text(an, k);
+                h = sim::hashBytes(v.data(), v.size(), h);
+            }
+            for (double v : {double(style), p.reach, p.drop})
+                h = sim::hashBytes(&v, sizeof v, h);
+            mPins.push_back(p);
+        }
 
         sim::Setup su;
         su.startFrame = whole(*gn, "startFrame", 0);
@@ -1005,7 +1236,15 @@ public:
         su.layout.push_back({sim::Channel::Ignore, uint32_t(outputs * 16 + 3)});
         su.sources.push_back(mNode);
         for (const LinkRig& l : mLinks)
+        {
             su.sources.push_back(l.node);
+            if (l.frame)
+                su.sources.push_back(l.frame);
+        }
+        for (const PinRig& p : mPins)
+            for (NodeId n : {p.node, p.frame, p.axis, p.pivot, p.target, p.anchor})
+                if (n && std::find(su.sources.begin(), su.sources.end(), n) == su.sources.end())
+                    su.sources.push_back(n);
         su.reads = su.outputs;
         su.reads.insert(su.reads.end(), su.sources.begin(), su.sources.end());
         su.paramsHash = h;
@@ -1032,6 +1271,41 @@ public:
         }
         for (const LinkRig& l : mLinks)
             in.push_back(l.weightAttr >= 0 ? std::get<double>(g.value({l.node, l.weightAttr, -1})) : 1.0);
+        for (const LinkRig& l : mLinks)
+            if (l.frame)
+            {
+                // Where the grip puts the source, against the target joint as animated.
+                const glm::dmat4 want = rigid(worldOf(*g.node(l.frame))) * glm::inverse(l.grip);
+                const glm::dmat4 tw = worldOf(*g.node(l.targetJoint));
+                const glm::dvec3 p = pointOn(glm::inverse(tw), glm::dvec3(want[3]));
+                const glm::dquat q = glm::normalize(glm::conjugate(rotationOf(tw)) * rotationOf(want));
+                in.insert(in.end(), {p.x, p.y, p.z, q.w, q.x, q.y, q.z});
+            }
+        for (const PinRig& p : mPins)
+        {
+            const double w = std::clamp(p.weightAttr >= 0 ? std::get<double>(g.value({p.node, p.weightAttr, -1})) : 1.0, 0.0, 1.0);
+            const glm::dmat4 now = worldOf(*g.node(p.joint));
+            glm::dmat4 want;
+            if (p.aim)
+            {
+                Aim a;
+                a.holder = now;
+                a.axis = rigid(worldOf(*g.node(p.axis)));
+                a.pivot = positionOf(*g.node(p.pivot));
+                a.target = positionOf(*g.node(p.target));
+                a.style = p.style;
+                a.anchor = p.anchor ? positionOf(*g.node(p.anchor)) : a.pivot;
+                a.reach = p.reach;
+                a.drop = p.drop;
+                a.up = math::axisBasis().up;
+                want = aimHolder(a);
+            }
+            else
+                want = rigid(worldOf(*g.node(p.frame))) * glm::inverse(p.grip);
+            const glm::dvec3 at = glm::mix(glm::dvec3(now[3]), glm::dvec3(want[3]), w);
+            const glm::dquat q = glm::normalize(glm::slerp(rotationOf(now), rotationOf(want), w));
+            in.insert(in.end(), {at.x, at.y, at.z, q.w, q.x, q.y, q.z, w});
+        }
     }
 
     void reset(const std::vector<double>& in, std::vector<double>& state) override { solveFrame(in, state); }
@@ -1122,8 +1396,46 @@ private:
             k.weight = mEnabled ? std::clamp(in[at++], 0.0, 1.0) : 0.0;
             links.push_back(k);
         }
+        for (size_t c = 0; c < mLinks.size(); ++c)
+            if (mLinks[c].frame)
+            {
+                links[c].targetPoint = glm::dvec3(in[at], in[at + 1], in[at + 2]);
+                links[c].rotation = glm::normalize(glm::dquat(in[at + 3], in[at + 4], in[at + 5], in[at + 6]));
+                at += 7;
+            }
+        struct Pinned
+        {
+            size_t figure, bone;
+            glm::dvec3 position;
+        };
+        std::vector<Pinned> pinned;
+        for (const PinRig& p : mPins)
+        {
+            const double w = mEnabled ? in[at + 7] : 0.0;
+            if (w > 1e-9)
+            {
+                const glm::dvec3 pos(in[at], in[at + 1], in[at + 2]);
+                figures[size_t(p.figure)].problem.effectors.push_back(
+                    {.bone = p.bone, .position = pos, .rotation = glm::normalize(glm::dquat(in[at + 3], in[at + 4], in[at + 5], in[at + 6]))});
+                pinned.push_back({size_t(p.figure), size_t(p.bone), pos});
+                if (p.anchorBone >= 0)
+                {
+                    const fbik::Problem& fp = figures[size_t(p.figure)].problem;
+                    std::vector<glm::dquat> rot;
+                    for (const fbik::Bone& b : fp.bones)
+                        rot.push_back(b.rotation);
+                    const glm::dmat4 shoulder = fbik::forward(fp, rot, std::vector<glm::dvec3>(rot.size(), glm::dvec3(0.0)))[size_t(p.anchorBone)];
+                    figures[size_t(p.figure)].problem.effectors.push_back({.bone = p.anchorBone, .position = glm::dvec3(shoulder[3]), .rotation = rotationOf(shoulder), .weight = w});
+                }
+                // A bone an aim pins carries what it holds where the aim says, so contacts riding it reach the rest of the way.
+                for (Link& k : links)
+                    if (k.target == p.figure && k.targetBone == p.bone)
+                        k.share *= 1.0 - w;
+            }
+            at += kPinInputs;
+        }
         Result r;
-        const bool any = mEnabled && std::ranges::any_of(links, [](const Link& l) { return l.weight > 1e-9; });
+        const bool any = mEnabled && (!pinned.empty() || std::ranges::any_of(links, [](const Link& l) { return l.weight > 1e-9; }));
         if (mEnabled && (any || mOptions.collide))
             r = solve(figures, links, mOptions);
         size_t o = 0;
@@ -1148,7 +1460,15 @@ private:
                 ++o;
             }
         }
-        state[mOutputs * 16] = r.contactError;
+        double pinError = 0.0;
+        for (const Pinned& p : pinned)
+        {
+            size_t first = 0;
+            for (size_t i = 0; i < p.figure; ++i)
+                first += figures[i].problem.bones.size();
+            pinError = std::max(pinError, glm::length(glm::dvec3(getMatrix(&state[(first + p.bone) * 16])[3]) - p.position));
+        }
+        state[mOutputs * 16] = std::max(r.contactError, pinError);
         state[mOutputs * 16 + 1] = r.penetration;
         state[mOutputs * 16 + 2] = double(r.iterations);
     }
@@ -1158,6 +1478,7 @@ private:
     Options mOptions;
     std::vector<FigureRig> mFigures;
     std::vector<LinkRig> mLinks;
+    std::vector<PinRig> mPins;
     size_t mOutputs = 0;
 };
 
@@ -1225,8 +1546,31 @@ void registerTypes()
         choice("lead", kLeadAuto, {"auto", "source", "target", "even"},
                "Who yields: auto shares the gap by mass, source brings the target to it, target makes the source reach, even splits it."),
         bounded(attr("stiffness", PlugType::Float, 12.0, AttrKeyable, "Physics: the contact's spring frequency, Hz, at full weight."), 0.0),
+        attr("frame", PlugType::String, std::string(), 0,
+             "A transform the source's grip matches every frame (a grip point on a prop), riding the target joint, or the world "
+             "with no target. Empty uses point and rotation."),
+        attr("gripOffset", PlugType::Matrix, glm::dmat4(1.0), AttrHidden, "The source's grip in its own joint's space, for frame."),
     };
-    for (NodeType* t : {&grapple, &contact})
+
+    NodeType aim{.name = kAimType, .base = transform, .dag = true,
+                 .doc = "A grapple aim: turns what a joint holds so an axis on it points at a target, moving the joint and the "
+                        "body with it, blended in and out by its keyable weight.",
+                 .icon = "target-arrow", .create = transform->create};
+    aim.ownAttrs = {
+        attr("enabled", PlugType::Bool, true, 0, "Take part in the solve."),
+        attr("joint", PlugType::String, std::string(), 0, "The joint that holds what is aimed (a hand)."),
+        attr("axis", PlugType::String, std::string(), 0, "The transform whose +X is aimed: a muzzle, a blade's tip."),
+        attr("pivot", PlugType::String, std::string(), 0, "The transform the held thing turns about: a stock, a grip. Empty: axis."),
+        attr("target", PlugType::String, std::string(), 0, "The transform aimed at."),
+        choice("style", kAimTurn, {"turn", "shoulder", "extend", "guard"},
+               "turn about the pivot where it is; shoulder puts the pivot on the anchor; extend holds it out from the anchor toward "
+               "the target; guard as extend, dropped below the line."),
+        attr("anchor", PlugType::String, std::string(), 0, "The joint shoulder, extend and guard place the pivot from (a shoulder)."),
+        bounded(attr("reach", PlugType::Float, 0.0, 0, "Extend and guard: cm from the anchor to the pivot. 0: 0.9 of the arm."), 0.0),
+        attr("drop", PlugType::Float, 0.0, 0, "Guard: cm the pivot sits below the line to the target."),
+        bounded(attr("weight", PlugType::Float, 1.0, AttrKeyable, "0 leaves the holder as animated, 1 aims fully. Key it to blend."), 0.0, 1.0),
+    };
+    for (NodeType* t : {&grapple, &contact, &aim})
     {
         // Contact points live in their target joint's space and figures' capsules in their joints': nothing is world space.
         relocate::registerNeutral(t->name);
@@ -1352,8 +1696,20 @@ json contactJson(Graph& g, NodeId c)
 {
     const Node& n = *g.node(c);
     static const char* kLeads[] = {"auto", "source", "target", "even"};
-    return {{"contact", g.path(c)}, {"source", text(n, "source")}, {"target", text(n, "target")}, {"weight", num(n, "weight")},
-            {"orient", flag(n, "orient")}, {"lead", kLeads[std::clamp<int64_t>(whole(n, "lead"), 0, 3)]}, {"enabled", flag(n, "enabled", true)}};
+    json out = {{"contact", g.path(c)}, {"source", text(n, "source")}, {"target", text(n, "target")}, {"weight", num(n, "weight")},
+                {"orient", flag(n, "orient")}, {"lead", kLeads[std::clamp<int64_t>(whole(n, "lead"), 0, 3)]}, {"enabled", flag(n, "enabled", true)}};
+    if (contactFollowsFrame(g, c))
+        out["frame"] = text(n, "frame");
+    return out;
+}
+
+json aimJson(Graph& g, NodeId n)
+{
+    const Node& a = *g.node(n);
+    static const char* kStyles[] = {"turn", "shoulder", "extend", "guard"};
+    return {{"aim", g.path(n)},       {"joint", text(a, "joint")},   {"axis", text(a, "axis")},
+            {"pivot", text(a, "pivot")}, {"target", text(a, "target")}, {"anchor", text(a, "anchor")},
+            {"style", kStyles[std::clamp<int64_t>(whole(a, "style"), 0, 3)]}, {"weight", num(a, "weight")}, {"enabled", flag(a, "enabled", true)}};
 }
 
 json figuresJson(Graph& g, NodeId grapple)
@@ -1500,6 +1856,89 @@ void registerCommands()
     });
 
     ops::registerCommand({
+        .name = "grappleAim",
+        .doc = "Aim what a joint holds at a target: the axis (a muzzle, a blade's tip; its +X) is turned onto the target about the "
+               "pivot, moving the joint and, through the grapple's solve, the arms and body with it. style places the pivot first: "
+               "shoulder on the anchor (rifles, launchers), extend out toward the target (pistols), guard below that line (blades). "
+               "Key weight to blend it. Returns the aim.",
+        .positionalDoc = "holding joint, target",
+        .flags = {
+            nodeFlag({"axis", "ax", T::String, nullptr, "The transform whose +X is aimed."}, "transform"),
+            nodeFlag({"pivot", "pv", T::String, nullptr, "The transform turned about. Default: axis."}, "transform"),
+            {"style", "s", T::String, "turn", "turn, shoulder, extend or guard.", {"turn", "shoulder", "extend", "guard"}},
+            nodeFlag({"anchor", "an", T::String, nullptr, "Shoulder, extend, guard: the joint or point the pivot is placed from."}, "transform"),
+            {"reach", "r", T::Float, 0.0, "Extend, guard: cm from the anchor. 0: 0.9 of the arm.", {}, {}, 0.0},
+            {"drop", "d", T::Float, 0.0, "Guard: cm below the line to the target."},
+            nodeFlag({"grapple", "g", T::String, nullptr, "The grapple to add it to. Default: the one holding the character, else a new one."}, kType),
+            {"time", "t", T::Float, nullptr, "Seconds the aim comes on at. Default: now."},
+            {"blend", "b", T::Float, 0.2, "Seconds it blends in over. 0 makes it on at every time.", {}, {}, 0.0},
+            {"name", "n", T::String, nullptr, "Name for the aim."},
+        },
+        .run = [](const Args& a) -> json {
+            Graph& g = graph();
+            const std::vector<std::string> objs = a.objects();
+            if (objs.size() != 2)
+                throw CommandError("grappleAim: give the holding joint and the target");
+            const NodeId joint = jointArg(objs[0], "grappleAim").id();
+            const NodeId target = nodeNamed(objs[1], "grappleAim").id();
+            if (!a.has("axis"))
+                throw CommandError("grappleAim: give axis, the transform whose +X is aimed");
+            const NodeId axis = nodeNamed(a.get<std::string>("axis"), "grappleAim").id();
+            const std::string style = a.get<std::string>("style", "turn");
+            static const std::vector<std::string> kStyles = {"turn", "shoulder", "extend", "guard"};
+            const auto si = std::find(kStyles.begin(), kStyles.end(), style);
+            if (si == kStyles.end())
+                throw CommandError("grappleAim: style is turn, shoulder, extend or guard");
+            if (style != "turn" && !a.has("anchor"))
+                throw CommandError("grappleAim: " + style + " needs anchor, the joint the pivot is placed from");
+            const NodeId root = skeletonRoot(g, joint);
+            NodeId grapple = kNoNode;
+            if (a.has("grapple"))
+            {
+                Node& n = nodeNamed(a.get<std::string>("grapple"), "grappleAim");
+                if (!isGrapple(n))
+                    throw CommandError("grappleAim: " + n.path() + " is not a grapple");
+                grapple = n.id();
+            }
+            else
+                for (NodeId id : g.nodes())
+                    if (isGrapple(*g.node(id)))
+                        for (const FigureSetup& f : figuresOf(g, id))
+                            if (!grapple && f.root == root)
+                                grapple = id;
+            if (!grapple)
+                grapple = g.createNode(*types::find(kType), "grapple1")->id();
+            ensureFigures(g, grapple, {root});
+            std::string name = a.has("name") ? a.get<std::string>("name") : g.node(joint)->name() + "_aim";
+            std::replace(name.begin(), name.end(), ':', '_');
+            const NodeId n = g.createNode(*types::find(kAimType), name, grapple)->id();
+            setAttr(g, n, "joint", fullPath(g, joint));
+            setAttr(g, n, "axis", fullPath(g, axis));
+            setAttr(g, n, "target", fullPath(g, target));
+            if (a.has("pivot"))
+                setAttr(g, n, "pivot", fullPath(g, nodeNamed(a.get<std::string>("pivot"), "grappleAim").id()));
+            if (a.has("anchor"))
+                setAttr(g, n, "anchor", fullPath(g, nodeNamed(a.get<std::string>("anchor"), "grappleAim").id()));
+            setAttr(g, n, "style", int64_t(si - kStyles.begin()));
+            setAttr(g, n, "reach", a.get<double>("reach", 0.0));
+            setAttr(g, n, "drop", a.get<double>("drop", 0.0));
+            const double blend = a.get<double>("blend", 0.2);
+            if (blend > 0.0)
+            {
+                const double time = a.has("time") ? a.get<double>("time") : g.time();
+                const PlugRef plug{n, attrIndex(*g.node(n), "weight"), -1};
+                anim::setKey(g, plug, time - blend, 0.0);
+                anim::setKey(g, plug, time, 1.0);
+            }
+            g.evaluate();
+            json out = aimJson(g, n);
+            out["grapple"] = g.path(grapple);
+            return out;
+        },
+        .examples = {"grappleAim(\"hand_r\", \"target1\", axis=\"rifle_muzzle\", pivot=\"rifle_stock\", style=\"shoulder\", anchor=\"upperarm_r\")"},
+    });
+
+    ops::registerCommand({
         .name = "grappleFigure",
         .doc = "A character's settings in its grapple: its mass (who yields: the heavier side moves less) and whether its feet stay "
                "where the animation plants them. Returns every figure of the grapple.",
@@ -1630,7 +2069,10 @@ void registerCommands()
             json contacts = json::array();
             for (NodeId c : contactsOf(g, grapple))
                 contacts.push_back(contactJson(g, c));
-            json out = {{"grapple", g.path(grapple)}, {"figures", figuresJson(g, grapple)}, {"contacts", contacts}};
+            json aims = json::array();
+            for (NodeId n : aimsOf(g, grapple))
+                aims.push_back(aimJson(g, n));
+            json out = {{"grapple", g.path(grapple)}, {"figures", figuresJson(g, grapple)}, {"contacts", contacts}, {"aims", aims}};
             const std::vector<std::string> layers = recordedLayers(g, grapple);
             out["layer"] = layers.empty() ? json(nullptr) : json(layers.back());
             try

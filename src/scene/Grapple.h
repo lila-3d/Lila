@@ -33,6 +33,8 @@ namespace lila::scene::grapple
 {
 inline constexpr const char* kType = "grapple";
 inline constexpr const char* kContactType = "grappleContact";
+/** An aim: turns what a joint holds so an axis points at a target, the body following through the solve. */
+inline constexpr const char* kAimType = "grappleAim";
 
 /** A collision capsule riding a bone: the segment a to b in the bone's space, cm. */
 struct Capsule
@@ -108,6 +110,40 @@ LILA_SCENE_API std::pair<glm::dvec3, glm::dvec3> closestPoints(const glm::dvec3&
 /** Distance along a ray to a capsule's surface; none for a miss. */
 LILA_SCENE_API std::optional<double> rayCapsule(const glm::dvec3& origin, const glm::dvec3& dir, const glm::dvec3& a, const glm::dvec3& b, double radius);
 
+/** How an aim places what it turns. */
+enum class AimStyle
+{
+    Turn,     // turns about the pivot where it is
+    Shoulder, // the pivot goes to the anchor (a stock to the shoulder), then turns
+    Extend,   // the pivot goes out from the anchor toward the target by reach (a pistol at arm's length)
+    Guard,    // as Extend, dropped below the line to the target (a blade held in guard)
+};
+
+/** One aim's pose at a frame, world space. */
+struct Aim
+{
+    /** The holding joint's world matrix as animated. */
+    glm::dmat4 holder{1.0};
+    /** The frame whose +X is aimed (a muzzle, a blade's tip); its origin lies on the aimed line. */
+    glm::dmat4 axis{1.0};
+    /** The point the held thing turns about (a stock, a grip). */
+    glm::dvec3 pivot{0.0};
+    glm::dvec3 target{0.0, 0.0, 1000.0};
+    AimStyle style = AimStyle::Turn;
+    /** Shoulder: where the pivot goes. Extend and Guard: where reach is measured from. */
+    glm::dvec3 anchor{0.0};
+    /** Extend and Guard: cm from the anchor to the pivot. */
+    double reach = 50.0;
+    /** Guard: cm the pivot sits below the line from the anchor to the target. */
+    double drop = 0.0;
+    glm::dvec3 up{0.0, 1.0, 0.0};
+};
+
+/** The holder's world matrix with the aim fully on: the held thing moved and turned rigidly with it. Pure. */
+LILA_SCENE_API glm::dmat4 aimHolder(const Aim& a);
+/** How far off the target the aimed axis points with the holder at holder, degrees. Pure. */
+LILA_SCENE_API double aimError(const Aim& a, const glm::dmat4& holder);
+
 /** Solves the figures together. Pure. */
 LILA_SCENE_API Result solve(const std::vector<Figure>& figures, const std::vector<Link>& links, const Options& options = {});
 
@@ -158,6 +194,8 @@ LILA_SCENE_API void setFigures(Graph& g, NodeId grapple, const std::vector<Figur
 LILA_SCENE_API std::vector<NodeId> contactsOf(Graph& g, NodeId grapple);
 /** The grapple a contact (or the grapple itself) belongs to; kNoNode otherwise. */
 LILA_SCENE_API NodeId grappleOf(Graph& g, NodeId node);
+/** The grapple's aims, in id order. */
+LILA_SCENE_API std::vector<NodeId> aimsOf(Graph& g, NodeId grapple);
 /** A contact's source and target joints; kNoNode where the named joint is gone. */
 LILA_SCENE_API std::pair<NodeId, NodeId> contactJoints(Graph& g, NodeId contact);
 /** World points of a contact now: the source's point and the target point it is held to. */
@@ -173,6 +211,13 @@ struct PosedCapsule
 LILA_SCENE_API std::vector<PosedCapsule> posedCapsules(Graph& g, const FigureSetup& figure);
 
 LILA_SCENE_API void registerTypes();
-/** grappleContact, grappleKey, grappleFigure, fitGrappleBodies, bakeGrapple, grappleInfo. */
+/**
+ * A contact's frame mode: with its frame attr naming a transform, the source is held each frame so its grip (gripOffset,
+ * in the source joint's space) matches that transform's world frame: riding the target joint when it has one, else in
+ * the world. For hands on props whose grips move with the animation.
+ */
+LILA_SCENE_API bool contactFollowsFrame(Graph& g, NodeId contact);
+
+/** grappleContact, grappleKey, grappleAim, grappleFigure, fitGrappleBodies, bakeGrapple, grappleInfo. */
 LILA_SCENE_API void registerCommands();
 } // namespace lila::scene::grapple
