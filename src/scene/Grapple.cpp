@@ -16,6 +16,7 @@
 #include "scene/TransformOps.h"
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <tbb/parallel_for.h>
 #include <glm/gtx/norm.hpp>
 #include <glm/gtx/quaternion.hpp>
 
@@ -391,10 +392,10 @@ Result solve(const std::vector<Figure>& figures, const std::vector<Link>& links,
             moved[size_t(fi)] = moved[size_t(fj)] = true;
         }
 
-        for (size_t i = 0; i < n; ++i)
-        {
+        // Each figure's solve reads only this round's targets, so they run side by side and come out the same in any order.
+        tbb::parallel_for(size_t(0), n, [&](size_t i) {
             if (!moved[i])
-                continue;
+                return;
             fbik::Problem& p = problems[i];
             for (int h : figures[i].holds)
                 if (h >= 0 && size_t(h) < p.bones.size())
@@ -425,7 +426,7 @@ Result solve(const std::vector<Figure>& figures, const std::vector<Link>& links,
             const fbik::Solution s = fbik::solve(p);
             w[i].pose = s;
             w[i].world = fbik::forward(figures[i].problem, s.rotation, s.offset, s.stretch);
-        }
+        });
 
         out.iterations = round + 1;
         const auto [deepest, added] = collisions(true);
@@ -1577,6 +1578,7 @@ void registerCommands()
         .run = [](const Args& a) -> json {
             LILA_ZONE();
             Graph& g = graph();
+            Graph::DeferMeshes deferMeshes;
             const NodeId grapple = grappleArg(g, a, "bakeGrapple");
             for (const std::string& layer : recordedLayers(g, grapple))
                 if (named(g, layer))
@@ -1592,21 +1594,24 @@ void registerCommands()
             const anim::Playback& pb = anim::playback();
             const int64_t start = o.start.value_or(sim::frameOf(pb.minTime)), end = o.end.value_or(sim::frameOf(pb.maxTime));
             NodeId layer = kNoNode;
+            double worst = 0.0, deepest = 0.0;
             try
             {
+                // The stats come from the cache while it is known good: once the layer exists every lookup would
+                // sample the whole range again to check it.
+                sim::simulate(g, grapple, std::max(start, end), sim::LoopMode::Off);
+                for (int64_t f = std::min(start, end); f <= std::max(start, end); ++f)
+                    if (auto fr = sim::cached(g, grapple, f); fr && fr->state.size() >= 3)
+                    {
+                        worst = std::max(worst, fr->state[fr->state.size() - 3]);
+                        deepest = std::max(deepest, fr->state[fr->state.size() - 2]);
+                    }
                 layer = sim::record(g, grapple, o);
             }
             catch (const std::invalid_argument& e)
             {
                 throw CommandError(std::string("bakeGrapple: ") + e.what());
             }
-            double worst = 0.0, deepest = 0.0;
-            for (int64_t f = std::min(start, end); f <= std::max(start, end); ++f)
-                if (auto fr = sim::simulate(g, grapple, f, sim::LoopMode::Off); fr && fr->state.size() >= 3)
-                {
-                    worst = std::max(worst, fr->state[fr->state.size() - 3]);
-                    deepest = std::max(deepest, fr->state[fr->state.size() - 2]);
-                }
             return {{"layer", g.path(layer)}, {"frames", std::abs(end - start) + 1}, {"contactError", worst}, {"penetration", deepest}};
         },
         .examples = {"bakeGrapple(\"grapple1\", start=0, end=120)"},
