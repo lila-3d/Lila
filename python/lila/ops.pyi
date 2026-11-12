@@ -5648,6 +5648,110 @@ def morphTargets(*objects: Any) -> Any:
         objects: morph, mesh or target.
     """
 
+def motionBuildGaits(spec: Any | None = None, out: str | None = None, *, s: Any | None = None, o: str | None = None) -> Any:
+    """Build a gait library from motion capture (BVH): each clip retargeted to the model's skeleton, its speed and cycle measured, target windows sampled across one cycle. For your own mocap, or to rebuild Lila's.
+
+    Args:
+        spec: {'provenance': text, 'windows': 6, 'gaits': [{'file', 'style', 'name', 'scale', 'from', 'to', 'crouch'}], 'idle': {'file', 'at'}}. Short form s.
+        out: The gaits .json to write. Short form o.
+    """
+
+def motionDevice(device: str | None = None, *, d: str | None = None) -> Any:
+    """Choose where motion generates: auto (the GPU where it works, else the CPU), gpu or cpu. Saved as a preference; the model reloads on next use.
+
+    Args:
+        device: auto, gpu or cpu. Short form d. One of 'auto', 'gpu', 'cpu'. Default 'auto'.
+    """
+
+def motionFollowPath(*objects: Any, path: Sequence[Any] | None = None, style: str | None = None, speed: float | None = None, stop: bool | None = None, facing: Sequence[float] | None = None, variant: int | None = None, lookahead: float | None = None, take: str | None = None, start: float | None = None, rootMotion: bool | None = None, plantFeet: bool | None = None, lockFeet: bool | None = None, p: Sequence[Any] | None = None, st: str | None = None, sp: float | None = None, s: bool | None = None, f: Sequence[float] | None = None, v: int | None = None, la: float | None = None, t: str | None = None, sa: float | None = None, rm: bool | None = None, pf: bool | None = None, lf: bool | None = None) -> Any:
+    """Generate a character walking, running, strafing or crouching along a path, performing any spots on it, and key the motion into a new take. The path is points, curves and spots in order; the character starts as posed at the start time.
+
+    Args:
+        objects: the character (a joint of its skeleton, or the node above it).
+        path: Waypoints in order: points [x, y, z] (cm), curve names, motionSpot names. Short form p.
+        style: walk, run, crouch, strafeLeft, strafeRight or backward (motionGaits lists them). Short form st. Default 'walk'.
+        speed: m/s; 0 uses the gait's own. Short form sp. Default 0.0.
+        stop: Come to rest at the end. Short form s. Default True.
+        facing: Strafe styles face this direction; default: the way the path starts. Short form f.
+        variant: Other values give other, equally valid motion. Short form v. Default 0.
+        lookahead: Seconds of travel each target sits ahead: lower follows tighter. Short form la. Default 0.9.
+        take: Take to key into; one of that name is replaced. Empty keys the current animation. Short form t. Default 'Path'.
+        start: Seconds; default the playback start. Short form sa.
+        rootMotion: The root joint follows the pelvis on the ground (for engine root motion). Short form rm. Default True.
+        plantFeet: Hold feet still where the model predicts contact. Short form pf. Default True.
+        lockFeet: Key the foot lock of the character's IK chains where feet are planted. Short form lf. Default True.
+
+    Examples:
+        motionFollowPath('Manny', path=[[0, 0, 400], [300, 0, 700]], style='run')
+
+        motionFollowPath('Manny', path=['pathCurve1', 'chairSpot'], take='SitDown')
+    """
+
+def motionGaits() -> Any:
+    """List the locomotion styles and their gaits (speed in m/s, cycle in seconds) motionFollowPath can use, and where their poses came from."""
+
+def motionSample(*objects: Any, start: float | None = None, end: float | None = None, joints: Sequence[Any] | None = None, s: float | None = None, e: float | None = None, j: Sequence[Any] | None = None) -> Any:
+    """A character's motion as the motion model sees it: per frame at 30 fps, the world positions (cm) of SOMA joints, the heading and the ground point. For checking generated motion and building spots from clips.
+
+    Args:
+        objects: the character.
+        start: Seconds; default the playback start. Short form s.
+        end: Seconds; default the playback end. Short form e.
+        joints: SOMA joint names (Hips, LeftHand, RightFoot ...); default Hips, hands and feet. Short form j.
+    """
+
+def motionSpot(preset: str | None = None, file: str | None = None, name: str | None = None, position: Sequence[float] | None = None, yaw: float | None = None, list: bool | None = None, *, pr: str | None = None, f: str | None = None, n: str | None = None, p: Sequence[float] | None = None, y: float | None = None, l: bool | None = None) -> Any:
+    """Make a spot: a starter interaction Lila ships (by name), a .lilaspot file, or an empty one to capture poses into. Returns the node, or with list the starters.
+
+    Args:
+        preset: A shipped spot by name (list shows them). Short form pr.
+        file: A .lilaspot file. Short form f.
+        name: Node name. Short form n.
+        position: World position, cm. Short form p.
+        yaw: Degrees about Y: the way the spot faces. Short form y. Default 0.0.
+        list: List the shipped spots instead. Short form l. Default False.
+
+    Examples:
+        motionSpot(preset='Pick Up', position=[0, 0, 300])
+    """
+
+def motionSpotSave(*objects: Any, file: str | None = None, provenance: str | None = None, f: str | None = None, pv: str | None = None) -> Any:
+    """Save a spot's targets as a .lilaspot asset to reuse in other scenes (motionSpot file=...).
+
+    Args:
+        objects: the motionSpot node.
+        file: Where to write; default the spot's file. Short form f.
+        provenance: Where the poses came from, stored with the asset. Short form pv.
+    """
+
+def motionSpotTarget(*objects: Any, capture: str | None = None, time: float | None = None, poses: int | None = None, index: int | None = None, remove: bool | None = None, name: str | None = None, transitionEarly: int | None = None, minTokens: int | None = None, maxTokens: int | None = None, pins: Sequence[Any] | None = None, hold: int | None = None, c: str | None = None, t: float | None = None, ps: int | None = None, i: int | None = None, rm: bool | None = None, n: str | None = None, te: int | None = None, mn: int | None = None, mx: int | None = None, pi: Sequence[Any] | None = None, h: int | None = None) -> Any:
+    """Add, change or remove a spot's targets. capture adds the character's pose at a time (and the next poses at 30 Hz for a moving arrival) relative to the spot. Returns the spot's targets.
+
+    Args:
+        objects: the motionSpot node.
+        capture: Character to capture a target from. Short form c.
+        time: Seconds; default the current time. Short form t.
+        poses: Poses to capture, 1 to 4: more gives the arrival its velocity. Short form ps. Default 1.
+        index: Target to change or remove; capture inserts before it (default: at the end). Short form i.
+        remove: Remove the target at index. Short form rm. Default False.
+        name: Target name. Short form n.
+        transitionEarly: Frames before arriving the next target takes over: higher passes through. Short form te.
+        minTokens: Shortest approach, tokens of 4 frames (6..16). Short form mn.
+        maxTokens: Longest approach, tokens of 4 frames (6..16). Short form mx.
+        pins: Hands and feet held on the pose as it arrives: leftHand, rightHand, leftFoot, rightFoot. Short form pi.
+        hold: Frames to stay in the pose. Short form h.
+
+    Examples:
+        motionSpotTarget('chairSpot', capture='Manny', time=2.0, poses=1, name='Sit')
+    """
+
+def motionStatus(reload: bool | None = None, *, r: bool | None = None) -> Any:
+    """Load the motion model if needed and report what it runs on: the device (GPU through DirectML, or CPU, with the reason when it fell back), the model file, the runtime version, or what is missing.
+
+    Args:
+        reload: Load the model again (after replacing the file). Short form r. Default False.
+    """
+
 def move(*objects: Any, by: Sequence[float] | None = None, to: Sequence[float] | None = None, x: float | None = None, y: float | None = None, z: float | None = None, space: str | None = None) -> Any:
     """Move objects. move(by=(x, y, z)) moves relative in `space`; move(to=(x, y, z)) puts each pivot at a world position. A selected parent and child move once.
 
