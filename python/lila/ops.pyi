@@ -557,7 +557,7 @@ def attachCurve(*objects: Any, blend: bool | None = None, keepOriginal: bool | N
         keepOriginal: Keep the second curve. Short form kp. Default False.
     """
 
-def audio(*objects: Any, fileName: str | None = None, offset: float | None = None, gain: float | None = None, mute: bool | None = None, take: str | None = None, name: str | None = None, f: str | None = None, o: float | None = None, g: float | None = None, m: bool | None = None, t: str | None = None, n: str | None = None) -> Any:
+def audio(*objects: Any, fileName: str | None = None, track: int | None = None, offset: float | None = None, sourceStart: float | None = None, sourceEnd: float | None = None, gain: float | None = None, mute: bool | None = None, take: str | None = None, name: str | None = None, f: str | None = None, tr: int | None = None, o: float | None = None, ss: float | None = None, se: float | None = None, g: float | None = None, m: bool | None = None, t: str | None = None, n: str | None = None) -> Any:
     """Create an audio node from a sound file, or edit the one named. Returns its name.
 
     Audio plays under the time slider during playback and scrubbing. With take, it belongs to that take: heard only while the take is active, its offset counted from the take's start.
@@ -565,7 +565,10 @@ def audio(*objects: Any, fileName: str | None = None, offset: float | None = Non
     Args:
         objects: audio node to edit (omit to create one).
         fileName: Sound file; stored relative to the workspace root. Short form f.
+        track: Sound track of a file with several, from 0. Short form tr.
         offset: Frame the sound starts at. Short form o.
+        sourceStart: Frame of the file the sound starts from. Short form ss.
+        sourceEnd: Frame of the file the sound stops at; 0 for the end. Short form se.
         gain: Volume multiplier. Short form g.
         mute: Silence it. Short form m.
         take: Take it belongs to. Short form t.
@@ -4715,6 +4718,24 @@ def importFile(*objects: Any, translator: str | None = None, options: Any | None
         options: {flag: value} passed on to the translator's command.
     """
 
+def importFootage(*objects: Any, camera: str | None = None, take: str | None = None, frame: float | None = None, sound: bool | None = None, track: int | None = None, name: str | None = None, c: str | None = None, t: str | None = None, fr: float | None = None, s: bool | None = None, tr: int | None = None, n: str | None = None) -> Any:
+    """Bring in reference footage for the shot in one step: a video becomes an image plane on the camera, and its sound (or a sound file given alone) an audio node starting on the same frame. Both belong to the active take, so they play only with it and line up from its start. Returns the nodes made.
+
+    Args:
+        objects: video or sound file.
+        camera: View or camera the video is seen through. Short form c. Default 'persp'.
+        take: Take the media belongs to; default the active one, empty for none. Short form t.
+        frame: Frame the footage starts on: default the take's first frame, or the playback start without a take. Short form fr.
+        sound: Also make an audio node from a video's sound. Short form s. Default True.
+        track: Sound track of a video with several, from 0. Short form tr. Default 0.
+        name: Base name; default the file's. Short form n.
+
+    Examples:
+        importFootage('ref/shot010.mov')
+
+        importFootage('ref/shot010.mov', camera='shotCam', frame=1001)
+    """
+
 def importGltf(*objects: Any, parent: str | None = None, skins: bool | None = None, animation: bool | None = None, take: str | None = None, setPlayback: bool | None = None, materials: bool | None = None, textureDir: str | None = None, report: bool | None = None, select: bool | None = None, p: str | None = None, anim: bool | None = None) -> Any:
     """Import a glTF 2.0 file (.gltf with its .bin and images, embedded data URIs, or binary .glb): the default scene's nodes as transforms, joints, meshes and cameras, converted from glTF's Y-up metres to the scene's axes and cm.
 
@@ -5454,6 +5475,16 @@ def measureView(view: str | None = None, lookThrough: str | None = None, yaw: fl
         overlays: Draw what the viewport draws over the scene too: locators, curves' draw overrides, Soft Net lines and knots, extension drawers. Short form ov. Default False.
         frames: Frames to draw; the result is their median. Default 20.
         ambientOcclusion: Force ambient occlusion on or off instead of the viewport pref. Short form ao.
+    """
+
+def mediaInfo(*objects: Any) -> Any:
+    """What a video or sound file holds: its picture (size, rate, frames, codec, the decoder that reads it) and its sound tracks, the choices for an audio node's track.
+
+    Args:
+        objects: file.
+
+    Examples:
+        mediaInfo('ref/shot010.mov')
     """
 
 def mergeAnimLayers(*objects: Any) -> Any:
@@ -9153,6 +9184,17 @@ def skinningMethod(*objects: Any, method: str | None = None, m: str | None = Non
     Args:
         objects: meshes.
         method: linear | dualQuaternion | centresOfRotation | directDeltaMush. Short form m. One of 'linear', 'dualQuaternion', 'centresOfRotation', 'directDeltaMush'. Default 'linear'.
+    """
+
+def slideMedia(*objects: Any, frames: float | None = None, f: float | None = None) -> Any:
+    """Move audio nodes and image planes along the timeline by a number of frames: an audio node's offset, an image plane's start frame. Trims stay with the sound.
+
+    Args:
+        objects: audio nodes or image planes.
+        frames: Frames to move by; negative moves earlier. Short form f. Default 0.0.
+
+    Examples:
+        slideMedia('shot010', 'shot010Ref', frames=-6)
     """
 
 def smartJoin(*objects: Any, segments: int | None = None, tension: float | None = None, twist: int | None = None, holeScale: float | None = None, offsetU: float | None = None, offsetV: float | None = None, limbLoop: int | None = None, deleteBuried: bool | None = None, relax: int | None = None, trimMargin: float | None = None, keepOriginals: bool | None = None, flip: bool | None = None, name: str | None = None) -> Any:
