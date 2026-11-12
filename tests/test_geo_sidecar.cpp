@@ -57,16 +57,16 @@ std::vector<glm::dvec3> importedPoints(const json& names)
     return out;
 }
 
-struct Clean
+struct SidecarClean
 {
-    Clean() { georef::setCurrent(std::nullopt); }
-    ~Clean() { georef::setCurrent(std::nullopt); }
+    SidecarClean() { georef::setCurrent(std::nullopt); }
+    ~SidecarClean() { georef::setCurrent(std::nullopt); }
 };
 } // namespace
 
 TEST_CASE("a Pix4D mesh with its offset and .prj sets the scene's georeference")
 {
-    Clean clean;
+    SidecarClean clean;
     const fs::path d = freshDir("pix4d");
     writePly(d / "site.ply", {{1.0, 2.0, 3.0}, {11.0, 2.0, 3.0}, {1.0, 12.0, 3.0}});
     write(d / "site_offset.xyz", "500000.000 4649776.000 100.000\n");
@@ -92,7 +92,7 @@ TEST_CASE("a Pix4D mesh with its offset and .prj sets the scene's georeference")
 
 TEST_CASE("a second georeferenced file moves into the scene's georeference")
 {
-    Clean clean;
+    SidecarClean clean;
     georef::setCurrent(georef::Georeference{"EPSG:32633", {499000.0, 4649000.0, 0.0}});
     const fs::path d = freshDir("second");
     writePly(d / "tile.ply", {{0.0, 0.0, 0.0}, {5.0, 0.0, 0.0}, {0.0, 5.0, 0.0}});
@@ -108,7 +108,7 @@ TEST_CASE("a second georeferenced file moves into the scene's georeference")
 
 TEST_CASE("a metadata.xml in a local ENU frame lands in the UTM zone around it")
 {
-    Clean clean;
+    SidecarClean clean;
     const fs::path d = freshDir("terra");
     write(d / "metadata.xml", "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<ModelMetadata version=\"1\">\n<SRS>ENU:42,15</SRS>\n<SRSOrigin>0,0,0</SRSOrigin>\n</ModelMetadata>\n");
     writePly(d / "block.ply", {{100.0, 50.0, 7.0}, {101.0, 50.0, 7.0}, {100.0, 51.0, 7.0}});
@@ -126,7 +126,7 @@ TEST_CASE("a metadata.xml in a local ENU frame lands in the UTM zone around it")
 
 TEST_CASE("an absolute-coordinate mesh with a .prj is rebased on its centre")
 {
-    Clean clean;
+    SidecarClean clean;
     const fs::path d = freshDir("absolute");
     writePly(d / "scan.ply", {{500100.25, 4649800.5, 50.0}, {500110.25, 4649800.5, 50.0}, {500100.25, 4649810.5, 52.0}});
     write(d / "scan.prj", kUtm33Wkt);
@@ -146,7 +146,7 @@ TEST_CASE("an absolute-coordinate mesh with a .prj is rebased on its centre")
 
 TEST_CASE("a mesh with nothing beside it imports as before")
 {
-    Clean clean;
+    SidecarClean clean;
     const fs::path d = freshDir("plain");
     writePly(d / "rock.ply", {{1.0, 2.0, 3.0}, {2.0, 2.0, 3.0}, {1.0, 3.0, 3.0}});
     CHECK_FALSE(geoSidecar::find(d / "rock.ply"));
