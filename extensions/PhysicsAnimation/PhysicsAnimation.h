@@ -131,6 +131,8 @@ struct BodyDef
     double linearDamping = 0.05;
     double angularDamping = 0.05;
     int64_t group = 0;
+    /** The top joint of the body's skeleton: in a grapple's ragdoll, bodies of different skeletons collide. */
+    NodeId skeleton = kNoNode;
     // The joint to the parent body. Frames are rotations: X the twist axis, Y the plane axis.
     glm::dvec3 anchorInParent{0.0}; // cm, parent joint space
     glm::dquat frameInParent{1, 0, 0, 0};
@@ -169,6 +171,20 @@ struct FieldDef
     int magnitudeAttr = -1;
 };
 
+/**
+ * A grapple contact between two bodies (of two characters, usually): a spring pulling a point on one to a point on the
+ * other, both yielding by mass, with its keyable weight and stiffness sampled each frame.
+ */
+struct ContactDef
+{
+    NodeId node = kNoNode;
+    int a = -1, b = -1;
+    glm::dvec3 pointA{0.0}, pointB{0.0}; // body space, cm
+    /** B's frame to A's at full weight, when the contact holds rotation too. */
+    std::optional<glm::dquat> rotation;
+    int weightAttr = -1, stiffnessAttr = -1;
+};
+
 /** Everything a world is built from, read off a solver node and the scene. */
 struct RigDef
 {
@@ -177,6 +193,9 @@ struct RigDef
     std::vector<PinDef> pins;
     std::vector<ColliderDef> colliders;
     std::vector<FieldDef> fields;
+    std::vector<ContactDef> contacts;
+    /** A grapple's ragdoll: bodies of different skeletons collide whatever selfCollision says. */
+    bool figures = false;
     glm::dvec3 gravity{0.0, -980.0, 0.0};
     bool ground = true;
     double groundHeight = 0.0;
@@ -242,5 +261,7 @@ struct LabelDefaults
 std::optional<LabelDefaults> labelDefaults(const std::string& label);
 
 bool registerScene(lila::ext::Context& ctx);
+/** grappleRagdoll (GrappleRagdoll.cpp). */
+void registerGrappleRagdoll(lila::ext::Context& ctx);
 void registerUi(lila::ext::Context& ctx);
 } // namespace physanim

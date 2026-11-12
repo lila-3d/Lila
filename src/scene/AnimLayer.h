@@ -193,6 +193,20 @@ struct KeyRedirect
 LILA_SCENE_API std::optional<KeyRedirect> redirectKey(Graph& g, const PlugRef& plug, double value);
 
 /**
+ * Keys many channels at one time without evaluating between them: while one is alive, redirectKey reads the values below
+ * the layer as last evaluated (keys at the same time on the layer can't change them) and each member's value as the keys
+ * so far put it. Evaluate after changing the time, before keying there.
+ */
+class LILA_SCENE_API KeyBatch
+{
+public:
+    KeyBatch();
+    ~KeyBatch();
+    KeyBatch(const KeyBatch&) = delete;
+    KeyBatch& operator=(const KeyBatch&) = delete;
+};
+
+/**
  * Keys one component of a layered or constrained transform rotate whose target input takes rotation keys: one with a
  * rotation curve already, or an unkeyed one on a node whose rotationInterpolation isn't Euler. The input gets (or
  * keeps) an animCurveRQ keyed with the whole converted rotation. Returns the curve; nullopt when the key is an

@@ -760,6 +760,19 @@ def bakeForTarget(project: str | None = None, target: str | None = None, optiona
         overrideGroups: Give every existing group the target's group defaults, including settings made on a group by hand. Short form og. Default False.
     """
 
+def bakeGrapple(*objects: Any, grapple: str | None = None, start: int | None = None, end: int | None = None, g: str | None = None) -> Any:
+    """Bake the grapple onto the characters' joints as plain keys, on its own additive layer (replacing the one it baked before; mute the layer to compare, delete it to go back). Every frame is solved with the characters' animation below the layer. Returns {'layer', 'frames', 'contactError', 'penetration'}: the worst contact gap and body overlap left, cm.
+
+    Args:
+        objects: grapple or one of its contacts (default the selection, else the scene's only grapple).
+        grapple: The grapple. Short form g.
+        start: First frame. Default: the playback range.
+        end: Last frame.
+
+    Examples:
+        bakeGrapple("grapple1", start=0, end=120)
+    """
+
 def bakeGroup(*objects: Any, project: str | None = None, lows: Sequence[Any] | None = None, highs: Sequence[Any] | None = None, addLow: Sequence[Any] | None = None, removeLow: Sequence[Any] | None = None, addHigh: Sequence[Any] | None = None, removeHigh: Sequence[Any] | None = None, self: bool | None = None, modifiers: Any | None = None, preset: str | None = None, cage: str | None = None, cageOffset: float | None = None, frontal: float | None = None, rear: float | None = None, ignoreBackfaces: bool | None = None, aoScope: str | None = None, skew: float | None = None, unlinks: Any | None = None, addHighFile: Sequence[Any] | None = None, removeHighFile: Sequence[Any] | None = None, fileObject: str | None = None, fileFrame: float | None = None, pj: str | None = None, lo: Sequence[Any] | None = None, hi: Sequence[Any] | None = None, al: Sequence[Any] | None = None, rl: Sequence[Any] | None = None, ah: Sequence[Any] | None = None, rh: Sequence[Any] | None = None, sf: bool | None = None, md: Any | None = None, ps: str | None = None, cg: str | None = None, co: float | None = None, fd: float | None = None, rd: float | None = None, ib: bool | None = None, sk: float | None = None, ul: Any | None = None, ahf: Sequence[Any] | None = None, rhf: Sequence[Any] | None = None, fob: str | None = None, ffr: float | None = None) -> Any:
     """Create or edit a bake group: the lows that receive maps and the highs projected onto them. A group only traces its own highs, so groups overlapping in space never affect each other, and several groups can write into one texture. Each high carries a bake-only modifier stack (modifiers= or preset=, e.g. "Smooth x2") evaluated into the bake's snapshot only: nothing is added to the scene. self=True bakes the lows onto themselves through such a stack. Creates the group (and a project) when the name is new. Returns the group.
 
@@ -3568,6 +3581,15 @@ def fitCurve(*objects: Any, tolerance: float | None = None, constructionHistory:
         name: Name of a new curve. Short form n.
     """
 
+def fitGrappleBodies(*objects: Any, grapple: str | None = None, keepMass: bool | None = None, g: str | None = None, km: bool | None = None) -> Any:
+    """Refit the grapple's collision capsules and masses at the current pose: from the characters' physics markers, else their skinned meshes, else bone-sized. Keeps each figure's planted feet. Returns the figures with what each was fitted from.
+
+    Args:
+        objects: grapple or one of its contacts (default the selection, else the scene's only grapple).
+        grapple: The grapple. Short form g.
+        keepMass: Keep each figure's mass as it is. Short form km. Default False.
+    """
+
 def fixDuplicateJointNames(*objects: Any) -> Any:
     """Rename joints that share a name with another joint in the same skeleton (the given roots and their descendants, or the selection), so the skeleton exports with unique bone names. Returns [[old, new], ...].
 
@@ -4170,6 +4192,58 @@ def goToBindPose(*objects: Any) -> Any:
 
     Args:
         objects: mesh.
+    """
+
+def grappleContact(*objects: Any, point: Sequence[float] | None = None, kind: str | None = None, orient: bool | None = None, lead: str | None = None, grapple: str | None = None, time: float | None = None, blend: float | None = None, name: str | None = None, p: Sequence[float] | None = None, k: str | None = None, o: bool | None = None, l: str | None = None, g: str | None = None, t: float | None = None, b: float | None = None, n: str | None = None) -> Any:
+    """Hold a joint of one character to a point on another (grab a wrist, a collar, an arm round a neck, hands under a body to lift it). The characters are solved together every frame by their grapple; key the contact's weight to blend it in and out. Returns the contact.
+
+    Args:
+        objects: source joint, target joint.
+        point: World point the source is held to, riding the target joint. Default: the target's body surface nearest the source. Short form p.
+        kind: grab holds position and rotation; hold position only; push lets the source lead; lift lets the source lead and frees the target's feet. Short form k. One of 'grab', 'hold', 'push', 'lift'. Default 'grab'.
+        orient: Hold the source's rotation against the target too. Default by kind. Short form o.
+        lead: Who yields. Default by kind: auto (by mass), or source for push and lift. Short form l. One of 'auto', 'source', 'target', 'even'.
+        grapple: The grapple to add it to. Default: the one holding either character, else a new one. Short form g.
+        time: Seconds the contact comes on at. Default: now. Short form t.
+        blend: Seconds it blends in over, keyed from what it was before. 0 makes it on at every time. Short form b. Default 0.2.
+        name: Name for the contact. Short form n.
+
+    Examples:
+        grappleContact("attacker:hand_r", "defender:lowerarm_l", kind="grab")
+
+        grappleContact("lifter:hand_l", "lifted:spine_02", kind="lift", blend=0.3)
+    """
+
+def grappleFigure(*objects: Any, grapple: str | None = None, mass: float | None = None, plant: bool | None = None, g: str | None = None, m: float | None = None, pl: bool | None = None) -> Any:
+    """A character's settings in its grapple: its mass (who yields: the heavier side moves less) and whether its feet stay where the animation plants them. Returns every figure of the grapple.
+
+    Args:
+        objects: a joint of the character.
+        grapple: The grapple. Default: the one holding the character. Short form g.
+        mass: kg. Short form m.
+        plant: Keep the feet where the animation puts them. Short form pl.
+    """
+
+def grappleInfo(*objects: Any, grapple: str | None = None, frame: int | None = None, g: str | None = None, f: int | None = None) -> Any:
+    """The grapple's figures and contacts, and how its solve does at a frame: {'figures', 'contacts', 'contactError', 'penetration', 'iterations'} (cm). Solves up to the frame if it isn't cached.
+
+    Args:
+        objects: grapple or one of its contacts (default the selection, else the scene's only grapple).
+        grapple: The grapple. Short form g.
+        frame: Frame. Default: the current one. Short form f.
+    """
+
+def grappleKey(*objects: Any, on: bool | None = None, time: float | None = None, blend: float | None = None, t: float | None = None, b: float | None = None) -> Any:
+    """Key contacts on or off: their weight reaches 1 (on) or 0 (off) at the time, blending from what it was before. Returns the contacts.
+
+    Args:
+        objects: contacts (default the selected ones).
+        on: True keys them on, False off. Default True.
+        time: Seconds. Default: now. Short form t.
+        blend: Seconds the blend takes. Short form b. Default 0.2.
+
+    Examples:
+        grappleKey("hand_r_to_lowerarm_l", on=False, time=2.0)
     """
 
 def groomAddMap(*objects: Any, name: str | None = None, kind: str | None = None, file: str | None = None, color: bool | None = None, value: float | None = None, n: str | None = None, k: str | None = None, f: str | None = None, v: float | None = None) -> Any:

@@ -219,6 +219,8 @@ public:
             su.sources.push_back(c.mesh);
         for (const FieldDef& f : mRig.fields)
             su.sources.push_back(f.node);
+        for (const ContactDef& c : mRig.contacts)
+            su.sources.push_back(c.node);
         su.reads = su.outputs;
         su.reads.insert(su.reads.end(), su.sources.begin(), su.sources.end());
         uint64_t h = mRig.hash;
@@ -256,6 +258,11 @@ public:
             in.push_back(value(f.node, f.magnitudeAttr, 0.0));
         if (mCarrier)
             putMatrix(in, world(mCarrier));
+        for (const ContactDef& c : mRig.contacts)
+        {
+            in.push_back(value(c.node, c.weightAttr, 1.0));
+            in.push_back(value(c.node, c.stiffnessAttr, 0.0));
+        }
     }
 
     void reset(const std::vector<double>& in, std::vector<double>& state) override
@@ -298,6 +305,9 @@ public:
         const size_t fields = colliderInput(mRig.colliders.size());
         for (size_t f = 0; f < mRig.fields.size(); ++f)
             d.fieldMagnitudes.push_back(in[fields + f]);
+        const size_t contacts = carrierInput() + (mCarrier ? 16 : 0);
+        for (size_t c = 0; c < mRig.contacts.size(); ++c)
+            d.contacts.push_back({in[contacts + c * 2], in[contacts + c * 2 + 1]});
         d.seconds = at.seconds;
         d.period = at.period;
         // The world already gives the whole carrier's inertia; the share not felt is the share carried along.
@@ -433,6 +443,7 @@ bool registerTypes(ext::Context& ctx)
         string(sim::kRecordingsAttr, "Layers recorded from this simulation, muted while it samples its inputs.", AttrHidden),
         string("carrier", "Carried motion: a transform (saddle, seat) the ragdoll rides; its acceleration is felt by carrierInertia."),
         limited(number("carrierInertia", 1.0, "Share of the carrier's acceleration the bodies feel: 1 like the world, 0 carried rigidly."), 0.0),
+        string("grapple", "A grapple whose contacts hold the bodies to each other as springs (by their weight and stiffness)."),
     };
 
     NodeType marker{.name = kMarkerType,
@@ -1305,6 +1316,7 @@ bool registerScene(ext::Context& ctx)
                                        }}))
         return false;
     registerCommands(ctx);
+    registerGrappleRagdoll(ctx);
     return true;
 }
 } // namespace physanim

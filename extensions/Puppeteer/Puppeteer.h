@@ -85,6 +85,8 @@ void registerHands(lila::ext::Context& ctx);
 void registerHandUi(lila::ext::Context& ctx);
 /** Finds the character's hands and makes a hand node for each, replacing any it had. Returns the new nodes. */
 std::vector<lila::scene::NodeId> setupHands(lila::scene::Graph& g, lila::scene::NodeId character);
+/** Grapple: the contact tool, its palette, contact drawing, actions and menus (gizmo/GrappleUi.cpp). */
+void registerGrapple(lila::ext::Context& ctx);
 /** Animate-mode panels (anim/). */
 void registerAnimPanels(lila::ext::Context& ctx);
 } // namespace puppeteer
