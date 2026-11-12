@@ -541,6 +541,7 @@ NodeId setKey(Graph& g, const PlugRef& plug, double time, double value, std::opt
     if (!(a.flags & AttrInput))
         throw std::invalid_argument(g.plugName(plug) + " is an output");
 
+    routeKey(g, plug);
     if (auto rq = setLayeredRotationKey(g, plug, time, value, in, out))
         return *rq;
     if (keysAsRotation(g, plug))
@@ -568,7 +569,7 @@ NodeId setKey(Graph& g, const PlugRef& plug, double time, double value, std::opt
     if (auto r = redirectKey(g, plug, value))
     {
         // An offset blend's inputB is its one control value: posing on its layer moves it at every frame together.
-        if (const auto* bn = dynamic_cast<const BlendNode*>(g.node(r->plug.node)); bn && bn->staticInputB() && r->plug.attr == BlendNode::kInputB)
+        if (const auto* bn = dynamic_cast<const BlendNode*>(g.node(r->plug.node)); (bn && bn->staticInputB() && r->plug.attr == BlendNode::kInputB) || r->staticValue)
         {
             g.setValue(r->plug, r->value);
             return r->plug.node;
@@ -659,10 +660,18 @@ void registerCommands()
         Node* s = g.node(src.node);
         if (!s || !(isCurve(*s) || isBlend(*s)))
             return Graph::DrivenEdit::Reject;
-        // Interactive drags run with undo off; they hold, and the committing set keys.
-        if (autoKey() && UndoStack::get().enabled())
+        // Interactive drags run with undo off; they hold, and the committing set keys (or sets an offset's value).
+        if (!UndoStack::get().enabled())
+            return Graph::DrivenEdit::Hold;
+        if (editSetsStatic(g, dst))
         {
             setKey(g, dst, g.time(), v);
+            return Graph::DrivenEdit::Handled;
+        }
+        if (autoKey())
+        {
+            setKey(g, dst, g.time(), v);
+            notifyAutoKey(g, dst, g.time());
             return Graph::DrivenEdit::Handled;
         }
         return Graph::DrivenEdit::Hold;

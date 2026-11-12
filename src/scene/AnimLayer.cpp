@@ -659,6 +659,58 @@ NodeId insertConstraintBlend(Graph& g, const PlugRef& memberIn, const PlugRef& d
     return b;
 }
 
+namespace
+{
+KeyRouter& router()
+{
+    static KeyRouter r;
+    return r;
+}
+AutoKeyListener& autoKeyListener()
+{
+    static AutoKeyListener l;
+    return l;
+}
+
+/** The router's route for member, else the active layer's. */
+KeyRoute routeFor(Graph& g, const PlugRef& member, bool write)
+{
+    if (router())
+        if (std::optional<KeyRoute> r = router()(g, member, write))
+            return *r;
+    return {activeLayer(g), false};
+}
+} // namespace
+
+void setKeyRouter(KeyRouter r) { router() = std::move(r); }
+
+NodeId keyLayer(Graph& g, const PlugRef& member) { return routeFor(g, whole(member), false).layer; }
+
+NodeId routeKey(Graph& g, const PlugRef& plug) { return routeFor(g, whole(plug), true).layer; }
+
+bool editSetsStatic(Graph& g, const PlugRef& plug)
+{
+    if (!router())
+        return false;
+    const PlugRef member = whole(plug);
+    const KeyRoute r = routeFor(g, member, false);
+    if (!r.staticValue)
+        return false;
+    // No layer or blend yet: the write makes them, with a static input.
+    if (!r.layer)
+        return true;
+    const NodeId b = blendFor(g, member, r.layer);
+    return !b || curvesFeeding(g, {b, BlendNode::kInputB, -1}, isVec(g, member)).empty();
+}
+
+void setAutoKeyListener(AutoKeyListener l) { autoKeyListener() = std::move(l); }
+
+void notifyAutoKey(Graph& g, const PlugRef& plug, double time)
+{
+    if (autoKeyListener())
+        autoKeyListener()(g, plug, time);
+}
+
 PlugRef keyInput(Graph& g, const PlugRef& plug)
 {
     Node* n = g.node(plug.node);
@@ -670,7 +722,7 @@ PlugRef keyInput(Graph& g, const PlugRef& plug)
     if (!src || src->attr != BlendNode::kOutput || !isBlend(*g.node(src->node)))
         return plug;
     std::vector<NodeId> chain = blendChain(g, plug);
-    if (NodeId layer = activeLayer(g))
+    if (NodeId layer = routeFor(g, whole(plug), false).layer)
         if (NodeId b = blendFor(g, whole(plug), layer))
             return {b, BlendNode::kInputB, plug.component};
     return {chain.back(), BlendNode::kInputA, plug.component};
@@ -682,7 +734,8 @@ std::optional<KeyRedirect> redirectKey(Graph& g, const PlugRef& plug, double val
 
     PlugRef member = whole(plug);
     std::vector<NodeId> chain = blendChain(g, member);
-    NodeId layer = activeLayer(g);
+    const KeyRoute route = routeFor(g, member, true);
+    NodeId layer = route.layer;
     if (chain.empty() && !layer)
         return std::nullopt;
 
@@ -729,6 +782,7 @@ std::optional<KeyRedirect> redirectKey(Graph& g, const PlugRef& plug, double val
     r.value = result[comp];
     r.whole = result;
     r.curveName = safeName(g.node(member.node)->name() + "_" + channelName(g, plug) + suffix);
+    r.staticValue = route.staticValue && layer && curvesFeeding(g, whole(r.plug), isVec(g, member)).empty();
     return r;
 }
 
@@ -738,13 +792,14 @@ std::optional<NodeId> setLayeredRotationKey(Graph& g, const PlugRef& plug, doubl
     LILA_ZONE();
 
     PlugRef member = whole(plug);
-    if (plug.component < 0 || !isTransformRotate(g, member) || (blendChain(g, member).empty() && !activeLayer(g)))
+    if (plug.component < 0 || !isTransformRotate(g, member) || (blendChain(g, member).empty() && !keyLayer(g, member)))
         return std::nullopt;
     auto r = redirectKey(g, plug, value);
     if (!r)
         return std::nullopt;
     PlugRef input = whole(r->plug);
-    if (const auto* bn = dynamic_cast<const BlendNode*>(g.node(input.node)); bn && bn->staticInputB() && input.attr == BlendNode::kInputB)
+    const auto* bn = dynamic_cast<const BlendNode*>(g.node(input.node));
+    if ((bn && bn->staticInputB() && input.attr == BlendNode::kInputB) || r->staticValue)
     {
         g.setValue(input, r->whole);
         return input.node;
@@ -752,7 +807,7 @@ std::optional<NodeId> setLayeredRotationKey(Graph& g, const PlugRef& plug, doubl
     Drivers d = driversOf(g, input, true);
     if (!takesRotationKeys(g, member, d))
         return std::nullopt;
-    NodeId layer = activeLayer(g);
+    NodeId layer = input.attr == BlendNode::kInputB ? layerOf(g, input.node) : kNoNode;
     std::string name = safeName(g.node(member.node)->name() + "_" + g.attr(member).name + (layer ? "_" + g.node(layer)->name() : ""));
     return keyRotation(g, input, member, d, name, [&](RotationCurve& rc) {
         size_t i = rc.insert(rc.makeKey(time, r->whole));

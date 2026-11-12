@@ -116,7 +116,8 @@ LILA_SCENE_API std::string channelName(Graph& g, const PlugRef& p);
 
 /**
  * True when keys on plug (a transform's rotate or one of its components) go to a rotation curve: one already drives
- * it, or nothing does, no anim layer is active and the node's rotationInterpolation is slerp or smooth.
+ * it, or nothing does, no anim layer takes the key and the node's rotationInterpolation is slerp or smooth. Called
+ * before writing a key: a key router may make the layer the key goes to.
  */
 LILA_SCENE_API bool keysAsRotation(Graph& g, const PlugRef& plug);
 /**
