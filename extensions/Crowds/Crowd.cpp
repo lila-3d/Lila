@@ -9,6 +9,7 @@
 #include <lila/Mesh.h>
 #include <lila/Motion.h>
 #include <lila/Profile.h>
+#include <lila/Relocate.h>
 #include <lila/Tasks.h>
 #include <lila/Anim.h>
 #include <lila/Transform.h>
@@ -291,6 +292,7 @@ Group groupFrom(Graph& g, const json& j, std::vector<NodeId>& points, const std:
     if (j.contains("center"))
         gr.center = {float(j["center"][0].get<double>() / kCm), float(j["center"][1].get<double>() / kCm)};
     gr.radius = float(j.value("radius", 1000.0) / kCm);
+    gr.yaw = float(j.value("yaw", 0.0) * kPiD / 180.0);
     gr.pauseMin = float(j.value("pauseMin", 1.0));
     gr.pauseMax = float(j.value("pauseMax", 4.0));
     gr.loop = j.value("loop", false);
@@ -1025,6 +1027,52 @@ json spawnGroup(Graph& g, NodeId crowd, const Args& a, const char* cmd)
     return {{"crowd", g.path(crowd)}, {"group", name}, {"agents", int(placed.size())}, {"replaced", replaced}};
 }
 
+/**
+ * The crowd's groups hold world-space data (centres, areas, agent starts and headings, point goals), rewritten by the
+ * move; everything they name by node follows its node. Crowds stand on the ground, so only moves that keep +Y up can
+ * carry them.
+ */
+relocate::Edit relocateCrowd(const relocate::Move& move, NodeId node)
+{
+    Graph& g = *move.graph;
+    const Node& n = *g.node(node);
+    const glm::dvec3 up = move.direction({0, 1, 0});
+    if (up.y < 1.0 - 1e-6)
+        throw CommandError(n.path() + ": a crowd stands on the ground, so it can only follow moves that keep +Y up");
+    const glm::dvec3 fwd = move.direction({0, 0, 1});
+    const double yaw = std::atan2(fwd.x, fwd.z) * 180.0 / kPiD;
+    json groups = groupsOf(n);
+    if (groups.empty())
+        return {};
+    auto point2 = [&](json& p) {
+        const glm::dvec3 q = move.point({p[0].get<double>(), 0.0, p[1].get<double>()});
+        p = json::array({q.x, q.z});
+    };
+    for (json& gr : groups)
+    {
+        if (gr.contains("center"))
+            point2(gr["center"]);
+        for (json& p : gr["area"].is_array() ? gr["area"] : gr["area"] = json::array())
+            point2(p);
+        if (gr["area"].empty())
+            gr.erase("area");
+        for (const char* key : {"goal", "threat", "target"})
+            if (gr.contains(key) && gr[key].is_array() && gr[key].size() >= 3)
+            {
+                const glm::dvec3 q = move.point({gr[key][0].get<double>(), gr[key][1].get<double>(), gr[key][2].get<double>()});
+                gr[key] = json::array({q.x, q.y, q.z});
+            }
+        gr["yaw"] = gr.value("yaw", 0.0) - yaw;
+        for (json& a : gr["agents"])
+        {
+            point2(a["p"]);
+            a["h"] = a.value("h", 0.0) + yaw;
+        }
+    }
+    const std::string text = groups.dump();
+    return [&g, node, text] { setText(g, node, "groups", text); };
+}
+
 json infoOf(Graph& g, NodeId crowd)
 {
     std::shared_ptr<const CrowdView> v = viewOf(g, crowd);
@@ -1105,6 +1153,7 @@ bool registerScene(ext::Context& ctx)
     };
     if (!types::registerType(ctx, std::move(t)))
         return false;
+    relocate::registerHandler(kCrowdType, {.plan = relocateCrowd});
     if (!sim::registerSolverType(ctx, {.nodeType = kCrowdType, .create = [](Graph&, NodeId node) -> std::unique_ptr<sim::Solver> {
                                            return std::make_unique<CrowdSolver>(node);
                                        }}))

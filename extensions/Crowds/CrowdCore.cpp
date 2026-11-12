@@ -744,7 +744,7 @@ void Runtime::decide(AgentState& a, size_t i, double time, std::span<const glm::
         else
         {
             const float r = grp.radius * std::sqrt(random(i, 14, n));
-            const float ang = 2.0f * kPi * random(i, 15, n);
+            const float ang = 2.0f * kPi * random(i, 15, n) + grp.yaw;
             g = grp.center + glm::vec2(std::cos(ang), std::sin(ang)) * r;
         }
         a.goalX = g.x;
@@ -808,7 +808,7 @@ void Runtime::decide(AgentState& a, size_t i, double time, std::span<const glm::
         // Agents sharing a goal spread over a disc so they don't all aim for one spot.
         const float spread = 0.45f * std::sqrt(float(std::max(1, mGroupSize[size_t(std::clamp(spec.group, 0, int(mGroupSize.size()) - 1))])));
         const float r = std::min(spread, 6.0f) * std::sqrt(random(i, 21, 0));
-        const float ang = 2.0f * kPi * random(i, 22, 0);
+        const float ang = 2.0f * kPi * random(i, 22, 0) + grp.yaw;
         goal += glm::vec2(std::cos(ang), std::sin(ang)) * r;
         const bool moved = glm::length(goal - glm::vec2(float(a.goalX), float(a.goalZ))) > 2.0f;
         if (int(a.task) == 0 || (moved && int(a.task) == 2))
