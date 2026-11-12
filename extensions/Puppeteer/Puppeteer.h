@@ -74,6 +74,12 @@ void registerCurveOverlay(lila::ext::Context& ctx);
 void closeCurveOverlay();
 /** Anim proxies: the prefs page, actions, and showing proxies with the modes (rig/AnimProxy.cpp). */
 void registerAnimProxy(lila::ext::Context& ctx);
+/** Hands: the puppeteerHand node and its commands (hand/Hands.cpp). */
+void registerHands(lila::ext::Context& ctx);
+/** The Hands panel, the Hand Pad over the viewport, and the hand actions and menus (hand/HandUi.cpp). */
+void registerHandUi(lila::ext::Context& ctx);
+/** Finds the character's hands and makes a hand node for each, replacing any it had. Returns the new nodes. */
+std::vector<lila::scene::NodeId> setupHands(lila::scene::Graph& g, lila::scene::NodeId character);
 /** Animate-mode panels (anim/). */
 void registerAnimPanels(lila::ext::Context& ctx);
 } // namespace puppeteer
