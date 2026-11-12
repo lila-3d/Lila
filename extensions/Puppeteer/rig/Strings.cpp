@@ -6,6 +6,7 @@
 
 #include <lila/Math.h>
 #include <lila/Prefs.h>
+#include <lila/Profile.h>
 #include <lila/Curves.h>
 #include <lila/Ghosts.h>
 #include <lila/OptionBox.h>
