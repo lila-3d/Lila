@@ -780,8 +780,9 @@ std::optional<KeyRedirect> redirectKey(Graph& g, const PlugRef& plug, double val
         target = chain.back();
 
     auto pending = std::find_if(tBatch.wanted.begin(), tBatch.wanted.end(), [&](const auto& w) { return w.first == member; });
+    // The member's own chain is all a key reads; meshes skinned to it needn't be recomputed for every key.
     if (tBatch.depth == 0 || added)
-        g.evaluate();
+        g.evaluateUpstream({member.node});
     const int comp = plug.component >= 0 ? plug.component : 0;
     glm::dvec3 o = tBatch.depth > 0 && pending != tBatch.wanted.end() ? pending->second : vecOf(g.storedValue(member));
     o[comp] = value;

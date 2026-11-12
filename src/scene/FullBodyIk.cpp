@@ -442,7 +442,10 @@ Problem problemFor(Graph& g, NodeId root, const PoseOptions& opts, std::vector<N
     Node* top = g.node(root);
     if (!top || !rig::isJoint(*top))
         throw std::invalid_argument("fullBodyIk: the root must be a joint");
-    g.evaluate();
+    // Only the skeleton is read: meshes skinned to it stay dirty rather than being skinned again.
+    std::vector<NodeId> skeleton = g.descendants(root);
+    skeleton.push_back(root);
+    g.evaluateUpstream(skeleton);
 
     Problem p;
     index.clear();

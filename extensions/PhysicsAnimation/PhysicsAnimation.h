@@ -85,6 +85,8 @@ struct ShapeDesc
     glm::dvec3 offset{0.0};          // shape frame origin in joint space
     glm::dquat rotation{1, 0, 0, 0}; // shape frame in joint space
     std::vector<glm::dvec3> hull;    // convex hull points, shape space
+    /** Sized from the skeleton's proportions, there being no skinned mesh to fit (not stored). */
+    bool fromBones = false;
 };
 
 ShapeDesc shapeOf(const Node& marker);
@@ -233,8 +235,16 @@ inline glm::dvec3 rotationVector(const glm::dquat& q0)
     return glm::dvec3(q.x, q.y, q.z) * (2.0 * std::atan2(s, q.w) / s);
 }
 
-/** Fits a marker's shape to its joint's dominant-influence region of the skinned meshes (a bone-sized default with none). */
+/**
+ * Fits a marker's shape to its joint's dominant-influence region of the skinned meshes; with none, bodySizedShape
+ * (fromBones set, for the caller to report).
+ */
 ShapeDesc fitShape(Graph& g, NodeId joint, ShapeKind kind);
+/**
+ * A shape for a joint with no skin to fit: sized by its label (pelvis, spine, head, hand ...) from the skeleton's height
+ * and shoulder span and its bone's length, so a bare skeleton's ragdoll has a body's sizes and mass.
+ */
+ShapeDesc bodySizedShape(Graph& g, NodeId joint, ShapeKind kind, const glm::dquat& frame);
 
 struct LimitFit
 {
@@ -253,7 +263,8 @@ struct LabelDefaults
 {
     ShapeKind shape = ShapeKind::Capsule;
     Behaviour behaviour = Behaviour::PoseMatch;
-    PoseSpace space = PoseSpace::Local;
+    /** Both: local motors alone let a standing body fold under gravity; the world pull holds it up. */
+    PoseSpace space = PoseSpace::Both;
     double twist = 30.0, swing1 = 45.0, swing2 = 45.0;
     double stiffness = 6.0;
 };

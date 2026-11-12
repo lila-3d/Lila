@@ -7,6 +7,7 @@
 #include "scene/Simulation.h"
 #include "scene/Transform.h"
 
+#include <filesystem>
 #include <map>
 
 using namespace lila;
@@ -94,4 +95,47 @@ TEST_CASE("grapple ragdoll: contacts pull the two bodies together and the bake i
     run("clearSimCache", {{"args", {solver}}});
     const std::string second = run("recordPhysics", {{"args", {solver}}}).get<std::string>();
     CHECK(layerKeys(second) == keys);
+}
+
+TEST_CASE("physics: a skeleton-only Manny's template ragdoll stands for 2 s under gravity, a body's mass")
+{
+    if (!std::filesystem::exists(LILA_TEST_MANNY_FBX))
+        return;
+    loadPhysics();
+    run("newScene");
+    run("autoKeyframe", {{"state", false}});
+    run("playbackOptions", {{"minTime", 0.0}, {"maxTime", 2.0}, {"fps", 30.0}});
+    run("importFbx", {{"args", {LILA_TEST_MANNY_FBX}}, {"animation", false}, {"setPlayback", false}});
+    const json markers = run("physicsMarkersFromTemplate", {{"args", {"root"}}});
+    REQUIRE(markers.size() >= 20);
+    Graph& g = Graph::current();
+    double mass = 0.0;
+    for (const json& m : markers)
+    {
+        const Node& n = *g.find(m.get<std::string>());
+        auto num = [&](const char* a) { return n.as<double>(n.type().attrIndex(a)); };
+        const glm::dvec3 e = n.as<glm::dvec3>(n.type().attrIndex("extents"));
+        const double r = num("radius");
+        const int64_t kind = n.as<int64_t>(n.type().attrIndex("shape"));
+        const double volume = kind == 0 ? 3.14159265 * r * r * (num("length") + 4.0 / 3.0 * r) : kind == 1 ? e.x * e.y * e.z : 4.0 / 3.0 * 3.14159265 * r * r * r;
+        mass += volume * num("density") / 1e6;
+    }
+    CHECK(mass > 50.0);
+    CHECK(mass < 140.0);
+
+    const std::string physics = run("recordPhysics", {{"args", {markers[0]}}}).get<std::string>();
+    REQUIRE(g.find(physics));
+    auto height = [&](const char* joint) { return glm::dvec3(g.find(joint)->as<glm::dmat4>(Transform::kWorldMatrix)[3]).y; };
+    g.setTime(0.0);
+    g.evaluate();
+    const double head0 = height("head"), pelvis0 = height("pelvis"), hand0 = height("hand_r");
+    for (int f = 0; f <= 60; f += 5)
+    {
+        g.setTime(f / 30.0);
+        g.evaluate();
+        CAPTURE(f);
+        CHECK(height("head") > head0 * 0.9);
+        CHECK(height("pelvis") > pelvis0 * 0.9);
+        CHECK(height("hand_r") > hand0 * 0.8);
+    }
 }

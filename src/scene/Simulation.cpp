@@ -836,6 +836,8 @@ anim::RotationCurve reduce(const anim::RotationCurve& in, double degrees)
 NodeId record(Graph& g, NodeId node, const RecordOptions& o)
 {
     LILA_ZONE();
+    // Keying re-evaluates as it goes; skinned meshes nothing here reads wait for the evaluation after.
+    Graph::DeferMeshes deferMeshes;
 
     Sim& s = simFor(g, node);
     configure(g, node, s, o.loop);
@@ -882,7 +884,8 @@ NodeId record(Graph& g, NodeId node, const RecordOptions& o)
         for (size_t f = 0; f < frames.size(); ++f)
         {
             g.setTime(double(start + int64_t(f)) / fps());
-            g.evaluate();
+            // Only the outputs' channels and parents are read: skinned meshes nothing reads stay dirty.
+            g.evaluateUpstream(outputs);
             for (size_t c = 0; c < chosen.size(); ++c)
             {
                 const size_t i = chosen[c];
@@ -962,8 +965,8 @@ NodeId record(Graph& g, NodeId node, const RecordOptions& o)
             continue;
         const double t = double(start + int64_t(f)) / fps();
         g.setTime(t);
-        // One evaluation per frame: keys at one time on the layer don't change what is below it.
-        g.evaluate();
+        // One evaluation per frame, of what the outputs' keys read: keys at one time on the layer don't change what is below it.
+        g.evaluateUpstream(outputs);
         anim::KeyBatch batch;
         for (size_t c = 0; c < chosen.size(); ++c)
         {
