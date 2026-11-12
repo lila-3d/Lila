@@ -109,6 +109,7 @@ target_link_libraries(lila_tests PRIVATE miniz::miniz)
 # test_pointcloud writes an E57 to read back.
 find_package(E57Format CONFIG REQUIRED)
 target_link_libraries(lila_tests PRIVATE E57Format)
+target_compile_definitions(lila_tests PRIVATE LILA_TEST_E57_DATA="${CMAKE_SOURCE_DIR}/tests/data/e57")
 # The batch run tests start real lilabatch workers.
 add_dependencies(lila_tests lilabatch)
 add_test(NAME lila_tests COMMAND lila_tests)

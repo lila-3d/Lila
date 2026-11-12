@@ -343,3 +343,47 @@ TEST_CASE("an E57 scan reads through its pose, with its CRS, and imports")
     REQUIRE(scene::georef::current());
     scene::georef::setCurrent(std::nullopt);
 }
+
+TEST_CASE("E57 files written by other tools read with their scaled-integer coordinates and colours")
+{
+    const fs::path data = fs::path(LILA_TEST_E57_DATA);
+    {
+        std::unique_ptr<PointSource> s = openSource(data / "bunnyInt32.e57");
+        CHECK(s->info().count == 30571);
+        std::vector<RawPoint> pts, all;
+        while (s->next(pts, 1 << 14))
+            all.insert(all.end(), pts.begin(), pts.end());
+        REQUIRE(all.size() == 30571);
+        glm::dvec3 lo(1e300), hi(-1e300);
+        for (const RawPoint& p : all)
+        {
+            lo = glm::min(lo, p.position);
+            hi = glm::max(hi, p.position);
+        }
+        // The file's own cartesianBounds, in metres.
+        CHECK(lo.x == doctest::Approx(-0.094689).epsilon(1e-4));
+        CHECK(hi.x == doctest::Approx(0.061009).epsilon(1e-4));
+        CHECK(lo.y == doctest::Approx(0.040011).epsilon(1e-4));
+        CHECK(hi.y == doctest::Approx(0.187321).epsilon(1e-4));
+        CHECK(lo.z == doctest::Approx(-0.061873).epsilon(1e-4));
+        CHECK(hi.z == doctest::Approx(0.058799).epsilon(1e-4));
+    }
+    {
+        std::unique_ptr<PointSource> s = openSource(data / "ColourRepresentation.e57");
+        std::vector<RawPoint> pts, all;
+        while (s->next(pts, 1 << 14))
+            all.insert(all.end(), pts.begin(), pts.end());
+        CHECK(all.size() == 153);
+        bool coloured = false;
+        for (const RawPoint& p : all)
+        {
+            CHECK(glm::all(glm::lessThanEqual(glm::abs(p.position), glm::dvec3(0.5 + 1e-6))));
+            coloured |= p.rgb[0] != p.rgb[1] || p.rgb[1] != p.rgb[2];
+        }
+        CHECK(coloured);
+    }
+    scene::georef::setCurrent(std::nullopt);
+    const json r = ops::execute("importPointCloud", {{"args", {(fs::path(LILA_TEST_E57_DATA) / "bunnyInt32.e57").string()}},
+                                                     {"cache", (fs::temp_directory_path() / "lila_bunny.lilapc").string()}});
+    CHECK(r["points"].get<uint64_t>() == 30571);
+}
