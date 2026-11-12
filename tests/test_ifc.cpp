@@ -4,6 +4,7 @@
 #include "ops/Command.h"
 #include "scene/Georef.h"
 #include "scene/Graph.h"
+#include "scene/Materials.h"
 #include "scene/MeshNodes.h"
 #include "scene/Transform.h"
 
@@ -108,5 +109,70 @@ TEST_CASE("an IFC wall comes in under its storey, with its properties, on the gr
     CHECK(lo.z == doctest::Approx(100.0).epsilon(1e-9));
     CHECK(hi.z == doctest::Approx(103.0).epsilon(1e-9));
     CHECK(m->numPoints() == 8);
+    scene::georef::setCurrent(std::nullopt);
+}
+
+TEST_CASE("an IFC2x3 site with no map conversion is placed by its RefLatitude, RefLongitude and TrueNorth, with materials")
+{
+    ops::execute("newScene", json::object());
+    scene::georef::setCurrent(std::nullopt);
+    // The same wall, IFC2x3: no IfcMapConversion; the site at 45 49' 32" N, 11 31' 56" E, 1300 m; TrueNorth along model -X,
+    // so the model's +Y points east. A styled colour on the wall.
+    std::string file = kWall;
+    auto replace = [&](const std::string& from, const std::string& to) {
+        const size_t at = file.find(from);
+        REQUIRE(at != std::string::npos);
+        file.replace(at, from.size(), to);
+    };
+    replace("FILE_SCHEMA(('IFC4'));", "FILE_SCHEMA(('IFC2X3'));");
+    replace("#20=IFCGEOMETRICREPRESENTATIONCONTEXT($,'Model',3,1.E-05,#11,$);", "#20=IFCGEOMETRICREPRESENTATIONCONTEXT($,'Model',3,1.E-05,#11,#23);\n#23=IFCDIRECTION((-1.,0.));");
+    replace("#21=IFCPROJECTEDCRS('EPSG:32633',$,$,$,$,$,$);\n", "");
+    replace("#22=IFCMAPCONVERSION(#20,#21,500000.,4649776.,100.,1.,0.,1.);\n", "");
+    replace("#30=IFCSITE('1YvctVUKr0kugbFTf53O9L',$,'Site',$,$,#31,$,$,.ELEMENT.,$,$,$,$,$);",
+            "#30=IFCSITE('1YvctVUKr0kugbFTf53O9L',$,'Site',$,$,#31,$,$,.ELEMENT.,(45,49,32,0),(11,31,56,0),1300.,$,$);");
+    replace("ENDSEC;\nEND-ISO", "#110=IFCCOLOURRGB($,0.8,0.2,0.1);\n#111=IFCSURFACESTYLERENDERING(#110,0.,$,$,$,$,$,$,.FLAT.);\n"
+                                "#112=IFCSURFACESTYLE($,.BOTH.,(#111));\n#113=IFCPRESENTATIONSTYLEASSIGNMENT((#112));\n"
+                                "#114=IFCSTYLEDITEM(#82,(#113),$);\nENDSEC;\nEND-ISO");
+    const fs::path dir = fs::temp_directory_path() / "lila_ifc";
+    fs::create_directories(dir);
+    std::ofstream(dir / "site.ifc", std::ios::binary) << file;
+    const json r = ops::execute("importIfc", {{"args", {(dir / "site.ifc").string()}}});
+    CHECK(r["georeference"].get<std::string>().find("IfcSite") != std::string::npos);
+    const auto geo = scene::georef::current();
+    REQUIRE(geo);
+    CHECK(geo->crs == "EPSG:32632");
+
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    const scene::Node* wall = g.find("Wall_A") ? g.find("Wall_A") : g.find("Wall A");
+    REQUIRE(wall);
+    const scene::MeshPtr m = wall->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+    REQUIRE(m);
+    const glm::dmat4 world = wall->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+    glm::dvec3 c(0.0);
+    int n = 0;
+    for (geo::Index p = 0; p < m->pointCapacity(); ++p)
+        if (m->pointValid(p))
+        {
+            c += glm::dvec3(world * glm::dvec4(m->position(p), 1.0));
+            ++n;
+        }
+    c /= double(n);
+    // Model (10, 20) with +Y east and +X south: 20 m east and 10 m south of the site, the box's centre 1.5 m up.
+    const json llh = ops::execute("georeferenceConvert", {{"points", {{c.x, c.y, c.z}}}, {"to", "geographic"}});
+    const double siteLat = 45.0 + 49.0 / 60.0 + 32.0 / 3600.0, siteLon = 11.0 + 31.0 / 60.0 + 56.0 / 3600.0;
+    const double northM = (llh[0][0].get<double>() - siteLat) * 111141.0;
+    const double eastM = (llh[0][1].get<double>() - siteLon) * 111141.0 * std::cos(glm::radians(siteLat)) * 1.0021;
+    CHECK(eastM == doctest::Approx(20.0).epsilon(0.005));
+    CHECK(northM == doctest::Approx(-10.0).epsilon(0.005));
+    CHECK(llh[0][2].get<double>() == doctest::Approx(1301.5).epsilon(1e-4));
+
+    // One material per colour, its base colour the IFC colour in linear.
+    REQUIRE(m->materialNames().size() == 1);
+    CHECK(m->materialNames()[0] == "IFC_CC331A");
+    const scene::Node* mat = scene::materials::find(g, "IFC_CC331A");
+    REQUIRE(mat);
+    const glm::dvec3 base = mat->as<glm::dvec3>(scene::material::kBaseColor);
+    CHECK(base.r == doctest::Approx(0.6038).epsilon(0.002));
     scene::georef::setCurrent(std::nullopt);
 }

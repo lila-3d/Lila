@@ -10,6 +10,7 @@
 #include "ops/Command.h"
 #include "scene/Georef.h"
 #include "scene/Graph.h"
+#include "scene/Materials.h"
 #include "scene/MeshNodes.h"
 #include "scene/Transform.h"
 
@@ -20,10 +21,17 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <algorithm>
+#include <cmath>
+#include <format>
 #include <fstream>
 #include <functional>
+#include <map>
+#include <optional>
+#include <span>
 #include <span>
 #include <map>
+#include <optional>
 #include <set>
 #include <unordered_map>
 
@@ -59,6 +67,17 @@ json readValue(const IfcLoader& l)
         return e;
     }
     case IfcTokenType::REF: return l.GetRefArgument();
+    case IfcTokenType::SET_BEGIN:
+    {
+        l.GetTokenType();
+        json list = json::array();
+        while (l.GetTokenType() != IfcTokenType::SET_END)
+        {
+            l.StepBack();
+            list.push_back(readValue(l));
+        }
+        return list;
+    }
     case IfcTokenType::LABEL:
     {
         // A typed value, IFCLABEL('x'): the label, then the value in parentheses.
@@ -118,6 +137,82 @@ struct Placing
     std::string message;
 };
 
+/** IfcCompoundPlaneAngleMeasure (degrees, minutes, seconds, millionths of a second, all with the same sign) in degrees. */
+std::optional<double> compoundAngle(const json& v)
+{
+    if (!v.is_array() || v.size() < 3)
+        return std::nullopt;
+    const double scale[] = {1.0, 1.0 / 60.0, 1.0 / 3600.0, 1.0 / 3.6e9};
+    double deg = 0.0;
+    for (size_t i = 0; i < std::min<size_t>(v.size(), 4); ++i)
+        if (v[i].is_number())
+            deg += v[i].get<double>() * scale[i];
+    return deg;
+}
+
+/**
+ * Without an IfcMapConversion (IFC2x3, and IFC4 files that never got one): IfcSite's RefLatitude, RefLongitude and
+ * RefElevation place the site origin, in the UTM zone around it, with the model's Y axis turned to its context's
+ * TrueNorth. Local metres become grid metres through the grid's convergence and scale at the site.
+ */
+std::optional<Placing> sitePlacing(const IfcLoader& l, bool zUp)
+{
+    for (uint32_t site : l.GetExpressIDsWithType(ws::IFCSITE))
+    {
+        const auto lat = compoundAngle(argument(l, site, 9));
+        const auto lon = compoundAngle(argument(l, site, 10));
+        if (!lat || !lon)
+            continue;
+        const json elevation = argument(l, site, 11);
+        const double h = elevation.is_number() ? elevation.get<double>() : 0.0;
+        const int zone = std::clamp(int(std::floor((*lon + 180.0) / 6.0)) + 1, 1, 60);
+        const std::string crs = std::format("EPSG:{}", (*lat >= 0.0 ? 32600 : 32700) + zone);
+        const auto origin = scene::georef::fromGeographic(crs, {*lat, *lon, h});
+        if (!origin)
+            return std::nullopt;
+        // True north in the model: the first 3D context's TrueNorth direction, else +Y.
+        glm::dvec2 north(0.0, 1.0);
+        for (uint32_t ctx : l.GetExpressIDsWithType(ws::IFCGEOMETRICREPRESENTATIONCONTEXT))
+        {
+            const json dir = argument(l, ctx, 5);
+            if (dir.is_number_integer() || dir.is_number_unsigned())
+            {
+                const json ratios = argument(l, uint32_t(dir.get<uint64_t>()), 0);
+                if (ratios.is_array() && ratios.size() >= 2 && ratios[0].is_number() && ratios[1].is_number())
+                {
+                    const glm::dvec2 d(ratios[0].get<double>(), ratios[1].get<double>());
+                    if (glm::length(d) > 1e-12)
+                        north = glm::normalize(d);
+                }
+            }
+            break;
+        }
+        // A metre east and north of the site on the ellipsoid, in grid metres: the grid's convergence and scale there.
+        constexpr double a = 6378137.0, f = 1.0 / 298.257223563, e2 = f * (2.0 - f);
+        const double phi = glm::radians(*lat), w = std::sqrt(1.0 - e2 * std::sin(phi) * std::sin(phi));
+        const double metresPerDegLat = glm::radians(a * (1.0 - e2) / (w * w * w)), metresPerDegLon = glm::radians(a / w * std::cos(phi));
+        const auto eastOf = scene::georef::fromGeographic(crs, {*lat, *lon + 1.0 / metresPerDegLon, h});
+        const auto northOf = scene::georef::fromGeographic(crs, {*lat + 1.0 / metresPerDegLat, *lon, h});
+        if (!eastOf || !northOf)
+            return std::nullopt;
+        const glm::dvec2 gridEast = glm::dvec2(*eastOf - *origin), gridNorth = glm::dvec2(*northOf - *origin);
+        // Model x, y to true east, north (TrueNorth gives where north points in the model), then to grid metres.
+        const glm::dvec2 modelEast(north.y, -north.x);
+        const glm::dmat2 toTrue = glm::transpose(glm::dmat2(modelEast, north));
+        const glm::dmat2 toGrid = glm::dmat2(gridEast, gridNorth) * toTrue;
+        glm::dmat4 toMap(1.0);
+        toMap[0] = glm::dvec4(toGrid[0], 0.0, 0.0);
+        toMap[1] = glm::dvec4(toGrid[1], 0.0, 0.0);
+        const scene::georef::Georeference file{crs, *origin};
+        const scene::georef::Placement p = scene::georef::place(file);
+        Placing out;
+        out.toScene = p.matrix * scene::georef::localFrame(file, zUp) * toMap;
+        out.message = std::format("{} (IfcSite {:.6f}, {:.6f}: no IfcMapConversion)", p.message, *lat, *lon);
+        return out;
+    }
+    return std::nullopt;
+}
+
 Placing placing(const IfcLoader& l, bool useGeo)
 {
     Placing out;
@@ -132,7 +227,11 @@ Placing placing(const IfcLoader& l, bool useGeo)
         return out;
     const std::vector<uint32_t> conversions = l.GetExpressIDsWithType(ws::IFCMAPCONVERSION);
     if (conversions.empty())
+    {
+        if (auto site = sitePlacing(l, zUp))
+            return *site;
         return out;
+    }
     const uint32_t mc = conversions.front();
     const json target = argument(l, mc, 1);
     if (!target.is_number_unsigned() && !target.is_number_integer())
@@ -162,6 +261,43 @@ Placing placing(const IfcLoader& l, bool useGeo)
     out.toScene = p.matrix * scene::georef::localFrame(file, zUp) * toMap;
     out.message = p.message + " (IfcMapConversion)";
     return out;
+}
+
+/** "IFC_RRGGBB": IFC's colour (display values) as bytes, one material per distinct colour, shared like CadImport's. */
+std::string materialName(const glm::vec4& c)
+{
+    auto byte = [](float v) { return int(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)); };
+    return std::format("IFC_{:02X}{:02X}{:02X}", byte(c.r), byte(c.g), byte(c.b));
+}
+
+/** Each face's material slot from its colour, the materials made on first use with that colour and its opacity. */
+void assignMaterials(Graph& g, geo::Mesh& mesh, const std::vector<glm::vec4>& faceColors)
+{
+    std::map<std::string, int32_t> slots;
+    std::span<int32_t> m = mesh.faceAttrs().getOrAdd<int32_t>(geo::attr::kMaterial);
+    for (geo::Index f = 0; f < geo::Index(faceColors.size()); ++f)
+    {
+        const std::string name = materialName(faceColors[size_t(f)]);
+        auto [it, made] = slots.try_emplace(name, int32_t(mesh.materialNames().size()));
+        if (made)
+        {
+            mesh.materialNames().push_back(name);
+            if (!scene::materials::find(g, name))
+            {
+                Node* mat = scene::materials::create(g, name);
+                const glm::vec4& c = faceColors[size_t(f)];
+                auto linear = [](double s) { return s <= 0.04045 ? s / 12.92 : std::pow((s + 0.055) / 1.055, 2.4); };
+                g.setValue({mat->id(), scene::material::kBaseColor, -1}, glm::dvec3(linear(c.r), linear(c.g), linear(c.b)));
+                if (c.a < 0.999f)
+                {
+                    // Glazing and other see-through elements.
+                    g.setValue({mat->id(), scene::material::kOpacity, -1}, double(c.a));
+                    g.setValue({mat->id(), scene::material::kBlendMode, -1}, int64_t(2));
+                }
+            }
+        }
+        m[size_t(f)] = it->second;
+    }
 }
 
 json importIfc(const Args& a)
@@ -347,6 +483,7 @@ json importIfc(const Args& a)
                     colors[size_t(c)] = faceColors[size_t(face)];
             }
             geo::colors::setCurrent(mesh, "ifcColor");
+            assignMaterials(g, mesh, faceColors);
             geo::mergeByDistance(mesh, {}, {.distance = 0.01});
             NodeId parent = scene::kNoNode;
             if (auto p = parentOf.find(id); p != parentOf.end())
