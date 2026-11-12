@@ -19,7 +19,9 @@
 #include <stdexcept>
 
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -667,7 +669,8 @@ std::array<double, 3> Engine::lastTimes() const { return mImpl->times; }
 namespace
 {
 std::mutex gSharedMutex;
-std::unique_ptr<Engine> gShared;
+// Never destroyed at exit: tearing down a DirectML session while the process unloads its DLLs fails fast.
+Engine* gShared = nullptr;
 Status gSharedStatus;
 bool gTried = false;
 Device gDevice = Device::Auto;
@@ -683,7 +686,7 @@ Engine* Engine::shared()
         {
             EngineOptions o;
             o.device = gDevice;
-            gShared = create(SomaSkeleton::shipped(), o, &gSharedStatus);
+            gShared = create(SomaSkeleton::shipped(), o, &gSharedStatus).release();
         }
         catch (const std::exception& e)
         {
@@ -693,7 +696,7 @@ Engine* Engine::shared()
         if (!gShared)
             log::write(LogLevel::Warning, "motion: " + gSharedStatus.message);
     }
-    return gShared.get();
+    return gShared;
 }
 
 Status Engine::status()
@@ -706,7 +709,8 @@ Status Engine::status()
 void Engine::resetShared()
 {
     std::lock_guard lock(gSharedMutex);
-    gShared.reset();
+    delete gShared;
+    gShared = nullptr;
     gTried = false;
 }
 
@@ -716,7 +720,8 @@ void Engine::setSharedDevice(Device device)
     if (device == gDevice)
         return;
     gDevice = device;
-    gShared.reset();
+    delete gShared;
+    gShared = nullptr;
     gTried = false;
 }
 

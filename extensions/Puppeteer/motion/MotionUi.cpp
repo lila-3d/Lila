@@ -9,6 +9,7 @@
 
 #include <lila/Command.h>
 #include <lila/Controls.h>
+#include <lila/DebugDraw.h>
 #include <lila/Events.h>
 #include <lila/FileDialog.h>
 #include <lila/Icons.h>
@@ -31,7 +32,9 @@
 #include <set>
 
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -513,6 +516,56 @@ private:
     Pad mPad;
 };
 
+// Spot previews -----------------------------------------------------------------------------------------------------
+
+/** Each spot's target poses as stick figures where the character will stand, the selected spot's brighter. */
+void drawSpots(const debugDraw::Channel& ch)
+{
+    ch.clear();
+    Graph& g = graph();
+    const mo::SomaSkeleton& s = mo::SomaSkeleton::shipped();
+    std::vector<int> model;
+    for (const char* n : mo::modelJointNames())
+        model.push_back(s.find(n));
+    const auto& sel = g.selection();
+    for (NodeId id : g.nodes())
+    {
+        const Node* n = g.node(id);
+        if (!n || !n->type().isA(mo::kSpotType))
+            continue;
+        std::vector<mo::PlacedTarget> targets;
+        try
+        {
+            const auto [at, heading] = mo::groundFrame(g, id);
+            targets = mo::placeSpot(mo::spotOf(g, id), at, heading);
+        }
+        catch (const std::exception&)
+        {
+            continue;
+        }
+        const bool picked = std::find(sel.begin(), sel.end(), id) != sel.end();
+        for (size_t t = 0; t < targets.size(); ++t)
+        {
+            const mo::Pose w = s.world(targets[t].poses.front());
+            const float shade = picked ? 0.9f : 0.45f;
+            debugDraw::Style style{.color = lila::math::LinearColor(shade, shade * (1.0f - 0.12f * float(t)), shade, 1.0f), .thickness = picked ? 2.0f : 1.0f,
+                                   .persistent = true, .channel = ch};
+            std::vector<lila::math::Vector> segs;
+            for (int j : model)
+            {
+                const int parent = s.parents[size_t(j)];
+                if (j <= 0 || parent < 0 || std::find(model.begin(), model.end(), parent) == model.end())
+                    continue;
+                const glm::dvec3 a = glm::dvec3(w[size_t(parent)].p) * mo::kCmPerMeter, b = glm::dvec3(w[size_t(j)].p) * mo::kCmPerMeter;
+                segs.push_back({a.x, a.y, a.z});
+                segs.push_back({b.x, b.y, b.z});
+            }
+            debugDraw::segments(segs, style);
+        }
+    }
+    viewportTools::requestRedraw();
+}
+
 // Panel -------------------------------------------------------------------------------------------------------------
 
 const std::vector<std::pair<std::string, QString>> kStyles = {
@@ -702,6 +755,10 @@ void registerCommands(ext::Context& ctx)
 void registerUi(ext::Context& ctx)
 {
     registerCommands(ctx);
+    static debugDraw::Channel spots;
+    spots = debugDraw::channel(ctx, "Motion Spots");
+    for (events::Event e : {events::Event::UndoStackChanged, events::Event::SelectionChanged, events::Event::SceneOpened, events::Event::SceneNew})
+        events::subscribe(e, [](const events::EventData&) { drawSpots(spots); }, "Puppeteer");
     viewportTools::add(ctx, {.id = "puppeteer.motion.driveTool", .label = "Drive", .icon = "steering-wheel",
                              .create = [] { return std::make_unique<DriveTool>(); }});
 
