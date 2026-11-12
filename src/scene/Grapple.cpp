@@ -540,10 +540,17 @@ NodeId hipsJoint(Graph& g, NodeId root)
 /** The child joint a bone runs to: the one continuing the line from its parent, else its first. */
 std::optional<NodeId> boneEnd(Graph& g, NodeId joint)
 {
-    std::vector<NodeId> kids;
+    // Twist and corrective helpers sit on the bone part way along it; the bone runs to the next real joint.
+    auto helper = [&](NodeId c) {
+        const std::string b = bareName(g.node(c)->name());
+        return has(b, "twist") || has(b, "corrective") || b.starts_with("ik_");
+    };
+    std::vector<NodeId> kids, helpers;
     for (NodeId c : g.children(joint))
         if (Node* n = g.node(c); n && rig::isJoint(*n) && rigel::isDeform(*n))
-            kids.push_back(c);
+            (helper(c) ? helpers : kids).push_back(c);
+    if (kids.empty())
+        kids = helpers;
     if (kids.empty())
         return std::nullopt;
     const glm::dvec3 at = positionOf(*g.node(joint));
@@ -558,8 +565,11 @@ std::optional<NodeId> boneEnd(Graph& g, NodeId joint)
         const glm::dvec3 d = positionOf(*g.node(k)) - at;
         if (glm::length(d) < 1e-6 || glm::length(in) < 1e-6)
             continue;
-        if (const double c = glm::dot(glm::normalize(d), glm::normalize(in)); c > bestDot)
-            bestDot = c, best = k;
+        // Children along the same line (within about 2 degrees) count as one; the farther wins.
+        const double c = glm::dot(glm::normalize(d), glm::normalize(in));
+        const bool tie = std::abs(c - bestDot) < 1e-3;
+        if ((c > bestDot && !tie) || (tie && glm::length(d) > glm::length(positionOf(*g.node(best)) - at)))
+            bestDot = std::max(c, bestDot), best = k;
     }
     return best;
 }

@@ -566,7 +566,7 @@ public:
             {
                 const auto [sj, tj] = gp::contactJoints(g, c);
                 const Node& n = *g.node(c);
-                const double weight = n.as<double>(n.type().attrIndex("weight"));
+                const double weight = std::get<double>(g.value({c, n.type().attrIndex("weight"), -1}));
                 auto* it = new QTreeWidgetItem(mList, {QString::fromStdString(shortName(g, sj) + "  \xe2\x86\x92  " + shortName(g, tj)),
                                                        QString::number(weight, 'f', 2)});
                 it->setData(0, Qt::UserRole, QString::fromStdString(g.path(c)));
@@ -644,7 +644,8 @@ private:
             for (const gp::FigureSetup& f : figures)
             {
                 const std::string root = g.path(f.root);
-                std::string name = shortName(g, f.root);
+                // A character's name, else the root's shortest path, which names the group two same-named skeletons sit in.
+                std::string name = g.path(f.root);
                 if (const NodeId c = characterFor(g, f.root))
                     name = g.node(c)->name();
                 auto* l = new QLabel(QString::fromStdString(name), mFiguresBox);
