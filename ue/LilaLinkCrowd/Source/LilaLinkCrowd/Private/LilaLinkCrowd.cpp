@@ -1,6 +1,11 @@
 #include "LilaLinkCrowd.h"
 
+#include "Kismet2/KismetEditorUtilities.h"
+#include "LilaCrowdActorSync.h"
+#include "LilaCrowdCharacter.h"
+#include "LilaCrowdSignals.h"
 #include "LilaLinkMethodRegistry.h"
+#include "ZoneGraphCrowdLaneAnnotations.h"
 
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Avoidance/MassAvoidanceTrait.h"
@@ -9,6 +14,12 @@
 #include "Dom/JsonValue.h"
 #include "Editor.h"
 #include "EngineUtils.h"
+#include "Animation/AnimSequence.h"
+#include "Animation/AnimationAsset.h"
+#include "Engine/Blueprint.h"
+#include "Engine/BlueprintGeneratedClass.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "MassActorSubsystem.h"
@@ -167,6 +178,10 @@ struct FCrowdNetwork
 	{
 		TArray<FVector> Points;
 		bool bCrossing = false;
+		/** At a signalled junction: the junction and the phase it walks in, of how many; -1 when always open. */
+		FName Junction;
+		int32 Phase = -1;
+		int32 Phases = 0;
 	};
 	TArray<FLane> Lanes;
 	TArray<FVector> Nodes;
@@ -206,6 +221,13 @@ struct FCrowdNetwork
 				continue;
 			}
 			Obj->TryGetBoolField(TEXT("crossing"), Lane.bCrossing);
+			const TSharedPtr<FJsonObject>* Signal = nullptr;
+			if (Obj->TryGetObjectField(TEXT("signal"), Signal))
+			{
+				Lane.Junction = FName(*(*Signal)->GetStringField(TEXT("junction")));
+				(*Signal)->TryGetNumberField(TEXT("phase"), Lane.Phase);
+				(*Signal)->TryGetNumberField(TEXT("phases"), Lane.Phases);
+			}
 			Lanes.Add(MoveTemp(Lane));
 		}
 		for (int32 L = 0; L < Lanes.Num(); ++L)
@@ -227,6 +249,16 @@ double TrimAt(const FCrowdNetwork& Net, const FLaneEnd& End)
 
 // StateTree and Mass assets --------------------------------------------------------------------------------------
 
+/** How Mass draws the agents: characters as actors near the camera, the mesh as instances further out, nothing beyond. */
+struct FLook
+{
+	UStaticMesh* Instance = nullptr;
+	UClass* Character = nullptr;
+	double ActorDistance = 5000.0;
+	double VisibleDistance = 15000.0;
+	int32 MaxActors = 200;
+};
+
 struct FGroup
 {
 	FString Name;
@@ -235,6 +267,8 @@ struct FGroup
 	double SpeedVariance = 0.1;
 	double Pause = 2.0;
 	double Radius = 40.0;
+	/** The characters it wears (index into the crowd's characters) with their shares. */
+	TArray<TPair<int32, double>> Characters;
 };
 
 template <typename T>
@@ -268,7 +302,7 @@ bool Save(UObject* Asset)
  * The lane walker: Wander finds a target along the crowd lanes and its Walk child follows it there, Stand waits pause
  * seconds, then Wander picks the next. With no lane to wander on, Idle stands and tries again.
  */
-UStateTree* MakeStateTree(const FString& Folder, const FString& Name, const FGroup& Group, TArray<FString>& Warnings)
+UStateTree* MakeStateTree(const FString& Folder, const FString& Name, const FGroup& Group, const FZoneGraphTagMask Shut, TArray<FString>& Warnings)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkCrowd::MakeStateTree);
 
@@ -285,6 +319,11 @@ UStateTree* MakeStateTree(const FString& Folder, const FString& Name, const FGro
 	UStateTreeState& Stand = Wander.AddChildState(FName(TEXT("Stand")));
 
 	auto& Find = Wander.AddTask<FMassZoneGraphFindWanderTarget>();
+	// A crossing whose signal is shut isn't a way on; with no other, Wander fails and the agent stands, then looks again.
+	if (const FProperty* Allowed = FMassZoneGraphFindWanderTarget::StaticStruct()->FindPropertyByName(TEXT("AllowedAnnotationTags")))
+	{
+		Allowed->ContainerPtrToValuePtr<FZoneGraphTagFilter>(&Find.GetNode())->NotTags = Shut;
+	}
 	auto& Follow = Walk.AddTask<FMassZoneGraphPathFollowTask>();
 	Follow.GetInstanceData().SpeedScale = 1.0f;
 	if (!Data->AddPropertyBinding(Find, TEXT("WanderTargetLocation"), Follow, TEXT("TargetLocation")))
@@ -319,7 +358,7 @@ TTrait* AddTrait(UMassEntityConfigAsset* Config)
 	return Trait;
 }
 
-UMassEntityConfigAsset* MakeConfig(const FString& Folder, const FString& Name, const FGroup& Group, UStateTree* Tree, UStaticMesh* Mesh)
+UMassEntityConfigAsset* MakeConfig(const FString& Folder, const FString& Name, const FGroup& Group, UStateTree* Tree, const FLook& Look)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkCrowd::MakeConfig);
 
@@ -336,6 +375,10 @@ UMassEntityConfigAsset* MakeConfig(const FString& Folder, const FString& Name, c
 		List->Add(FInstancedStruct::Make(Radius));
 		// The crowd visualization keeps an actor slot per agent, even when every distance shows instances.
 		List->Add(FInstancedStruct::Make<FMassActorFragment>());
+	}
+	if (TArray<FInstancedStruct>* Tags = Field<TArray<FInstancedStruct>>(Fragments, TEXT("Tags")))
+	{
+		Tags->Add(FInstancedStruct::Make<FLilaCrowdAgentTag>());
 	}
 	AddTrait<UMassCrowdMemberTrait>(Config);
 	UMassStateTreeTrait* Behaviour = AddTrait<UMassStateTreeTrait>(Config);
@@ -357,18 +400,44 @@ UMassEntityConfigAsset* MakeConfig(const FString& Folder, const FString& Name, c
 	AddTrait<UMassNavigationObstacleTrait>(Config);
 	AddTrait<UMassLODCollectorTrait>(Config);
 	AddTrait<UMassSimulationLODTrait>(Config);
-	if (Mesh)
+	if (Look.Instance || Look.Character)
 	{
-		UMassCrowdVisualizationTrait* Look = AddTrait<UMassCrowdVisualizationTrait>(Config);
-		FMassStaticMeshInstanceVisualizationMeshDesc& Desc = Look->StaticMeshInstanceDesc.Meshes.AddDefaulted_GetRef();
-		Desc.Mesh = Mesh;
-		// Instances at every distance: a crowd from Lila has no actor templates to swap to up close.
-		if (FMassRepresentationParameters* Params = Field<FMassRepresentationParameters>(Look, TEXT("Params")))
+		UMassCrowdVisualizationTrait* Visual = AddTrait<UMassCrowdVisualizationTrait>(Config);
+		if (Look.Instance)
 		{
-			for (int32 Lod = 0; Lod < EMassLOD::Max; ++Lod)
+			Visual->StaticMeshInstanceDesc.Meshes.AddDefaulted_GetRef().Mesh = Look.Instance;
+		}
+		else if (bool* Require = Field<bool>(Visual, TEXT("bRequireValidStaticMeshInstanceDesc")))
+		{
+			*Require = false;
+		}
+		if (Look.Character)
+		{
+			Visual->HighResTemplateActor = Look.Character;
+			Visual->LowResTemplateActor = Look.Character;
+		}
+		// Characters walk near the camera, instances stand in further out, nothing past the visible distance.
+		const EMassRepresentationType Near = Look.Character ? EMassRepresentationType::HighResSpawnedActor : EMassRepresentationType::StaticMeshInstance;
+		const EMassRepresentationType Mid = Look.Character ? EMassRepresentationType::LowResSpawnedActor : EMassRepresentationType::StaticMeshInstance;
+		const EMassRepresentationType Far = Look.Instance ? EMassRepresentationType::StaticMeshInstance : EMassRepresentationType::None;
+		if (FMassRepresentationParameters* Params = Field<FMassRepresentationParameters>(Visual, TEXT("Params")))
+		{
+			Params->LODRepresentation[EMassLOD::High] = Near;
+			Params->LODRepresentation[EMassLOD::Medium] = Mid;
+			Params->LODRepresentation[EMassLOD::Low] = Far;
+			Params->LODRepresentation[EMassLOD::Off] = EMassRepresentationType::None;
+		}
+		if (FMassVisualizationLODParameters* Lod = Field<FMassVisualizationLODParameters>(Visual, TEXT("LODParams")))
+		{
+			const float Near0 = float(Look.ActorDistance * 0.5), Near1 = float(Look.ActorDistance), Far0 = float(Look.VisibleDistance);
+			const float Base[EMassLOD::Max] = {0.0f, Near0, Near1, Far0};
+			for (int32 L = 0; L < EMassLOD::Max; ++L)
 			{
-				Params->LODRepresentation[Lod] = Lod == EMassLOD::Off ? EMassRepresentationType::None : EMassRepresentationType::StaticMeshInstance;
+				Lod->BaseLODDistance[L] = Base[L];
+				Lod->VisibleLODDistance[L] = Base[L];
 			}
+			Lod->LODMaxCount[EMassLOD::High] = Look.MaxActors;
+			Lod->LODMaxCount[EMassLOD::Medium] = Look.MaxActors;
 		}
 	}
 	Save(Config);
@@ -495,6 +564,93 @@ AActor* MakeLanes(UWorld* World, const FString& Id, const FString& Label, const 
 	return Actor;
 }
 
+/** A Blueprint of the crowd character actor wearing a character's mesh and walk: what Mass spawns for it up close. */
+UClass* MakeCharacter(const FString& Folder, const FString& Name, const TSharedPtr<FJsonObject>& Desc, TArray<FString>& Warnings)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkCrowd::MakeCharacter);
+
+	USkeletalMesh* Mesh = LoadObject<USkeletalMesh>(nullptr, *Desc->GetStringField(TEXT("mesh")));
+	UAnimationAsset* Walk = LoadObject<UAnimationAsset>(nullptr, *Desc->GetStringField(TEXT("walk")));
+	if (!Mesh)
+	{
+		Warnings.Add(FString::Printf(TEXT("no skeletal mesh at %s; that character shows as the instance mesh"), *Desc->GetStringField(TEXT("mesh"))));
+		return nullptr;
+	}
+	UPackage* Package = CreatePackage(*(Folder / Name));
+	Package->FullyLoad();
+	UBlueprint* Blueprint = FindObject<UBlueprint>(Package, *Name);
+	if (!Blueprint)
+	{
+		Blueprint = FKismetEditorUtilities::CreateBlueprint(ALilaCrowdCharacter::StaticClass(), Package, FName(*Name), BPTYPE_Normal, UBlueprint::StaticClass(),
+															 UBlueprintGeneratedClass::StaticClass());
+		FAssetRegistryModule::AssetCreated(Blueprint);
+	}
+	FKismetEditorUtilities::CompileBlueprint(Blueprint);
+	// The walk plays in place: Mass moves the actor, so the root bone's own travel is locked.
+	if (UAnimSequence* Sequence = Cast<UAnimSequence>(Walk); Sequence && !Sequence->bForceRootLock)
+	{
+		Sequence->Modify();
+		Sequence->bForceRootLock = true;
+		Save(Sequence);
+	}
+	ALilaCrowdCharacter* Defaults = Blueprint->GeneratedClass->GetDefaultObject<ALilaCrowdCharacter>();
+	Defaults->Mesh = Mesh;
+	Defaults->Walk = Walk;
+	double Yaw = 0.0;
+	Desc->TryGetNumberField(TEXT("yaw"), Yaw);
+	Defaults->Yaw = static_cast<float>(Yaw);
+	// Compiled again: a Blueprint's spawned actors take only the defaults its last compile saw differ from the parent's.
+	FKismetEditorUtilities::CompileBlueprint(Blueprint);
+	Defaults->MarkPackageDirty();
+	Save(Blueprint);
+	return Blueprint->GeneratedClass;
+}
+
+/**
+ * MassCrowd's lane annotations (closed crossings shut to agents choosing a way) and the signal cycle opening each
+ * crossing in its junction's walk phase, on the lanes actor.
+ */
+void AddSignals(AActor* Lanes, const FCrowdNetwork& Net, const FZoneGraphTag Closed, const FZoneGraphTag Waiting, const TSharedPtr<FJsonObject>& Params,
+				int32& OutSignalled)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkCrowd::AddSignals);
+
+	UZoneGraphCrowdLaneAnnotations* Annotations = NewObject<UZoneGraphCrowdLaneAnnotations>(Lanes, TEXT("LilaCrowdLaneStates"), RF_Transactional);
+	if (FZoneGraphTag* T = Field<FZoneGraphTag>(Annotations, TEXT("CloseLaneTag")))
+	{
+		*T = Closed;
+	}
+	if (FZoneGraphTag* T = Field<FZoneGraphTag>(Annotations, TEXT("WaitingLaneTag")))
+	{
+		*T = Waiting;
+	}
+	Lanes->AddInstanceComponent(Annotations);
+	Annotations->RegisterComponent();
+
+	ULilaCrowdSignals* Signals = NewObject<ULilaCrowdSignals>(Lanes, TEXT("LilaCrowdSignals"), RF_Transactional);
+	double PhaseSeconds = 20.0, ClearSeconds = 4.0;
+	Params->TryGetNumberField(TEXT("phaseSeconds"), PhaseSeconds);
+	Params->TryGetNumberField(TEXT("clearSeconds"), ClearSeconds);
+	Signals->PhaseSeconds = static_cast<float>(PhaseSeconds);
+	Signals->ClearSeconds = static_cast<float>(ClearSeconds);
+	OutSignalled = 0;
+	for (const FCrowdNetwork::FLane& L : Net.Lanes)
+	{
+		if (L.bCrossing)
+		{
+			FLilaCrowdCrossing& C = Signals->Crossings.AddDefaulted_GetRef();
+			C.A = L.Points[0];
+			C.B = L.Points.Last();
+			C.Junction = L.Junction;
+			C.Phase = L.Phase;
+			C.Phases = L.Phases;
+			OutSignalled += L.Phase >= 0 ? 1 : 0;
+		}
+	}
+	Lanes->AddInstanceComponent(Signals);
+	Signals->RegisterComponent();
+}
+
 TSharedPtr<FJsonValue> SetMassCrowd(const TSharedPtr<FJsonObject>& Params, FString& OutError)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkCrowd::SetMassCrowd);
@@ -541,6 +697,9 @@ TSharedPtr<FJsonValue> SetMassCrowd(const TSharedPtr<FJsonObject>& Params, FStri
 	Params->TryGetStringField(TEXT("crossingTag"), CrossingName);
 	Zone.Settings->Modify();
 	const FZoneGraphTag CrowdTag = Zone.Tag(CrowdName, Warnings), CrossingTag = Zone.Tag(CrossingName, Warnings);
+	const FZoneGraphTag ClosedTag = Zone.Tag(TEXT("LilaCrowdClosed"), Warnings), WaitingTag = Zone.Tag(TEXT("LilaCrowdWaiting"), Warnings);
+	FZoneGraphTagMask Shut(ClosedTag);
+	Shut.Add(WaitingTag);
 	double Width = 150.0;
 	Params->TryGetNumberField(TEXT("laneWidth"), Width);
 	FZoneLaneProfile* Profile = Zone.Profiles->FindByPredicate([](const FZoneLaneProfile& P) { return P.Name == ProfileName; });
@@ -582,6 +741,8 @@ TSharedPtr<FJsonValue> SetMassCrowd(const TSharedPtr<FJsonObject>& Params, FStri
 		return nullptr;
 	}
 	UE::ZoneGraphDelegates::OnZoneGraphRequestRebuild.Broadcast();
+	int32 Signalled = 0;
+	AddSignals(Lanes, Net, ClosedTag, WaitingTag, Params, Signalled);
 
 	UStaticMesh* Mesh = nullptr;
 	FString MeshPath = TEXT("/Engine/BasicShapes/Cylinder.Cylinder");
@@ -605,10 +766,39 @@ TSharedPtr<FJsonValue> SetMassCrowd(const TSharedPtr<FJsonObject>& Params, FStri
 		Obj->TryGetNumberField(TEXT("speedVariance"), G.SpeedVariance);
 		Obj->TryGetNumberField(TEXT("pause"), G.Pause);
 		Obj->TryGetNumberField(TEXT("radius"), G.Radius);
+		for (const TSharedPtr<FJsonValue>& C : ArrayOf(Obj, TEXT("characters")))
+		{
+			const TSharedPtr<FJsonObject> W = C->AsObject();
+			G.Characters.Emplace(int32(W->GetNumberField(TEXT("index"))), W->GetNumberField(TEXT("share")));
+		}
 	}
 	if (Groups.IsEmpty())
 	{
 		Groups.Add({TEXT("walkers")});
+	}
+	// Agents choose a lane up to a move ahead: the slowest must still reach a crossing it chose before its walk ends.
+	if (ULilaCrowdSignals* Signals = Lanes->FindComponentByClass<ULilaCrowdSignals>())
+	{
+		UMassCrowdSettings* Crowd = GetMutableDefault<UMassCrowdSettings>();
+		const float* Move = Field<float>(Crowd, TEXT("MoveDistance"));
+		const float* Deviation = Field<float>(Crowd, TEXT("MoveDistanceRandomDeviation"));
+		double Slowest = TNumericLimits<double>::Max();
+		for (const FGroup& G : Groups)
+		{
+			Slowest = FMath::Min(Slowest, G.Speed * (1.0 - FMath::Clamp(G.SpeedVariance, 0.0, 0.9)));
+		}
+		Signals->CommitSeconds = static_cast<float>(((Move ? *Move : 500.0) + (Deviation ? *Deviation : 0.0)) / FMath::Max(Slowest, 10.0));
+	}
+	FLook Look;
+	Look.Instance = Mesh;
+	Params->TryGetNumberField(TEXT("actorDistance"), Look.ActorDistance);
+	Params->TryGetNumberField(TEXT("visibleDistance"), Look.VisibleDistance);
+	Params->TryGetNumberField(TEXT("maxActors"), Look.MaxActors);
+	TArray<UClass*> Characters;
+	for (const TSharedPtr<FJsonValue>& C : ArrayOf(Params, TEXT("characters")))
+	{
+		const TSharedPtr<FJsonObject> Desc = C->AsObject();
+		Characters.Add(MakeCharacter(Folder, TEXT("BP_") + AssetName(Label) + TEXT("_") + AssetName(Desc->GetStringField(TEXT("name"))), Desc, Warnings));
 	}
 	TArray<FMassSpawnedEntityType> Types;
 	TArray<TSharedPtr<FJsonValue>> Trees, Configs;
@@ -616,17 +806,34 @@ TSharedPtr<FJsonValue> SetMassCrowd(const TSharedPtr<FJsonObject>& Params, FStri
 	for (const FGroup& G : Groups)
 	{
 		const FString Suffix = Base + TEXT("_") + AssetName(G.Name);
-		UStateTree* Tree = MakeStateTree(Folder, TEXT("ST_") + Suffix, G, Warnings);
+		UStateTree* Tree = MakeStateTree(Folder, TEXT("ST_") + Suffix, G, Shut, Warnings);
 		if (!Tree)
 		{
 			continue;
 		}
-		UMassEntityConfigAsset* Config = MakeConfig(Folder, TEXT("CE_") + Suffix, G, Tree, Mesh);
-		FMassSpawnedEntityType& Type = Types.AddDefaulted_GetRef();
-		Type.EntityConfig = Config;
-		Type.Proportion = static_cast<float>(FMath::Max(G.Share, 0.0));
 		Trees.Add(MakeShared<FJsonValueString>(Tree->GetPathName()));
-		Configs.Add(MakeShared<FJsonValueString>(Config->GetPathName()));
+		// One config per character the group wears, sharing the group's agents as Lila does.
+		TArray<TPair<int32, double>> Wears = G.Characters;
+		if (Wears.IsEmpty())
+		{
+			Wears.Emplace(INDEX_NONE, 1.0);
+		}
+		double Total = 0.0;
+		for (const TPair<int32, double>& W : Wears)
+		{
+			Total += W.Value;
+		}
+		for (const TPair<int32, double>& W : Wears)
+		{
+			FLook Wearing = Look;
+			Wearing.Character = Characters.IsValidIndex(W.Key) ? Characters[W.Key] : nullptr;
+			const FString Name = TEXT("CE_") + Suffix + (W.Key >= 0 ? FString::Printf(TEXT("_%d"), W.Key) : FString());
+			UMassEntityConfigAsset* Config = MakeConfig(Folder, Name, G, Tree, Wearing);
+			FMassSpawnedEntityType& Type = Types.AddDefaulted_GetRef();
+			Type.EntityConfig = Config;
+			Type.Proportion = static_cast<float>(FMath::Max(G.Share, 0.0) * (Total > 0.0 ? W.Value / Total : 1.0));
+			Configs.Add(MakeShared<FJsonValueString>(Config->GetPathName()));
+		}
 	}
 	if (Types.IsEmpty())
 	{
@@ -696,6 +903,7 @@ TSharedPtr<FJsonValue> SetMassCrowd(const TSharedPtr<FJsonObject>& Params, FStri
 	Out->SetStringField(TEXT("actor"), Lanes->GetPathName());
 	Out->SetNumberField(TEXT("lanes"), Net.Lanes.Num());
 	Out->SetNumberField(TEXT("nodes"), Polygons);
+	Out->SetNumberField(TEXT("signalled"), Signalled);
 	Out->SetStringField(TEXT("spawner"), Spawner->GetPathName());
 	Out->SetArrayField(TEXT("stateTrees"), Trees);
 	Out->SetArrayField(TEXT("configs"), Configs);
@@ -786,6 +994,41 @@ TSharedPtr<FJsonValue> SampleMassCrowd(const TSharedPtr<FJsonObject>& Params, FS
 		}
 	}
 	Out->SetNumberField(TEXT("instances"), Instances);
+	Out->SetNumberField(TEXT("time"), World->GetTimeSeconds());
+	TArray<TSharedPtr<FJsonValue>> Signals;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (const ULilaCrowdSignals* S = It->FindComponentByClass<ULilaCrowdSignals>())
+		{
+			for (int32 C = 0; C < S->States().Num(); ++C)
+			{
+				const ULilaCrowdSignals::FState& State = S->States()[C];
+				TSharedRef<FJsonObject> J = MakeShared<FJsonObject>();
+				J->SetNumberField(TEXT("phase"), S->Crossings[C].Phase);
+				J->SetBoolField(TEXT("open"), State.bOpen);
+				J->SetNumberField(TEXT("lanes"), State.Lanes);
+				J->SetNumberField(TEXT("enteredOpen"), State.EnteredOpen);
+				J->SetNumberField(TEXT("enteredClosed"), State.EnteredClosed);
+				Signals.Add(MakeShared<FJsonValueObject>(J));
+			}
+		}
+	}
+	Out->SetArrayField(TEXT("signals"), Signals);
+	// The characters Mass shows up close, where they stand and whether they play their walk.
+	TArray<TSharedPtr<FJsonValue>> Shown;
+	for (TActorIterator<ALilaCrowdCharacter> It(World); It; ++It)
+	{
+		if (It->IsHidden())
+		{
+			continue;
+		}
+		TSharedRef<FJsonObject> J = MakeShared<FJsonObject>();
+		J->SetField(TEXT("p"), PointValue(It->GetActorLocation()));
+		J->SetBoolField(TEXT("playing"), It->Body && It->Body->IsPlaying());
+		J->SetBoolField(TEXT("mesh"), It->Body && It->Body->GetSkeletalMeshAsset() != nullptr);
+		Shown.Add(MakeShared<FJsonValueObject>(J));
+	}
+	Out->SetArrayField(TEXT("characters"), Shown);
 	return MakeShared<FJsonValueObject>(Out);
 }
 

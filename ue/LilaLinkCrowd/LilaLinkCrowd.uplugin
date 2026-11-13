@@ -10,6 +10,11 @@
 	"EnabledByDefault": false,
 	"Modules": [
 		{
+			"Name": "LilaLinkCrowdRuntime",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
 			"Name": "LilaLinkCrowd",
 			"Type": "Editor",
 			"LoadingPhase": "PostEngineInit",

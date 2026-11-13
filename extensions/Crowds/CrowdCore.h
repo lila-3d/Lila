@@ -72,6 +72,9 @@ struct Network
         std::vector<glm::vec2> points;
         float width = 2.0f;
         bool crossing = false;
+        /** A crossing at a signalled junction: the junction (settlement and index), the phase people walk in, of how many. */
+        std::string junction;
+        int phase = -1, phases = 0;
     };
     std::vector<Lane> lanes;
     /** Per lane end (lane * 2, +1 for its far end), the lane ends it joins. */

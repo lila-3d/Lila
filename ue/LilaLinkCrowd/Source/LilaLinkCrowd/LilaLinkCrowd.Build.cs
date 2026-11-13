@@ -29,6 +29,8 @@ public class LilaLinkCrowd : ModuleRules
 			"MassZoneGraphNavigation",
 			"MassAIBehavior",
 			"MassCrowd",
+			"LilaLinkCrowdRuntime",
+			"ZoneGraphAnnotations",
 			"StateTreeModule",
 			"StateTreeEditorModule",
 		});
