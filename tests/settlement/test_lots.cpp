@@ -508,7 +508,8 @@ TEST_CASE("settlement lots: commands list, override by id with undo, choose rout
     CHECK(sub["blocks"][0]["type"] == "open");
     CHECK(sub["blocks"][0]["method"] == "voronoi");
     run("undo");
-    for (const json& b : run("settlementBlocks", {{"args", {mesh}}})["blocks"])
+    const json listed511 = run("settlementBlocks", {{"args", {mesh}}});
+    for (const json& b : listed511["blocks"])
         if (b["blockId"].get<uint64_t>() == id)
             CHECK(b["method"] == target["method"]);
 
