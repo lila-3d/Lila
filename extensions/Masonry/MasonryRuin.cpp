@@ -1120,7 +1120,7 @@ Built realizePlan(const Plan& plan, const RuinParams& ruin, const AgeParams& age
         }
     }
 
-    // Loose elements (columns, stairs, vaults) stand on the ground where they reach down to the walls' ground around them.
+    // Loose elements (columns, stairs, vaults) and floors stand on the ground where they reach down to the walls' ground around them.
     {
         std::vector<Stone> walls;
         for (const Stone& s : b.stones)
@@ -1129,7 +1129,7 @@ Built realizePlan(const Plan& plan, const RuinParams& ruin, const AgeParams& age
         Columns ground;
         ground.build(walls.empty() ? std::span<const Stone>(b.stones) : std::span<const Stone>(walls), std::max(plan.pitch, 1.0) * 4.0);
         for (Stone& s : b.stones)
-            if (s.wall < 0 && !s.grounded && s.role != Role::Slab)
+            if (s.wall < 0 && !s.grounded)
                 s.grounded = s.center.y - halfExtentAabb(s).y <= ground.near(s.center).first + std::max(plan.pitch, 1.0) * 0.5;
     }
 

@@ -4,6 +4,7 @@
 
 #include "MasonryCore.h"
 #include "MasonryArch.h"
+#include "MasonryRuin.h"
 
 #include <lila/Boolean.h>
 
@@ -689,9 +690,63 @@ struct PlacedOpening
     double centre = 0.0; // centre line param
     int sillCourse = 0, springCourse = 0, topCourse = 0, lintelCourses = 0;
     ArchSpec arch;
+    double archTop = 0.0; // highest corner of the arch's stones above the springing
     double springY = 0.0;
     double bearing = 0.0, sillExtra = 0.0;
 };
+
+/**
+ * Course stones with nothing under them (every stone below a short rough one, or the void over an arch crown) grow down
+ * onto the highest stone beneath, a half joint above it, unless growing would meet another stone.
+ */
+void growOntoBeds(std::vector<Stone>& stones, size_t first, double pitch, double joint)
+{
+    std::vector<int> floating;
+    countFloating(stones, pitch * 0.1, &floating);
+    if (floating.empty())
+        return;
+    StoneGrid grid;
+    grid.cell = std::max(pitch * 2.0, 20.0);
+    grid.build(stones, 0.0);
+    std::stable_sort(floating.begin(), floating.end(), [&](int a, int b) { return stones[size_t(a)].center.y < stones[size_t(b)].center.y; });
+    for (int k : floating)
+    {
+        if (size_t(k) < first)
+            continue;
+        const Stone& s = stones[size_t(k)];
+        const double bottom = s.center.y - halfExtentAabb(s).y;
+        Stone below = s;
+        below.size.y = pitch * 3.0;
+        below.center = s.center - s.frame[1] * ((s.size.y + below.size.y) * 0.5);
+        double bed = -1e300;
+        for (int o : grid.around(below, 0.0))
+            if (o != k && overlaps(below, stones[size_t(o)], joint * 0.5))
+            {
+                const Stone& t = stones[size_t(o)];
+                const double top = t.center.y + halfExtentAabb(t).y;
+                if (top <= bottom + 1e-6)
+                    bed = std::max(bed, top);
+            }
+        const double up = std::max(s.frame[1].y, 0.5);
+        const double grow = (bottom - bed - joint * 0.5) / up;
+        if (bed < -1e299 || grow <= 0.0)
+            continue;
+        Stone grown = s;
+        grown.size.y += grow;
+        grown.center -= s.frame[1] * (grow * 0.5);
+        bool clear = true;
+        for (int o : grid.around(grown, 0.0))
+            if (o != k && overlaps(grown, stones[size_t(o)], 0.0))
+            {
+                clear = false;
+                break;
+            }
+        if (!clear)
+            continue;
+        stones[size_t(k)] = grown;
+        grid.build(stones, 0.0);
+    }
+}
 
 /** Stones of a wall, before trimming. Elements (arch, lintel, sill) come first and are never trimmed. */
 struct Laid
@@ -1060,6 +1115,9 @@ Layout layoutWall(const Footprint& footprint, const WallParams& p, int wall)
                 const double rise = archRise(po.arch);
                 po.springCourse = std::clamp(int(std::lround((wantTop - rise - K.base) / K.pitch)), po.sillCourse + 1, K.count);
                 po.topCourse = po.springCourse;
+                for (const ArchStone& a : archStones(po.arch))
+                    for (double side : {-0.5, 0.5})
+                        po.archTop = std::max(po.archTop, (a.center + a.axisX * (a.top * side) + a.axisY * (a.height * 0.5)).y);
             }
             po.springY = K.base + po.springCourse * K.pitch;
             openings.push_back(po);
@@ -1113,7 +1171,7 @@ Layout layoutWall(const Footprint& footprint, const WallParams& p, int wall)
                     else if (po.o->arch != ArchKind::Lintel && course >= po.springCourse)
                     {
                         const double ext = extradosHalfWidth(po.arch, y - po.springY);
-                        if (ext >= 0.0)
+                        if (ext >= 0.0 && y - po.springY < po.archTop)
                             half = ext + j;
                     }
                     else if (po.o->sill > 0.0 && po.o->sillStone && course == po.sillCourse - 1)
@@ -1418,6 +1476,7 @@ Layout layoutWall(const Footprint& footprint, const WallParams& p, int wall)
         s.center += s.frame * shift;
         s.frame = s.frame * tilt;
     }
+    growOntoBeds(out.stones, laid.elements.size(), K.pitch, j);
     return out;
 }
 

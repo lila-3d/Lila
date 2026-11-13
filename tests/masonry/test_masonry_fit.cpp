@@ -73,6 +73,40 @@ std::vector<int> standingOf(const Built& b)
 size_t standingOverlaps(const Built& b) { return overlappingPairs(b, standingOf(b), 0.1).size(); }
 } // namespace
 
+TEST_CASE("masonry fit: intact walls stand on their beds, over arch crowns and short rough stones too")
+{
+    SUBCASE("dry stone, straight on flat ground")
+    {
+        BuildOptions o;
+        o.wall.bond = Bond::DryStone;
+        o.wall.height = 120;
+        o.wall.thickness = 60;
+        o.wall.stone = {40, 20, 30, 1.0};
+        const Footprint f = line({{0, 0, 0}, {800, 0, 0}});
+        const Built b = realizePlan(planWalls(std::span<const Footprint>(&f, 1), o), RuinParams{}, AgeParams{}, false);
+        CHECK(floating(b) == 0);
+        CHECK(countOverlaps(b.stones, 0.1) == 0);
+    }
+    SUBCASE("a tower with a band, a cornice and a belfry")
+    {
+        const Built b = building({{"walls", {towerWall()}}});
+        CHECK(floating(b) == 0);
+        CHECK(standingOverlaps(b) == 0);
+    }
+    SUBCASE("a nave without buttresses, windows under pointed arches")
+    {
+        const Built b = building({{"walls", {naveWall(false)}}});
+        CHECK(floating(b) == 0);
+        CHECK(standingOverlaps(b) == 0);
+    }
+    SUBCASE("a floor alone on the ground")
+    {
+        const json floor = {{"name", "paving"}, {"points", pts({{0, 0, 0}, {1600, 0, 0}, {1600, 0, 800}, {0, 0, 800}})}, {"y", 0}, {"thickness", 10}, {"surface", "flags"}};
+        const Built b = building({{"floors", {floor}}});
+        CHECK(floating(b) == 0);
+    }
+}
+
 TEST_CASE("masonry fit: floors fit inside their walls, whole and broken")
 {
     const json nave = naveWall(true);
