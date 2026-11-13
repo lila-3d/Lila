@@ -2355,6 +2355,99 @@ json placeCmd(const Args& a)
     return finish(g, p, grapple, a, {{"on", g.path(on)}, {"how", how}, {"settled", t + blend}});
 }
 
+// puppeteerPropPass ----------------------------------------------------------------------------------------------------
+
+json passCmd(const Args& a)
+{
+    Graph& g = Graph::current();
+    const char* cmd = "puppeteerPropPass";
+    Prop p = propArg(g, a, cmd);
+    if (!a.has("to"))
+        throw CommandError(std::string(cmd) + ": give to, the character who takes it");
+    const KeepTime keep(g);
+    const double t = a.has("time") ? a.get<double>("time") : g.time();
+    const double duration = std::max(2.0 / fps(), a.get<double>("duration", 0.6));
+    const double handover = t + 0.5 * duration, end = t + duration, frame = 1.0 / fps();
+    const NodeId giver = characterArg(g, a, p, cmd);
+    const NodeId receiver = characterArg(g, a, p, cmd, "to");
+    if (giver == receiver)
+        throw CommandError(std::string(cmd) + ": " + g.node(giver)->name() + " already has it; to is another character");
+    const NodeId grapple = propGrapple(g, giver, true);
+    propGrapple(g, receiver, true);
+    at(g, t);
+    const NodeId giverJoint = holderNow(g, p);
+    if (!giverJoint || characterFor(g, giverJoint) != giver)
+        throw CommandError(std::format("{}: {} isn't in {}'s hand at frame {:g}; hold it first", cmd, g.node(p.root)->name(), g.node(giver)->name(), t * fps()));
+    const hand::Hand gh = *hand::load(g, hand::handFor(g, giverJoint));
+    const NodeId giverPt = heldPoint(g, p, t, giverJoint);
+    const std::string handName = a.get<std::string>("hand", "main");
+    const bool right = handName == "main" ? p.rightHanded : handName == "right";
+    const HandRef rh = needHand(g, receiver, right, cmd);
+
+    // The receiver's grip: given, else another grip than the giver's (off, alt, then main), else one made beside it.
+    NodeId recvPt = kNoNode;
+    json made = nullptr;
+    if (a.has("point"))
+        recvPt = gripPoint(g, p, a.get<std::string>("point"), Role::Main, cmd);
+    for (Role r : {Role::Off, Role::Alt, Role::Main})
+        for (NodeId pt : p.points)
+            if (!recvPt && pt != giverPt && roleOf(*g.node(pt)) == r)
+                recvPt = pt;
+    if (!recvPt)
+    {
+        const PropShape sh = shapeIn(g, p);
+        PointDef d;
+        d.role = Role::Alt;
+        d.name = "pass";
+        d.radius = numOf(g, giverPt, "radius");
+        d.frame = pointLocal(g, p, giverPt);
+        const glm::dvec3 from(d.frame[3]);
+        glm::dvec3 toward = sh.middle() - from;
+        toward = glm::length(toward) > 1e-6 ? glm::normalize(toward) : glm::dvec3(d.frame[0]);
+        d.frame[3] = glm::dvec4(from + toward * 10.0, 1.0);
+        recvPt = writePoint(g, p, d, kNoNode, false);
+        made = g.path(recvPt);
+        log::write(LogLevel::Warning, std::format("{}: {} has one grip, which {} holds; made {} 10 cm along for {} to take", cmd, g.node(p.root)->name(),
+                                                  g.node(giver)->name(), g.node(recvPt)->name(), g.node(receiver)->name()));
+    }
+
+    // Both hands share it through one contact: the giver's hand held on its grip riding the receiver's hand, for the
+    // whole exchange. The prop goes into the receiver's hand at the start, where it is, and eases into the receiver's
+    // grip by the handover; the contact pulls the two hands together, each by half the gap, so both arms reach. Its gap is
+    // nothing at the start, so nothing jumps, and the giver lets go by easing the contact out.
+    for (const PropContact& c : propContacts(g, grapple, p))
+        if (weightAt(g, c.node, t) > 1e-6)
+        {
+            keyWeight(g, c.node, t, weightAt(g, c.node, t));
+            keyWeight(g, c.node, t + frame, 0.0);
+        }
+    at(g, t);
+    const glm::dmat4 giverGrip = glm::inverse(rigidOf(worldOf(g, giverJoint))) * rigidOf(worldOf(g, giverPt));
+    switchFresh(g, p, ensureSpace(g, p.root, rh.h.joint), t);
+    settleInto(g, p, recvPt, rh.h.joint, gripOf(g, rh.h, p, recvPt, p.settings.trigger), t, handover - t);
+    const NodeId cg = contactFor(g, grapple, p, gh, rh.h.joint, giverPt);
+    setPlug(g, cg, "gripOffset", giverGrip);
+    if (t - frame >= anim::playback().minTime)
+        keyWeight(g, cg, t - frame, 0.0);
+    keyWeight(g, cg, t, 1.0);
+    keyWeight(g, cg, handover, 1.0);
+    keyWeight(g, cg, end, 0.0);
+
+    if (a.get<bool>("fingers", true))
+    {
+        poseFingers(g, rh.h, t, handover, p.settings.mainPose, true, p.settings.trigger, &p);
+        poseFingers(g, gh, end - std::min(0.15, 0.5 * duration), end, "relaxed", false, false, nullptr);
+    }
+    json ev = {{"time", t}, {"kind", "pass"}, {"from", g.path(giver)}, {"to", g.path(receiver)}, {"character", g.path(receiver)},
+               {"hand", g.path(rh.h.joint)}, {"point", g.path(recvPt)}, {"handover", handover}, {"end", end}};
+    recordEvent(g, p, ev);
+    json extra = {{"handover", handover}, {"end", end}, {"giver", g.path(giverJoint)}, {"receiver", g.path(rh.h.joint)}, {"giverPoint", g.path(giverPt)},
+                  {"receiverPoint", g.path(recvPt)}, {"contact", g.path(cg)}};
+    if (!made.is_null())
+        extra["made"] = made;
+    return finish(g, p, grapple, a, extra);
+}
+
 // puppeteerPropUnreal -------------------------------------------------------------------------------------------------
 
 /** World matrices the gun, right and left ik bones follow each frame: the holding hand, then each hand. */
@@ -2926,6 +3019,23 @@ void registerCommands(ext::Context& ctx)
                   releaseFlag, fingersFlag, kSolveFlag},
         .run = placeCmd,
         .examples = {"puppeteerPropPlace(\"mug\", on=\"table\", time=2.0)", "puppeteerPropPlace(\"sword\", on=\"rack\", hook=\"rack_hook1\")"},
+    });
+
+    ctx.registerCommand({
+        .name = "puppeteerPropPass",
+        .doc = "Hands a held prop to another character over duration from time: the receiver's hand takes it by its own grip "
+               "(off, alt or main, whichever the giver isn't holding), both hands holding it with both arms sharing the reach "
+               "until the handover halfway through, and the giver lets go by the end. The solve moves both characters. "
+               "Returns the handover.",
+        .positionalDoc = "prop (default the selection)",
+        .flags = {{"character", "ch", T::String, nullptr, "Who gives it. Default: whoever holds it then."},
+                  {"to", "to", T::String, nullptr, "Who takes it."},
+                  {"hand", "hd", T::String, "main", "The receiver's hand: main (the prop's), right or left.", {"main", "right", "left"}},
+                  {"point", "pt", T::String, nullptr, "The grip the receiver takes. Default: one the giver isn't holding."},
+                  {"duration", "du", T::Float, 0.6, "Seconds from the receiver reaching to the giver letting go.", {}, {}, 0.0},
+                  kTimeFlag, fingersFlag, kSolveFlag},
+        .run = passCmd,
+        .examples = {"puppeteerPropPass(\"mug\", to=\"bob\", time=1.0)"},
     });
 
     ctx.registerCommand({

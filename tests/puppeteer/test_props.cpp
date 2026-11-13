@@ -909,3 +909,48 @@ TEST_CASE("props: hung from a hook by its grip, it hangs below it")
     CHECK(glm::length(pos(pointNamed(info, "main")) - pos("hook")) < 1e-6);
     CHECK(angleDeg(pos(pointNamed(info, "tip")) - pos("hook"), {0, -1, 0}) < 3.0);
 }
+
+TEST_CASE("props: passed to another character, both hands share it and the receiver keeps it")
+{
+    manny();
+    bob(70.0);
+    sword();
+    holding("sword", "sword1h");
+    const std::string giver = jointPath("hand_r"), receiver = graph().path(id("bob_hand_r"));
+    at(0.0);
+    const glm::dvec3 g0 = pos(giver), r0 = pos(receiver);
+    const json ps = run("puppeteerPropPass", {{"args", {"sword"}}, {"to", "bob"}, {"time", 0.2}, {"duration", 0.6}});
+    const double handover = ps.at("handover");
+    CHECK(handover == Approx(0.5));
+    at(handover);
+    const auto [gh, ggrip] = scene::grapple::contactPoints(graph(), id(ps.at("contact").get<std::string>()));
+    const std::string rp = ps.at("receiverPoint");
+    const glm::dmat4 held = glm::inverse(world(receiver)) * world(rp);
+    MESSAGE("at the handover: giver " << glm::length(gh - ggrip) << " cm from its grip; hands moved " << glm::length(pos(giver) - g0) << " and "
+                                      << glm::length(pos(receiver) - r0) << " cm");
+    CHECK(glm::length(gh - ggrip) < 1.0);
+    // The receiver's hand has it at its grip from the handover on.
+    at(handover + 0.4);
+    CHECK(near(glm::inverse(world(receiver)) * world(rp), held, 1e-6));
+    at(handover);
+    // Both arms reach: neither hand stays put.
+    CHECK(glm::length(pos(giver) - g0) > 2.0);
+    CHECK(glm::length(pos(receiver) - r0) > 2.0);
+    // No pop anywhere in the exchange: every step of the grip is in line with the steps either side of it.
+    std::vector<glm::dvec3> path;
+    for (int f = 3; f <= 28; ++f)
+    {
+        at(f / 30.0);
+        path.push_back(pos(ps.at("receiverPoint").get<std::string>()));
+    }
+    std::vector<double> steps;
+    for (size_t i = 0; i + 1 < path.size(); ++i)
+        steps.push_back(glm::length(path[i + 1] - path[i]));
+    double worst = 0.0;
+    for (size_t i = 1; i + 1 < steps.size(); ++i)
+        worst = std::max(worst, steps[i] / (std::max(steps[i - 1], steps[i + 1]) + 0.5));
+    MESSAGE("largest step against its neighbours: " << worst << "x");
+    CHECK(worst < 2.0);
+    at(1.5);
+    CHECK(run("puppeteerPropInfo", {{"args", {"sword"}}}).at("holder") == receiver);
+}
