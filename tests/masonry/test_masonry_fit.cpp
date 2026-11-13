@@ -210,3 +210,30 @@ TEST_CASE("masonry fit: loose stones of a dry stone wall over a hill keep clear 
         CHECK(standingOverlaps(b) == 0);
     }
 }
+
+TEST_CASE("masonry fit commands: a wall's region name, bounds, and where masonryCheck finds interpenetration")
+{
+    loadMasonry();
+    run("newScene");
+    const json w = run("masonryWall", {{"points", pts({{0, 0, 0}, {400, 0, 0}})}, {"region", "garden_wall"}, {"height", 100}, {"name", "Garden"}});
+    CHECK(w["regions"].contains("garden_wall"));
+    CHECK(!w["regions"].contains("wall_0"));
+    REQUIRE(w["bounds"].is_object());
+    CHECK(w["bounds"]["min"][0].get<double>() < 1.0);
+    CHECK(w["bounds"]["max"][0].get<double>() > 399.0);
+    CHECK(w["bounds"]["max"][1].get<double>() > 90.0);
+
+    // Two walls crossing: their stones interpenetrate where they meet, and the check names both.
+    const json spec = {{"walls",
+                        {{{"name", "east"}, {"points", pts({{0, 0, 0}, {400, 0, 0}})}, {"height", 100}, {"thickness", 40}},
+                         {{"name", "north"}, {"points", pts({{200, 0, -200}, {200, 0, 200}})}, {"height", 100}, {"thickness", 40}}}}};
+    const json b = run("masonryBuilding", {{"spec", spec}, {"name", "Crossing"}});
+    CHECK(b["bounds"].is_object());
+    const json c = run("masonryCheck", {{"args", {b["mesh"]}}});
+    CHECK(!c["ok"].get<bool>());
+    REQUIRE(c["overlaps"].get<int64_t>() > 0);
+    CHECK(c["overlapRegions"].contains("east + north"));
+    CHECK(c["overlapPairs"].size() > 0);
+    CHECK(c["issues"].dump().find("east + north") != std::string::npos);
+    CHECK(c["stacked"].get<int64_t>() == 0);
+}

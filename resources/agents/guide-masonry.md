@@ -33,8 +33,8 @@ t['stones'], t['regions'], c['ok'], c['issues']
 
 - Turns gentler than `cornerAngle` (30 degrees) curve the wall, so 16 points make a round tower; sharper turns are bonded corners.
 - `at` is cm along the footprint from its first point; the loop's length is about `2 * pi * r`. An opening past the end, or above the top, is skipped.
-- A wall from `masonryWall` is one region, `wall_0`, with its openings under it (`wall_0/door`). Name parts with `masonryBuilding` when you need to address them.
-- The result: `mesh`, `modifier`, `group`, `stones`, `courses`, `roles`, `regions` (stone count per region), `stoneTriangles`, `collisionHulls`, `ruin`, `seconds`.
+- A wall from `masonryWall` is one region, `wall_0` (or `region='tower'`), with its openings under it (`wall_0/door`). Name the parts of a whole building with `masonryBuilding`.
+- The result: `mesh`, `modifier`, `group`, `stones`, `courses`, `roles`, `regions` (stone count per region), `stoneTriangles`, `collisionHulls`, `ruin`, `bounds` (`min`, `max` of the stones), `seconds`.
 
 ## Building from one spec
 
@@ -135,7 +135,7 @@ ruin(w['mesh'], left=0.75, rubble=0.8)
 
 ## Check
 
-1. `masonryCheck(mesh, maxStones=, maxTriangles=)` returns `ok`, `issues`, `floating` and `floatingStones` (the first ten: region, role, at), `overlaps` (standing stones interpenetrating past `tolerance`, 0.1 cm), `stacked` (rubble heaped above half the walls' height) and `rubbleHeight`, `rubbleOverlaps` (informational), `collisionHulls`, `stones`, `triangles`. Fix until `ok`.
+1. `masonryCheck(mesh, maxStones=, maxTriangles=)` returns `ok`, `issues`, `floating` and `floatingStones` (the first ten: region, role, at), `overlaps` (standing stones interpenetrating past `tolerance`, 0.1 cm) with `overlapRegions` (pairs per region, `nave + tower` across two) and `overlapPairs` (the first ten), `stacked` (rubble heaped above half the walls' height) and `rubbleHeight`, `rubbleOverlaps` (informational), `collisionHulls`, `stones`, `triangles`. Fix until `ok`.
 2. Floating stones mean a vault, arch or column sits in mid-air in the spec: lower it onto a wall, or let `ruin` drop what has no support.
 3. `masonryInfo(mesh)` gives the full stats, the current `settings` and `checks`.
 4. Look once at the end: `captureTurntable(path=, views=['front', 'right', 'top', 'persp'], display='shaded')`, or `captureView(path=, view='three-quarter', display='shaded')`. Check the ruin's silhouette and that rubble lies on the ground.
