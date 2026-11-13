@@ -710,7 +710,7 @@ Extracted extractIntegerGrid(const Surface& s, const ParamMesh& m, const std::ve
 
 std::vector<glm::dvec3> solveSeamlessPositions(const Surface& s, const std::vector<glm::dvec3>& q, const std::vector<double>& scale,
                                                std::string* error, std::vector<std::array<int, 2>>* edgeSteps, Extracted* grid,
-                                               int foldRetries, Index* folds)
+                                               int foldRetries, Index* folds, ContinuousCharts* continuous)
 {
     LILA_ZONE();
 
@@ -720,6 +720,45 @@ std::vector<glm::dvec3> solveSeamlessPositions(const Surface& s, const std::vect
         return std::vector<glm::dvec3>{};
     };
     ParamMesh m = buildParamMesh(s, q, scale);
+    // For the continuous charts a triangle touching a cone takes its direction from its other corners, since the field at
+    // the cone itself points nowhere in particular.
+    if (continuous && m.tris.size() == s.tris.size())
+    {
+        const std::vector<uint8_t> cone = singularVertices(m);
+        for (size_t t = 0; t < m.tris.size(); ++t)
+        {
+            const auto& tri = m.tris[t];
+            if (!cone[tri[0]] && !cone[tri[1]] && !cone[tri[2]])
+                continue;
+            const glm::dvec3 n = m.normal[t];
+            glm::dvec3 ref(0.0), sum(0.0);
+            for (Index v : tri)
+            {
+                if (cone[v])
+                    continue;
+                glm::dvec3 d = q[v] - n * glm::dot(n, q[v]);
+                if (glm::length(d) < 1e-12)
+                    continue;
+                d = glm::normalize(d);
+                if (glm::length(ref) == 0.0)
+                    ref = d;
+                sum += turn(d, n, int(std::lround(angleAbout(d, ref, n) / kQuarter)));
+            }
+            if (glm::length(sum) > 1e-12)
+                m.dir[t] = glm::normalize(sum);
+        }
+        if (std::getenv("LILA_SEAMLESS_DEBUG"))
+        {
+            const std::vector<uint8_t> after = singularVertices(m);
+            int a = 0, b = 0;
+            for (size_t v = 0; v < cone.size(); ++v)
+            {
+                a += cone[v];
+                b += after[v];
+            }
+            std::fprintf(stderr, "seamless: cone fan directions from their other corners, cones %d -> %d\n", a, b);
+        }
+    }
     const Index nt = Index(m.tris.size()), nv = Index(m.pos.size()), ne = Index(m.edges.size());
 
     // Comb: turn each triangle's direction so it matches its parent in a spanning tree of the triangles, then the tree's
@@ -1037,6 +1076,24 @@ std::vector<glm::dvec3> solveSeamlessPositions(const Surface& s, const std::vect
             sing += singular[v];
         std::fprintf(stderr, "seamless: %d tris, %zu field poles, %d singular verts, %d cut edges, %zu feature ints; continuous flips %d\n",
                      int(nt), fieldSingularities(s, q).size(), int(sing), int(nc), featureInts.size(), int(countFlipped()));
+    }
+    if (continuous)
+    {
+        if (m.tris.size() != s.tris.size())
+            return fail("the parametrization's triangles don't match the surface's");
+        continuous->dir = m.dir;
+        continuous->chart.assign(nt, {});
+        for (Index t = 0; t < nt; ++t)
+            for (int k = 0; k < 3; ++k)
+            {
+                const Index w = wedgeOf[t * 3 + k];
+                continuous->chart[t][k] = glm::dvec2(x[2 * w], x[2 * w + 1]);
+            }
+        for (Index t = 0; t < nt; ++t)
+            continuous->folded += cross2(continuous->chart[t][1] - continuous->chart[t][0], continuous->chart[t][2] - continuous->chart[t][0]) <= 0.0;
+        if (debug)
+            std::fprintf(stderr, "  continuous charts: %d folded\n", int(continuous->folded));
+        return std::vector<glm::dvec3>(s.pos.begin(), s.pos.end());
     }
     int retries = 0;
     for (const std::vector<Index>* stage : {&singularInts, &featureInts, &cutInts})
