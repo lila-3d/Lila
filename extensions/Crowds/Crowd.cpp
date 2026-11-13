@@ -636,7 +636,7 @@ struct Spawned
 };
 
 /** Points at least `gap` apart, picked by `pick` (up to 30 tries each). */
-template <class F> std::vector<Spawned> scatter(int count, double gap, Rand& r, F&& pick)
+template <class F> std::vector<Spawned> scatter(int count, double gap, F&& pick)
 {
     std::vector<Spawned> out;
     for (int i = 0; i < count; ++i)
@@ -941,7 +941,7 @@ json spawnGroup(Graph& g, NodeId crowd, const Args& a, const char* cmd)
         }
         if (tris.empty())
             throw CommandError(std::string(cmd) + ": " + source->path() + " has no ground to stand on (faces facing up)");
-        placed = scatter(count, gap, r, [&] {
+        placed = scatter(count, gap, [&] {
             const double u = r.next() * total;
             const size_t k = size_t(std::lower_bound(cum.begin(), cum.end(), u) - cum.begin());
             const auto& t = tris[std::min(k, tris.size() - 1)];
@@ -958,7 +958,7 @@ json spawnGroup(Graph& g, NodeId crowd, const Args& a, const char* cmd)
         if (!v || v->runtime->setup().network.empty())
             throw CommandError(std::string(cmd) + ": the crowd has no network; set its network to a settlement or curves first");
         const Network& net = v->runtime->setup().network;
-        placed = scatter(count, gap, r, [&] {
+        placed = scatter(count, gap, [&] {
             int lane = 0;
             const glm::vec2 p = net.pointAt(r.next(), &lane);
             const float off = (float(r.next()) - 0.5f) * net.lanes[size_t(lane)].width * 0.6f;
@@ -976,7 +976,7 @@ json spawnGroup(Graph& g, NodeId crowd, const Args& a, const char* cmd)
         if (source)
             center = {worldOf(*source)[3].x, worldOf(*source)[3].z};
         gj["center"] = {center.x, center.y};
-        placed = scatter(count, gap, r, [&] {
+        placed = scatter(count, gap, [&] {
             const double rr = radius * std::sqrt(r.next()), ang = 2.0 * kPiD * r.next();
             return Spawned{center + glm::dvec2(std::cos(ang), std::sin(ang)) * rr, randomHeading()};
         });
