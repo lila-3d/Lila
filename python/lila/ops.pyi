@@ -10230,6 +10230,14 @@ def texBrushPresets(name: str | None = None, reload: bool | None = None, *, n: s
         reload: Rescan the folders first.
     """
 
+def texBuildGraph(*objects: Any, assign: Sequence[Any] | None = None) -> Any:
+    """Build a material's texture graph from a compact spec, creating its texture set when it doesn't exist: {material, set, settings, description, nodes: [{name, type, params: {...}, values: {...}, position}], links: ['A.out -> Output.baseColor', ...]}. The set defaults to <material>Tex. A Material Output named Output is added when missing; positions are laid out when omitted. Nothing changes unless the whole spec is valid; the error lists every problem with the valid names. Returns the set, the material, the channels the graph drives and any compile error.
+
+    Args:
+        objects: spec.
+        assign: Meshes to give the material (created when missing).
+    """
+
 def texClearLayer(*objects: Any, layer: str | None = None) -> Any:
     """Clear a paint layer: drop its strokes and pixels.
 
