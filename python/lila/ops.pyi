@@ -7561,6 +7561,8 @@ def relocateScene(*objects: Any, to: Sequence[float] | None = None, offset: Sequ
 
     One rigid move M is applied: the roots take it through their channels and keys, and nodes that store world-space data (skin bind matrices, deformer bind matrices, world spaces, world up vectors, measures) are rewritten to match. Every transform and deformed mesh point is then checked at several frames (and in every take) against M times where it was; if anything is off by more than 1e-6 cm, or the scene holds a node type relocateScene doesn't know, nothing changes and the error says why. One undo step.
 
+    In a georeferenced scene a whole-scene move shifts the georeference origin the other way, so everything keeps its projected coordinates and place on the Earth; it can't turn the whole scene, since the CRS grid's axes are fixed. Moving chosen hierarchies (nodes=) moves them on the Earth too.
+
     Args:
         objects: objects the from= point is taken from (default: the selection).
         from: The point that moves to `to`: bottom (the bottom centre of the objects' bounds), center (their bounds centre), pivot (the first object's pivot), components (the centre of the selected components), or an object's name (its pivot). Default 'bottom'. Example: `relocateScene(from="Hero")`
