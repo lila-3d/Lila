@@ -1213,7 +1213,7 @@ void mouse(QWidget* w, QEvent::Type type, QPointF at)
     QApplication::sendEvent(w, &e);
 }
 
-void click(QWidget* w, QPointF at)
+void clickOn(QWidget* w, QPointF at)
 {
     mouse(w, QEvent::MouseButtonPress, at);
     mouse(w, QEvent::MouseButtonRelease, at);
@@ -1254,9 +1254,9 @@ TEST_CASE("Strings Rules editor: contacts, limbs and lines toggle on the joint g
 
     // Contacts: a click toggles the joint.
     const size_t contacts = rules()["contacts"].size();
-    click(canvas, at("hand_l"));
+    clickOn(canvas, at("hand_l"));
     CHECK(rules()["contacts"].size() == contacts + 1);
-    click(canvas, at("hand_l"));
+    clickOn(canvas, at("hand_l"));
     CHECK(rules()["contacts"].size() == contacts);
 
     // Limbs: a drag from a joint to one below it adds one (either direction), a click on it removes it.
@@ -1266,14 +1266,14 @@ TEST_CASE("Strings Rules editor: contacts, limbs and lines toggle on the joint g
     REQUIRE(rules()["chains"].size() == limbs + 1);
     CHECK(rules()["chains"].back().front() == "upperarm_r");
     CHECK(canvas->property("limbCount").toInt() == int(limbs + 1));
-    click(canvas, at("lowerarm_r"));
+    clickOn(canvas, at("lowerarm_r"));
     CHECK(rules()["chains"].size() == limbs);
 
     // Lines: the same gestures.
     pickLayer(editor.get(), "Lines");
     dragOn(canvas, at("spine_01"), at("head"));
     CHECK(rules()["lines"].contains("head"));
-    click(canvas, at("neck"));
+    clickOn(canvas, at("neck"));
     CHECK_FALSE(rules()["lines"].contains("head"));
 
     // Test: IK drags the hand while the mouse is down; release puts every joint back with nothing on the undo stack.

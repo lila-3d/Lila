@@ -23,7 +23,7 @@ namespace puppeteer
 {
 namespace
 {
-QString joinNames(const json& names, const char* separator)
+QString joinedNames(const json& names, const char* separator)
 {
     QStringList out;
     for (const json& n : names)
@@ -105,7 +105,7 @@ QWidget* rulesSection(NodeId character)
             return;
         }
         const auto from = [](const json& source) { return "From " + QString::fromStdString(source.get<std::string>()); };
-        contacts->setText(r["contacts"].empty() ? QString("None") : joinNames(r["contacts"], ", "));
+        contacts->setText(r["contacts"].empty() ? QString("None") : joinedNames(r["contacts"], ", "));
         contactsFrom->setText(from(r["contactsFrom"]));
         QStringList rows;
         for (const json& c : r["chains"])
@@ -115,7 +115,7 @@ QWidget* rulesSection(NodeId character)
         limbsCount->setText(rows.isEmpty() ? QString("None: limbs run to the next branch") : QString::number(rows.size()));
         limbsCount->setEnabled(!rows.isEmpty());
         limbsFrom->setText(from(r["chainsFrom"]));
-        isolated->setText(r["isolate"].empty() ? QString("None") : joinNames(r["isolate"], ", "));
+        isolated->setText(r["isolate"].empty() ? QString("None") : joinedNames(r["isolate"], ", "));
         QStringList picks;
         for (const auto& [joint, mode] : r["modes"].items())
             if (const auto m = strings::modeFromName(mode.get<std::string>()))

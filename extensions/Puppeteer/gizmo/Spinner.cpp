@@ -298,34 +298,34 @@ constexpr Button kButtons[] = {
 
 constexpr Handle kTools[] = {Handle::Move, Handle::Rotate, Handle::Scale};
 
-glm::vec4 gray(float v, float a = 1.0f) { return {v, v, v, a}; }
+glm::vec4 spinnerGray(float v, float a = 1.0f) { return {v, v, v, a}; }
 const glm::vec4 kOrange{0.93f, 0.55f, 0.13f, 1.0f};
 const glm::vec4 kYellow{0.92f, 0.78f, 0.22f, 1.0f};
 
 /** Every neutral the Spinner draws with, in one place. */
 struct Palette
 {
-    glm::vec4 plate = gray(0.10f);     // behind the zones, seen in their gaps
-    glm::vec4 bezel = gray(0.165f);    // the band holding the buttons
-    glm::vec4 bezelEdge = gray(1.0f, 0.10f);  // light top edge
-    glm::vec4 bezelInner = gray(0.0f, 0.45f); // dark line where the band meets the zones
-    glm::vec4 well = gray(0.25f);
-    glm::vec4 wellHot = gray(0.33f);
-    glm::vec4 ring = gray(0.86f);              // the on toggle's ring
-    glm::vec4 segment = gray(0.22f);
-    glm::vec4 segmentHot = gray(0.30f);
-    glm::vec4 segmentOn = gray(0.70f);
-    glm::vec4 icon = gray(0.66f);
-    glm::vec4 iconHot = gray(0.95f);
-    glm::vec4 iconOn = gray(0.97f);
-    glm::vec4 iconOnSegment = gray(0.08f);
-    glm::vec4 groove = gray(0.07f);
-    glm::vec4 grooveFill = gray(0.62f);
-    glm::vec4 tick = gray(0.45f);
-    glm::vec4 thumb = gray(0.88f);
-    glm::vec4 thumbHot = gray(1.0f);
-    glm::vec4 disabled = gray(0.30f);
-    glm::vec4 letter = gray(0.0f, 0.5f);
+    glm::vec4 plate = spinnerGray(0.10f);     // behind the zones, seen in their gaps
+    glm::vec4 bezel = spinnerGray(0.165f);    // the band holding the buttons
+    glm::vec4 bezelEdge = spinnerGray(1.0f, 0.10f);  // light top edge
+    glm::vec4 bezelInner = spinnerGray(0.0f, 0.45f); // dark line where the band meets the zones
+    glm::vec4 well = spinnerGray(0.25f);
+    glm::vec4 wellHot = spinnerGray(0.33f);
+    glm::vec4 ring = spinnerGray(0.86f);              // the on toggle's ring
+    glm::vec4 segment = spinnerGray(0.22f);
+    glm::vec4 segmentHot = spinnerGray(0.30f);
+    glm::vec4 segmentOn = spinnerGray(0.70f);
+    glm::vec4 icon = spinnerGray(0.66f);
+    glm::vec4 iconHot = spinnerGray(0.95f);
+    glm::vec4 iconOn = spinnerGray(0.97f);
+    glm::vec4 iconOnSegment = spinnerGray(0.08f);
+    glm::vec4 groove = spinnerGray(0.07f);
+    glm::vec4 grooveFill = spinnerGray(0.62f);
+    glm::vec4 tick = spinnerGray(0.45f);
+    glm::vec4 thumb = spinnerGray(0.88f);
+    glm::vec4 thumbHot = spinnerGray(1.0f);
+    glm::vec4 disabled = spinnerGray(0.30f);
+    glm::vec4 letter = spinnerGray(0.0f, 0.5f);
 };
 const Palette kPal;
 
@@ -578,9 +578,9 @@ public:
         const double inner = rings ? g.ringInner : 0.0;
         for (int axis = 0; axis < 3; ++axis)
         {
-            glm::vec4 col = color ? glm::vec4(viewportDisplay::axisColor(axis), 1.0f) : gray(0.62f - 0.1f * float(axis));
+            glm::vec4 col = color ? glm::vec4(viewportDisplay::axisColor(axis), 1.0f) : spinnerGray(0.62f - 0.1f * float(axis));
             if (footChannel)
-                col = color ? kOrange : gray(0.7f);
+                col = color ? kOrange : spinnerGray(0.7f);
             const Handle h = axis == 0 ? Handle::AxisX : axis == 1 ? Handle::AxisY : Handle::AxisZ;
             const bool lit = hot == h;
             double outer = g.zone;
@@ -590,19 +590,19 @@ public:
                 outer += 3.0;
             }
             if (disabled)
-                col = gray(0.30f, 0.6f);
+                col = spinnerGray(0.30f, 0.6f);
             const glm::vec4 deep = glm::vec4(glm::vec3(col) * 0.70f, col.a);
             p.sector(c, inner, outer, zones[axis][0], zones[axis][1], deep, col, 5.0);
             if (!disabled)
-                p.arc(c, outer - 1.5, zones[axis][0] + 3.0, zones[axis][1] - 3.0, 1.5f, gray(1.0f, lit ? 0.35f : 0.18f), true);
+                p.arc(c, outer - 1.5, zones[axis][0] + 3.0, zones[axis][1] - 3.0, 1.5f, spinnerGray(1.0f, lit ? 0.35f : 0.18f), true);
             const double mid = (zones[axis][0] + zones[axis][1]) * 0.5;
             if (footChannel)
-                iconAt(p, at(c, (inner + g.zone) * 0.5, mid), kToolIcon, "puppeteer.foot", gray(0.1f));
+                iconAt(p, at(c, (inner + g.zone) * 0.5, mid), kToolIcon, "puppeteer.foot", spinnerGray(0.1f));
             else if (!rings)
             {
                 static const char* letters[] = {"X", "Y", "Z"};
                 const QPointF lp = at(c, g.zone - 14.0, mid);
-                p.text(lp + QPointF(0.0, 4.5), letters[axis], disabled ? gray(0.0f, 0.25f) : kPal.letter, OverlayPainter::Center);
+                p.text(lp + QPointF(0.0, 4.5), letters[axis], disabled ? spinnerGray(0.0f, 0.25f) : kPal.letter, OverlayPainter::Center);
             }
         }
         for (double a : {-150.0, -30.0, 90.0})
@@ -611,21 +611,21 @@ public:
         // Centre: the IK/foot pole disc, the uniform scale disc, or the free-drag hub.
         if (rings)
         {
-            glm::vec4 col = !color ? gray(0.78f) : s.tool == Tool::Scale ? kYellow : kOrange;
+            glm::vec4 col = !color ? spinnerGray(0.78f) : s.tool == Tool::Scale ? kYellow : kOrange;
             if (hot == Handle::Center)
                 col = glm::mix(col, glm::vec4(1.0f), 0.2f);
             if (disabled)
-                col = gray(0.30f, 0.6f);
+                col = spinnerGray(0.30f, 0.6f);
             p.smoothDisc(c, g.centerDisc + 2.0, kPal.plate);
             p.sector(c, 0.0, g.centerDisc, 0.0, 360.0, glm::vec4(glm::vec3(col) * 1.05f, col.a), glm::vec4(glm::vec3(col) * 0.78f, col.a));
-            p.arc(c, g.centerDisc - 1.0, -160.0, -20.0, 1.5f, gray(1.0f, 0.25f), true);
-            iconAt(p, c, std::min(28.0, g.centerDisc * 1.1), s.tool == Tool::Scale ? "puppeteer.local" : "puppeteer.pole", gray(0.08f));
+            p.arc(c, g.centerDisc - 1.0, -160.0, -20.0, 1.5f, spinnerGray(1.0f, 0.25f), true);
+            iconAt(p, c, std::min(28.0, g.centerDisc * 1.1), s.tool == Tool::Scale ? "puppeteer.local" : "puppeteer.pole", spinnerGray(0.08f));
         }
         else
         {
             p.smoothDisc(c, kHub + 2.0, kPal.plate);
-            p.smoothDisc(c, kHub, disabled ? kPal.disabled : hot == Handle::Center ? gray(0.98f) : gray(0.80f));
-            p.smoothDisc(c, 3.0, gray(0.1f, 0.6f));
+            p.smoothDisc(c, kHub, disabled ? kPal.disabled : hot == Handle::Center ? spinnerGray(0.98f) : spinnerGray(0.80f));
+            p.smoothDisc(c, 3.0, spinnerGray(0.1f, 0.6f));
         }
 
         drawTools(p, c, g, t, hot, disabled);
@@ -1123,7 +1123,7 @@ private:
     {
         const Geo g = geo();
         p.arc(c, g.ring, kBreakdownFrom, kBreakdownTo, 5.0f, kPal.groove, true);
-        p.arc(c, g.ring + 3.0, kBreakdownFrom + 2.0, kBreakdownTo - 2.0, 1.0f, gray(1.0f, 0.06f));
+        p.arc(c, g.ring + 3.0, kBreakdownFrom + 2.0, kBreakdownTo - 2.0, 1.0f, spinnerGray(1.0f, 0.06f));
         for (double a : {kBreakdownFrom, 90.0, kBreakdownTo})
             p.smoothLine(at(c, g.ring - 8.0, a), at(c, g.ring - (a == 90.0 ? 4.0 : 5.0), a), 1.5f, disabled ? kPal.disabled : kPal.tick);
         // The thumb follows the drag along the groove, back to the middle once released.
@@ -1133,7 +1133,7 @@ private:
         if (std::abs(dot - 90.0) > 0.5 && !disabled)
             p.arc(c, g.ring, std::min(dot, 90.0), std::max(dot, 90.0), 3.0f, kPal.grooveFill);
         const QPointF thumb = at(c, g.ring, dot);
-        p.smoothDisc(thumb, 7.5, gray(0.0f, 0.5f));
+        p.smoothDisc(thumb, 7.5, spinnerGray(0.0f, 0.5f));
         p.smoothDisc(thumb, 6.5, disabled ? kPal.disabled : hot == Handle::Breakdown ? kPal.thumbHot : kPal.thumb);
     }
 
@@ -1241,7 +1241,7 @@ private:
         for (const glm::dvec3& pt : points)
             if (const auto at = mView.project(pt))
                 line.push_back(*at);
-        p.polyline(line, 1.5f, gray(0.9f, 0.45f));
+        p.polyline(line, 1.5f, spinnerGray(0.9f, 0.45f));
         for (size_t i = 0; i < points.size(); ++i)
         {
             const auto at = mView.project(points[i]);
@@ -1249,16 +1249,16 @@ private:
                 continue;
             const bool current = std::abs(mTrail.times[i] - now) < 1e-6;
             const float r = mTrail.keyed[i] ? 4.0f : 2.5f;
-            p.disc(*at, int(i) == hot ? r + 1.5f : r, int(i) == hot ? gray(1.0f) : gray(0.85f, 0.85f), 12);
+            p.disc(*at, int(i) == hot ? r + 1.5f : r, int(i) == hot ? spinnerGray(1.0f) : spinnerGray(0.85f, 0.85f), 12);
             if (current)
-                p.disc(*at, r + 3.0f, gray(0.95f, 0.35f), 16);
+                p.disc(*at, r + 3.0f, spinnerGray(0.95f, 0.35f), 16);
         }
         if (mDrag && mDrag->kind == Kind::Trail && mDrag->trailFrame >= 0)
             if (const auto from = mView.project(mTrail.points[size_t(mDrag->trailFrame)]))
                 if (const auto to = mView.project(mTrail.points[size_t(mDrag->trailFrame)] + mDrag->trailBy))
                 {
-                    p.line(*from, *to, 1.5f, gray(1.0f, 0.8f));
-                    p.disc(*to, 5.0f, gray(1.0f), 16);
+                    p.line(*from, *to, 1.5f, spinnerGray(1.0f, 0.8f));
+                    p.disc(*to, 5.0f, spinnerGray(1.0f), 16);
                 }
     }
 
@@ -1399,7 +1399,7 @@ private:
         const auto [from, to] = modeSpan(slotOf(lit));
         const QPointF tag = at(c, g.plate + 8.0, (from + to) * 0.5);
         p.setShadow(true);
-        p.text(QPointF(tag.x(), tag.y() + 4.5), stringsModeLabel(current), gray(0.92f), OverlayPainter::Right);
+        p.text(QPointF(tag.x(), tag.y() + 4.5), stringsModeLabel(current), spinnerGray(0.92f), OverlayPainter::Right);
         p.setShadow(false);
     }
 
@@ -1432,12 +1432,12 @@ private:
             const auto lead = mView.project(glm::dvec3(worldOf(g, set.back())[3]));
             if (!lead)
                 continue;
-            p.disc(*lead, 4.0f, gray(0.95f, 0.9f), 12);
+            p.disc(*lead, 4.0f, spinnerGray(0.95f, 0.9f), 12);
             for (size_t i = 0; i + 1 < set.size(); ++i)
                 if (const auto at = mView.project(glm::dvec3(worldOf(g, set[i])[3])))
                 {
-                    p.line(*at, *lead, 1.5f, gray(0.95f, 0.55f));
-                    p.disc(*at, 3.0f, gray(0.95f, 0.9f), 12);
+                    p.line(*at, *lead, 1.5f, spinnerGray(0.95f, 0.55f));
+                    p.disc(*at, 3.0f, spinnerGray(0.95f, 0.9f), 12);
                 }
         }
     }
@@ -1460,8 +1460,8 @@ private:
         {
             if (auto at = mView.project(pivot))
             {
-                p.smoothDisc(*at, kGizmoPixels, gray(0.85f, 0.14f));
-                p.arc(*at, kGizmoPixels, 0.0, 360.0, 2.0f, gray(0.92f, 0.7f));
+                p.smoothDisc(*at, kGizmoPixels, spinnerGray(0.85f, 0.14f));
+                p.arc(*at, kGizmoPixels, 0.0, 360.0, 2.0f, spinnerGray(0.92f, 0.7f));
             }
             return;
         }
@@ -1473,7 +1473,7 @@ private:
             const bool lit = isAxis(hot) && axisOf(hot) == axis;
             if (mDrag && mDrag->kind == Kind::Transform && !lit)
                 continue;
-            const glm::vec4 col = lit ? gray(1.0f) : color ? glm::vec4(viewportDisplay::axisColor(axis), 0.95f) : gray(0.85f - 0.15f * float(axis));
+            const glm::vec4 col = lit ? spinnerGray(1.0f) : color ? glm::vec4(viewportDisplay::axisColor(axis), 0.95f) : spinnerGray(0.85f - 0.15f * float(axis));
             const float width = lit ? 3.0f : 2.0f;
             if (settings().tool == Tool::Rotate)
             {
@@ -1528,7 +1528,7 @@ private:
                 p.line(*base, *tip - u * 4.0, width, c);
                 p.rect(QRectF(tip->x() - 4.5, tip->y() - 4.5, 9.0, 9.0), c);
             }
-            p.text(*tip + u * 16.0 + QPointF(0.0, 4.5), letters[axis], glm::vec4(glm::vec3(lit ? gray(1.0f) : col), c.a), OverlayPainter::Center);
+            p.text(*tip + u * 16.0 + QPointF(0.0, 4.5), letters[axis], glm::vec4(glm::vec3(lit ? spinnerGray(1.0f) : col), c.a), OverlayPainter::Center);
         }
         p.setShadow(false);
     }
@@ -2164,12 +2164,12 @@ private:
                     line.push_back(*at);
             if (line.size() < 2)
                 continue;
-            p.polyline(line, 1.5f, gray(0.9f, 0.5f));
-            p.disc(line.front(), 3.0f, gray(0.9f, 0.8f), 12);
-            p.disc(line.back(), 3.0f, gray(0.9f, 0.8f), 12);
+            p.polyline(line, 1.5f, spinnerGray(0.9f, 0.5f));
+            p.disc(line.front(), 3.0f, spinnerGray(0.9f, 0.8f), 12);
+            p.disc(line.back(), 3.0f, spinnerGray(0.9f, 0.8f), 12);
             if (g.node(mDrag->arcJoints[i]))
                 if (const auto at = mView.project(glm::dvec3(worldOf(g, mDrag->arcJoints[i])[3])))
-                    p.disc(*at, 4.5f, gray(1.0f), 16);
+                    p.disc(*at, 4.5f, spinnerGray(1.0f), 16);
         }
     }
 
