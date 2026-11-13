@@ -71,18 +71,24 @@ private:
 /** Gives every character key curve without a key at t one at its own value, so the key stays whole. Returns how many. */
 int fillCharacterKey(Graph& g, const Character& ch, double t);
 
+/** How far a merged control may stray from the layered sum on any frame: degrees, scene units. */
+inline constexpr double kMergeRotateTolerance = 0.01;
+inline constexpr double kMergeTranslateTolerance = 0.001;
+
 struct MergeResult
 {
     std::string control;
+    /** Keys on the control after the merge, addedKeys of them between its own and the track's. */
     int keys = 0;
+    int addedKeys = 0;
     /** Largest difference from the layered result over every frame the merge spans: degrees and scene units. */
     double rotateError = 0.0;
     double translateError = 0.0;
 };
 /**
  * Merges a track into the character keys: the control is keyed at its own keys and the track's, each at the summed
- * value, and the track goes. Between keys the curve approximates the sum; the result says by how much.
- * Undoable.
+ * value, then at the worst frame of every span where the curve leaves the sum by more than the tolerance, again until
+ * every frame is within it (at worst a key on every frame, which matches exactly), and the track goes. Undoable.
  */
 MergeResult mergeTrack(Graph& g, NodeId track);
 /** Deletes the track; the character keys underneath are untouched. Undoable. */

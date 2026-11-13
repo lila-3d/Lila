@@ -177,6 +177,41 @@ TEST_CASE("control tracks: merge sums into the character keys; undo brings the t
     CHECK(at("j2.rz", 20) == Approx(40));
 }
 
+TEST_CASE("control tracks: a keyed track merges exactly, with keys between where the curve would leave the sum")
+{
+    setupScene();
+    run("keyTarget", {{"args", {"root"}}, {"target", "control"}});
+    Graph& g = Graph::current();
+    g.setTime(sec(4));
+    run("characterKey", {{"args", {"arm_l"}}});
+    pose("arm_l.rz", 14, 30);
+    run("characterKey", {{"args", {"arm_l"}}});
+    pose("arm_l.rz", 25, 12);
+    run("characterKey", {{"args", {"arm_l"}}});
+    std::vector<double> layered;
+    for (int f = 0; f <= 30; ++f)
+        layered.push_back(at("arm_l.rz", f));
+    const size_t ownKeys = run("keyframe", {{"args", {"arm_l.rz"}}, {"query", true}}).size();
+
+    const json r = run("mergeControlTrack", {{"args", {"arm_l"}}});
+    REQUIRE(r.size() == 1);
+    // Own keys, the track's 4, 14 and 25, and keys between where the spans would stray.
+    CHECK(r[0]["addedKeys"].get<int>() > 0);
+    CHECK(r[0]["keys"].get<int>() >= 5 + r[0]["addedKeys"].get<int>());
+    CHECK(r[0]["rotateError"].get<double>() <= 0.01);
+    CHECK(tracks()["tracks"].size() == 0);
+    double worst = 0.0;
+    for (int f = 0; f <= 25; ++f)
+        worst = std::max(worst, std::abs(at("arm_l.rz", f) - layered[size_t(f)]));
+    CHECK(worst <= 0.01);
+    // Fewer keys than frames: only the spans that needed one got one.
+    CHECK(r[0]["keys"].get<int>() < 26);
+
+    run("undo");
+    CHECK(tracks()["tracks"].size() == 1);
+    CHECK(run("keyframe", {{"args", {"arm_l.rz"}}, {"query", true}}).size() == ownKeys);
+}
+
 TEST_CASE("character keys: Set Key and auto key key every control the character animates")
 {
     setupScene();
