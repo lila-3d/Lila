@@ -532,7 +532,7 @@ json grade(Graph& g, const std::string& name, const Args& a, const std::string& 
     json edits = editsOf(*mod, cmd);
     Rebuilt r = rebuildSettlement(g, name, cmd.c_str(), &edits);
     const std::string terrain = terrainOf(r, a, cmd);
-    for (const char* need : {"terrainAddRoad", "terrainStampPad", "terrainStampRegion", "terrainStamps", "terrainRoads", "terrainDirtyRegions"})
+    for (const char* need : {"terrainAddRoad", "terrainStampPad", "terrainStampRegion", "terrainStamps", "terrainRoads", "terrainDirtyRegions", "terrainBatch"})
         if (!ops::find(need))
             throw CommandError(cmd + ": the Terrain command " + std::string(need) + " is not available; load the Terrain extension");
 
@@ -781,6 +781,33 @@ json grade(Graph& g, const std::string& name, const Args& a, const std::string& 
         }
         return false;
     };
+    // Roads, rings and stamps go to the terrain in one batch: it is written and evaluated once, not once per part.
+    std::vector<std::pair<const Send*, int*>> queued;
+    auto queue = [&](const Send& s, int& sent) { queued.push_back({&s, &sent}); };
+    auto flush = [&] {
+        if (queued.empty())
+            return;
+        json calls = json::array();
+        for (const auto& [s, sent] : queued)
+        {
+            json flags = s->flags;
+            flags["args"] = json::array({terrain});
+            calls.push_back({{"command", s->command}, {"flags", std::move(flags)}});
+        }
+        const json done = ops::execute("terrainBatch", {{"calls", calls}});
+        std::set<size_t> failed;
+        for (const json& e : done.value("errors", json::array()))
+        {
+            const size_t k = e.value("index", size_t(0));
+            failed.insert(k);
+            if (errors.size() < 20 && k < queued.size())
+                errors.push_back(queued[k].first->command + " " + queued[k].first->id + ": " + e.value("error", std::string()));
+        }
+        for (size_t k = 0; k < queued.size(); ++k)
+            if (!failed.contains(k))
+                ++*queued[k].second;
+        queued.clear();
+    };
     auto isPart = [&](const std::string& id, const std::string& base) {
         return id.size() == base.size() + 2 && id.starts_with(base) && id[base.size()] == '_' && std::isalpha(static_cast<unsigned char>(id.back()));
     };
@@ -801,12 +828,12 @@ json grade(Graph& g, const std::string& name, const Args& a, const std::string& 
         terrainCall("terrainRoadRemove", terrain, {{"ids", partsToRemove}, {"layer", roadLayer}}, cmd);
     for (const Send& s : roads)
         if (resend.contains(s.id))
-            sentRoads += send(s);
+            queue(s, sentRoads);
     for (const Send& s : rings)
     {
         made[s.id] = s.hash;
         if (ringsToSend.contains(s.id))
-            sentRings += send(s);
+            queue(s, sentRings);
         else
             ++kept;
     }
@@ -816,8 +843,9 @@ json grade(Graph& g, const std::string& name, const Args& a, const std::string& 
         if (unchanged(s, haveStamps))
             ++kept;
         else
-            sentStamps += send(s);
+            queue(s, sentStamps);
     }
+    flush();
     const json prevRivers = edits.value("terrain", json::object()).value("rivers", json::array());
     json riverIds = json::array();
     for (const Send& s : rivers)

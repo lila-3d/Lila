@@ -14,6 +14,7 @@
 #include "MaterialNodes.h"
 #include "Stamps.h"
 #include "Terrain.h"
+#include "TerrainEdit.h"
 #include "Water.h"
 #include "Volume.h"
 
@@ -106,26 +107,34 @@ Found findTerrain(Graph& g, const std::string& name, const std::string& cmd)
     Node* n = g.find(name);
     if (!n)
         throw CommandError(cmd + ": no node named '" + name + "'");
-    g.evaluate();
     Found f;
-    if (gn::isGnModifier(*n))
+    for (bool evaluated = !edit::EditBatch::active(); ; evaluated = true)
     {
-        f.modifier = n;
-        f.local = gn::modifierHeightfield(n->id());
-        const scene::NodeId meshId = scene::modifiers::meshOf(g, n->id());
-        f.mesh = meshId != scene::kNoNode ? g.node(meshId) : nullptr;
-    }
-    else
-    {
-        f.mesh = n;
-        const std::vector<scene::NodeId> stack = scene::modifiers::stack(g, n->id());
-        for (auto it = stack.rbegin(); it != stack.rend() && !f.local; ++it)
-            if (Node* m = g.node(*it); m && gn::isGnModifier(*m))
-                if (auto h = gn::modifierHeightfield(m->id()))
-                {
-                    f.modifier = m;
-                    f.local = std::move(h);
-                }
+        if (evaluated)
+            g.evaluate();
+        f = {};
+        if (gn::isGnModifier(*n))
+        {
+            f.modifier = n;
+            f.local = gn::modifierHeightfield(n->id());
+            const scene::NodeId meshId = scene::modifiers::meshOf(g, n->id());
+            f.mesh = meshId != scene::kNoNode ? g.node(meshId) : nullptr;
+        }
+        else
+        {
+            f.mesh = n;
+            const std::vector<scene::NodeId> stack = scene::modifiers::stack(g, n->id());
+            for (auto it = stack.rbegin(); it != stack.rend() && !f.local; ++it)
+                if (Node* m = g.node(*it); m && gn::isGnModifier(*m))
+                    if (auto h = gn::modifierHeightfield(m->id()))
+                    {
+                        f.modifier = m;
+                        f.local = std::move(h);
+                    }
+        }
+        // In a batch the heightfield from the last evaluation does; a terrain never evaluated yet is evaluated now.
+        if (evaluated || (f.local && !f.local->empty()))
+            break;
     }
     if (!f.local || f.local->empty())
         throw CommandError(cmd + ": " + n->path() + " makes no heightfield (make a terrain with terrainCreate)");
@@ -359,7 +368,10 @@ TerrainGroup terrainGroup(Graph& g, const Found& f, const std::string& cmd)
         throw CommandError(cmd + ": " + (f.modifier ? f.modifier->path() : std::string("the terrain")) + " has no group");
     try
     {
-        return {node, gn::readGroup(*node)};
+        TerrainGroup t{node, {}};
+        if (!edit::batchedGroup(*node, t.group))
+            t.group = gn::readGroup(*node);
+        return t;
     }
     catch (const std::exception& e)
     {
@@ -369,6 +381,8 @@ TerrainGroup terrainGroup(Graph& g, const Found& f, const std::string& cmd)
 
 void commitTerrainGroup(TerrainGroup& t, const std::string& cmd)
 {
+    if (edit::batchGroup(*t.node, t.group))
+        return;
     try
     {
         gn::commitGroup(Graph::current(), *t.node, std::move(t.group));
@@ -675,7 +689,8 @@ json runStamp(const Args& a, bool region, const std::string& cmd, const std::str
     }
 
     TerrainGroup t = terrainGroup(g, f, cmd);
-    json list = listOf(ensureLayer(t.group, "TerrainStamps", layer, {}, cmd), "stamps");
+    edit::ListEdit stamps(*t.node, ensureLayer(t.group, "TerrainStamps", layer, {}, cmd), "stamps");
+    json& list = stamps.list();
     std::string id = a.get<std::string>("id", "");
     if (id.empty())
         for (int k = 1; id.empty(); ++k)
@@ -736,9 +751,13 @@ json runStamp(const Args& a, bool region, const std::string& cmd, const std::str
         }
     if (!replaced)
         list.push_back(s.toJson());
-    setList(*nodeNamed(t.group, layer), "stamps", list);
-    dropUnusedSources(t.group);
+    stamps.store(*nodeNamed(t.group, layer));
+    // A batch leaves unused sources for the next edit to drop: its lists are only written back when it commits.
+    if (!edit::EditBatch::active())
+        dropUnusedSources(t.group);
     commitTerrainGroup(t, cmd);
+    if (edit::EditBatch::active())
+        return {{"id", id}, {"layer", layer}, {"replaced", replaced}, {"batched", true}};
 
     const Found after = findTerrain(g, pathOf(f, names[0]), cmd);
     const auto results = stampResults(after.modifier->id(), layer);
@@ -1308,6 +1327,54 @@ Found oneTerrain(const Args& a, const std::string& cmd)
 
 void registerContractCommands(ext::Context& ctx)
 {
+    ctx.registerCommand({
+        .name = "terrainBatch",
+        .doc = "Run many stamp and road edits as one: calls is a list of {command, flags} for terrainStampPad, terrainStampRegion, "
+               "terrainStampQuay, terrainAddFeature, terrainAddRoad and terrainAddRoundabout, each with its flags as that command "
+               "takes them (args included). The terrain's group is written once at the end and evaluated once on the next read, "
+               "so hundreds of edits cost about one. Each call returns its id and layer only; read the results afterwards with "
+               "terrainStamps or terrainRoads. Returns ran, results (null for a call that failed) and errors ({index, command, "
+               "error}); the calls that worked still apply.",
+        .flags = {{"calls", "c", T::List, json::array(), "[{command, flags}, ...]."}},
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            static const std::set<std::string> allowed = {"terrainStampPad", "terrainStampRegion", "terrainStampQuay",
+                                                          "terrainAddFeature", "terrainAddRoad", "terrainAddRoundabout"};
+            const json calls = a.flags.value("calls", json::array());
+            if (!calls.is_array())
+                throw CommandError("terrainBatch: calls is a list of {command, flags}");
+            for (size_t k = 0; k < calls.size(); ++k)
+                if (const json& c = calls[k]; !c.is_object() || !allowed.contains(c.value("command", std::string())))
+                    throw CommandError("terrainBatch: call " + std::to_string(k) + " is not one of terrainStampPad, terrainStampRegion, "
+                                       "terrainStampQuay, terrainAddFeature, terrainAddRoad or terrainAddRoundabout");
+            json results = json::array(), errors = json::array();
+            int ran = 0;
+            {
+                edit::EditBatch batch;
+                for (size_t k = 0; k < calls.size(); ++k)
+                {
+                    const json& c = calls[k];
+                    const std::string command = c.value("command", std::string());
+                    try
+                    {
+                        results.push_back(ops::execute(command, c.value("flags", json::object())));
+                        ++ran;
+                    }
+                    catch (const std::exception& e)
+                    {
+                        results.push_back(nullptr);
+                        errors.push_back({{"index", k}, {"command", command}, {"error", e.what()}});
+                    }
+                }
+                batch.commit("terrainBatch");
+            }
+            return {{"ran", ran}, {"results", results}, {"errors", errors}};
+        },
+        .examples = {"terrainBatch(calls=[{'command': 'terrainStampPad', 'flags': {'args': ['Terrain'], 'id': 'a', 'footprint': "
+                     "[[0, 0], [1000, 0], [1000, 1000], [0, 1000]]}}])['errors']"},
+    });
+
     ctx.registerCommand({
         .name = "terrainStampQuay",
         .doc = "Build a waterfront along a line: quay (a vertical bank, the land side levelled, the water side dredged by depth), "

@@ -294,6 +294,36 @@ TEST_CASE("settlement terrain: on rough ground every graded street keeps its gra
     CHECK(again["streetsSent"].get<int>() == 0);
 }
 
+TEST_CASE("settlement terrain: terrainBatch makes the same terrain as its calls one by one")
+{
+    terrainLoadPackages();
+    run("newScene");
+    const std::string one = terrainMesh(40000.0, 65, 800.0, 5), many = terrainMesh(40000.0, 65, 800.0, 5);
+    auto calls = [](const std::string& t) {
+        const json square = json::array({json::array({-3000, -3000}), json::array({3000, -3000}), json::array({3000, 3000}), json::array({-3000, 3000})});
+        return json::array({{{"command", "terrainAddRoad"}, {"flags", {{"args", {t}}, {"id", "r"}, {"layer", "CityRoads"}, {"path", json::array({json::array({-15000, -9000}), json::array({15000, 8000})})}}}},
+                            {{"command", "terrainStampPad"}, {"flags", {{"args", {t}}, {"id", "a"}, {"layer", "City"}, {"footprint", square}}}},
+                            {{"command", "terrainStampRegion"}, {"flags", {{"args", {t}}, {"id", "b"}, {"layer", "City"}, {"footprint", json::array({json::array({6000, 6000}), json::array({9000, 6000}), json::array({9000, 9000})})}}}}});
+    };
+    for (const json& c : calls(one))
+        run(c["command"].get<std::string>().c_str(), c["flags"]);
+    const json batch = run("terrainBatch", {{"calls", calls(many)}});
+    CAPTURE(batch.dump());
+    CHECK(batch["ran"] == 3);
+    CHECK(batch["errors"].empty());
+    CHECK(run("terrainInfo", {{"args", {many}}})["revision"] == run("terrainInfo", {{"args", {one}}})["revision"]);
+    CHECK(run("terrainStamps", {{"args", {many}}})["layers"]["City"].size() == 2);
+    CHECK(run("terrainRoads", {{"args", {many}}})["layers"]["CityRoads"].size() == 1);
+
+    // A call that fails is reported by index and the rest still apply.
+    const json bad = run("terrainBatch", {{"calls", json::array({{{"command", "terrainStampPad"}, {"flags", {{"args", {many}}, {"id", "c"}, {"layer", "City"}}}},
+                                                                {{"command", "terrainStampPad"}, {"flags", {{"args", {many}}, {"id", "d"}, {"layer", "City"}, {"footprint", calls(many)[1]["flags"]["footprint"]}}}}})}});
+    REQUIRE(bad["errors"].size() == 1);
+    CHECK(bad["errors"][0]["index"] == 0);
+    CHECK(run("terrainStamps", {{"args", {many}}})["layers"]["City"].size() == 3);
+    CHECK_THROWS(run("terrainBatch", {{"calls", json::array({{{"command", "terrainErode"}, {"flags", {{"args", {many}}}}}})}}));
+}
+
 TEST_CASE("settlement terrain: re-planning keeps untouched blocks byte for byte")
 {
     // Two grounds that differ only in a bump: blocks away from it keep their hash, blocks on it are laid again.
