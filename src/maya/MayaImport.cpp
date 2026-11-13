@@ -60,7 +60,6 @@ using geo::kInvalid;
 using scene::Graph;
 using scene::NodeId;
 using scene::PlugRef;
-using json = nlohmann::json;
 
 constexpr int kMaxRefDepth = 8;
 

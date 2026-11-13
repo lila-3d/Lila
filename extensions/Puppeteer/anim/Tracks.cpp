@@ -19,10 +19,11 @@ using namespace lila::scene;
 
 namespace puppeteer::anim
 {
+using T = ArgType;
+
 namespace
 {
 namespace sa = lila::scene::anim;
-using T = ArgType;
 
 enum TracksAttr
 {
