@@ -859,3 +859,53 @@ TEST_CASE("props: another character catches what one throws")
     at(c.at("time").get<double>() + 0.3);
     CHECK(run("puppeteerPropInfo", {{"args", {"ball"}}}).at("holder") == graph().path(id("bob_hand_r")));
 }
+
+TEST_CASE("props: put on a table it rides the table, and the hand reaches to take it back")
+{
+    manny();
+    ball();
+    holding("ball");
+    at(0.0);
+    const glm::dvec3 h = pos(jointPath("hand_r"));
+    cube("table", {h.x, h.y - 30.0, h.z}, {60, 4, 60});
+    const double top = h.y - 28.0;
+    const json pl = run("puppeteerPropPlace", {{"args", {"ball"}}, {"on", "table"}, {"time", 0.2}, {"blend", 0.3}, {"solve", false}});
+    CHECK(pl.at("on") == graph().path(id("table")));
+    at(1.0);
+    MESSAGE("ball on the table: " << pos("ball_mesh").y - top << " cm above its top");
+    CHECK(pos("ball_mesh").y == Approx(top + 4.05).epsilon(0.002));
+    CHECK(run("puppeteerPropInfo", {{"args", {"ball"}}}).at("holds").back().at("space") == graph().path(id("table")));
+    // The table moves: the ball goes with it.
+    const glm::dvec3 before = pos("ball_mesh");
+    run("setAttr", {{"args", {"table.translateX", h.x + 50.0}}});
+    at(1.0);
+    CHECK(glm::length(pos("ball_mesh") - (before + glm::dvec3(50, 0, 0))) < 1e-6);
+    run("setAttr", {{"args", {"table.translateX", h.x}}});
+    // Taken back: the hand reaches for it on the table over a third of a second.
+    const json take = run("puppeteerPropHold", {{"args", {"ball"}}, {"hand", "right"}, {"hands", 1}, {"time", 1.2}, {"reach", 0.3}});
+    at(1.5);
+    CHECK(run("puppeteerPropInfo", {{"args", {"ball"}}}).at("holder") == jointPath("hand_r"));
+    const scene::NodeId pin = contactOf(jointPath("hand_r"), take.at("mainPoint"));
+    REQUIRE(pin != scene::kNoNode);
+    at(1.2);
+    const auto [hand, grip] = scene::grapple::contactPoints(graph(), pin);
+    MESSAGE("hand to grip as it takes it: " << glm::length(hand - grip) << " cm");
+    CHECK(glm::length(hand - grip) < 1.0);
+    CHECK(run("puppeteerPropInfo", {{"args", {"ball"}}}).at("holds").back().at("kind") == "hand");
+}
+
+TEST_CASE("props: hung from a hook by its grip, it hangs below it")
+{
+    manny();
+    sword();
+    holding("sword", "sword1h");
+    cube("rack", {0, 150, 80}, {80, 10, 4});
+    run("spaceLocator", {{"name", "hook"}});
+    run("setAttr", {{"args", {"hook.translate", 10.0, 150.0, 76.0}}});
+    run("parent", {{"args", {"hook", "rack"}}});
+    run("puppeteerPropPlace", {{"args", {"sword"}}, {"on", "rack"}, {"hook", "hook"}, {"time", 0.2}, {"blend", 0.3}, {"solve", false}});
+    at(1.0);
+    const json info = run("puppeteerPropInfo", {{"args", {"sword"}}});
+    CHECK(glm::length(pos(pointNamed(info, "main")) - pos("hook")) < 1e-6);
+    CHECK(angleDeg(pos(pointNamed(info, "tip")) - pos("hook"), {0, -1, 0}) < 3.0);
+}

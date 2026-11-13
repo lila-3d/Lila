@@ -2264,6 +2264,97 @@ json catchCmd(const Args& a)
                    {"reachable", best.short_ <= 0.0}});
 }
 
+// puppeteerPropPlace ---------------------------------------------------------------------------------------------------
+
+json placeCmd(const Args& a)
+{
+    Graph& g = Graph::current();
+    const char* cmd = "puppeteerPropPlace";
+    Prop p = propArg(g, a, cmd);
+    if (!a.has("on"))
+        throw CommandError(std::string(cmd) + ": give on, the object to put it on (a table, a rack, a wall)");
+    Node& onN = nodeNamed(g, a.get<std::string>("on"), cmd);
+    if (onN.type().attrIndex("worldMatrix") < 0)
+        throw CommandError(std::string(cmd) + ": " + onN.path() + " is not a transform");
+    if (propFor(g, onN.id()) == p.node || isUnder(g, onN.id(), p.root))
+        throw CommandError(std::string(cmd) + ": it can't go on itself");
+    const NodeId on = onN.id();
+    const KeepTime keep(g);
+    const double t = a.has("time") ? a.get<double>("time") : g.time();
+    const double blend = std::max(0.0, a.get<double>("blend", 0.4));
+    const NodeId character = characterIfAny(g, a, p, cmd);
+    const NodeId grapple = character ? propGrapple(g, character, true) : propGrapple(g, kNoNode, false);
+    const std::vector<Holding> holding = holdingAt(g, grapple, p, t);
+    const PropShape sh = shapeIn(g, p);
+    at(g, t + blend);
+    const glm::dmat4 onWorld = rigidOf(worldOf(g, on));
+    at(g, t);
+    const glm::dmat4 m0 = rigidOf(worldOf(g, p.root));
+    const glm::dvec3 u = up();
+
+    glm::dmat4 local(1.0), endWorld(1.0);
+    std::string how;
+    if (a.has("hook"))
+    {
+        // Hung by a point (default its main grip) from a hook, the rest hanging below it.
+        Node& hookN = nodeNamed(g, a.get<std::string>("hook"), cmd);
+        if (hookN.type().attrIndex("worldMatrix") < 0)
+            throw CommandError(std::string(cmd) + ": " + hookN.path() + " is not a transform");
+        const NodeId pt = gripPoint(g, p, a.get<std::string>("point", ""), Role::Main, cmd);
+        const glm::dvec3 hangBy = pt ? glm::dvec3(pointLocal(g, p, pt)[3]) : sh.at({-1.0, 0.0, 0.0});
+        at(g, t + blend);
+        const glm::dvec3 hookAt(worldOf(g, hookN.id())[3]);
+        at(g, t);
+        glm::dvec3 down = pointOf(m0, sh.middle()) - pointOf(m0, hangBy);
+        const glm::dquat q = glm::length(down) > 1e-6 ? turnOnto(down, -u) : glm::dquat(1, 0, 0, 0);
+        local = translation(hangBy);
+        endWorld = translation(hookAt) * rotationMatrix(q) * glm::dmat4(glm::dmat3(m0));
+        how = "hung on " + hookN.path();
+    }
+    else
+    {
+        // Laid on the object's top: below the given position, else below where it is held, else the top's middle.
+        const Surfaces surfaces = surfacesFor(g, on);
+        if (surfaces.items.empty())
+            throw CommandError(std::string(cmd) + ": " + onN.path() + " has no mesh to put it on; give hook to hang it from a point instead");
+        geo::Bounds box;
+        for (const Surfaces::Item& it : surfaces.items)
+            box.extend(it.bvh->bounds());
+        const double top = std::max(glm::dot(box.min, u), glm::dot(box.max, u));
+        // From above the object's top straight down, so whatever it is held over is found first.
+        auto below = [&](glm::dvec3 q) {
+            q += u * (top - glm::dot(q, u) + 50.0);
+            return surfaces.cast(q, -u, 1e5);
+        };
+        std::optional<Surfaces::Hit> hit;
+        if (a.has("position"))
+            hit = below(jsonVec(a.flags.at("position")));
+        else
+        {
+            hit = below(pointOf(m0, sh.middle()));
+            if (!hit)
+            {
+                hit = below(0.5 * (box.min + box.max));
+                if (hit)
+                    log::write(LogLevel::Warning, std::format("{}: {} isn't held over {}; put on the middle of its top", cmd, g.node(p.root)->name(), onN.name()));
+            }
+        }
+        if (!hit)
+            throw CommandError(std::string(cmd) + ": found no top on " + onN.path() + " to put it on");
+        const glm::dvec3 nrm = glm::dot(hit->normal, u) < 0.0 ? -hit->normal : hit->normal;
+        const glm::dmat4 rest = restingOn(sh, m0, hit->point, nrm);
+        local = translation(sh.middle());
+        endWorld = rest * local;
+        how = "on " + surfaceName(g, hit->node);
+    }
+    // The pivot's end frame in the object's frame where it settles, so it rides the object from then on.
+    switchFresh(g, p, ensureSpace(g, p.root, on), t);
+    settleAbout(g, p, local, on, rigidOf(glm::inverse(onWorld) * endWorld), t, blend);
+    carryAndLetGo(g, grapple, p, holding, t, blend, std::max(0.0, a.get<double>("release", 0.25)), a.get<bool>("fingers", true));
+    recordEvent(g, p, {{"time", t}, {"kind", "place"}, {"on", g.path(on)}, {"how", how}});
+    return finish(g, p, grapple, a, {{"on", g.path(on)}, {"how", how}, {"settled", t + blend}});
+}
+
 // puppeteerPropUnreal -------------------------------------------------------------------------------------------------
 
 /** World matrices the gun, right and left ik bones follow each frame: the holding hand, then each hand. */
@@ -2816,6 +2907,25 @@ void registerCommands(ext::Context& ctx)
                   fingersFlag, kSolveFlag},
         .run = catchCmd,
         .examples = {"puppeteerPropCatch(\"ball\")", "puppeteerPropCatch(\"ball\", character=\"bob\", hand=\"left\")"},
+    });
+
+    ctx.registerCommand({
+        .name = "puppeteerPropPlace",
+        .doc = "Puts a held prop on an object (a table, a rack, a shelf) at time: over blend the hands carry it onto the "
+               "object's top below where it is held (or below position), where it settles lying on its thinnest side, or hang it "
+               "by a point from hook (a transform on a wall hook or rack); then the hands let go. From then on it rides the "
+               "object, following it when it moves. puppeteerPropHold with reach takes it back. Returns the prop.",
+        .positionalDoc = "prop (default the selection)",
+        .flags = {kCharacterFlag,
+                  nodeFlag({"on", "on", T::String, nullptr, "The object it goes on."}, "transform"),
+                  nodeFlag({"hook", "hk", T::String, nullptr, "A transform to hang it from instead of laying it on the top."}, "transform"),
+                  {"point", "pt", T::String, nullptr, "With hook: the point it hangs by. Default: main."},
+                  {"position", "p", T::Vec3, nullptr, "World point on the object to put it at."},
+                  kTimeFlag,
+                  {"blend", "b", T::Float, 0.4, "Seconds it takes to go there and settle.", {}, {}, 0.0},
+                  releaseFlag, fingersFlag, kSolveFlag},
+        .run = placeCmd,
+        .examples = {"puppeteerPropPlace(\"mug\", on=\"table\", time=2.0)", "puppeteerPropPlace(\"sword\", on=\"rack\", hook=\"rack_hook1\")"},
     });
 
     ctx.registerCommand({
