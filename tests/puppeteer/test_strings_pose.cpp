@@ -1359,7 +1359,10 @@ TEST_CASE("stringsRuleWeb: pins, IK chains with their lock and solve, and glue a
 
     run("ikLock", {{"args", {chain}}, {"state", false}});
     CHECK(run("stringsRuleWeb", {{"args", {"hero"}}})["locks"][0]["locked"] == false);
+    // Glue is kept by joint name for the session: free everything, with nothing selected, so later tests start clean.
+    run("select", {{"clear", true}});
     run("stringsGlue", {{"remove", true}});
+    CHECK(run("stringsGlue", {{"query", true}}).empty());
     run("puppeteerPin", {{"args", {"hand_r"}}, {"pin", false}});
 }
 
@@ -1507,6 +1510,7 @@ TEST_CASE("stringsPose preview: solved in memory it matches what the keys give, 
 {
     loadPuppeteer();
     stringsBiped();
+    run("stringsGlue", {{"remove", true}});
     run("playbackOptions", {{"fps", 30.0}, {"minTime", 0.0}, {"maxTime", sec(130)}});
     for (int f = 0; f <= 120; ++f)
     {
@@ -1521,15 +1525,19 @@ TEST_CASE("stringsPose preview: solved in memory it matches what the keys give, 
     run("stringsPose", call);
     const double first = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     json r;
-    double later = 0.0;
-    for (int i = 1; i <= 5; ++i)
+    // The fastest of several updates: other processes (a parallel test run) only ever slow some of them down, while a
+    // real regression (the frames solved one after another, or re-evaluating the scene) slows every one.
+    double later = 1e30, mean = 0.0;
+    for (int i = 1; i <= 7; ++i)
     {
         call["by"] = v3(0, -6.0 - i, 2);
         t0 = std::chrono::steady_clock::now();
         r = run("stringsPose", call);
-        later += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / 5.0;
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        later = std::min(later, ms);
+        mean += ms / 7.0;
     }
-    MESSAGE("range preview of 121 frames: first " << first << " ms, then " << later << " ms per drag update");
+    MESSAGE("range preview of 121 frames: first " << first << " ms, then " << later << " ms (fastest), " << mean << " ms (mean) per drag update");
     CHECK(r.size() == 121);
     CHECK(later < 100.0);
     std::map<int, glm::dvec3> previewed;
