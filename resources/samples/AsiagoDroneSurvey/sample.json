@@ -1,6 +1,6 @@
 {
     "name": "Asiago Drone Survey",
-    "description": "A drone photogrammetry point cloud of a forest stand near Asiago, Italy, at its real UTM zone 32N coordinates: 2 million coloured points, georeferenced.",
+    "description": "A drone photogrammetry scan of a forest stand near Asiago, Italy: 2 million coloured points over 220 × 130 m, at their real UTM zone 32N coordinates.",
     "files": [
         {
             "url": "https://zenodo.org/records/7421524/files/Asiago_postTaglio_nuvola-densa-drone-UTM32.laz?download=1",

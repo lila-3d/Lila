@@ -1,4 +1,5 @@
 #include "ui/DroneCamera.h"
+#include "ui/ViewportTool.h"
 
 #include "core/PrefStore.h"
 #include "ui/Actions.h"
@@ -187,6 +188,7 @@ public:
             return true;
         if (!mDragging && (e->modifiers() & Qt::AltModifier))
             return false;
+        mButtons = e->buttons();
         mView->setFocus();
         if (!mDragging)
         {
@@ -239,6 +241,7 @@ public:
     {
         if (!mDragging)
             return false;
+        mButtons = e->buttons();
         if (e->buttons() == Qt::NoButton)
             endDrag();
         return true;
@@ -324,9 +327,27 @@ protected:
         const bool press = e->type() == QEvent::KeyPress;
         if (!press)
             return release(k);
-        if (QApplication::focusWidget() != mView || isModifierKey(k->key()))
+        if (QApplication::focusWidget() != mView)
             return false;
-        if (k->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))
+        // Looking with the right button held, Ctrl sinks and Space climbs, as in Unreal.
+        const bool looking = mDragging && (mButtons & Qt::RightButton);
+        if (looking && (k->key() == Qt::Key_Control || k->key() == Qt::Key_Space))
+        {
+            if (!k->isAutoRepeat())
+            {
+                mPressed.push_back(keyId(k));
+                mHeld[int(k->key() == Qt::Key_Control ? Key::Down : Key::Up)] = true;
+                if (!mTimer.isActive())
+                {
+                    mClock.restart();
+                    mTimer.start();
+                }
+            }
+            return true;
+        }
+        if (isModifierKey(k->key()))
+            return false;
+        if (k->modifiers() & ((looking ? Qt::NoModifier : Qt::ControlModifier) | Qt::AltModifier | Qt::MetaModifier))
             return false;
         if (Hotkeys::get().isKeyFor(k, "view.drone"))
             return false;
@@ -336,6 +357,9 @@ protected:
             leaveLater();
             return true;
         }
+        // F frames the selection as usual; it slows the flight only while looking with the right button.
+        if (key == Key::Slower && !looking)
+            return false;
         if (key == Key::Faster || key == Key::Slower)
         {
             setSpeed(speed() * (key == Key::Faster ? kSpeedStep : 1.0 / kSpeedStep));
@@ -376,6 +400,11 @@ private:
         if (k->isAutoRepeat())
             return false;
         const bool ours = std::erase(mPressed, keyId(k)) > 0;
+        if (ours && (k->key() == Qt::Key_Control || k->key() == Qt::Key_Space))
+        {
+            mHeld[int(k->key() == Qt::Key_Control ? Key::Down : Key::Up)] = false;
+            return true;
+        }
         const Key key = keyFor(k);
         if (ours && key != Key::None && int(key) < kMoveKeys)
             mHeld[int(key)] = false;
@@ -453,6 +482,8 @@ private:
     CameraView mBefore;
     double mBaseFocal = 35.0;
     bool mDragging = false;
+    /** The buttons held in the view's drag, as its mouse events say. */
+    Qt::MouseButtons mButtons;
     QPointF mAnchor;
     QRectF mBanner, mClose;
     bool mCloseHover = false;
@@ -553,8 +584,20 @@ bool wheel(ViewportWidget* view, QWheelEvent* e)
 
 void draw(OverlayPainter& p, ViewportWidget* view)
 {
-    if (DroneFlight* f = flight(view))
-        f->draw(p);
+    DroneFlight* f = flight(view);
+    if (!f)
+        return;
+    f->draw(p);
+    // In place of the layout's keys in the corner.
+    drawKeyList(p, QPointF(16.0, double(view->height()) - 84.0),
+                {{"W A S D", "Move"},
+                 {"E / Q", "Up, down"},
+                 {"Space / Ctrl", "Up, down (right drag)"},
+                 {"Right drag", "Look"},
+                 {"Z / C", "Zoom while held"},
+                 {"R", "Faster"},
+                 {"F", "Frame (slower with right drag)"},
+                 {"Esc", "Leave"}});
 }
 
 bool applyCursor(ViewportWidget* view)
@@ -575,9 +618,8 @@ void registerActions(std::function<ViewportWidget*()> activeView)
                           if (ViewportWidget* v = activeView())
                               toggle(v);
                       },
-                  .doc = "Fly the view through the scene with Unreal's viewport keys: WASD or the arrows move, E and Q rise and fall, "
-                         "Z and C zoom, R and F change speed, Esc leaves. Right drag looks; nothing can be edited until you leave. "
-                         "Bound to a key, a tap toggles it and holding the key flies until you let go.",
+                  .doc = "Fly the view through the scene with Unreal's viewport keys, listed in the view while flying. Nothing can be "
+                         "edited until you leave. Shift-click the button for speed and smoothing.",
                   .checked =
                       [activeView] {
                           ViewportWidget* v = activeView();
