@@ -180,18 +180,49 @@ struct Heap
             for (int64_t z = z0; z <= z1; ++z)
                 fn(x, z);
     }
-    double highest(const glm::dvec3& centre, const glm::dvec3& e) const
+    /**
+     * Cells under s's own outline seen from above, with s moved to at, rather than under its box's bounds: a stone
+     * turned across the cells must not raise the heap over the corners it doesn't cover. At least the cell under at.
+     */
+    template <class Fn> void forFootprint(const Stone& s, const glm::dvec3& at, Fn&& fn) const
+    {
+        int up = 0;
+        for (int i = 1; i < 3; ++i)
+            if (std::abs(s.frame[i].y) > std::abs(s.frame[up].y))
+                up = i;
+        glm::dvec3 axis[2];
+        double half[2];
+        for (int i = 0, n = 0; i < 3; ++i)
+            if (i != up)
+            {
+                const glm::dvec3 a(s.frame[i].x, 0.0, s.frame[i].z);
+                axis[n] = glm::length(a) > 1e-9 ? glm::normalize(a) : glm::dvec3(n == 0, 0.0, n == 1);
+                half[n++] = s.size[i] * 0.5;
+            }
+        // A cell counts when it overlaps the outline at all: its half size reaches out along each axis.
+        for (int n = 0; n < 2; ++n)
+            half[n] += cell * 0.5 * (std::abs(axis[n].x) + std::abs(axis[n].z));
+        bool any = false;
+        forCells(at, halfExtentAabb(s), [&](int64_t x, int64_t z) {
+            const glm::dvec3 d((x + 0.5) * cell - at.x, 0.0, (z + 0.5) * cell - at.z);
+            if (std::abs(glm::dot(d, axis[0])) <= half[0] && std::abs(glm::dot(d, axis[1])) <= half[1])
+            {
+                any = true;
+                fn(x, z);
+            }
+        });
+        if (!any)
+            fn(int64_t(std::floor(at.x / cell)), int64_t(std::floor(at.z / cell)));
+    }
+    double highestUnder(const Stone& s, const glm::dvec3& at) const
     {
         double top = -1e300;
-        forCells(centre, e, [&](int64_t x, int64_t z) { top = std::max(top, at(x, z)); });
+        forFootprint(s, at, [&](int64_t x, int64_t z) { top = std::max(top, this->at(x, z)); });
         return top;
     }
-    void raise(const glm::dvec3& centre, const glm::dvec3& e, double top)
+    void raiseUnder(const Stone& s, double top)
     {
-        forCells(centre, e, [&](int64_t x, int64_t z) {
-            const double cur = at(x, z);
-            h[StoneGrid::pack(x, 0, z)] = std::max(cur, top);
-        });
+        forFootprint(s, s.center, [&](int64_t x, int64_t z) { h[StoneGrid::pack(x, 0, z)] = std::max(at(x, z), top); });
     }
 };
 
@@ -706,6 +737,30 @@ RuinStats ruinStones(std::vector<Stone>& stones, const RuinParams& p, double pit
         });
         return hit;
     };
+    // Down the heap while it is steeper than loose stone lies, so heaps spread out and fill hollows instead of stacking.
+    auto slideDownHeap = [&](Stone& s, const glm::dvec3& e, double run, uint64_t key) {
+        constexpr double kRepose = 0.7; // tan of about 35 degrees
+        for (int slide = 0; slide < 64; ++slide)
+        {
+            double low = heap.highestUnder(s, s.center) - run * kRepose;
+            glm::dvec3 next = s.center;
+            const double turn = unitRandom(mixKey(key, uint64_t(slide)));
+            for (int d = 0; d < 8; ++d)
+            {
+                const double a = (d + turn) * kPi * 0.25;
+                const glm::dvec3 q = s.center + glm::dvec3(std::cos(a), 0.0, std::sin(a)) * run;
+                const double y = heap.highestUnder(s, q);
+                if (y < low && !blocked(q, e, y, 2.0 * e.y))
+                {
+                    low = y;
+                    next = q;
+                }
+            }
+            if (next == s.center)
+                return;
+            s.center = next;
+        }
+    };
     std::vector<size_t> fallenOrder;
     for (size_t k = 0; k < n; ++k)
         if (!keep[k])
@@ -746,13 +801,13 @@ RuinStats ruinStones(std::vector<Stone>& stones, const RuinParams& p, double pit
         // The lowest of a few spots around where it lands, so heaps spread instead of stacking into towers.
         {
             glm::dvec3 best = s.center;
-            double bestY = heap.highest(s.center, e * 0.8);
+            double bestY = heap.highestUnder(s, s.center);
             const double reach = std::max({e.x, e.z, unit}) * 1.5;
             for (int c = 0; c < 6; ++c)
             {
                 const double a = unitRandom(mixKey(p.seed, 416, k, c)) * 6.283185307179586;
                 const glm::dvec3 at = s.center + glm::dvec3(std::cos(a), 0.0, std::sin(a)) * reach * (0.5 + 0.5 * unitRandom(mixKey(p.seed, 417, k, c)));
-                const double y = heap.highest(at, e * 0.8);
+                const double y = heap.highestUnder(s, at);
                 if (y < bestY - 1e-9)
                 {
                     bestY = y;
@@ -762,13 +817,17 @@ RuinStats ruinStones(std::vector<Stone>& stones, const RuinParams& p, double pit
             s.center = best;
         }
         int step = 0;
-        for (; step < 12 && blocked(s.center, e * 0.8, heap.highest(s.center, e * 0.8), 2.0 * e.y); ++step)
+        for (; step < 12 && blocked(s.center, e * 0.8, heap.highestUnder(s, s.center), 2.0 * e.y); ++step)
             s.center += away * std::max({e.x, e.z, unit});
         // Nowhere clear to land: it is gone with the rest.
         if (step == 12)
             continue;
-        s.center.y = heap.highest(s.center, e * 0.8) + e.y;
-        heap.raise(s.center, e * 0.8, s.center.y + e.y);
+        slideDownHeap(s, e * 0.8, 2.0 * std::max({e.x, e.z, unit * 0.25}), mixKey(p.seed, 418, k));
+        s.center.y = heap.highestUnder(s, s.center) + e.y;
+        // A heap filling an enclosed floor stops well below the walls around it; the rest is gone.
+        if (const auto [lg, lt] = cols.near(s.center); s.center.y - e.y > lg + 0.4 * std::max(lt - lg, unit))
+            continue;
+        heap.raiseUnder(s, s.center.y + e.y);
         s.role = s.role == Role::Slab ? Role::Slab : Role::Rubble;
         s.t1 = -1.0;
         s.t0 = 0.0;
@@ -862,6 +921,34 @@ int countFloating(std::span<const Stone> stones, double tolerance, std::vector<i
         }
         count += held ? 0 : 1;
         if (!held && which)
+            which->push_back(int(k));
+    }
+    return count;
+}
+
+int countStacked(std::span<const Stone> stones, double height, std::vector<int>* which, double* highest)
+{
+    std::vector<Stone> standing;
+    for (const Stone& s : stones)
+        if (!isRubble(s))
+            standing.push_back(s);
+    if (standing.empty())
+        standing.assign(stones.begin(), stones.end());
+    Columns cols;
+    cols.build(standing, typicalSize(standing) * 4.0, std::any_of(standing.begin(), standing.end(), [](const Stone& s) { return s.grounded; }));
+    int count = 0;
+    for (size_t k = 0; k < stones.size(); ++k)
+    {
+        const Stone& s = stones[k];
+        if (!isRubble(s))
+            continue;
+        const double above = s.center.y - halfExtentAabb(s).y - cols.near(s.center).first;
+        if (highest)
+            *highest = std::max(*highest, above);
+        if (above <= height)
+            continue;
+        ++count;
+        if (which)
             which->push_back(int(k));
     }
     return count;

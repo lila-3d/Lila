@@ -1023,8 +1023,9 @@ void registerCommands(ext::Context& ctx)
     ctx.registerCommand({
         .name = "masonryCheck",
         .doc = "Check a masonry wall or building before shipping it: floating stones (not on the ground and touching nothing "
-               "under them), standing stones interpenetrating by more than tolerance, missing collision, and an optional budget. "
-               "Returns {ok, issues: [text], floating, floatingStones (the first ten: region, role, at), overlaps, rubbleOverlaps, collisionHulls, stones, triangles}.",
+               "under them), standing stones interpenetrating by more than tolerance, rubble heaped higher than half the walls "
+               "(stacked), missing collision, and an optional budget. Returns {ok, issues: [text], floating, floatingStones (the "
+               "first ten: region, role, at), overlaps, rubbleOverlaps, stacked, rubbleHeight, collisionHulls, stones, triangles}.",
         .positionalDoc = "masonry mesh or modifier (default the selection)",
         .flags = {{"tolerance", "", T::Float, 0.1, "Interpenetration allowed, and the gap a resting stone may have under it, cm.", {}, {}, 0.0},
                   {"maxStones", "", T::Int, int64_t(0), "Budget: most stones; 0 for none.", {}, {}, 0.0},
@@ -1053,6 +1054,10 @@ void registerCommands(ext::Context& ctx)
                                           {"role", roleName(s.role)},
                                           {"at", {s.center.x, s.center.y, s.center.z}}});
             }
+            // Rubble from a wall spreads at its foot: a heap higher than half the walls is a column, not a heap.
+            const double stackLimit = std::max(3.0 * b.pitch, 0.5 * b.courses * b.pitch);
+            double rubbleHeight = 0.0;
+            const int stacked = countStacked(b.stones, stackLimit, nullptr, &rubbleHeight);
             const json stats = statsOf(*r, w.footprints.size());
             json issues = json::array();
             if (b.stones.empty())
@@ -1061,6 +1066,8 @@ void registerCommands(ext::Context& ctx)
                 issues.push_back(std::format("{} stones float", floating));
             if (overlaps > 0)
                 issues.push_back(std::format("{} pairs of standing stones interpenetrate by more than {} cm", overlaps, tol));
+            if (stacked > 0)
+                issues.push_back(std::format("{} rubble stones are stacked up to {:.0f} cm above the ground, over half the walls' height ({:.0f} cm)", stacked, rubbleHeight, stackLimit));
             if (b.coreHulls.empty() && !b.stones.empty())
                 issues.push_back("no collision: the core is empty");
             if (const int64_t m = a.get<int64_t>("maxStones", 0); m > 0 && int64_t(b.stones.size()) > m)
@@ -1073,6 +1080,8 @@ void registerCommands(ext::Context& ctx)
                     {"floatingStones", floatingStones},
                     {"overlaps", int64_t(overlaps)},
                     {"rubbleOverlaps", int64_t(rubbleOverlaps)},
+                    {"stacked", stacked},
+                    {"rubbleHeight", rubbleHeight},
                     {"collisionHulls", int64_t(b.coreHulls.size())},
                     {"stones", int64_t(b.stones.size())},
                     {"triangles", stats["stoneTriangles"]}};

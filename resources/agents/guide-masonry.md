@@ -25,7 +25,7 @@ t = masonryWall(points=pts, closed=True, name='Tower', bond='ashlar', height=120
                 stoneLength=50, stoneHeight=28, stoneDepth=35, joint=1.5, batter=1, cornice=2,
                 openings=[{'name': 'door', 'at': 150, 'width': 120, 'height': 240, 'arch': 'round'},
                           {'name': 'window', 'at': 1000, 'width': 60, 'height': 140, 'sill': 650, 'arch': 'pointed'}])
-ruin(t['mesh'], left=0.5, collapse=90, gaps=1, rubble=0.3)
+ruin(t['mesh'], left=0.5, collapse=90, gaps=1)
 age(t['mesh'], age=0.8, moss=0.6, ivy=0.4)
 c = masonryCheck(t['mesh'], maxStones=20000)
 t['stones'], t['regions'], c['ok'], c['issues']
@@ -53,7 +53,7 @@ b = masonryBuilding(name='Chapel', spec={
          'openings': [{'name': 'west_door', 'at': 1750, 'width': 160, 'height': 320, 'arch': 'round'},
                       {'name': 'belfry', 'at': 250, 'width': 90, 'height': 200, 'sill': 1450, 'arch': 'round'}]}],
     'vaults': [{'name': 'nave_vault', 'kind': 'barrel', 'from': [45, 900, 400], 'to': [1555, 900, 400], 'span': 710}]})
-ruin('Chapel', left=0.5, collapse=0, gaps=1, settle=True)
+ruin('Chapel', left=0.5, collapse=0, gaps=1)
 age('Chapel', age=0.8, moss=0.6)
 b['regions'], masonryCheck('Chapel')['ok']
 ```
@@ -113,7 +113,7 @@ ruin(w['mesh'], left=0.75, rubble=0.8, loose=0)
 ## Ruin
 
 - `ruin(mesh, left=0.5, collapse=90, gaps=1)`: `left` is the share of stone left standing (0.75, 0.5, 0.25). It stands lowest toward `collapse`; `slope` is how much lower; `roughness` the ragged top; `gaps` breaches to the ground; `survivors`, `loose`, `tip` the stones that hang on and tip; `rubble` the share of fallen stones heaped at the foot (the rest are gone); `settle=True` drops the rubble with the rigid-body solver (slower). `left` is met to within a few percent: the result's `left` is what stands.
-- Inside closed walls (a tower, a nave), heaped rubble can stack into a column above the walls. Use `settle=True`, or `rubble=0.3` or less, and look at a capture.
+- Rubble heaps at the foot and inside closed walls, spreading at a natural slope; a heap filling a tower stops well below its walls and the rest is gone.
 - `ruin` sets the modifier's ruin inputs. A wall or building has one ruin: each call changes only the flags it gives, and the rest stay from earlier calls. `regions=['tower']` limits it to those regions until `regions=''` clears it.
 - Extra local damage: `ruinPaint(mesh, points=[[x, y, z], ...], radius=150)` knocks out stones near the stroke (`strength=-1` holds them up instead; `clear=True` drops all strokes). Strokes add to the ruin.
 - `structural=True` also drops what cannot stand (an arch without its keystone, overhangs).
@@ -136,7 +136,7 @@ ruin(w['mesh'], left=0.75, rubble=0.8, loose=0)
 
 ## Check
 
-1. `masonryCheck(mesh, maxStones=, maxTriangles=)` returns `ok`, `issues`, `floating` and `floatingStones` (the first ten: region, role, at), `overlaps` (standing stones interpenetrating past `tolerance`, 0.1 cm), `rubbleOverlaps` (informational), `collisionHulls`, `stones`, `triangles`. Fix until `ok`.
+1. `masonryCheck(mesh, maxStones=, maxTriangles=)` returns `ok`, `issues`, `floating` and `floatingStones` (the first ten: region, role, at), `overlaps` (standing stones interpenetrating past `tolerance`, 0.1 cm), `stacked` (rubble heaped above half the walls' height) and `rubbleHeight`, `rubbleOverlaps` (informational), `collisionHulls`, `stones`, `triangles`. Fix until `ok`.
 2. Floating stones mean a vault, arch or column sits in mid-air in the spec: lower it onto a wall, or let `ruin` drop what has no support.
 3. `masonryInfo(mesh)` gives the full stats, the current `settings` and `checks`.
 4. Look once at the end: `captureTurntable(path=, views=['front', 'right', 'top', 'persp'], display='shaded')`, or `captureView(path=, view='three-quarter', display='shaded')`. Check the ruin's silhouette and that rubble lies on the ground.
