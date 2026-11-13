@@ -828,7 +828,17 @@ void ApplySocket(const FImportRequest& Request, FImportOutcome& Outcome)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImport::ApplySocket);
 
-	USkeletalMesh* Mesh = LoadObject<USkeletalMesh>(nullptr, *Request.SocketMesh);
+	// A mesh imported earlier in the same sync is in memory but not saved yet, so find it by its full object path first.
+	FString ObjectPath = Request.SocketMesh;
+	if (!ObjectPath.Contains(TEXT(".")))
+	{
+		ObjectPath += TEXT(".") + FPackageName::GetShortName(ObjectPath);
+	}
+	USkeletalMesh* Mesh = FindObject<USkeletalMesh>(nullptr, *ObjectPath);
+	if (!Mesh)
+	{
+		Mesh = LoadObject<USkeletalMesh>(nullptr, *ObjectPath);
+	}
 	if (!Mesh)
 	{
 		Outcome.Warnings.Add(FString::Printf(TEXT("No skeletal mesh %s for socket %s yet; send the character, then this prop again"),
