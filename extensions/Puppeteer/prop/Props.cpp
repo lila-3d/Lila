@@ -18,9 +18,11 @@
 #include <lila/Relocate.h>
 #include <lila/Simulation.h>
 #include <lila/Spaces.h>
+#include <lila/Interchange.h>
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/norm.hpp>
+#include <glm/gtc/constants.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -256,6 +258,25 @@ std::vector<Hold> holdsOf(Graph& g, const Prop& p)
     return out;
 }
 
+json eventsOf(Graph& g, const Prop& p)
+{
+    const std::string text = strOf(g, p.node, "events");
+    json j = json::parse(text.empty() ? std::string("[]") : text, nullptr, false);
+    return j.is_array() ? j : json::array();
+}
+
+void recordEvent(Graph& g, const Prop& p, const json& ev)
+{
+    const double t = ev.value("time", 0.0), half = 0.5 / fps();
+    json out = json::array();
+    for (const json& e : eventsOf(g, p))
+        if (std::abs(e.value("time", 0.0) - t) > half)
+            out.push_back(e);
+    out.push_back(ev);
+    std::stable_sort(out.begin(), out.end(), [](const json& x, const json& y) { return x.value("time", 0.0) < y.value("time", 0.0); });
+    setPlug(g, p.node, "events", out.dump());
+}
+
 NodeId holderNow(Graph& g, const Prop& p)
 {
     const int index = sp::active(g, p.root);
@@ -267,26 +288,38 @@ NodeId holderNow(Graph& g, const Prop& p)
 
 NodeId propGrapple(Graph& g, NodeId character, bool make)
 {
-    const std::string ch = g.path(character);
-    for (NodeId id : g.nodes())
-        if (Node* n = g.node(id); n && n->type().isA(gp::kType) && attrOf(*n, kGrappleCharacterAttr) >= 0 && textOf(*n, kGrappleCharacterAttr) == ch)
+    NodeId id = kNoNode;
+    for (NodeId n : g.nodes())
+        if (Node* nn = g.node(n); nn && nn->type().isA(gp::kType) && attrOf(*nn, kPropGrappleAttr) >= 0)
+            id = n;
+    if (!id && !make)
+        return kNoNode;
+    if (!id)
+    {
+        Node* gn = g.createNode(*types::find(gp::kType), "props_grapple");
+        id = gn->id();
+        g.addAttr(id, {.name = kPropGrappleAttr,
+                       .type = PlugType::Bool,
+                       .defaultValue = true,
+                       .flags = AttrInput | AttrStorable | AttrHidden,
+                       .doc = "Solves the arms of every character holding props."});
+        // Bodies aren't kept apart and nothing is posed but the arms reaching for their grips.
+        setPlug(g, id, "collide", false);
+        setPlug(g, id, "autoPose", false);
+        setPlug(g, id, "iterations", int64_t(8));
+        g.evaluate();
+    }
+    if (!character)
+        return id;
+    const NodeId root = characterRoot(g, character);
+    std::vector<gp::FigureSetup> figures = gp::figuresOf(g, id);
+    for (const gp::FigureSetup& f : figures)
+        if (f.root == root)
             return id;
     if (!make)
-        return kNoNode;
-    Node* gn = g.createNode(*types::find(gp::kType), g.node(character)->name() + "_props");
-    const NodeId id = gn->id();
-    g.addAttr(id, {.name = kGrappleCharacterAttr,
-                   .type = PlugType::String,
-                   .defaultValue = std::string(),
-                   .flags = AttrInput | AttrStorable | AttrHidden,
-                   .doc = "The character whose props this grapple solves."});
-    setPlug(g, id, kGrappleCharacterAttr, ch);
-    // One character: no bodies to keep apart, and the arms alone carry the grips.
-    setPlug(g, id, "collide", false);
-    setPlug(g, id, "autoPose", false);
-    setPlug(g, id, "iterations", int64_t(8));
-    g.evaluate();
-    gp::setFigures(g, id, {gp::fitFigure(g, characterRoot(g, character))});
+        return id;
+    figures.push_back(gp::fitFigure(g, root));
+    gp::setFigures(g, id, figures);
     return id;
 }
 
@@ -468,20 +501,32 @@ Prop propArg(Graph& g, const Args& a, const char* cmd)
     throw CommandError(std::string(cmd) + ": give a prop (puppeteerPropSetup makes one), or select it");
 }
 
-/** The character a prop command works with: the flag, the one holding the prop, the selection's, or the only one. */
-NodeId characterArg(Graph& g, const Args& a, const Prop& p, const char* cmd)
+/**
+ * The character a prop command works with: the flag, the one holding the prop at the command's time (else the last one
+ * that held it before then, else the first that ever does), the selection's, or the only one.
+ */
+NodeId characterArg(Graph& g, const Args& a, const Prop& p, const char* cmd, const char* flag = "character")
 {
-    if (a.has("character"))
+    if (a.has(flag))
     {
-        const NodeId c = characterFor(g, nodeNamed(g, a.get<std::string>("character"), cmd).id());
+        const NodeId c = characterFor(g, nodeNamed(g, a.get<std::string>(flag), cmd).id());
         if (!c)
-            throw CommandError(std::string(cmd) + ": " + a.get<std::string>("character") + " is not in a Puppeteer character");
+            throw CommandError(std::string(cmd) + ": " + a.get<std::string>(flag) + " is not in a Puppeteer character");
         return c;
     }
+    const double t = a.has("time") ? a.get<double>("time") : g.time();
+    NodeId before = kNoNode, first = kNoNode;
     for (const Hold& h : holdsOf(g, p))
         if (h.target)
             if (const NodeId c = characterFor(g, h.target))
-                return c;
+            {
+                if (!first)
+                    first = c;
+                if (h.time <= t + 1e-9)
+                    before = c;
+            }
+    if (before || first)
+        return before ? before : first;
     for (NodeId s : g.selection())
         if (const NodeId c = characterFor(g, s))
             return c;
@@ -716,18 +761,18 @@ void keyRootAt(Graph& g, NodeId root, const glm::dmat4& world, double t)
 }
 
 /**
- * Keys the prop settling from where it is at t into `end` (the point's frame in the space's frame) by t + blend: every
- * frame between, the point's frame against the space eases there rigidly about the point itself. Interpolating the
- * root's own channels instead swings a prop whose origin is far from its mesh through a wide arc.
+ * Keys the prop settling from where it is at t into `end` (a pivot's frame in the space's frame; no space target is the
+ * world) by t + blend: every frame between, the pivot's frame against the space eases there rigidly about the pivot
+ * itself. local is the pivot's frame in the root's space. Interpolating the root's own channels instead swings a prop
+ * whose origin is far from its mesh through a wide arc.
  */
-void settleInto(Graph& g, const Prop& p, NodeId point, NodeId spaceTarget, const glm::dmat4& end, double t, double blend)
+void settleAbout(Graph& g, const Prop& p, const glm::dmat4& local, NodeId spaceTarget, const glm::dmat4& end, double t, double blend)
 {
-    const glm::dmat4 local = pointLocal(g, p, point);
     auto spaceAt = [&](double time) {
         at(g, time);
-        return rigidOf(worldOf(g, spaceTarget));
+        return spaceTarget ? rigidOf(worldOf(g, spaceTarget)) : glm::dmat4(1.0);
     };
-    const glm::dmat4 start = glm::inverse(spaceAt(t)) * rigidOf(worldOf(g, point));
+    const glm::dmat4 start = glm::inverse(spaceAt(t)) * rigidOf(worldOf(g, p.root)) * local;
     const glm::dquat q0 = glm::quat_cast(glm::dmat3(start)), q1 = glm::quat_cast(glm::dmat3(end));
     const long long frames = std::max<long long>(1, std::llround(blend * fps()));
     for (long long f = 1; f <= frames; ++f)
@@ -738,6 +783,11 @@ void settleInto(Graph& g, const Prop& p, NodeId point, NodeId spaceTarget, const
         rel[3] = glm::dvec4(glm::mix(glm::dvec3(start[3]), glm::dvec3(end[3]), e), 1.0);
         keyRootAt(g, p.root, placeOn(spaceAt(time) * rel, local), time);
     }
+}
+
+void settleInto(Graph& g, const Prop& p, NodeId point, NodeId spaceTarget, const glm::dmat4& end, double t, double blend)
+{
+    settleAbout(g, p, pointLocal(g, p, point), spaceTarget, end, t, blend);
 }
 
 /** Drops the bake layers of the character's prop grapple, leaving the animation itself. */
@@ -754,6 +804,9 @@ void dropSolve(Graph& g, NodeId grapple)
     setPlug(g, grapple, sim::kRecordingsAttr, std::string("[]"));
     g.evaluate();
 }
+
+/** Keys a weight at t. */
+void keyWeight(Graph& g, NodeId node, double t, double w) { anim::setKey(g, plugOf(*g.node(node), "weight"), t, w); }
 
 double weightAt(Graph& g, NodeId node, double t)
 {
@@ -1062,16 +1115,25 @@ json holdCmd(const Args& a)
     const double blend = blendArg(a);
     const NodeId grapple = propGrapple(g, character, true);
     const std::set<NodeId> before = handsHolding(g, grapple, p, t);
+    // Reaching: the hand goes to the prop where it is over the reach before t, and takes it there.
+    const double reach = std::min(std::max(0.0, a.get<double>("reach", 0.0)), t - anim::playback().minTime);
+    if (reach > 0.0)
+    {
+        const NodeId pin = contactFor(g, grapple, p, main.h, kNoNode, mainPt);
+        setPlug(g, pin, "gripOffset", gripOf(g, main.h, p, mainPt, st.trigger));
+        keyWeight(g, pin, t - reach, 0.0);
+        keyWeight(g, pin, t, 1.0);
+    }
 
-    // The switch keeps the prop where it is at t; by t + blend it sits in the grip.
+    // The switch keeps the prop where it is at t; by t + blend it sits in the grip (at once when the hand reached it).
     at(g, t);
     const int space = ensureSpace(g, p.root, main.h.joint);
     sp::SwitchOptions so;
     so.time = t;
     so.key = true;
     sp::switchSpace(g, p.root, space, so);
-    const double settle = t + blend;
-    settleInto(g, p, mainPt, main.h.joint, gripOf(g, main.h, p, mainPt, st.trigger), t, blend);
+    const double settle = reach > 0.0 ? t : t + blend;
+    settleInto(g, p, mainPt, main.h.joint, gripOf(g, main.h, p, mainPt, st.trigger), t, reach > 0.0 ? 0.0 : blend);
 
     // Contacts: the off hand on its grip, riding the main hand; every other contact of this prop lets go.
     NodeId offContact = kNoNode;
@@ -1100,7 +1162,7 @@ json holdCmd(const Args& a)
         after.insert(off->h.joint);
     if (a.get<bool>("fingers", true))
     {
-        poseFingers(g, main.h, t, settle, st.mainPose, true, st.trigger, &p);
+        poseFingers(g, main.h, reach > 0.0 ? t - reach : t, settle, st.mainPose, true, st.trigger, &p);
         if (off)
             poseFingers(g, off->h, t, settle, st.offPose, false, false, nullptr);
         for (NodeId j : before)
@@ -1110,12 +1172,17 @@ json holdCmd(const Args& a)
                         poseFingers(g, *h, t, settle, "relaxed", false, false, nullptr);
     }
     json extra = {{"main", g.path(main.h.joint)}, {"mainPoint", g.path(mainPt)}};
+    json ev = {{"time", t}, {"kind", a.get<std::string>("event", reach > 0.0 ? "take" : "hold")}, {"hand", g.path(main.h.joint)},
+               {"point", g.path(mainPt)}, {"character", g.path(character)}};
     if (off)
     {
         extra["off"] = g.path(off->h.joint);
         extra["offPoint"] = g.path(offPt);
         extra["contact"] = g.path(offContact);
+        ev["offHand"] = g.path(off->h.joint);
+        ev["offPoint"] = g.path(offPt);
     }
+    recordEvent(g, p, ev);
     json out = finish(g, p, grapple, a, extra);
     // The off hand reaches its grip in the solve; its fingers wrap once it is there.
     if (off && a.get<bool>("fingers", true) && a.get<bool>("solve", true))
@@ -1159,6 +1226,7 @@ json dropCmd(const Args& a)
     so.time = t;
     so.key = true;
     sp::switchSpace(g, p.root, worldSpace(g, p.root), so);
+    recordEvent(g, p, {{"time", t}, {"kind", "drop"}});
     return finish(g, p, grapple, a, json::object());
 }
 
@@ -1193,6 +1261,7 @@ json holsterCmd(const Args& a)
     so.key = true;
     sp::switchSpace(g, p.root, ensureSpace(g, p.root, holster), so);
     settleInto(g, p, mainPt, holster, glm::dmat4(1.0), t, blend);
+    recordEvent(g, p, {{"time", t}, {"kind", "holster"}, {"character", g.path(character)}});
     return finish(g, p, grapple, a, {{"holster", g.path(holster)}});
 }
 
@@ -1292,6 +1361,408 @@ json aimCmd(const Args& a)
         if (n != aim)
             rampWeight(g, n, t, blend, 0.0);
     return finish(g, p, grapple, a, {{"aim", g.path(aim)}, {"style", aimStyleId(anchor ? style : AimStyle::Turn)}, {"target", g.path(target)}});
+}
+
+// Handoffs: shared pieces ----------------------------------------------------------------------------------------------
+
+/** The prop's mesh in its root's space, measured: its box along its principal axes, longest first. */
+struct PropShape
+{
+    glm::dvec3 centre{0.0};
+    std::array<glm::dvec3, 3> axes{glm::dvec3(1, 0, 0), glm::dvec3(0, 1, 0), glm::dvec3(0, 0, 1)};
+    glm::dvec3 lo{-1.0}, hi{1.0};
+    bool measured = false;
+    /** A point by its place in the box: -1 one face, 1 the other, along each axis. */
+    glm::dvec3 at(const glm::dvec3& f) const
+    {
+        glm::dvec3 p = centre;
+        for (int k = 0; k < 3; ++k)
+            p += axes[size_t(k)] * (0.5 * (lo[k] + hi[k]) + 0.5 * (hi[k] - lo[k]) * f[k]);
+        return p;
+    }
+    std::array<glm::dvec3, 8> corners() const
+    {
+        std::array<glm::dvec3, 8> out;
+        for (int i = 0; i < 8; ++i)
+            out[size_t(i)] = at({i & 1 ? 1.0 : -1.0, i & 2 ? 1.0 : -1.0, i & 4 ? 1.0 : -1.0});
+        return out;
+    }
+    glm::dvec3 middle() const { return at(glm::dvec3(0.0)); }
+    glm::dvec3 extent() const { return hi - lo; }
+};
+
+PropShape shapeIn(Graph& g, const Prop& p)
+{
+    PropShape s;
+    const std::vector<glm::dvec3> pts = meshPointsIn(g, p);
+    if (pts.size() < 4)
+        return s;
+    const detail::Frame f = detail::frameOf(pts);
+    s.centre = f.centre;
+    s.axes = f.axes;
+    s.lo = glm::dvec3(1e300);
+    s.hi = glm::dvec3(-1e300);
+    for (const glm::dvec3& q : pts)
+        for (int k = 0; k < 3; ++k)
+        {
+            const double v = glm::dot(q - f.centre, f.axes[size_t(k)]);
+            s.lo[k] = std::min(s.lo[k], v);
+            s.hi[k] = std::max(s.hi[k], v);
+        }
+    s.measured = true;
+    return s;
+}
+
+/** What a prop can land, stand or rest on: scene meshes (props and characters left out) and the ground. */
+struct Surfaces
+{
+    struct Item
+    {
+        NodeId node = kNoNode;
+        std::unique_ptr<geo::MeshBvh> bvh;
+    };
+    std::vector<Item> items;
+    bool ground = true;
+    struct Hit
+    {
+        glm::dvec3 point{0.0}, normal{0.0, 1.0, 0.0};
+        double t = 0.0;
+        /** kNoNode for the ground. */
+        NodeId node = kNoNode;
+    };
+    /** The nearest surface along the ray within maxT, its normal facing back along the ray. */
+    std::optional<Hit> cast(const glm::dvec3& origin, const glm::dvec3& dir, double maxT) const
+    {
+        const double len = glm::length(dir);
+        if (len < 1e-12)
+            return std::nullopt;
+        const glm::dvec3 d = dir / len;
+        std::optional<Hit> best;
+        for (const Item& it : items)
+        {
+            geo::BvhHit h;
+            if (!it.bvh->raycast(origin, d, h, best ? best->t : maxT))
+                continue;
+            glm::dvec3 a, b, c;
+            it.bvh->trianglePoints(h.triangle, a, b, c);
+            glm::dvec3 n = glm::cross(b - a, c - a);
+            n = glm::length(n) > 1e-12 ? glm::normalize(n) : -d;
+            best = Hit{origin + d * h.t, glm::dot(n, d) > 0.0 ? -n : n, h.t, it.node};
+        }
+        const glm::dvec3 u = up();
+        const double denom = glm::dot(d, u);
+        if (ground && std::abs(denom) > 1e-9)
+        {
+            const double t = -glm::dot(origin, u) / denom;
+            if (t >= 0.0 && t <= (best ? best->t : maxT))
+                best = Hit{origin + d * t, denom > 0.0 ? -u : u, t, kNoNode};
+        }
+        return best;
+    }
+};
+
+/** The scene's surfaces in world space; with only, that object's meshes alone (and no ground). */
+Surfaces surfacesFor(Graph& g, NodeId only = kNoNode)
+{
+    Surfaces s;
+    s.ground = !only;
+    g.evaluate();
+    for (NodeId id : g.nodes())
+    {
+        Node* n = g.node(id);
+        if (!n || !n->type().isA("mesh"))
+            continue;
+        if (only && id != only && !isUnder(g, id, only))
+            continue;
+        if (propFor(g, id) || characterFor(g, id) || skin::find(g, id))
+            continue;
+        if (const int vis = n->type().attrIndex("visibility"); vis >= 0)
+        {
+            const PlugValue v = g.value({id, vis, -1});
+            if (const bool* on = std::get_if<bool>(&v); on && !*on)
+                continue;
+        }
+        const PlugValue mv = g.value({id, n->type().attrIndex("outMesh"), -1});
+        const MeshPtr* mesh = std::get_if<MeshPtr>(&mv);
+        if (!mesh || !*mesh || (*mesh)->numFaces() == 0)
+            continue;
+        geo::Mesh w = **mesh;
+        const glm::dmat4 xf = worldOf(g, id);
+        for (glm::dvec3& q : w.positions())
+            q = glm::dvec3(xf * glm::dvec4(q, 1.0));
+        s.items.push_back({id, std::make_unique<geo::MeshBvh>(w)});
+    }
+    return s;
+}
+
+std::string surfaceName(Graph& g, NodeId n) { return n ? g.path(n) : std::string("ground"); }
+
+/** The rotation turning direction a onto b, the shortest way. */
+glm::dquat turnOnto(glm::dvec3 a, glm::dvec3 b)
+{
+    a = glm::normalize(a);
+    b = glm::normalize(b);
+    const double c = glm::dot(a, b);
+    if (c > 1.0 - 1e-12)
+        return glm::dquat(1.0, 0.0, 0.0, 0.0);
+    if (c < -1.0 + 1e-12)
+    {
+        glm::dvec3 axis = glm::cross(a, std::abs(a.x) < 0.9 ? glm::dvec3(1, 0, 0) : glm::dvec3(0, 1, 0));
+        return glm::angleAxis(glm::pi<double>(), glm::normalize(axis));
+    }
+    return glm::angleAxis(std::acos(std::clamp(c, -1.0, 1.0)), glm::normalize(glm::cross(a, b)));
+}
+
+glm::dmat4 rotationMatrix(const glm::dquat& q) { return glm::dmat4(glm::mat3_cast(q)); }
+glm::dmat4 translation(const glm::dvec3& v) { return glm::translate(glm::dmat4(1.0), v); }
+glm::dvec3 pointOf(const glm::dmat4& m, const glm::dvec3& p) { return glm::dvec3(m * glm::dvec4(p, 1.0)); }
+
+/**
+ * Keys the root's translate and rotate at t so its world matrix is `world`, like keyRootAt but straight onto the curves
+ * when no animation layer is involved (a throw keys every frame). Rotation is kept continuous with the key before.
+ */
+void keyRootFast(Graph& g, NodeId root, const glm::dmat4& world, double t, std::optional<glm::dvec3>& last)
+{
+    if (anim::keyLayer(g, {root, Transform::kTranslate, -1}) != kNoNode || anim::keyLayer(g, {root, Transform::kRotate, -1}) != kNoNode)
+    {
+        keyRootAt(g, root, world, t);
+        return;
+    }
+    at(g, t);
+    setWorldRotation(g, root, glm::dmat3(rigidOf(world)));
+    g.evaluate();
+    setWorldPosition(g, root, glm::dvec3(world[3]));
+    g.evaluate();
+    const glm::dvec3 tr = vecOf(g, root, Transform::kTranslate);
+    glm::dvec3 ro = vecOf(g, root, Transform::kRotate);
+    if (last)
+        for (int c = 0; c < 3; ++c)
+            ro[c] += 360.0 * std::round(((*last)[c] - ro[c]) / 360.0);
+    last = ro;
+    for (int c = 0; c < 3; ++c)
+        anim::setKey(g, {root, Transform::kTranslate, c}, t, tr[c]);
+    if (anim::keysAsRotation(g, {root, Transform::kRotate, -1}))
+        anim::setRotationKey(g, {root, Transform::kRotate, -1}, t, ro);
+    else
+        for (int c = 0; c < 3; ++c)
+            anim::setKey(g, {root, Transform::kRotate, c}, t, ro[c]);
+}
+
+/** Removes the root's translate and rotate keys in [t0, t1]. */
+void clearRootKeys(Graph& g, NodeId root, double t0, double t1)
+{
+    if (t1 < t0)
+        return;
+    for (int attr : {Transform::kTranslate, Transform::kRotate})
+        for (int c = -1; c < 3; ++c)
+            if (const NodeId curve = anim::curveFor(g, {root, attr, c}))
+                anim::removeKeys(g, curve, t0, t1);
+}
+
+/** The time of the root's next space key after t, or a long way off when none. */
+double nextSwitchAfter(Graph& g, NodeId root, double t)
+{
+    const double half = 0.5 / fps();
+    if (const NodeId curve = anim::curveFor(g, {root, Transform::kSpace, -1}))
+        for (double k : anim::curveKeyTimes(*g.node(curve)))
+            if (k > t + half)
+            {
+                // The switch's hold key a frame before belongs to the switch.
+                const double before = k - 1.0 / fps();
+                return before > t + half ? before : k;
+            }
+    return 1e9;
+}
+
+/** Switches the prop's root into a space at t keeping its pose, and clears the keys of whatever it did before up to its next switch. */
+void switchFresh(Graph& g, const Prop& p, int space, double t)
+{
+    at(g, t);
+    sp::SwitchOptions so;
+    so.time = t;
+    so.key = true;
+    sp::switchSpace(g, p.root, space, so);
+    const double half = 0.5 / fps();
+    clearRootKeys(g, p.root, t + half, nextSwitchAfter(g, p.root, t) - half);
+}
+
+/** A hand holding the prop at a time, and the grip point it holds. */
+struct Holding
+{
+    hand::Hand h;
+    NodeId point = kNoNode;
+};
+
+/** The grip point the hand took the prop by when it last did, else the main grip. */
+NodeId heldPoint(Graph& g, const Prop& p, double t, NodeId joint)
+{
+    NodeId out = kNoNode;
+    const std::string jp = g.path(joint);
+    for (const json& e : eventsOf(g, p))
+    {
+        if (e.value("time", 0.0) > t + 1e-9)
+            break;
+        for (const char* side : {"hand", "offHand"})
+            if (e.value(side, std::string()) == jp)
+                if (Node* n = named(g, e.value(std::string(side) == "hand" ? "point" : "offPoint", std::string())))
+                    out = n->id();
+    }
+    return out ? out : p.point(g, Role::Main);
+}
+
+std::vector<Holding> holdingAt(Graph& g, NodeId grapple, const Prop& p, double t)
+{
+    std::vector<Holding> out;
+    auto add = [&](NodeId joint, NodeId point) {
+        for (const Holding& h : out)
+            if (h.h.joint == joint)
+                return;
+        if (const NodeId hn = hand::handFor(g, joint))
+            if (std::optional<hand::Hand> h = hand::load(g, hn); h && h->joint == joint)
+                out.push_back({*h, point});
+    };
+    at(g, t);
+    if (const NodeId j = holderNow(g, p))
+        add(j, heldPoint(g, p, t, j));
+    for (const PropContact& c : propContacts(g, grapple, p))
+        if (numOf(g, c.node, "weight") > 0.5)
+            if (Node* s = named(g, c.source))
+                if (Node* f = named(g, c.frame))
+                    add(s->id(), f->id());
+    return out;
+}
+
+/**
+ * The hands holding the prop at t carry it while it moves over [t, t + carry] (each held on its grip in the world, so
+ * the arm follows the prop) and let go over the release after; with no carry they let go at once (a throw). The
+ * fingers open as they let go.
+ */
+void carryAndLetGo(Graph& g, NodeId grapple, const Prop& p, const std::vector<Holding>& holding, double t, double carry, double release, bool fingers)
+{
+    if (!grapple)
+        return;
+    const double frame = 1.0 / fps();
+    std::set<NodeId> pins;
+    if (carry > 0.0)
+        for (const Holding& h : holding)
+        {
+            const NodeId pin = contactFor(g, grapple, p, h.h, kNoNode, h.point);
+            pins.insert(pin);
+            // Where the hand holds it now, the hold's own grip, so taking over from the hold moves nothing.
+            g.evaluate();
+            at(g, t);
+            setPlug(g, pin, "gripOffset", glm::inverse(rigidOf(worldOf(g, h.h.joint))) * rigidOf(worldOf(g, h.point)));
+            if (t - frame >= anim::playback().minTime)
+                keyWeight(g, pin, t - frame, weightAt(g, pin, t - frame));
+            keyWeight(g, pin, t, 1.0);
+            keyWeight(g, pin, t + carry, 1.0);
+            keyWeight(g, pin, t + carry + std::max(release, frame), 0.0);
+        }
+    for (const PropContact& c : propContacts(g, grapple, p))
+        if (!pins.count(c.node) && weightAt(g, c.node, t) > 1e-6)
+        {
+            keyWeight(g, c.node, t, weightAt(g, c.node, t));
+            keyWeight(g, c.node, t + frame, 0.0);
+        }
+    if (fingers)
+        for (const Holding& h : holding)
+            poseFingers(g, h.h, t + carry, t + carry + std::max(release, frame), "relaxed", false, false, nullptr);
+}
+
+/** The character of a handoff when there is one (the flag, the holder, the only one); none is allowed. */
+NodeId characterIfAny(Graph& g, const Args& a, const Prop& p, const char* cmd)
+{
+    if (!a.has("character") && characters(g).empty())
+        return kNoNode;
+    try
+    {
+        return characterArg(g, a, p, cmd);
+    }
+    catch (const CommandError&)
+    {
+        if (a.has("character"))
+            throw;
+        return kNoNode;
+    }
+}
+
+/** Right, up and forward for a handoff: the character's when there is one, else the world's. */
+glm::dmat3 frameFor(Graph& g, NodeId character)
+{
+    if (character)
+        return characterFrame(g, character);
+    const lila::math::AxisBasis& b = lila::math::axisBasis();
+    return glm::dmat3(b.right, b.up, b.forward);
+}
+
+const FlagDef kReleaseFlag{"release", "rl", ArgType::Float, 0.25, "Seconds the hands take to let go once it is down.", {}, {}, 0.0};
+
+// puppeteerPropPlant ---------------------------------------------------------------------------------------------------
+
+json plantCmd(const Args& a)
+{
+    Graph& g = Graph::current();
+    const char* cmd = "puppeteerPropPlant";
+    Prop p = propArg(g, a, cmd);
+    const KeepTime keep(g);
+    const double t = a.has("time") ? a.get<double>("time") : g.time();
+    const double blend = std::max(0.0, a.get<double>("blend", 0.4));
+    const NodeId character = characterIfAny(g, a, p, cmd);
+    const NodeId grapple = character ? propGrapple(g, character, true) : propGrapple(g, kNoNode, false);
+    const std::vector<Holding> holding = holdingAt(g, grapple, p, t);
+    const PropShape sh = shapeIn(g, p);
+    if (!sh.measured)
+        throw CommandError(std::string(cmd) + ": " + g.node(p.root)->name() + " has no mesh to stand on its end");
+    at(g, t);
+    const glm::dmat4 m0 = rigidOf(worldOf(g, p.root));
+
+    // The two ends along its length; tip is the end its tip or muzzle point is at.
+    const glm::dvec3 endHi = sh.at({1.0, 0.0, 0.0}), endLo = sh.at({-1.0, 0.0, 0.0});
+    glm::dvec3 tipEnd = endHi;
+    if (const NodeId tp = p.point(g, Role::Tip) ? p.point(g, Role::Tip) : p.point(g, Role::Muzzle))
+    {
+        const glm::dvec3 tl(pointLocal(g, p, tp)[3]);
+        tipEnd = glm::length(tl - endHi) < glm::length(tl - endLo) ? endHi : endLo;
+    }
+    const glm::dvec3 baseEnd = tipEnd == endHi ? endLo : endHi;
+    const std::string endName = a.get<std::string>("standOn", "tip");
+    glm::dvec3 planted = tipEnd, other = baseEnd;
+    if (endName == "base")
+        std::swap(planted, other);
+    else if (endName != "tip")
+    {
+        const NodeId pt = gripPoint(g, p, endName, Role::Main, cmd);
+        planted = glm::dvec3(pointLocal(g, p, pt)[3]);
+        other = glm::length(planted - endHi) > glm::length(planted - endLo) ? endHi : endLo;
+    }
+    const glm::dvec3 plantedW = pointOf(m0, planted), otherW = pointOf(m0, other);
+
+    // Where: on the surface below the planted end, ahead of the character by `ahead`, or below position.
+    const glm::dmat3 cf = frameFor(g, character);
+    const glm::dvec3 u = up();
+    glm::dvec3 probe = a.has("position") ? jsonVec(a.flags.at("position")) : plantedW + cf[2] * a.get<double>("ahead", 25.0);
+    const Surfaces surfaces = surfacesFor(g);
+    const std::optional<Surfaces::Hit> hit = surfaces.cast(probe + u * 150.0, -u, 2000.0);
+    if (!hit)
+        throw CommandError(std::format("{}: nothing below {:.0f}, {:.0f}, {:.0f} to plant it on", cmd, probe.x, probe.y, probe.z));
+    glm::dvec3 n = glm::dot(hit->normal, u) < 0.0 ? -hit->normal : hit->normal;
+    // Leaning back toward where it was held by default (the handle toward the hand), or toward the given direction.
+    glm::dvec3 toward = a.has("toward") ? jsonVec(a.flags.at("toward")) : otherW - hit->point;
+    toward -= n * glm::dot(toward, n);
+    if (glm::length(toward) < 1e-6)
+        toward = -cf[2] - n * glm::dot(-cf[2], n);
+    toward = glm::length(toward) > 1e-9 ? glm::normalize(toward) : glm::dvec3(cf[0]);
+    const double lean = glm::radians(std::clamp(a.get<double>("lean", 12.0), 0.0, 89.0));
+    const glm::dvec3 along = std::cos(lean) * n + std::sin(lean) * toward;
+    const glm::dquat q = turnOnto(otherW - plantedW, along);
+    const glm::dmat4 endPivot = translation(hit->point) * rotationMatrix(q) * glm::dmat4(glm::dmat3(m0));
+
+    switchFresh(g, p, worldSpace(g, p.root), t);
+    settleAbout(g, p, translation(planted), kNoNode, endPivot, t, blend);
+    carryAndLetGo(g, grapple, p, holding, t, blend, std::max(0.0, a.get<double>("release", 0.25)), a.get<bool>("fingers", true));
+    recordEvent(g, p, {{"time", t}, {"kind", "plant"}, {"end", endName}, {"surface", surfaceName(g, hit->node)}, {"lean", glm::degrees(lean)}});
+    return finish(g, p, grapple, a,
+                  {{"surface", surfaceName(g, hit->node)}, {"at", vecJson(hit->point)}, {"lean", glm::degrees(lean)}, {"end", endName}, {"settled", t + blend}});
 }
 
 // puppeteerPropUnreal -------------------------------------------------------------------------------------------------
@@ -1732,12 +2203,37 @@ void registerCommands(ext::Context& ctx)
             {"point", "pt", T::String, nullptr, "The grip point the hand takes, by name or role. Default: main."},
             {"offPoint", "op", T::String, nullptr, "With two hands: the other hand's grip. Default: off."},
             {"fingers", "fi", T::Bool, true, "Pose and wrap the fingers round the prop."},
+            {"reach", "re", T::Float, 0.0, "Seconds before time the hand reaches for the prop where it is (on a table, in the "
+                                           "air, on the ground) and takes it there; 0 brings the prop to the hand instead.", {}, {}, 0.0},
+            {"event", "", T::String, nullptr, "What the track calls the hold (take, catch). Default: hold, or take when reaching."},
             kTimeFlag, kBlendFlag, kSolveFlag,
             {"start", "", T::Int, nullptr, "Solve from this frame. Default: the playback start."},
             {"end", "", T::Int, nullptr, "Solve to this frame."},
         },
         .run = holdCmd,
         .examples = {"puppeteerPropHold(\"sword\", hands=2, time=0.5)", "puppeteerPropHold(\"pistol\", hand=\"left\", time=2.0, blend=0.25)"},
+    });
+
+    const FlagDef releaseFlag{"release", "rl", T::Float, 0.25, "Seconds the hands take to let go once it is down.", {}, {}, 0.0};
+    const FlagDef fingersFlag{"fingers", "fi", T::Bool, true, "Open the hands that held it."};
+    ctx.registerCommand({
+        .name = "puppeteerPropPlant",
+        .doc = "Stands a held prop on its tip or base on the surface below it, a little ahead of the character: over blend the "
+               "hands carry it down (the arms follow it) and it settles leaning at lean degrees from the surface's normal, then "
+               "the hands let go and it stays there in the world. Surfaces are the scene's meshes (not props or characters) and "
+               "the ground. Returns the prop with where it stands.",
+        .positionalDoc = "prop (default the selection)",
+        .flags = {kCharacterFlag,
+                  {"standOn", "so", T::String, "tip", "The end it stands on: tip (where its tip or muzzle is), base, or a point's name.", {"tip", "base"}},
+                  {"lean", "ln", T::Float, 12.0, "Degrees it leans from upright.", {}, {}, 0.0, 89.0},
+                  {"toward", "tw", T::Vec3, nullptr, "World direction it leans toward. Default: back toward where it was held."},
+                  {"ahead", "ah", T::Float, 25.0, "cm ahead of the character the surface is looked for below."},
+                  {"position", "p", T::Vec3, nullptr, "World point to plant it below instead."},
+                  kTimeFlag,
+                  {"blend", "b", T::Float, 0.4, "Seconds it takes to go down and settle.", {}, {}, 0.0},
+                  releaseFlag, fingersFlag, kSolveFlag},
+        .run = plantCmd,
+        .examples = {"puppeteerPropPlant(\"sword\", time=1.0, lean=10)", "puppeteerPropPlant(\"staff\", standOn=\"base\", lean=0)"},
     });
 
     ctx.registerCommand({

@@ -14,8 +14,10 @@ namespace puppeteer::prop
 {
 inline constexpr const char* kPropType = "puppeteerProp";
 inline constexpr const char* kPointType = "puppeteerPropPoint";
-/** The dynamic attr on a grapple naming the character whose props it solves. */
-inline constexpr const char* kGrappleCharacterAttr = "propCharacter";
+/** A throw's arc under its prop: launch, spin and landing, keyed onto the prop and edited in the viewport. */
+inline constexpr const char* kArcType = "puppeteerPropArc";
+/** The dynamic attr marking the grapple that solves every character's props. */
+inline constexpr const char* kPropGrappleAttr = "propsGrapple";
 
 /** A prop node, resolved. */
 struct Prop
@@ -55,10 +57,20 @@ struct Hold
 };
 /** The prop's holds in time order (one at the playback start when it was never keyed). */
 std::vector<Hold> holdsOf(Graph& g, const Prop& p);
+/**
+ * The prop's handoffs as the track lists them, in time order: each {time, kind, ...} with kind hold, take, catch, drop,
+ * holster, plant, throw, place or pass, and what it involved (hand, point, character, arc, on, from, to).
+ */
+json eventsOf(Graph& g, const Prop& p);
+/** Records a handoff at its time, replacing one within half a frame of it. */
+void recordEvent(Graph& g, const Prop& p, const json& ev);
 /** The joint holding the prop now (its active space's target when a joint), else kNoNode. */
 NodeId holderNow(Graph& g, const Prop& p);
 
-/** The character's prop grapple, made when make is set and it has none. */
+/**
+ * The scene's prop grapple, which solves every character holding props (and two sharing one in a pass) together, with
+ * the character among its figures: made or added when make is set.
+ */
 NodeId propGrapple(Graph& g, NodeId character, bool make);
 /** The meshes under the prop's root, for grip wraps and fitting. */
 std::vector<NodeId> propMeshes(Graph& g, const Prop& p);

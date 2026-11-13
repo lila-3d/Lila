@@ -354,7 +354,7 @@ TEST_CASE("props: a greatsword held in both hands, the arms sharing the reach")
     CHECK(glm::length(mainInHand) > 3.0);
     CHECK(glm::length(mainInHand) < 15.0);
     // The left hand reached its grip, and both hands moved to meet (neither arm did it all).
-    const json info = run("grappleInfo", {{"args", {"manny_props"}}});
+    const json info = run("grappleInfo", {{"args", {"props_grapple"}}});
     CHECK(info.at("contactError").get<double>() < 0.5);
     const double movedR = glm::length(pos(handR) - rBefore), movedL = glm::length(pos(handL) - lBefore);
     CHECK(movedR > 2.0);
@@ -364,7 +364,7 @@ TEST_CASE("props: a greatsword held in both hands, the arms sharing the reach")
     run("puppeteerPropHold", {{"args", {"sword"}}, {"hands", 1}, {"time", 5.0 / 30.0}, {"blend", 3.0 / 30.0}});
     at(10.0 / 30.0);
     CHECK(run("puppeteerPropInfo", {{"args", {"sword"}}}).at("holder") == handR);
-    for (const json& c : run("grappleInfo", {{"args", {"manny_props"}}}).at("contacts"))
+    for (const json& c : run("grappleInfo", {{"args", {"props_grapple"}}}).at("contacts"))
         CHECK(c.at("weight").get<double>() == Approx(0.0));
 }
 
@@ -426,7 +426,7 @@ TEST_CASE("props: a rifle aimed at a target, shouldered, the body following")
     const glm::dvec3 toTarget = glm::normalize(pos("enemy") - glm::dvec3(m[3]));
     const double deg = glm::degrees(std::acos(std::clamp(glm::dot(glm::normalize(glm::dvec3(m[0])), toTarget), -1.0, 1.0)));
     CHECK(deg < 2.0);
-    INFO("solve error " << run("grappleInfo", {{"args", {"manny_props"}}}).dump());
+    INFO("solve error " << run("grappleInfo", {{"args", {"props_grapple"}}}).dump());
     // The off hand still holds its grip, as far from it as the right hand is from the main grip.
     const double offGap = glm::length(pos(pointNamed(p, "off")) - pos(jointPath("hand_l")));
     const double mainGap = glm::length(pos(pointNamed(p, "main")) - pos(jointPath("hand_r")));
@@ -436,7 +436,7 @@ TEST_CASE("props: a rifle aimed at a target, shouldered, the body following")
     // Weight 0 later lets the aim go.
     run("puppeteerPropAim", {{"args", {"rifle"}}, {"off", true}, {"time", 5.0 / 30.0}, {"blend", 2.0 / 30.0}});
     at(10.0 / 30.0);
-    const json info = run("grappleInfo", {{"args", {"manny_props"}}});
+    const json info = run("grappleInfo", {{"args", {"props_grapple"}}});
     REQUIRE(info.at("aims").size() == 1);
     CHECK(info.at("aims").at(0).at("weight").get<double>() == Approx(0.0));
 }
@@ -659,4 +659,91 @@ TEST_CASE("props: points are added, moved, turned and removed, and a refit keeps
     CHECK(graph().find(strum) == nullptr);
     run("undo");
     CHECK(graph().find(strum) != nullptr);
+}
+
+// Handoffs -------------------------------------------------------------------------------------------------------------
+
+namespace proptest
+{
+/** Manny with two seconds of playback, holding a prop in the right hand from frame 0. */
+void holding(const std::string& prop, const char* preset = nullptr)
+{
+    run("playbackOptions", {{"minTime", 0.0}, {"maxTime", 2.0}, {"fps", 30.0}});
+    json call = {{"args", {prop}}};
+    if (preset)
+        call["preset"] = preset;
+    run("puppeteerPropSetup", call);
+    run("puppeteerPropHold", {{"args", {prop}}, {"hand", "right"}, {"hands", 1}, {"character", "manny"}, {"time", 0.0}, {"blend", 0.0}, {"solve", false}});
+}
+
+std::string ball() { return group("ball", {cube("ball_mesh", {200, 0, 0}, {8, 8, 8})}); }
+
+/** A second Manny, bob, standing `ahead` cm in front of the first and facing it. */
+void bob(double ahead)
+{
+    run("buildRigSkeleton", {{"args", {"UE5_Manny"}}, {"rig", false}, {"prefix", "bob_"}});
+    run("puppeteerCharacter", {{"args", {"bob_root"}}, {"template", "UE5_Manny"}, {"name", "bob"}});
+    run("setAttr", {{"args", {"bob_root.translate", 0.0, 0.0, ahead}}});
+    run("setAttr", {{"args", {"bob_root.rotate", 0.0, 180.0, 0.0}}});
+}
+
+/** The contact on the prop grapple holding source onto frame (any target), else none. */
+scene::NodeId contactOf(const std::string& source, const std::string& frame)
+{
+    for (scene::NodeId c : scene::grapple::contactsOf(graph(), id("props_grapple")))
+    {
+        const scene::Node& n = *graph().node(c);
+        const std::string s = std::get<std::string>(n.value(n.type().attrIndex("source")));
+        if (graph().find(s) && graph().find(s)->id() == id(source) && std::get<std::string>(n.value(n.type().attrIndex("frame"))) == frame)
+            return c;
+    }
+    return scene::kNoNode;
+}
+
+double angleDeg(const glm::dvec3& a, const glm::dvec3& b)
+{
+    return glm::degrees(std::acos(std::clamp(glm::dot(glm::normalize(a), glm::normalize(b)), -1.0, 1.0)));
+}
+} // namespace proptest
+
+TEST_CASE("props: planted on its tip, it leans as asked and stays when the hand lets go")
+{
+    manny();
+    sword();
+    holding("sword", "sword1h");
+    const json info = run("puppeteerPropInfo", {{"args", {"sword"}}});
+    const std::string tip = pointNamed(info, "tip"), mainPt = pointNamed(info, "main");
+    const json pl = run("puppeteerPropPlant", {{"args", {"sword"}}, {"time", 10.0 / 30.0}, {"blend", 9.0 / 30.0}, {"lean", 10.0}});
+    CHECK(pl.at("surface") == "ground");
+    std::vector<glm::dvec3> path;
+    for (int f = 0; f <= 40; ++f)
+    {
+        at(f / 30.0);
+        path.push_back(pos(tip));
+    }
+    // No pop where it leaves the hand, an eased start, and still once down.
+    CHECK(glm::length(path[10] - path[9]) < 1e-6);
+    double largest = 0.0;
+    for (int f = 10; f < 19; ++f)
+        largest = std::max(largest, glm::length(path[f + 1] - path[f]));
+    CHECK(glm::length(path[11] - path[10]) < 0.3 * largest);
+    for (int f = 20; f < 40; ++f)
+        CHECK(glm::length(path[f + 1] - path[f]) < 1e-6);
+    at(1.0);
+    MESSAGE("planted tip height " << pos(tip).y << " cm, lean " << angleDeg(pos(mainPt) - pos(tip), {0, 1, 0}) << " deg");
+    CHECK(std::abs(pos(tip).y) < 0.6);
+    CHECK(angleDeg(pos(mainPt) - pos(tip), {0, 1, 0}) == Approx(10.0).epsilon(0.05));
+    CHECK(run("puppeteerPropInfo", {{"args", {"sword"}}}).at("holder").is_null());
+    CHECK(run("puppeteerPropInfo", {{"args", {"sword"}}}).at("holds").back().at("kind") == "world");
+    // The hand carried it down: held on its grip in the world through the carry, let go after.
+    const scene::NodeId pin = contactOf(jointPath("hand_r"), mainPt);
+    REQUIRE(pin != scene::kNoNode);
+    at(15.0 / 30.0);
+    const auto [hand, grip] = scene::grapple::contactPoints(graph(), pin);
+    MESSAGE("hand to grip mid-carry: " << glm::length(hand - grip) << " cm");
+    CHECK(glm::length(hand - grip) < 1.0);
+    at(35.0 / 30.0);
+    CHECK(attr(graph().path(pin) + ".weight") == Approx(0.0));
+    run("undo");
+    CHECK(run("puppeteerPropInfo", {{"args", {"sword"}}}).at("holds").back().at("kind") == "hand");
 }
