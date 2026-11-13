@@ -263,7 +263,7 @@ bool ConstrainedLeastSquares::buildReducedSystem()
             const size_t column = m_freeIndexOfRoot[substitution.root];
             if (noIndex == column)
                 continue;
-            entries.emplace_back(row, static_cast<Eigen::Index>(column),
+            entries.emplace_back(static_cast<int>(row), static_cast<int>(column),
                 weightRoot * coefficient.second * substitution.scale);
         }
         cache.rowShift[row] = shift;
@@ -352,7 +352,7 @@ bool ConstrainedLeastSquares::solveWithLagrangeMultipliers(std::vector<double>* 
         for (const auto& coefficient : m_constraintEquations[static_cast<size_t>(constraintIndex)].coefficients) {
             if (coefficient.first >= m_variableCount)
                 return false;
-            constraintEntries.emplace_back(constraintIndex, static_cast<Eigen::Index>(coefficient.first), coefficient.second);
+            constraintEntries.emplace_back(static_cast<int>(constraintIndex), static_cast<int>(coefficient.first), coefficient.second);
         }
     }
     constraintMatrix.setFromTriplets(constraintEntries.begin(), constraintEntries.end());
@@ -382,7 +382,7 @@ bool ConstrainedLeastSquares::solveWithLagrangeMultipliers(std::vector<double>* 
                 const double entry = equation.weight * coefficient.second * otherCoefficient.second;
                 if (coefficient.first == otherCoefficient.first)
                     diagonalSum += entry;
-                entries.emplace_back(static_cast<Eigen::Index>(coefficient.first), static_cast<Eigen::Index>(otherCoefficient.first),
+                entries.emplace_back(static_cast<int>(coefficient.first), static_cast<int>(otherCoefficient.first),
                     entry);
             }
         }
@@ -391,14 +391,14 @@ bool ConstrainedLeastSquares::solveWithLagrangeMultipliers(std::vector<double>* 
         const LinearEquation& equation = m_constraintEquations[static_cast<size_t>(selectedConstraints[constraintIndex])];
         rightHandSide[variableCount + constraintIndex] = equation.rightHandSide;
         for (const auto& coefficient : equation.coefficients) {
-            entries.emplace_back(static_cast<Eigen::Index>(coefficient.first), variableCount + constraintIndex, coefficient.second);
-            entries.emplace_back(variableCount + constraintIndex, static_cast<Eigen::Index>(coefficient.first), coefficient.second);
+            entries.emplace_back(static_cast<int>(coefficient.first), static_cast<int>(variableCount + constraintIndex), coefficient.second);
+            entries.emplace_back(static_cast<int>(variableCount + constraintIndex), static_cast<int>(coefficient.first), coefficient.second);
         }
     }
     const double meanDiagonal = variableCount > 0 ? diagonalSum / (double)variableCount : 0.0;
     const double ridge = meanDiagonal > 0.0 ? relativeRidge * meanDiagonal : relativeRidge;
     for (Eigen::Index i = 0; i < variableCount; ++i)
-        entries.emplace_back(i, i, ridge);
+        entries.emplace_back(static_cast<int>(i), static_cast<int>(i), ridge);
     normal.setFromTriplets(entries.begin(), entries.end());
     Eigen::SparseLU<Eigen::SparseMatrix<double>> solver;
     solver.compute(normal);
