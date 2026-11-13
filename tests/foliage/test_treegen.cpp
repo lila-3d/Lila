@@ -178,6 +178,23 @@ TEST_CASE("tree geometry: skeleton counts and determinism")
     CHECK(sp["in"] == 2.0);
 }
 
+TEST_CASE("tree geometry: no preset's trunk has a zero-area face")
+{
+    using namespace treegen;
+    for (const std::string& preset : builtInPresets())
+    {
+        const json values = presetSettings(preset);
+        const json build = stylize(values, values["global.style"].get<double>());
+        const Trunk t = buildTrunk(sectionValues(build, "trunk"), {0, 1, 0});
+        // The same test meshCheck reports zero-area faces by.
+        const double scale = glm::length(t.mesh.bounds().size());
+        int degenerate = 0;
+        for (geo::Index f = 0; f < t.mesh.faceCapacity(); ++f)
+            degenerate += t.mesh.faceValid(f) && t.mesh.faceArea(f) < 1e-8 * scale * scale;
+        CHECK_MESSAGE(degenerate == 0, preset, ": ", degenerate, " zero-area faces of ", t.mesh.numFaces());
+    }
+}
+
 TEST_CASE("tree generator: package registers its commands, panel, actions and menu")
 {
     ensureLoaded();

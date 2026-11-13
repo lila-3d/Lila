@@ -9,7 +9,7 @@ The Foliage extension (enabled by default) grows trees: a trunk with recursive b
 - Change a tree: build it again with new `settings=` (or `treeRebuild(tree)` to reproduce it). Read what it was built with: `treeSettings(tree)`.
 - Leaves: `treeLeafPlane(settings={'plane.length': 0.2, ...})`, or your own modelled leaf or cluster. Detail levels: several leaf meshes, densest first. See "Leaves and cards".
 - Textures: `treeTextureSet(tree, season='autumn')` makes bark and leaf texture sets from the species palette. See "Textures".
-- Check: `meshInfo` per part for triangles and size, then `captureView(display='shaded', frameSelection=True, isolate=True)` from the front and three-quarter. See "Check it".
+- Check: `meshInfo` per part for triangles and size, `meshCheck(part, expectShells=0)` for mesh problems, then `captureView(display='shaded', frameSelection=True, isolate=True)` from the front and three-quarter. See "Check it".
 - To Unreal: `unrealMap(tree, contentPath='/Game/Foliage/SM_Pine')` then `unrealSync(tree)`; many copies with `instance` and `unrealPlaceInstances`; `treeExport` for the bake-ready high and low FBX pair. See "Export".
 - Shrubs and grass from a modelled mesh: `bladeExtrude` and friends. See "Blades".
 
@@ -105,7 +105,7 @@ Canopy blobs are deleted after the leaves are scattered; `blob.keep_canopy` keep
 
 `treeTextureSet(tree, season='summer', target='unreal')` makes two texture sets: `<tree>_Bark` on the `Trunk` material (the species' bark tones over cavity, edges and AO) and `<tree>_Leaves` on `Leaves` (the season's tones over `leafShade`). Seasons: `spring`, `summer`, `autumn`, `lateAutumn`. Returns `{sets, bakeProject, season, species, warnings}`.
 
-- The bark's cavity, edge and AO layers read baked maps. Without a bake project they read as defaults and `warnings` says so; pass `bake=False` to skip that. The leaf layers need no bake.
+- The bark's cavity, edge and AO layers read baked maps. `treeExport` the tree first and `treeTextureSet` makes the bake project from it (`bakeProject`, AO, curvature, cavity and the leaf colour set); `createBakeFromGenerator(tree, kind='tree')` makes one on its own. Without an export the maps read as defaults and `warnings` says so; pass `bake=False` to skip that. The leaf layers need no bake.
 - `replace=True` rebuilds sets of the same names.
 - Look at one: `texEvaluate(set, resolution=256, channels=['baseColor'], folder=...)`. Write the maps: `texExport(set, folder=...)`. Send to Unreal: `unrealSendTextureSet(set)`.
 
@@ -122,13 +122,13 @@ captureView(view='three-quarter', display='shaded', frameSelection=True, isolate
 - `frameSelection` frames the selection and `isolate` hides the rest, so trees built at the origin don't overlap. One front capture shows lean and silhouette; the three-quarter shows the crown's depth.
 - Budgets: `Akamatsu Mature` is about 3,200 trunk and 10,800 leaf triangles (900 leaves of the default 6-segment card). Lower `leaf.count` or `plane.segments` for game trees; raise `leaf.count` with `leaf.size` down for denser crowns.
 - `treeSettings(tree)` returns `{tree, values, preset, sources}`: what it was built with, including the leaf mesh. It is null for anything the generator did not build.
-- The trunk is one shell per limb and the leaves one shell per leaf, so read `meshInfo`, not `meshCheck`, which expects one shell. `worldBoundsMin` and `worldBoundsMax` give the real height and spread in cm.
+- The trunk is one shell per limb and the leaves one shell per leaf, so give `meshCheck` `expectShells=0`; it expects one shell by default. `worldBoundsMin` and `worldBoundsMax` give the real height and spread in cm.
 
 ## Export
 
 - Straight to Unreal (LilaLink connected): `unrealMap(tree, contentPath='/Game/Foliage/SM_Pine01', kind='static')` maps the root as one static mesh (its meshes combined, `Trunk` and `Leaves` slots), and `unrealSync(tree)` sends it now; saving the scene sends it again. `nanite=True` for Nanite foliage. Many copies of one tree: `copies = instance(tree)` (move each), then `unrealPlaceInstances([tree] + copies, mode='hism')` sends the trunk and leaves once each (`SM_<tree>_trunk`, `SM_<tree>_leaves`) and places them as instanced components.
 - Plain FBX: `exportFbx('D:/Out/SM_Pine01.fbx', tree)` (UE5 axes by default).
-- Bake pair: `treeExport(tree, settings={'export.path': 'D:/Bakes', 'export.name': 'Pine'})` writes `Pine_Lo.fbx` (lowest detail), `Pine_Hi.fbx` (subdivided, merged), `Pine_tree.json` and `Pine_palette.json` (written once, never overwritten), and assigns the `Trunk`, `Canopy` and `Leaves` materials. The export path is stored on the tree for later calls. `treeBakeHandoff(tree, settings=...)` returns the paths, materials, face counts and ray distances (`rays`, cm per part: use `out99` and `in99`) a bake needs without writing anything.
+- Bake pair: `treeExport(tree, settings={'export.path': 'D:/Bakes', 'export.name': 'Pine'})` writes `Pine_Lo.fbx` (lowest detail), `Pine_Hi.fbx` (subdivided, merged), `Pine_tree.json` and `Pine_palette.json` (written once, never overwritten), and assigns the `Trunk`, `Canopy` and `Leaves` materials. The export path is stored on the tree for later calls. `treeBakeHandoff(tree)` returns the paths, materials, face counts and ray distances (`rays`, cm per part: use `out99` and `in99`) a bake needs without writing anything.
 - In Unreal the leaf material needs Masked blend mode with the leaf texture's alpha, and Two Sided on unless `plane.double` was on.
 
 ## Blades
