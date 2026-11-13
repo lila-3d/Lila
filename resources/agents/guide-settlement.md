@@ -49,9 +49,9 @@ settlementCheck(mesh)['ok'], terrainCheck(T)['ok']
 - `kind` for siting: `town`, `market`, `port`, `mining`, `fort`, `farming`, `mill`; `rules={'defense': 0.9}` weights terms yourself. On a Terrain the terms come from its own analysis (fords, harbours, buildable land).
 - On a Terrain, main roads are routed with `terrainRoute` and rivers crossing the outline come in as water (`terrainWater=False` leaves them out). Only main roads bridge rivers; no lot lies in water.
 - Grading is the slow step: about 4 minutes for a 500 m town of 300 lots and 170 streets, 10 minutes for 1000 lots, on a 257 terrain. Iterate on the layout ungraded; `lots=False` or `streets=False` grades only part. `settlementCheck` works before grading.
-- `settlementGrade` returns counts made and sent per kind (`streetsSent`, `stampsSent`, `pads`, `bridgeStreets`), `unchanged`, `removed` and `overGrade` (streets the terrain could not keep within grade, with the reason). `padMode='terraced'` steps pads down slopes; `roundabouts='none'` skips roundabouts. Grading again sends only what changed.
+- `settlementGrade` returns counts made and sent per kind (`streetsSent`, `stampsSent`, `pads`, `bridgeStreets`), `unchanged`, `removed` and `overGrade` (streets the terrain could not keep within grade: street `id`, terrain `road`, `grade`, `maxGrade`, `why`). `padMode='terraced'` steps pads down slopes; `roundabouts='none'` skips roundabouts. Grading again sends only what changed.
 - Grading pins the plan. After terrain edits, `settlementReplan(mesh)` re-plans blocks in changed regions (`mode`, `why`, `keptBlocks`, `newBlocks`), then `settlementGrade(mesh)` again. Any change to the settlement's own inputs after grading (a new buildings route, an edit) makes the next replan `full`.
-- After grading, `settlementCheck` can still list `grade` warnings (measured junction to junction over the ground) while `overGrade` is empty. Steep sites give them; pick a flatter site or raise `maxGrade` in `overrides`.
+- After grading, `settlementCheck` judges each street by the grade its terrain road was built at, so its `grade` warnings are the streets in `overGrade`.
 - Steep hillsides stay empty past the profile's `terraceGrade` (0.5): raise it in `overrides`.
 - Keep the settlement mesh at the origin; the ground is read in world space.
 

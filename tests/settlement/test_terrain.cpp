@@ -284,7 +284,7 @@ TEST_CASE("settlement terrain: on rough ground every graded street keeps its gra
     // Every terrain road steeper than its limit is in the report.
     std::set<std::string> reported;
     for (const json& o : graded["overGrade"])
-        reported.insert(o["id"].get<std::string>());
+        reported.insert(o["road"].get<std::string>());
     for (const json& r : run("terrainRoads", {{"args", {t}}})["layers"]["CityRoads"])
         if (r["maxGrade"].get<double>() > r["design"]["maxGrade"].get<double>() * 1.01 + 0.05)
             CHECK(reported.contains(r["id"].get<std::string>()));

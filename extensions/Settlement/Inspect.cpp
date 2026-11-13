@@ -184,7 +184,7 @@ bool edgeIsBridge(const Layout& l, int edge)
     return false;
 }
 
-json checkLayout(const Layout& l, const Ground& ground, const Options& o)
+json checkLayout(const Layout& l, const Ground& ground, const Options& o, const std::map<uint64_t, GradedStreet>* graded)
 {
     LILA_ZONE();
 
@@ -239,7 +239,8 @@ json checkLayout(const Layout& l, const Ground& ground, const Options& o)
         const StreetEdge& x = l.graph.edges[e];
         const Vec2 a = l.graph.nodes[size_t(x.a)].p, b = l.graph.nodes[size_t(x.b)].p;
         const bool bridge = edgeIsBridge(l, int(e));
-        if (!bridge && ground.gradeAlong(a, b) > classMaxGrade(p, x.cls) * 1.05 + 1e-9)
+        const bool asGraded = graded && graded->contains(x.street);
+        if (!bridge && !asGraded && ground.gradeAlong(a, b) > classMaxGrade(p, x.cls) * 1.05 + 1e-9)
         {
             auto& s = steepest[x.street];
             if (ground.gradeAlong(a, b) > s.first)
@@ -258,6 +259,23 @@ json checkLayout(const Layout& l, const Ground& ground, const Options& o)
                           glm::length(b - a) / 100.0, classMaxGrade(p, x.cls) * 100.0),
               at((a + b) * 0.5));
     }
+    if (graded)
+        for (const auto& [street, s] : *graded)
+        {
+            if (!gradedOverLimit(s))
+                continue;
+            int edge = -1;
+            for (size_t e = 0; e < l.graph.edges.size() && edge < 0; ++e)
+                if (l.graph.isStreet(int(e)) && l.graph.edges[e].street == street)
+                    edge = int(e);
+            if (edge < 0)
+                continue;
+            const StreetEdge& x = l.graph.edges[size_t(edge)];
+            issue("grade", "warning", "street:" + std::to_string(street),
+                  std::format("{} street {} is graded at {:.1f}% over {:.1f} m, over its {:.1f}%{}", className(x.cls), street, s.grade, s.length / 100.0,
+                              s.limit, s.why.empty() ? "" : ": " + s.why),
+                  at((l.graph.nodes[size_t(x.a)].p + l.graph.nodes[size_t(x.b)].p) * 0.5));
+        }
 
     std::map<int, const Lot*> lotById;
     for (const Lot& lot : l.lots)
