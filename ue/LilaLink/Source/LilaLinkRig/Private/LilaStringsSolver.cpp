@@ -743,6 +743,140 @@ double HoldLimbs(const FProblem& P, FPose& S, const TArray<FHold>& Holds, const 
 	}
 	return HoldError(Worlds(P, S), Holds);
 }
+
+FMatrix TurnedAround(const FMatrix& World, const FVector& C, const FQuat& Q) { return Mul(Mul(Mul(Translate(C), RotationMatrix(Q)), Translate(-C)), World); }
+
+/** glm::slerp from identity to Q by A, Q already on the short side, so half turns match Lila's to the bit. */
+FQuat PartOf(const FQuat& Q, const double A)
+{
+	const double CosTheta = Q.W;
+	if (CosTheta > 1.0 - DBL_EPSILON)
+	{
+		return FQuat(A * Q.X, A * Q.Y, A * Q.Z, (1.0 - A) + A * Q.W);
+	}
+	const double Theta = FMath::Acos(CosTheta);
+	const double S0 = FMath::Sin((1.0 - A) * Theta), S1 = FMath::Sin(A * Theta), Sin = FMath::Sin(Theta);
+	return FQuat(S1 * Q.X / Sin, S1 * Q.Y / Sin, S1 * Q.Z / Sin, (S0 + S1 * Q.W) / Sin);
+}
+
+/** Puts each isolated bone (parents first) back to its world rotation from Start, where the pose has carried it now. */
+void IsolateRotations(const FProblem& P, FPose& S, const TArray<FMatrix>& Start, const TArray<int32>& Isolate, const int32 Grabbed)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaStrings::IsolateRotations);
+
+	TArray<int32> Bones;
+	for (const int32 B : Isolate)
+	{
+		if (P.Bones.IsValidIndex(B) && B != Grabbed && P.Bones[B].bSolve)
+		{
+			Bones.Add(B);
+		}
+	}
+	Bones.Sort();
+	for (const int32 B : Bones)
+	{
+		const TArray<FMatrix> W = Worlds(P, S);
+		FMatrix Target = Start[B];
+		Target.SetOrigin(W[B].GetOrigin());
+		Place(P, S, W, B, Target, false);
+	}
+}
+
+/** Holds below the grabbed bone outside its own limb: what Forward keeps while the bone above them turns. */
+TArray<FHold> HeldBelow(const FProblem& P, const FRequest& R)
+{
+	TArray<FHold> Out;
+	for (const FHold& H : R.Holds)
+	{
+		if (H.Bone == R.Grabbed || !IsUnder(P, H.Bone, R.Grabbed))
+		{
+			continue;
+		}
+		if (!LimbOf(P, H.Bone, R.Hips, INDEX_NONE, 0, R.Rules).Contains(R.Grabbed))
+		{
+			Out.Add(H);
+		}
+	}
+	return Out;
+}
+
+/** Free: the bone turns or moves alone, its children keeping their world rotation (and, on a move, their place). */
+void FreePose(const FProblem& P, FPose& S, const FRequest& R, const TArray<FMatrix>& Start)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaStrings::FreePose);
+
+	const int32 G = R.Grabbed;
+	if (R.Turn)
+	{
+		ForwardTurn(P, S, G, *R.Turn);
+	}
+	if (R.Move)
+	{
+		const TArray<FMatrix> W = Worlds(P, S);
+		Place(P, S, W, G, Shifted(W[G], *R.Move), true);
+	}
+	for (int32 I = 0; I < P.Bones.Num(); ++I)
+	{
+		if (P.Bones[I].Parent == G && P.Bones[I].bSolve)
+		{
+			const TArray<FMatrix> W = Worlds(P, S);
+			FMatrix Target = Start[I];
+			if (!R.Move)
+			{
+				Target.SetOrigin(W[I].GetOrigin());
+			}
+			Place(P, S, W, I, Target, R.Move.IsSet());
+		}
+	}
+}
+
+/**
+ * Bidirectional and All: a turn takes the parts below the bone half way and the body above half the other way, both
+ * about the bone; a move carries the body half way and bends the limb for the rest (All: the whole body all the way).
+ */
+double BothWays(const FProblem& P, FPose& S, const FRequest& R, const TArray<FMatrix>& Start, const bool bRigid)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaStrings::BothWays);
+
+	const int32 G = R.Grabbed;
+	const FVector C = Start[G].GetOrigin();
+	TArray<FHold> Outside;
+	if (!bRigid)
+	{
+		for (const FHold& H : R.Holds)
+		{
+			if (!IsUnder(P, H.Bone, G))
+			{
+				Outside.Add(H);
+			}
+		}
+	}
+	if (R.Turn)
+	{
+		const FQuat T = *R.Turn;
+		const FQuat Half = PartOf(T.W < 0.0 ? FQuat(-T.X, -T.Y, -T.Z, -T.W) : T, 0.5);
+		const TArray<FMatrix> W = Worlds(P, S);
+		Place(P, S, W, R.Hips, TurnedAround(W[R.Hips], C, Half.Inverse()), true);
+		ForwardTurn(P, S, G, T);
+	}
+	if (R.Move)
+	{
+		const TArray<FMatrix> W = Worlds(P, S);
+		if (bRigid)
+		{
+			Place(P, S, W, R.Hips, Shifted(W[R.Hips], *R.Move), true);
+			return 0.0;
+		}
+		Place(P, S, W, R.Hips, Shifted(W[R.Hips], *R.Move * 0.5), true);
+		TArray<FHold> Holds;
+		FHold& Target = Holds.AddDefaulted_GetRef();
+		Target.Bone = G;
+		Target.World = Shifted(Start[G], *R.Move);
+		Holds.Append(Outside);
+		return HoldLimbs(P, S, Holds, R.Hips, R.MaxStretch, {}, R.Rules);
+	}
+	return Outside.IsEmpty() ? 0.0 : HoldLimbs(P, S, Outside, R.Hips, R.MaxStretch, {}, R.Rules);
+}
 } // namespace
 
 TArray<FMatrix> Forward(const FProblem& P, const TArray<FQuat>& Rotation, const TArray<FVector>& Offset, const TArray<double>& Stretch)
@@ -870,23 +1004,51 @@ TArray<int32> LimbOf(const FProblem& P, const int32 Bone, const int32 Hips, cons
 	return Out;
 }
 
+EMode ResolveDefault(const FProblem& P, const FRequest& R)
+{
+	if (R.Rules)
+	{
+		for (const TPair<int32, EMode>& D : R.Rules->Defaults)
+		{
+			if (D.Key == R.Grabbed && D.Value != EMode::Default)
+			{
+				return D.Value;
+			}
+		}
+	}
+	if (R.Move && (R.Grabbed == R.Hips || LimbOf(P, R.Grabbed, R.Hips, INDEX_NONE, 0, R.Rules).Num() >= 2))
+	{
+		return EMode::Ik;
+	}
+	return EMode::Forward;
+}
+
 FResult SolveRequest(const FProblem& P, const FRequest& R)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaStrings::SolveRequest);
 
 	check(P.Bones.IsValidIndex(R.Grabbed));
+	if (R.Mode == EMode::Default)
+	{
+		FRequest Picked = R;
+		Picked.Mode = ResolveDefault(P, R);
+		return SolveRequest(P, Picked);
+	}
 	if (R.Mode == EMode::FullBody)
 	{
-		return FullBody(P, R);
+		FResult Out = FullBody(P, R);
+		Out.Resolved = EMode::FullBody;
+		return Out;
 	}
 	FResult Out;
+	Out.Resolved = R.Mode;
 	Out.Pose = StartPose(P);
 	FPose& S = Out.Pose;
 	const int32 G = R.Grabbed;
 	const TArray<FMatrix> Start = Worlds(P, S);
 	const bool bBelowHips = R.Hips >= 0 && IsUnder(P, G, R.Hips) && G != R.Hips;
 
-	if (R.Mode == EMode::Forward)
+	if (R.Mode == EMode::Forward || R.Mode == EMode::ForwardAll)
 	{
 		if (R.Turn)
 		{
@@ -896,17 +1058,51 @@ FResult SolveRequest(const FProblem& P, const FRequest& R)
 		{
 			Place(P, S, Start, G, Shifted(Start[G], *R.Move), true);
 		}
+		if (R.Mode == EMode::Forward)
+		{
+			if (const TArray<FHold> Held = HeldBelow(P, R); !Held.IsEmpty())
+			{
+				Out.Error = HoldLimbs(P, S, Held, R.Hips, R.MaxStretch, {}, R.Rules);
+			}
+			IsolateRotations(P, S, Start, R.Isolate, G);
+		}
 		return Out;
 	}
 
-	if (R.Mode == EMode::Backward)
+	if (R.Mode == EMode::Free)
+	{
+		FreePose(P, S, R, Start);
+		return Out;
+	}
+
+	if (R.Mode == EMode::Bidirectional || R.Mode == EMode::All)
+	{
+		if (!bBelowHips)
+		{
+			// The hips have nothing above them to give: both ways is Forward there.
+			FRequest Fwd = R;
+			Fwd.Mode = R.Mode == EMode::All ? EMode::ForwardAll : EMode::Forward;
+			FResult F = SolveRequest(P, Fwd);
+			F.Resolved = R.Mode;
+			return F;
+		}
+		Out.Error = BothWays(P, S, R, Start, R.Mode == EMode::All);
+		if (R.Mode == EMode::Bidirectional)
+		{
+			IsolateRotations(P, S, Start, R.Isolate, G);
+		}
+		return Out;
+	}
+
+	if (R.Mode == EMode::Backward || R.Mode == EMode::BackwardAll)
 	{
 		if (R.Hips >= 0 && !IsUnder(P, G, R.Hips))
 		{
 			Out.bHandled = false;
 			return Out;
 		}
-		TArray<FHold> Others = R.Holds;
+		const bool bRigid = R.Mode == EMode::BackwardAll;
+		TArray<FHold> Others = bRigid ? TArray<FHold>() : R.Holds;
 		if (R.Turn)
 		{
 			ForwardTurn(P, S, G, *R.Turn);
@@ -927,13 +1123,21 @@ FResult SolveRequest(const FProblem& P, const FRequest& R)
 			// The body is carried by the grabbed bone; the limbs that hold bend under it.
 			const TArray<FMatrix> W = Worlds(P, S);
 			Place(P, S, W, R.Hips, Shifted(W[R.Hips], *R.Move), true);
-			Soft.Emplace(G, Start[G].GetOrigin() + *R.Move);
+			if (!bRigid)
+			{
+				Soft.Emplace(G, Start[G].GetOrigin() + *R.Move);
+			}
 		}
-		Out.Error = HoldLimbs(P, S, Others, R.Hips, R.MaxStretch, Soft, R.Rules);
+		if (!bRigid)
+		{
+			Out.Error = HoldLimbs(P, S, Others, R.Hips, R.MaxStretch, Soft, R.Rules);
+			IsolateRotations(P, S, Start, R.Isolate, G);
+		}
 		return Out;
 	}
 
 	// IK.
+	Out.Resolved = EMode::Ik;
 	if (R.Hips >= 0 && !IsUnder(P, G, R.Hips))
 	{
 		Out.bHandled = false;

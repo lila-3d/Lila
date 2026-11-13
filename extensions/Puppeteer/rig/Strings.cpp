@@ -1036,7 +1036,8 @@ json stringsRuleWeb(const Args& a)
 
 /**
  * The rule web sent to Unreal: LilaLink makes or updates a Control Rig on the skeletal mesh with a control on each hand,
- * foot, head and the hips, each posing its bone through a Lila Strings Full Body unit given the web.
+ * foot, head and the hips, each posing its bone through a Lila Strings unit given the web, its Mode and Isolate Rotation
+ * channels starting at the mode and setting given.
  */
 json unrealStringsRig(const Args& a)
 {
@@ -1081,7 +1082,13 @@ json unrealStringsRig(const Args& a)
             addControl(chain.back());
     for (const json& c : web["contacts"])
         addControl(c);
-    const json payload = {{"skeletalMesh", mesh}, {"rig", rig}, {"ruleWeb", web}, {"controls", controls}};
+    const strings::Mode mode = modeArg(a, "unrealStringsRig");
+    const json payload = {{"skeletalMesh", mesh},
+                          {"rig", rig},
+                          {"ruleWeb", web},
+                          {"controls", controls},
+                          {"mode", strings::modeName(mode)},
+                          {"isolate", a.get<bool>("isolate", isolateRef())}};
     if (a.get<bool>("dryRun", false))
         return {{"rig", rig}, {"skeletalMesh", mesh}, {"payload", payload}};
     // Reloaded so a LilaLink update takes effect without restarting the editor.
@@ -3882,11 +3889,13 @@ void registerStrings(ext::Context& ctx)
         .name = "unrealStringsRig",
         .doc = "Pose the character in Unreal the way Strings poses it here: LilaLink makes or updates a Control Rig on its skeletal "
                "mesh: a control on the hips and the end of each line of action and limb (hands, feet, head) and each contact, each posing its bone through a Lila "
-               "Strings Full Body unit given the character's rule web; swap a unit for Forward, Backward or IK to change how it poses. "
+               "Strings unit given the character's rule web. Each control's Mode and Isolate Rotation channels pick how it poses. "
                "Returns {rig, skeletalMesh, unreal}, or {rig, skeletalMesh, payload} with dryRun.",
         .positionalDoc = "character or one of its joints (default the selection)",
         .flags = {{"skeletalMesh", "sm", T::String, nullptr, "The skeletal mesh asset. Default: the root's skeletal mapping."},
                   {"rig", "r", T::String, nullptr, "The Control Rig asset to make or update. Default: CR_<mesh>_Strings beside the mesh."},
+                  {"mode", "m", T::String, nullptr, "The mode the controls start in; default the current one.", modeChoices()},
+                  {"isolate", "iso", T::Bool, nullptr, "The controls start with Isolate Rotation on; default the Isolate Rotation setting."},
                   {"dryRun", "dry", T::Bool, false, "Return what would be sent without connecting to Unreal."}},
         .undoable = false,
         .run = unrealStringsRig,
