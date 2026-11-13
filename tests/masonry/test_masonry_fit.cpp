@@ -17,6 +17,96 @@ using namespace masonry;
 using namespace masonrytest;
 using json = nlohmann::json;
 
+namespace
+{
+const json kStone = {{"length", 60}, {"height", 30}, {"depth", 35}, {"joint", 1.5}};
+
+json naveWall(bool buttresses)
+{
+    json w = {{"name", "nave"},
+              {"points", pts({{0, 0, 0}, {1600, 0, 0}, {1600, 0, 800}, {0, 0, 800}})},
+              {"closed", true},
+              {"height", 900},
+              {"thickness", 90},
+              {"cornice", 1},
+              {"openings",
+               {{{"name", "east_window"}, {"at", 2000}, {"width", 120}, {"height", 300}, {"sill", 350}, {"arch", "pointed"}},
+                {{"name", "south_window"}, {"at", 1000}, {"width", 100}, {"height", 280}, {"sill", 350}, {"arch", "pointed"}}}}};
+    if (buttresses)
+        w["buttresses"] = {{{"at", 400}}, {{"at", 800}}, {{"at", 1200}}};
+    return w;
+}
+
+json towerWall()
+{
+    return {{"name", "tower"},
+            {"points", pts({{-640, 0, 150}, {-140, 0, 150}, {-140, 0, 650}, {-640, 0, 650}})},
+            {"closed", true},
+            {"height", 1800},
+            {"thickness", 100},
+            {"bands", {900}},
+            {"cornice", 2},
+            {"openings",
+             {{{"name", "west_door"}, {"at", 1750}, {"width", 160}, {"height", 320}, {"arch", "round"}},
+              {{"name", "belfry"}, {"at", 250}, {"width", 90}, {"height", 200}, {"sill", 1450}, {"arch", "round"}}}}};
+}
+
+Built building(const json& spec, const RuinParams& r = {}, RuinStats* st = nullptr)
+{
+    json s = spec;
+    s["stone"] = kStone;
+    s["bond"] = "ashlar";
+    return realizePlan(planBuilding(s, BuildOptions{}), r, AgeParams{}, false, st);
+}
+
+int floating(const Built& b) { return countFloating(b.stones, std::max(0.1, b.pitch * 0.15)); }
+
+std::vector<int> standingOf(const Built& b)
+{
+    std::vector<int> out;
+    for (size_t k = 0; k < b.stones.size(); ++k)
+        if (!isRubble(b.stones[k]))
+            out.push_back(int(k));
+    return out;
+}
+
+size_t standingOverlaps(const Built& b) { return overlappingPairs(b, standingOf(b), 0.1).size(); }
+} // namespace
+
+TEST_CASE("masonry fit: floors fit inside their walls, whole and broken")
+{
+    const json nave = naveWall(true);
+    const json follow = pts({{0, 0, 0}, {1600, 0, 0}, {1600, 0, 800}, {0, 0, 800}});
+    const json inside = pts({{45, 0, 45}, {1555, 0, 45}, {1555, 0, 755}, {45, 0, 755}});
+    for (const auto& [tag, outline, y] : {std::tuple{"outline on the walls", follow, 0.0}, std::tuple{"outline on the inside face", inside, 0.0},
+                                          std::tuple{"raised floor", follow, 300.0}})
+    {
+        CAPTURE(tag);
+        const json spec = {{"walls", {nave}}, {"floors", {{{"name", "paving"}, {"points", outline}, {"y", y}, {"thickness", y > 0.0 ? 30 : 10}, {"surface", "flags"}}}}};
+        const Built whole = building(spec);
+        CHECK(standingOverlaps(whole) == 0);
+        CHECK(floating(whole) == 0);
+        int slabs = 0, paving = 0;
+        for (const Stone& s : whole.stones)
+        {
+            slabs += s.role == Role::Slab ? 1 : 0;
+            paving += s.role == Role::Paving ? 1 : 0;
+            // Cut back to the walls' inside faces, 45 cm in from the walls' centre line.
+            if (s.role == Role::Slab)
+                CHECK(s.size.x < 1600.0 - 89.0);
+        }
+        CHECK(slabs == 1);
+        CHECK(paving > 100);
+
+        RuinParams r;
+        r.left = 0.5;
+        RuinStats st;
+        const Built ruined = building(spec, r, &st);
+        CHECK(st.slabPieces > 4);
+        CHECK(standingOverlaps(ruined) == 0);
+    }
+}
+
 TEST_CASE("masonry fit: rubble inside a closed tower spreads over its floor instead of stacking")
 {
     BuildOptions o;

@@ -52,7 +52,8 @@ b = masonryBuilding(name='Chapel', spec={
         {'name': 'tower', 'points': tower, 'closed': True, 'height': 1800, 'thickness': 100, 'bands': [900], 'cornice': 2,
          'openings': [{'name': 'west_door', 'at': 1750, 'width': 160, 'height': 320, 'arch': 'round'},
                       {'name': 'belfry', 'at': 250, 'width': 90, 'height': 200, 'sill': 1450, 'arch': 'round'}]}],
-    'vaults': [{'name': 'nave_vault', 'kind': 'barrel', 'from': [45, 900, 400], 'to': [1555, 900, 400], 'span': 710}]})
+    'vaults': [{'name': 'nave_vault', 'kind': 'barrel', 'from': [45, 900, 400], 'to': [1555, 900, 400], 'span': 710}],
+    'floors': [{'name': 'paving', 'points': nave, 'y': 0, 'thickness': 10, 'surface': 'flags'}]})
 ruin('Chapel', left=0.5, collapse=0, gaps=1)
 age('Chapel', age=0.8, moss=0.6)
 b['regions'], masonryCheck('Chapel')['ok']
@@ -62,7 +63,7 @@ b['regions'], masonryCheck('Chapel')['ok']
 - Edit and rebuild: `s = masonrySpec('Chapel')['spec']`, change `s`, `masonryBuilding(node='Chapel', spec=s)`. Ruin and age settings stay.
 - Walls must not share a line: two walls whose thickness overlaps fail `masonryCheck` with interpenetrating stones. Leave the tower's wall clear of the nave's (half of each thickness plus a gap).
 - Vaults and freestanding arches spring at the y you give: put them on a wall top or column (a barrel vault's `span` is the inside width), or `masonryCheck` reports floating stones.
-- Floors inside walls currently make `masonryCheck` report interpenetrating stones even when the outline is the walls' inside face. When the building must pass, leave paving out or build it as its own `masonryBuilding`.
+- A floor's outline can follow the walls' points: the slab and its paving are cut back to the walls' inside faces. A roof whose underside is at the wall top sits on the walls whole.
 - Roofs are floors at the top: `'surface': 'tiles'` with `pitch` and `uphill`.
 - Large builders: `'scale': 8` multiplies every length, stones included. Scale the stones with the building, or it reads as human-sized.
 

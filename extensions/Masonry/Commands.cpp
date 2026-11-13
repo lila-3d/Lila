@@ -899,11 +899,11 @@ void registerCommands(ext::Context& ctx)
             const WallRef w = wallRef(g, a, "masonryInfo");
             const std::shared_ptr<const Result> r = buildOf(w, false, "masonryInfo");
             json out = statsOf(*r, w.footprints.size());
-            std::vector<Stone> standing;
-            for (const Stone& s : r->built.stones)
-                if (s.role != Role::Rubble && !s.loose)
-                    standing.push_back(s);
-            const size_t overlapping = countOverlaps(standing);
+            std::vector<int> standing;
+            for (size_t k = 0; k < r->built.stones.size(); ++k)
+                if (r->built.stones[k].role != Role::Rubble && !r->built.stones[k].loose)
+                    standing.push_back(int(k));
+            const size_t overlapping = overlappingPairs(r->built, standing, 0.01).size();
             out["settings"] = w.values;
             out["checks"] = {{"overlaps", int64_t(overlapping)}, {"ok", overlapping == 0 && !r->built.stones.empty()}};
             out["mesh"] = w.mesh ? w.mesh->path() : std::string();
@@ -1039,11 +1039,11 @@ void registerCommands(ext::Context& ctx)
             const std::shared_ptr<const Result> r = buildOf(w, false, "masonryCheck");
             const Built& b = r->built;
             const double tol = std::max(0.0, a.get<double>("tolerance", 0.1));
-            std::vector<Stone> standing, rubble;
-            for (const Stone& s : b.stones)
-                (s.role == Role::Rubble ? rubble : standing).push_back(s);
-            const size_t overlaps = countOverlaps(standing, tol);
-            const size_t rubbleOverlaps = countOverlaps(rubble, std::max(tol, 1.0));
+            std::vector<int> standing, rubble;
+            for (size_t k = 0; k < b.stones.size(); ++k)
+                (isRubble(b.stones[k]) ? rubble : standing).push_back(int(k));
+            const size_t overlaps = overlappingPairs(b, standing, tol).size();
+            const size_t rubbleOverlaps = overlappingPairs(b, rubble, std::max(tol, 1.0)).size();
             std::vector<int> which;
             const int floating = countFloating(b.stones, std::max(tol, b.pitch * 0.15), &which);
             json floatingStones = json::array();

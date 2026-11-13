@@ -4,7 +4,9 @@
 
 #include "MasonryRuin.h"
 
+#include <lila/Boolean.h>
 #include <lila/Fracture.h>
+#include <lila/Log.h>
 #include <lila/Profile.h>
 
 #include "RigidScene.h"
@@ -954,6 +956,53 @@ int countStacked(std::span<const Stone> stones, double height, std::vector<int>*
     return count;
 }
 
+namespace
+{
+/**
+ * The slab with the walls it reaches into cut away, a little more than their thickness so the faces' wander and
+ * protrusion stay clear: a floor fits inside its walls, down to the slab's underside where it lies at their foot.
+ * Walls it only sits on (a roof) are left whole.
+ */
+geo::Mesh fitInsideWalls(const geo::Mesh& slab, const SlabPlan& sl, const Plan& plan)
+{
+    geo::Bounds sb = slab.bounds();
+    std::vector<geo::Mesh> hulls;
+    for (const WallPlan& wp : plan.walls)
+    {
+        WallParams p = wp.params;
+        const double clear = std::max(0.0, p.protrude) + p.stone.joint * 0.5;
+        p.thickness = std::max(p.thickness, 1.0) + 2.0 * clear;
+        for (geo::Mesh& h : collisionHulls(wp.footprint, p, 1))
+        {
+            const geo::Bounds hb = h.bounds();
+            if (hb.min.y >= sl.y1 + p.stone.joint || hb.max.y <= sl.y0 + p.stone.joint || hb.min.x >= sb.max.x || hb.max.x <= sb.min.x ||
+                hb.min.z >= sb.max.z || hb.max.z <= sb.min.z)
+                continue;
+            for (glm::dvec3& q : h.positions())
+                if (q.y <= hb.min.y + 1e-6)
+                    q.y = std::min(q.y, sb.min.y - 1.0);
+            hulls.push_back(std::move(h));
+        }
+    }
+    if (hulls.empty())
+        return slab;
+    std::vector<lila::scene::BooleanOperand> ops{{&slab, glm::dmat4(1.0)}};
+    for (const geo::Mesh& h : hulls)
+        ops.push_back({&h, glm::dmat4(1.0)});
+    lila::scene::BooleanOptions bo;
+    bo.op = lila::scene::BooleanOp::Difference;
+    bo.cleanup = false;
+    bo.splitNgons = false;
+    const lila::scene::BooleanResult r = lila::scene::meshBoolean(ops, glm::dmat4(1.0), bo);
+    if (!r.ok())
+    {
+        lila::log::warn("Masonry: a floor could not be fitted inside its walls ({}), so it is laid whole", r.error);
+        return slab;
+    }
+    return r.mesh;
+}
+} // namespace
+
 Built realizePlan(const Plan& plan, const RuinParams& ruin, const AgeParams& age, bool lods, RuinStats* statsOut)
 {
     LILA_ZONE_N("Masonry realize");
@@ -974,17 +1023,34 @@ Built realizePlan(const Plan& plan, const RuinParams& ruin, const AgeParams& age
         }
         b.stones.insert(b.stones.end(), l.stones.begin(), l.stones.end());
     }
-    for (Stone s : plan.elements)
     {
-        s.wall = -1;
-        b.stones.push_back(s);
+        // Paving is laid out to its outline, so cut it back where it runs into the walls.
+        std::vector<Stone> paving;
+        for (const Stone& s : plan.elements)
+            if (s.role == Role::Paving)
+                paving.push_back(s);
+        if (!paving.empty() && !b.stones.empty())
+            b.dropped += fitAgainst(paving, b.stones, plan.look.wall.stone.joint);
+        for (Stone s : plan.elements)
+            if (s.role != Role::Paving)
+            {
+                s.wall = -1;
+                b.stones.push_back(s);
+            }
+        for (Stone& s : paving)
+        {
+            s.wall = -1;
+            b.stones.push_back(s);
+        }
     }
     for (size_t k = 0; k < plan.slabs.size(); ++k)
     {
         const SlabPlan& sl = plan.slabs[k];
         if (sl.outline.size() < 3)
             continue;
-        const geo::Mesh slab = slabMesh(sl.outline, sl.y0, sl.y1);
+        const geo::Mesh slab = fitInsideWalls(slabMesh(sl.outline, sl.y0, sl.y1), sl, plan);
+        if (slab.numFaces() == 0)
+            continue;
         std::vector<geo::Mesh> parts;
         if (ruin.active())
         {
