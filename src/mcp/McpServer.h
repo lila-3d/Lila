@@ -7,6 +7,8 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace lila::ext
 {
@@ -67,6 +69,8 @@ public:
     void addResource(Resource resource);
     /** For extensions: owned by ctx and removed when it unloads. False, with a log message, if the uri is taken. */
     bool addResource(ext::Context& ctx, Resource resource);
+    /** Copies of the resources whose uri starts with prefix, by uri. */
+    std::vector<Resource> resources(std::string_view prefix = {}) const;
     void addPrompt(Prompt prompt);
     /** For extensions: owned by ctx and removed when it unloads. False, with a log message, if the name is taken. */
     bool addPrompt(ext::Context& ctx, Prompt prompt);

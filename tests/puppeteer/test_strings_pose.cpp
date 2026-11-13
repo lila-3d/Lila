@@ -1358,9 +1358,10 @@ TEST_CASE("stringsRuleWeb: pins, IK chains with their lock and solve, and glue a
     CHECK(slot["limit"]["kind"] == "hinge");
     CHECK(slot["limit"]["max"].get<double>() == doctest::Approx(glm::radians(30.0)));
     CHECK(slot.contains("preferred"));
-    // The glue between the hands goes by name; the prop attached to a foot goes as a frame of its own.
+    // The glue between the hands goes by name; the prop attached to a foot goes as a frame of its own, and leads as attach's last.
     REQUIRE(web["glue"].size() == 2);
-    CHECK(web["glue"][0] == json({{"members", {"hand_l", "hand_r"}}, {"attach", false}}));
+    CHECK(web["glue"][0] == json({{"members", {"hand_l", "hand_r"}}, {"attach", false}, {"lead", 0}}));
+    CHECK(web["glue"][1]["lead"] == 1);
     CHECK(web["glue"][1]["members"][0] == "foot_l");
     CHECK(web["glue"][1]["members"][1]["prop"].get<std::string>().ends_with("cup"));
     CHECK(web["glue"][1]["members"][1]["location"].size() == 3);

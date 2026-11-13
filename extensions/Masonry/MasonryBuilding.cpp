@@ -417,7 +417,7 @@ std::vector<Stone> pavingStones(const PavingSpec& p, double joint, uint64_t seed
     return out;
 }
 
-Plan planWalls(std::span<const Footprint> footprints, const BuildOptions& o)
+Plan planWalls(std::span<const Footprint> footprints, const BuildOptions& o, const std::string& region)
 {
     Plan p;
     p.look = o;
@@ -428,7 +428,7 @@ Plan planWalls(std::span<const Footprint> footprints, const BuildOptions& o)
         wp.footprint = footprints[w];
         wp.params = o.wall;
         wp.region = int(p.regions.size());
-        p.regions.push_back("wall_" + std::to_string(w));
+        p.regions.push_back(region.empty() ? "wall_" + std::to_string(w) : (w == 0 ? region : region + "_" + std::to_string(w)));
         for (const Opening& op : wp.params.openings)
         {
             wp.openingRegions.push_back(int(p.regions.size()));

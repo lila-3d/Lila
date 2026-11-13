@@ -979,6 +979,36 @@ json unrealLimit(const ik::JointLimit& l)
     return out;
 }
 
+/** How heavy a member is for leading glue in Unreal: its character's skeleton length (cm), a prop nothing. */
+double heftOf(Graph& g, NodeId member)
+{
+    const NodeId character = rig::isJoint(*g.node(member)) ? characterFor(g, member) : kNoNode;
+    const NodeId root = character ? characterRoot(g, character) : kNoNode;
+    if (!root)
+        return 0.0;
+    double length = 0.0;
+    for (NodeId d : g.descendants(root))
+        if (rig::isJoint(*g.node(d)))
+            length += glm::length(vecOf(g, d, Transform::kTranslate));
+    return length;
+}
+
+/**
+ * Which member leads a set once it is bound in Unreal, where a binding runs one way: an attach's last member, as in Lila;
+ * a glue's heaviest (a character over a prop, the larger skeleton over the smaller), the first on a tie.
+ */
+int leadOf(Graph& g, const Relation& rel, const std::vector<NodeId>& members)
+{
+    if (rel.attach)
+        return int(members.size()) - 1;
+    int lead = 0;
+    double best = -1.0;
+    for (size_t i = 0; i < members.size(); ++i)
+        if (const double h = heftOf(g, members[i]); h > best + 1e-9)
+            best = h, lead = int(i);
+    return lead;
+}
+
 /**
  * An IK chain for the rule web: its end bone, whether it is locked now, and everything Lila's ikHandle solves it from,
  * carried into Unreal space: solver (twoBone, fabrik, spline), pole (from the start joint), pole angle and roll (radians,
@@ -1172,7 +1202,7 @@ json ruleWeb(Graph& g, NodeId character)
             list.push_back(ext);
         }
         if (skeletal >= 1 && list.size() >= 2)
-            glue.push_back({{"members", list}, {"attach", rel.attach}});
+            glue.push_back({{"members", list}, {"attach", rel.attach}, {"lead", leadOf(g, rel, members)}});
     }
     return {{"version", 2},
             {"character", g.node(character)->name()},

@@ -1655,13 +1655,19 @@ void assignStreetIds(Layout& l)
     StreetGraph& g = l.graph;
     std::vector<char> used(g.edges.size(), 0);
     std::unordered_map<uint64_t, int> seen;
+    // A street runs on through any junction where no other street of its own class and path meets it: side streets,
+    // alleys and drawn streets joining or crossing it leave its id as it was.
     auto through = [&](int node, int e) {
-        if (g.degree(node) != 2)
-            return -1;
+        const StreetEdge& at = g.edges[size_t(e)];
+        int next = -1, same = 0;
         for (int x : g.incident(node))
-            if (x != e && g.isStreet(x) && g.edges[size_t(x)].path == g.edges[size_t(e)].path)
-                return x;
-        return -1;
+            if (g.isStreet(x) && g.edges[size_t(x)].path == at.path && g.edges[size_t(x)].cls == at.cls)
+            {
+                ++same;
+                if (x != e)
+                    next = x;
+            }
+        return same == 2 ? next : -1;
     };
     auto walk = [&](int start, int e) {
         std::vector<int> chain;

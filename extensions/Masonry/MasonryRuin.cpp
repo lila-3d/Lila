@@ -4,7 +4,9 @@
 
 #include "MasonryRuin.h"
 
+#include <lila/Boolean.h>
 #include <lila/Fracture.h>
+#include <lila/Log.h>
 #include <lila/Profile.h>
 
 #include "RigidScene.h"
@@ -180,18 +182,49 @@ struct Heap
             for (int64_t z = z0; z <= z1; ++z)
                 fn(x, z);
     }
-    double highest(const glm::dvec3& centre, const glm::dvec3& e) const
+    /**
+     * Cells under s's own outline seen from above, with s moved to at, rather than under its box's bounds: a stone
+     * turned across the cells must not raise the heap over the corners it doesn't cover. At least the cell under at.
+     */
+    template <class Fn> void forFootprint(const Stone& s, const glm::dvec3& at, Fn&& fn) const
+    {
+        int up = 0;
+        for (int i = 1; i < 3; ++i)
+            if (std::abs(s.frame[i].y) > std::abs(s.frame[up].y))
+                up = i;
+        glm::dvec3 axis[2];
+        double half[2];
+        for (int i = 0, n = 0; i < 3; ++i)
+            if (i != up)
+            {
+                const glm::dvec3 a(s.frame[i].x, 0.0, s.frame[i].z);
+                axis[n] = glm::length(a) > 1e-9 ? glm::normalize(a) : glm::dvec3(n == 0, 0.0, n == 1);
+                half[n++] = s.size[i] * 0.5;
+            }
+        // A cell counts when it overlaps the outline at all: its half size reaches out along each axis.
+        for (int n = 0; n < 2; ++n)
+            half[n] += cell * 0.5 * (std::abs(axis[n].x) + std::abs(axis[n].z));
+        bool any = false;
+        forCells(at, halfExtentAabb(s), [&](int64_t x, int64_t z) {
+            const glm::dvec3 d((x + 0.5) * cell - at.x, 0.0, (z + 0.5) * cell - at.z);
+            if (std::abs(glm::dot(d, axis[0])) <= half[0] && std::abs(glm::dot(d, axis[1])) <= half[1])
+            {
+                any = true;
+                fn(x, z);
+            }
+        });
+        if (!any)
+            fn(int64_t(std::floor(at.x / cell)), int64_t(std::floor(at.z / cell)));
+    }
+    double highestUnder(const Stone& s, const glm::dvec3& at) const
     {
         double top = -1e300;
-        forCells(centre, e, [&](int64_t x, int64_t z) { top = std::max(top, at(x, z)); });
+        forFootprint(s, at, [&](int64_t x, int64_t z) { top = std::max(top, this->at(x, z)); });
         return top;
     }
-    void raise(const glm::dvec3& centre, const glm::dvec3& e, double top)
+    void raiseUnder(const Stone& s, double top)
     {
-        forCells(centre, e, [&](int64_t x, int64_t z) {
-            const double cur = at(x, z);
-            h[StoneGrid::pack(x, 0, z)] = std::max(cur, top);
-        });
+        forFootprint(s, s.center, [&](int64_t x, int64_t z) { h[StoneGrid::pack(x, 0, z)] = std::max(at(x, z), top); });
     }
 };
 
@@ -628,28 +661,45 @@ RuinStats ruinStones(std::vector<Stone>& stones, const RuinParams& p, double pit
             }
         topExposed[keptIndex[i]] = !covered;
     }
+    auto clearOf = [&](const Stone& c, size_t k) {
+        for (int o : grid.around(c, std::max({pad, c.size.x, c.size.y, c.size.z})))
+            if (size_t(o) != k && keep[size_t(o)] && overlaps(c, stones[size_t(o)], 0.0))
+                return false;
+        return true;
+    };
     for (size_t k = 0; k < n; ++k)
     {
-        Stone& s = stones[k];
+        const Stone& s = stones[k];
         if (!keep[k] || !topExposed[k] || s.t1 < s.t0 || s.grounded || !may(k))
             continue;
         if (unitRandom(mixKey(p.seed, 404, k)) >= p.loose)
             continue;
-        s.loose = true;
-        ++st.loose;
         const double sideSign = s.face == Face::Through ? (unitRandom(mixKey(p.seed, 405, k)) < 0.5 ? 1.0 : -1.0) : 1.0;
-        if (unitRandom(mixKey(p.seed, 406, k)) < 0.7)
+        const bool tipped = unitRandom(mixKey(p.seed, 406, k)) < 0.7;
+        const double angle = glm::radians(std::clamp(p.tip, 0.0, 89.0)) * (0.25 + 0.75 * unitRandom(mixKey(p.seed, 407, k)));
+        const double slide = s.size.z * (0.1 + 0.2 * unitRandom(mixKey(p.seed, 408, k)));
+        // One that would meet a neighbour tips or slides less, or stays put.
+        for (double scale : {1.0, 0.5, 0.25})
         {
-            const double angle = glm::radians(std::clamp(p.tip, 0.0, 89.0)) * (0.25 + 0.75 * unitRandom(mixKey(p.seed, 407, k)));
-            const glm::dvec3 pivotLocal(0.0, -s.size.y * 0.5, -sideSign * s.size.z * 0.5);
-            const glm::dvec3 pivot = s.center + s.frame * pivotLocal;
-            const double a = -sideSign * angle;
-            const glm::dmat3 rx(glm::dvec3(1, 0, 0), glm::dvec3(0, std::cos(a), std::sin(a)), glm::dvec3(0, -std::sin(a), std::cos(a)));
-            s.frame = s.frame * rx;
-            s.center = pivot + s.frame * (-pivotLocal);
+            Stone c = s;
+            if (tipped)
+            {
+                const glm::dvec3 pivotLocal(0.0, -c.size.y * 0.5, -sideSign * c.size.z * 0.5);
+                const glm::dvec3 pivot = c.center + c.frame * pivotLocal;
+                const double a = -sideSign * angle * scale;
+                const glm::dmat3 rx(glm::dvec3(1, 0, 0), glm::dvec3(0, std::cos(a), std::sin(a)), glm::dvec3(0, -std::sin(a), std::cos(a)));
+                c.frame = c.frame * rx;
+                c.center = pivot + c.frame * (-pivotLocal);
+            }
+            else
+                c.center -= c.frame[2] * (sideSign * slide * scale);
+            if (!clearOf(c, k))
+                continue;
+            c.loose = true;
+            stones[k] = c;
+            ++st.loose;
+            break;
         }
-        else
-            s.center -= s.frame[2] * (sideSign * s.size.z * (0.1 + 0.2 * unitRandom(mixKey(p.seed, 408, k))));
     }
     // A tipped or slid stone may no longer hold what it held.
     grid.build(stones, 0.0);
@@ -706,6 +756,30 @@ RuinStats ruinStones(std::vector<Stone>& stones, const RuinParams& p, double pit
         });
         return hit;
     };
+    // Down the heap while it is steeper than loose stone lies, so heaps spread out and fill hollows instead of stacking.
+    auto slideDownHeap = [&](Stone& s, const glm::dvec3& e, double run, uint64_t key) {
+        constexpr double kRepose = 0.7; // tan of about 35 degrees
+        for (int slide = 0; slide < 64; ++slide)
+        {
+            double low = heap.highestUnder(s, s.center) - run * kRepose;
+            glm::dvec3 next = s.center;
+            const double turn = unitRandom(mixKey(key, uint64_t(slide)));
+            for (int d = 0; d < 8; ++d)
+            {
+                const double a = (d + turn) * kPi * 0.25;
+                const glm::dvec3 q = s.center + glm::dvec3(std::cos(a), 0.0, std::sin(a)) * run;
+                const double y = heap.highestUnder(s, q);
+                if (y < low && !blocked(q, e, y, 2.0 * e.y))
+                {
+                    low = y;
+                    next = q;
+                }
+            }
+            if (next == s.center)
+                return;
+            s.center = next;
+        }
+    };
     std::vector<size_t> fallenOrder;
     for (size_t k = 0; k < n; ++k)
         if (!keep[k])
@@ -746,13 +820,13 @@ RuinStats ruinStones(std::vector<Stone>& stones, const RuinParams& p, double pit
         // The lowest of a few spots around where it lands, so heaps spread instead of stacking into towers.
         {
             glm::dvec3 best = s.center;
-            double bestY = heap.highest(s.center, e * 0.8);
+            double bestY = heap.highestUnder(s, s.center);
             const double reach = std::max({e.x, e.z, unit}) * 1.5;
             for (int c = 0; c < 6; ++c)
             {
                 const double a = unitRandom(mixKey(p.seed, 416, k, c)) * 6.283185307179586;
                 const glm::dvec3 at = s.center + glm::dvec3(std::cos(a), 0.0, std::sin(a)) * reach * (0.5 + 0.5 * unitRandom(mixKey(p.seed, 417, k, c)));
-                const double y = heap.highest(at, e * 0.8);
+                const double y = heap.highestUnder(s, at);
                 if (y < bestY - 1e-9)
                 {
                     bestY = y;
@@ -762,13 +836,17 @@ RuinStats ruinStones(std::vector<Stone>& stones, const RuinParams& p, double pit
             s.center = best;
         }
         int step = 0;
-        for (; step < 12 && blocked(s.center, e * 0.8, heap.highest(s.center, e * 0.8), 2.0 * e.y); ++step)
+        for (; step < 12 && blocked(s.center, e * 0.8, heap.highestUnder(s, s.center), 2.0 * e.y); ++step)
             s.center += away * std::max({e.x, e.z, unit});
         // Nowhere clear to land: it is gone with the rest.
         if (step == 12)
             continue;
-        s.center.y = heap.highest(s.center, e * 0.8) + e.y;
-        heap.raise(s.center, e * 0.8, s.center.y + e.y);
+        slideDownHeap(s, e * 0.8, 2.0 * std::max({e.x, e.z, unit * 0.25}), mixKey(p.seed, 418, k));
+        s.center.y = heap.highestUnder(s, s.center) + e.y;
+        // A heap filling an enclosed floor stops well below the walls around it; the rest is gone.
+        if (const auto [lg, lt] = cols.near(s.center); s.center.y - e.y > lg + 0.4 * std::max(lt - lg, unit))
+            continue;
+        heap.raiseUnder(s, s.center.y + e.y);
         s.role = s.role == Role::Slab ? Role::Slab : Role::Rubble;
         s.t1 = -1.0;
         s.t0 = 0.0;
@@ -867,6 +945,81 @@ int countFloating(std::span<const Stone> stones, double tolerance, std::vector<i
     return count;
 }
 
+int countStacked(std::span<const Stone> stones, double height, std::vector<int>* which, double* highest)
+{
+    std::vector<Stone> standing;
+    for (const Stone& s : stones)
+        if (!isRubble(s))
+            standing.push_back(s);
+    if (standing.empty())
+        standing.assign(stones.begin(), stones.end());
+    Columns cols;
+    cols.build(standing, typicalSize(standing) * 4.0, std::any_of(standing.begin(), standing.end(), [](const Stone& s) { return s.grounded; }));
+    int count = 0;
+    for (size_t k = 0; k < stones.size(); ++k)
+    {
+        const Stone& s = stones[k];
+        if (!isRubble(s))
+            continue;
+        const double above = s.center.y - halfExtentAabb(s).y - cols.near(s.center).first;
+        if (highest)
+            *highest = std::max(*highest, above);
+        if (above <= height)
+            continue;
+        ++count;
+        if (which)
+            which->push_back(int(k));
+    }
+    return count;
+}
+
+namespace
+{
+/**
+ * The slab with the walls it reaches into cut away, a little more than their thickness so the faces' wander and
+ * protrusion stay clear: a floor fits inside its walls, down to the slab's underside where it lies at their foot.
+ * Walls it only sits on (a roof) are left whole.
+ */
+geo::Mesh fitInsideWalls(const geo::Mesh& slab, const SlabPlan& sl, const Plan& plan)
+{
+    geo::Bounds sb = slab.bounds();
+    std::vector<geo::Mesh> hulls;
+    for (const WallPlan& wp : plan.walls)
+    {
+        WallParams p = wp.params;
+        const double clear = std::max(0.0, p.protrude) + p.stone.joint * 0.5;
+        p.thickness = std::max(p.thickness, 1.0) + 2.0 * clear;
+        for (geo::Mesh& h : collisionHulls(wp.footprint, p, 1))
+        {
+            const geo::Bounds hb = h.bounds();
+            if (hb.min.y >= sl.y1 + p.stone.joint || hb.max.y <= sl.y0 + p.stone.joint || hb.min.x >= sb.max.x || hb.max.x <= sb.min.x ||
+                hb.min.z >= sb.max.z || hb.max.z <= sb.min.z)
+                continue;
+            for (glm::dvec3& q : h.positions())
+                if (q.y <= hb.min.y + 1e-6)
+                    q.y = std::min(q.y, sb.min.y - 1.0);
+            hulls.push_back(std::move(h));
+        }
+    }
+    if (hulls.empty())
+        return slab;
+    std::vector<lila::scene::BooleanOperand> ops{{&slab, glm::dmat4(1.0)}};
+    for (const geo::Mesh& h : hulls)
+        ops.push_back({&h, glm::dmat4(1.0)});
+    lila::scene::BooleanOptions bo;
+    bo.op = lila::scene::BooleanOp::Difference;
+    bo.cleanup = false;
+    bo.splitNgons = false;
+    const lila::scene::BooleanResult r = lila::scene::meshBoolean(ops, glm::dmat4(1.0), bo);
+    if (!r.ok())
+    {
+        lila::log::warn("Masonry: a floor could not be fitted inside its walls ({}), so it is laid whole", r.error);
+        return slab;
+    }
+    return r.mesh;
+}
+} // namespace
+
 Built realizePlan(const Plan& plan, const RuinParams& ruin, const AgeParams& age, bool lods, RuinStats* statsOut)
 {
     LILA_ZONE_N("Masonry realize");
@@ -887,17 +1040,34 @@ Built realizePlan(const Plan& plan, const RuinParams& ruin, const AgeParams& age
         }
         b.stones.insert(b.stones.end(), l.stones.begin(), l.stones.end());
     }
-    for (Stone s : plan.elements)
     {
-        s.wall = -1;
-        b.stones.push_back(s);
+        // Paving is laid out to its outline, so cut it back where it runs into the walls.
+        std::vector<Stone> paving;
+        for (const Stone& s : plan.elements)
+            if (s.role == Role::Paving)
+                paving.push_back(s);
+        if (!paving.empty() && !b.stones.empty())
+            b.dropped += fitAgainst(paving, b.stones, plan.look.wall.stone.joint);
+        for (Stone s : plan.elements)
+            if (s.role != Role::Paving)
+            {
+                s.wall = -1;
+                b.stones.push_back(s);
+            }
+        for (Stone& s : paving)
+        {
+            s.wall = -1;
+            b.stones.push_back(s);
+        }
     }
     for (size_t k = 0; k < plan.slabs.size(); ++k)
     {
         const SlabPlan& sl = plan.slabs[k];
         if (sl.outline.size() < 3)
             continue;
-        const geo::Mesh slab = slabMesh(sl.outline, sl.y0, sl.y1);
+        const geo::Mesh slab = fitInsideWalls(slabMesh(sl.outline, sl.y0, sl.y1), sl, plan);
+        if (slab.numFaces() == 0)
+            continue;
         std::vector<geo::Mesh> parts;
         if (ruin.active())
         {
@@ -950,7 +1120,7 @@ Built realizePlan(const Plan& plan, const RuinParams& ruin, const AgeParams& age
         }
     }
 
-    // Loose elements (columns, stairs, vaults) stand on the ground where they reach down to the walls' ground around them.
+    // Loose elements (columns, stairs, vaults) and floors stand on the ground where they reach down to the walls' ground around them.
     {
         std::vector<Stone> walls;
         for (const Stone& s : b.stones)
@@ -959,7 +1129,7 @@ Built realizePlan(const Plan& plan, const RuinParams& ruin, const AgeParams& age
         Columns ground;
         ground.build(walls.empty() ? std::span<const Stone>(b.stones) : std::span<const Stone>(walls), std::max(plan.pitch, 1.0) * 4.0);
         for (Stone& s : b.stones)
-            if (s.wall < 0 && !s.grounded && s.role != Role::Slab)
+            if (s.wall < 0 && !s.grounded)
                 s.grounded = s.center.y - halfExtentAabb(s).y <= ground.near(s.center).first + std::max(plan.pitch, 1.0) * 0.5;
     }
 
