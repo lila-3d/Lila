@@ -1708,6 +1708,8 @@ int uncovered(const geo::Mesh& m, const Work& w)
 
 /** A face with less area than this (times the spacing squared) lying along a crease is a flap. */
 constexpr double kFlapArea = 0.08;
+/** How far (in spacings) on average an edge loop may lie from a guide and still be laid onto it. */
+constexpr double kLoopReach = 0.6;
 
 /** Longest hole, in edges, the grid's holes are filled across; a longer one means the cover folded over a region. */
 constexpr size_t kMaxGridHole = 24;
@@ -1873,6 +1875,138 @@ void freeCreaseFlaps(geo::Mesh& m, std::vector<FeatureKind>& feature, const geo:
             avg /= double(count);
             m.setPosition(p, surface.closestPoint(avg, c) ? c.point : avg);
         }
+}
+
+/**
+ * The closed edge loop of a quad mesh lying closest along a closed guide, traced straight through four-edge points from
+ * the points nearest the guide; empty when none closes within reach (mean distance under kLoopReach spacings).
+ */
+std::vector<Index> nearestEdgeLoop(const geo::Mesh& m, const std::vector<std::array<glm::dvec3, 2>>& segs, double h)
+{
+    std::vector<std::pair<double, Index>> near;
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        if (m.pointValid(p) && !m.isBoundaryPoint(p))
+            near.push_back({glm::distance(closestOnSegments(m.position(p), segs), m.position(p)), p});
+    std::sort(near.begin(), near.end());
+    near.resize(std::min<size_t>(near.size(), 12));
+    double guideLength = 0.0;
+    for (const auto& sg : segs)
+        guideLength += glm::distance(sg[0], sg[1]);
+    const size_t most = size_t(4.0 * guideLength / std::max(h, 1e-12)) + 8;
+    auto facesOf = [&](Index e) {
+        std::vector<Index> out;
+        const Index c0 = m.edgeCorner(e);
+        if (c0 == kInvalid)
+            return out;
+        Index c = c0;
+        do
+        {
+            out.push_back(m.cornerFace(c));
+            c = m.cornerRadial(c);
+        } while (c != c0 && out.size() < 8);
+        return out;
+    };
+    std::vector<Index> best;
+    double bestScore = kLoopReach * h;
+    for (const auto& [d0, start] : near)
+    {
+        if (m.pointValence(start) != 4)
+            continue;
+        std::vector<Index> edges;
+        m.forEachPointEdge(start, [&](Index e) { edges.push_back(e); });
+        for (Index first : edges)
+        {
+            std::vector<Index> loop{start};
+            Index at = start, via = first;
+            bool closed = false;
+            for (size_t step = 0; step < most; ++step)
+            {
+                const Index next = m.edgeOtherPoint(via, at);
+                if (next == start)
+                {
+                    closed = true;
+                    break;
+                }
+                if (m.isBoundaryPoint(next) || m.pointValence(next) != 4)
+                    break;
+                loop.push_back(next);
+                // Straight on: the edge at next sharing no face with the one we came in by.
+                Index out = kInvalid;
+                m.forEachPointEdge(next, [&](Index e) {
+                    if (e == via)
+                        return;
+                    bool sharesFace = false;
+                    for (Index f : facesOf(via))
+                        for (Index g : facesOf(e))
+                            sharesFace |= f == g;
+                    if (!sharesFace)
+                        out = e;
+                });
+                if (out == kInvalid)
+                    break;
+                at = next;
+                via = out;
+            }
+            if (!closed || loop.size() < 3)
+                continue;
+            double mean = 0.0;
+            for (Index p : loop)
+                mean += glm::distance(closestOnSegments(m.position(p), segs), m.position(p));
+            mean /= double(loop.size());
+            if (mean < bestScore)
+            {
+                bestScore = mean;
+                best = loop;
+            }
+        }
+    }
+    return best;
+}
+
+/**
+ * Lays an edge loop onto each closed guide: the nearest closed loop's points move onto the guide (and back onto the
+ * surface), and their neighbours ease halfway after them so the quads beside stay even.
+ */
+void layLoopsOnGuides(geo::Mesh& m, const std::vector<std::vector<glm::dvec3>>& guides, const geo::MeshBvh& bvh, double h)
+{
+    const auto nb = pointNeighbours(m);
+    for (const auto& guide : guides)
+    {
+        if (guide.size() < 3 || glm::distance(guide.front(), guide.back()) > 1e-6 * h)
+            continue;
+        std::vector<std::array<glm::dvec3, 2>> segs;
+        for (size_t i = 0; i + 1 < guide.size(); ++i)
+            segs.push_back({guide[i], guide[i + 1]});
+        const std::vector<Index> loop = nearestEdgeLoop(m, segs, h);
+        if (loop.empty())
+            continue;
+        std::unordered_map<Index, glm::dvec3> moved;
+        for (Index p : loop)
+        {
+            const glm::dvec3 q = closestOnSegments(m.position(p), segs);
+            geo::BvhClosest c;
+            moved[p] = bvh.closestPoint(q, c) ? c.point : q;
+        }
+        std::unordered_map<Index, glm::dvec3> eased;
+        for (Index p : loop)
+        {
+            const glm::dvec3 shift = moved[p] - m.position(p);
+            for (Index o : nb[p])
+                if (!moved.contains(o))
+                {
+                    auto [it, fresh] = eased.try_emplace(o, glm::dvec3(0.0));
+                    it->second += 0.5 * shift;
+                }
+        }
+        for (const auto& [p, at] : moved)
+            m.setPosition(p, at);
+        for (const auto& [p, shift] : eased)
+        {
+            geo::BvhClosest c;
+            const glm::dvec3 q = m.position(p) + shift * 0.5;
+            m.setPosition(p, bvh.closestPoint(q, c) ? c.point : q);
+        }
+    }
 }
 
 /**
@@ -2169,6 +2303,8 @@ QuadRemeshResult coverRemesh(Work& w, const QuadRemeshOptions& opts, Stopwatch& 
         joinSeamTriangles(m, w.plane, h0);
         m.compact();
     }
+    if (!opts.featureGuides.empty())
+        layLoopsOnGuides(m, opts.featureGuides, bvh, h0);
     if (opts.sharpAngle > 0.0 && !w.creases.empty())
         geo::setHardEdgesByAngle(m, opts.sharpAngle);
     out.metrics = measureQuality(m, &bvh);
