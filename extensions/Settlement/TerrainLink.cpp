@@ -2,6 +2,7 @@
 // main roads from its router, grading as road features, pads and stamps (settlementGrade), re-planning only where the
 // terrain changed (settlementReplan), and the agent's checks and explanations (settlementCheck, settlementExplain).
 
+#include "Export.h"
 #include "Settlement.h"
 #include "SettlementTerrain.h"
 
@@ -579,7 +580,9 @@ json grade(Graph& g, const std::string& name, const Args& a, const std::string& 
         {
             if (line.surface || line.pts.size() < 2)
                 continue;
-            std::string id = key + "/street/" + std::to_string(line.street);
+            // A street runs on through junctions as several lines, each named by its street and its ends.
+            const std::string road = roadKey(line);
+            std::string id = key + "/street/" + std::to_string(line.street) + (road.find('.') != std::string::npos ? road.substr(road.find('.')) : "");
             if (const int n = taken[id]++; n > 0)
                 id += "/" + std::to_string(n);
             idOfStreet.emplace(line.street, id);
