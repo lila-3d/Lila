@@ -661,28 +661,45 @@ RuinStats ruinStones(std::vector<Stone>& stones, const RuinParams& p, double pit
             }
         topExposed[keptIndex[i]] = !covered;
     }
+    auto clearOf = [&](const Stone& c, size_t k) {
+        for (int o : grid.around(c, std::max({pad, c.size.x, c.size.y, c.size.z})))
+            if (size_t(o) != k && keep[size_t(o)] && overlaps(c, stones[size_t(o)], 0.0))
+                return false;
+        return true;
+    };
     for (size_t k = 0; k < n; ++k)
     {
-        Stone& s = stones[k];
+        const Stone& s = stones[k];
         if (!keep[k] || !topExposed[k] || s.t1 < s.t0 || s.grounded || !may(k))
             continue;
         if (unitRandom(mixKey(p.seed, 404, k)) >= p.loose)
             continue;
-        s.loose = true;
-        ++st.loose;
         const double sideSign = s.face == Face::Through ? (unitRandom(mixKey(p.seed, 405, k)) < 0.5 ? 1.0 : -1.0) : 1.0;
-        if (unitRandom(mixKey(p.seed, 406, k)) < 0.7)
+        const bool tipped = unitRandom(mixKey(p.seed, 406, k)) < 0.7;
+        const double angle = glm::radians(std::clamp(p.tip, 0.0, 89.0)) * (0.25 + 0.75 * unitRandom(mixKey(p.seed, 407, k)));
+        const double slide = s.size.z * (0.1 + 0.2 * unitRandom(mixKey(p.seed, 408, k)));
+        // One that would meet a neighbour tips or slides less, or stays put.
+        for (double scale : {1.0, 0.5, 0.25})
         {
-            const double angle = glm::radians(std::clamp(p.tip, 0.0, 89.0)) * (0.25 + 0.75 * unitRandom(mixKey(p.seed, 407, k)));
-            const glm::dvec3 pivotLocal(0.0, -s.size.y * 0.5, -sideSign * s.size.z * 0.5);
-            const glm::dvec3 pivot = s.center + s.frame * pivotLocal;
-            const double a = -sideSign * angle;
-            const glm::dmat3 rx(glm::dvec3(1, 0, 0), glm::dvec3(0, std::cos(a), std::sin(a)), glm::dvec3(0, -std::sin(a), std::cos(a)));
-            s.frame = s.frame * rx;
-            s.center = pivot + s.frame * (-pivotLocal);
+            Stone c = s;
+            if (tipped)
+            {
+                const glm::dvec3 pivotLocal(0.0, -c.size.y * 0.5, -sideSign * c.size.z * 0.5);
+                const glm::dvec3 pivot = c.center + c.frame * pivotLocal;
+                const double a = -sideSign * angle * scale;
+                const glm::dmat3 rx(glm::dvec3(1, 0, 0), glm::dvec3(0, std::cos(a), std::sin(a)), glm::dvec3(0, -std::sin(a), std::cos(a)));
+                c.frame = c.frame * rx;
+                c.center = pivot + c.frame * (-pivotLocal);
+            }
+            else
+                c.center -= c.frame[2] * (sideSign * slide * scale);
+            if (!clearOf(c, k))
+                continue;
+            c.loose = true;
+            stones[k] = c;
+            ++st.loose;
+            break;
         }
-        else
-            s.center -= s.frame[2] * (sideSign * s.size.z * (0.1 + 0.2 * unitRandom(mixKey(p.seed, 408, k))));
     }
     // A tipped or slid stone may no longer hold what it held.
     grid.build(stones, 0.0);

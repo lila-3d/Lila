@@ -103,10 +103,8 @@ The blockout is sliced into `band`-high sections (0: eight bands), walls are lai
 ```python
 w = masonryWall(points=[[-2500, 0, 4000], [0, 0, 3500], [2500, 0, 4200]], ground='Terrain', name='FieldWall',
                 bond='dryStone', height=120, thickness=60, stoneLength=40, stoneHeight=20, stoneDepth=30)
-ruin(w['mesh'], left=0.75, rubble=0.8, loose=0)
+ruin(w['mesh'], left=0.75, rubble=0.8)
 ```
-
-`loose=0` keeps tipped top stones out: on a wall following the ground they can interpenetrate their neighbours and fail `masonryCheck`.
 
 - Sloped wall with a gate: `masonryWall(points=[[0, 0, 0], [1200, 150, 0]], heights=[400, 250], thickness=60, batter=2, stoneLength=40, stoneHeight=20, stoneDepth=25, openings=[{'name': 'gate', 'at': 600, 'width': 160, 'height': 260, 'arch': 'round'}])`.
 - Building bases where walls meet terrain: `lila://guide/contacts` (`seamFind`, `seamScatter`, `seamCheck`).

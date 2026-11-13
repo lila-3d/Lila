@@ -145,3 +145,34 @@ TEST_CASE("masonry fit: rubble inside a closed tower spreads over its floor inst
             rubble.push_back(s);
     CHECK(countOverlaps(rubble, 1.0) < rubble.size() / 50);
 }
+
+TEST_CASE("masonry fit: loose stones of a dry stone wall over a hill keep clear of their neighbours")
+{
+    BuildOptions o;
+    o.wall.bond = Bond::DryStone;
+    o.wall.height = 120;
+    o.wall.thickness = 60;
+    o.wall.stone = {40, 20, 30, 1.0};
+    Footprint f;
+    const glm::dvec3 corners[] = {{-2500, 0, 4000}, {0, 0, 3500}, {2500, 0, 4200}};
+    for (int seg = 0; seg < 2; ++seg)
+        for (int i = 0; i < 64; ++i)
+        {
+            glm::dvec3 p = glm::mix(corners[seg], corners[seg + 1], i / 64.0);
+            p.y = 200.0 * std::sin(p.x / 900.0) + 120.0 * std::cos(p.z / 400.0);
+            f.points.push_back(p);
+        }
+    const Built whole = realizePlan(planWalls(std::span<const Footprint>(&f, 1), o), RuinParams{}, AgeParams{}, false);
+    REQUIRE(standingOverlaps(whole) == 0);
+    for (double loose : {0.4, 1.0})
+    {
+        CAPTURE(loose);
+        RuinParams r;
+        r.left = 0.75;
+        r.loose = loose;
+        RuinStats st;
+        const Built b = realizePlan(planWalls(std::span<const Footprint>(&f, 1), o), r, AgeParams{}, false, &st);
+        CHECK(st.loose > 20);
+        CHECK(standingOverlaps(b) == 0);
+    }
+}
