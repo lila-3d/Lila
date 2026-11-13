@@ -402,3 +402,21 @@ TEST_CASE("tree generator: native texture sets from the species palette")
                                        {"folder", (std::filesystem::temp_directory_path() / "lila_foliage_tests" / "tex").string()}});
     CHECK(e["files"].size() == 1);
 }
+
+TEST_CASE("tree generator: an exported tree's bake project comes from the paths the export stored")
+{
+    fresh();
+    const fs::path out = scratch("bakeproject");
+    const std::string leaf = run("treeLeafPlane").get<std::string>();
+    const std::string tree = run("treeBuild", {{"preset", "Kaede Young"}, {"settings", quick(5)}, {"leaf", leaf}, {"name", "maple"}}).get<std::string>();
+    json settings = json::object();
+    settings["export.path"] = out.string();
+    settings["export.name"] = "maple";
+    run("treeExport", {{"args", {tree}}, {"settings", settings}});
+
+    CHECK(run("treeBakeHandoff", {{"args", {tree}}})["high"] == (out / "maple_Hi.fbx").string());
+    const json r = run("treeTextureSet", {{"args", {tree}}, {"season", "autumn"}});
+    CHECK_FALSE(r["bakeProject"].get<std::string>().empty());
+    CHECK(r["warnings"].empty());
+    CHECK_FALSE(run("createBakeFromGenerator", {{"args", {tree}}, {"kind", "tree"}})["project"].get<std::string>().empty());
+}
