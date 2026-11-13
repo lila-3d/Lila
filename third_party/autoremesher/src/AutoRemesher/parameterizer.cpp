@@ -249,6 +249,9 @@ std::vector<double> Parameterizer::computeFaceScalingField(const std::vector<Vec
                         double distance = (vertices[u] - vertices[v]).length();
                         if (distance <= 0.0)
                             continue;
+                        // A vertex with only unsized faces round it has no normal to compare.
+                        if (normalV.lengthSquared() <= 0.0 || vertexNormals[u].lengthSquared() <= 0.0)
+                            continue;
                         double cosAngle = Vector3::dotProduct(normalV, vertexNormals[u]);
                         if (cosAngle > 1.0)
                             cosAngle = 1.0;
@@ -374,7 +377,10 @@ bool Parameterizer::parameterize()
                         (*m_vertices)[it[0]], (*m_vertices)[it[1]], (*m_vertices)[it[2]]);
                 }
             });
+        const bool unsized = m_unsizedFaces && m_unsizedFaces->size() == m_triangles->size();
         for (size_t i = 0; i < m_triangles->size(); ++i) {
+            if (unsized && (*m_unsizedFaces)[i])
+                continue;
             const auto& it = (*m_triangles)[i];
             vertexNormals[it[0]] += faceNormals[i];
             vertexNormals[it[1]] += faceNormals[i];
@@ -401,6 +407,10 @@ bool Parameterizer::parameterize()
         }
         faceScalingField = computeFaceScalingField(*m_vertices,
             *m_triangles, vertexNormals, faceAroundVertexMap);
+        if (m_unsizedFaces && m_unsizedFaces->size() == faceScalingField.size())
+            for (size_t i = 0; i < faceScalingField.size(); ++i)
+                if ((*m_unsizedFaces)[i])
+                    faceScalingField[i] = 1.0;
     }
 
     report(0.02f, "Building surface topology");
@@ -411,6 +421,25 @@ bool Parameterizer::parameterize()
     }
     if (m_featureEdges)
         topology.setFeatureEdges(m_featureEdges);
+    if (m_scalingSmoothing > 0) {
+        // Averaged through the vertices, in log so halving and doubling weigh alike.
+        std::vector<double> at(m_vertices->size()), weight(m_vertices->size());
+        for (int pass = 0; pass < m_scalingSmoothing; ++pass) {
+            std::fill(at.begin(), at.end(), 0.0);
+            std::fill(weight.begin(), weight.end(), 0.0);
+            for (size_t f = 0; f < m_triangles->size(); ++f)
+                for (size_t v : (*m_triangles)[f]) {
+                    at[v] += std::log(faceScalingField[f]);
+                    weight[v] += 1.0;
+                }
+            for (size_t f = 0; f < m_triangles->size(); ++f) {
+                double sum = 0.0;
+                for (size_t v : (*m_triangles)[f])
+                    sum += at[v] / std::max(1.0, weight[v]);
+                faceScalingField[f] = std::exp(sum / 3.0);
+            }
+        }
+    }
     if (m_faceScalingMultiplier && m_faceScalingMultiplier->size() == faceScalingField.size())
         for (size_t f = 0; f < faceScalingField.size(); ++f)
             faceScalingField[f] *= (*m_faceScalingMultiplier)[f];

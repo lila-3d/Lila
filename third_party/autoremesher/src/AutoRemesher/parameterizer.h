@@ -107,6 +107,15 @@ public:
     void setFaceScaling(const std::vector<double>* scaling) { m_faceScalingOverride = scaling; }
     void setFaceHints(const std::vector<FaceHint>* hints) { m_faceHints = hints; }
     void setFieldStiffness(const std::vector<double>* stiffness) { m_fieldStiffness = stiffness; }
+    /** How far the anisotropy may stretch a quad, long side over short. */
+    void setMaxAspectRatio(double ratio) { m_maxAspectRatio = ratio; }
+    /** Passes of smoothing over the curvature scaling field before it is used; 0 leaves it per triangle. */
+    void setScalingSmoothing(int passes) { m_scalingSmoothing = passes; }
+    /**
+     * Per triangle, nonzero for faces whose shape is not to be read as curvature (a cap closing an open border): they
+     * take the neutral size and don't turn the normals of the vertices they share.
+     */
+    void setUnsizedFaces(const std::vector<uint8_t>* faces) { m_unsizedFaces = faces; }
     /** Per triangle, a factor on the quad size the curvature adaptivity gives. */
     void setFaceScalingMultiplier(const std::vector<double>* multiplier) { m_faceScalingMultiplier = multiplier; }
     /** Per triangle, the longest quad edge allowed there, as a length; anything not above zero is no limit. */
@@ -144,6 +153,8 @@ private:
     const std::vector<FaceHint>* m_faceHints = nullptr;
     const std::vector<double>* m_fieldStiffness = nullptr;
     double m_targetQuadCount = 0.0;
+    int m_scalingSmoothing = 0;
+    const std::vector<uint8_t>* m_unsizedFaces = nullptr;
     const std::vector<double>* m_faceScalingMultiplier = nullptr;
     const std::vector<double>* m_faceSizeLimit = nullptr;
     std::vector<Vector3> m_field;
