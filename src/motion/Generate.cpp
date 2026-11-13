@@ -246,7 +246,15 @@ json GaitLibrary::toJson() const
                 ps.push_back(poseToJson(p));
             ws.push_back({{"phase", w.phase}, {"poses", ps}});
         }
-        gs.push_back({{"name", g.name}, {"style", g.style}, {"speed", g.speed}, {"period", g.period}, {"windows", ws}});
+        json gj = {{"name", g.name}, {"style", g.style}, {"speed", g.speed}, {"period", g.period}, {"windows", ws}};
+        if (!g.cycle.empty())
+        {
+            json cs = json::array();
+            for (const Pose& p : g.cycle)
+                cs.push_back(poseToJson(p));
+            gj["cycle"] = std::move(cs);
+        }
+        gs.push_back(std::move(gj));
     }
     json out = {{"lila", "motionGaits"}, {"version", 1}, {"provenance", provenance}, {"idle", poseToJson(idle)}, {"gaits", gs}};
     if (!crouchIdle.empty())
@@ -281,6 +289,9 @@ GaitLibrary GaitLibrary::fromJson(const json& j)
                     win.poses[k] = poseFromJson(ps[k]);
                 gait.windows.push_back(std::move(win));
             }
+            if (g.contains("cycle"))
+                for (const json& p : g["cycle"])
+                    gait.cycle.push_back(poseFromJson(p));
             lib.gaits.push_back(std::move(gait));
         }
         return lib;
@@ -289,6 +300,128 @@ GaitLibrary GaitLibrary::fromJson(const json& j)
     {
         throw std::runtime_error(std::string("not a gait library: ") + e.what());
     }
+}
+
+FootStrikes footStrikes(const std::vector<Pose>& frames)
+{
+    FootStrikes out;
+    const SomaSkeleton& s = SomaSkeleton::shipped();
+    const int feet[2] = {s.find("LeftFoot"), s.find("RightFoot")};
+    std::vector<float> h[2];
+    for (const Pose& p : frames)
+    {
+        const Pose w = s.world(p);
+        for (int k = 0; k < 2; ++k)
+            h[k].push_back(w[size_t(feet[k])].p.y);
+    }
+    for (int k = 0; k < 2; ++k)
+    {
+        if (feet[k] < 0 || h[k].size() < 3)
+            continue;
+        std::vector<float> sorted = h[k];
+        std::sort(sorted.begin(), sorted.end());
+        // Percentiles, so a stumble or a raised foot at the clip's ends doesn't set the range.
+        const double lo = sorted[sorted.size() / 20], hi = sorted[sorted.size() - 1 - sorted.size() / 20];
+        if (hi - lo < 1e-3)
+            continue;
+        const double down = lo + 0.25 * (hi - lo), up = lo + 0.5 * (hi - lo);
+        std::vector<double>& strikes = k == 0 ? out.left : out.right;
+        std::vector<double>& lifts = k == 0 ? out.leftLifts : out.rightLifts;
+        bool armed = h[k][0] > up;
+        for (size_t f = 1; f < h[k].size(); ++f)
+        {
+            const double a = h[k][f - 1], b = h[k][f];
+            if (a <= down && b > down)
+                lifts.push_back(double(f - 1) + (down - a) / (b - a));
+            if (b > up)
+                armed = true;
+            if (armed && a > down && b <= down)
+            {
+                strikes.push_back(double(f - 1) + (a - down) / (a - b));
+                armed = false;
+            }
+        }
+    }
+    return out;
+}
+
+double cycleFrames(const FootStrikes& strikes)
+{
+    std::vector<double> gaps;
+    for (const std::vector<double>* foot : {&strikes.left, &strikes.right})
+        for (size_t i = 1; i < foot->size(); ++i)
+            gaps.push_back((*foot)[i] - (*foot)[i - 1]);
+    if (gaps.empty())
+        return 0.0;
+    std::vector<double> sorted = gaps;
+    std::sort(sorted.begin(), sorted.end());
+    const double median = sorted[sorted.size() / 2];
+    // A missed strike makes one gap twice as long; the gaps near the median are the cycle.
+    double sum = 0.0;
+    int count = 0;
+    for (double g : gaps)
+        if (std::abs(g - median) <= 0.2 * median)
+        {
+            sum += g;
+            ++count;
+        }
+    return sum / double(count);
+}
+
+std::vector<Pose> loopCycle(const std::vector<Pose>& frames, double start, double length)
+{
+    std::vector<Pose> out;
+    if (frames.empty() || !(length > 0.0))
+        return out;
+    const int n = std::max(2, int(std::lround(length)));
+    auto at = [&](double t) {
+        t = std::clamp(t, 0.0, double(frames.size() - 1));
+        const size_t i0 = size_t(std::floor(t)), i1 = std::min(i0 + 1, frames.size() - 1);
+        const float w = float(t - double(i0));
+        Pose p = frames[i0];
+        for (size_t j = 0; j < p.size(); ++j)
+        {
+            p[j].q = glm::normalize(glm::slerp(frames[i0][j].q, frames[i1][j].q, w));
+            p[j].p = glm::mix(frames[i0][j].p, frames[i1][j].p, w);
+        }
+        return p;
+    };
+    for (int i = 0; i <= n; ++i)
+        out.push_back(at(start + length * double(i) / double(n)));
+
+    const glm::quat back = glm::angleAxis(-headingOf(out[0]), glm::vec3(0, 1, 0));
+    const glm::vec3 origin(out[0][0].p.x, 0.0f, out[0][0].p.z);
+    for (Pose& p : out)
+    {
+        const glm::vec3 r = back * (p[0].p - origin);
+        p[0].p = glm::vec3(r.x, p[0].p.y, r.z);
+        p[0].q = glm::normalize(back * p[0].q);
+    }
+    const glm::vec2 travel(out[size_t(n)][0].p.x, out[size_t(n)][0].p.z);
+    for (int i = 0; i <= n; ++i)
+    {
+        const float u = float(i) / float(n);
+        out[size_t(i)][0].p.x -= travel.x * u;
+        out[size_t(i)][0].p.z -= travel.y * u;
+    }
+    const Pose& first = out[0];
+    const Pose last = out[size_t(n)];
+    for (size_t j = 0; j < first.size(); ++j)
+    {
+        glm::quat d = glm::normalize(first[j].q * glm::conjugate(last[j].q));
+        if (d.w < 0.0f)
+            d = -d;
+        const glm::vec3 dp = first[j].p - last[j].p;
+        for (int i = 1; i < n; ++i)
+        {
+            const float u = float(i) / float(n);
+            Xform& x = out[size_t(i)][j];
+            x.q = glm::normalize(glm::slerp(glm::quat(1.0f, 0.0f, 0.0f, 0.0f), d, u) * x.q);
+            x.p += dp * u;
+        }
+    }
+    out.pop_back();
+    return out;
 }
 
 GaitLibrary GaitLibrary::load(const fs::path& file)
