@@ -364,7 +364,8 @@ TEST_CASE("props: a greatsword held in both hands, the arms sharing the reach")
     run("puppeteerPropHold", {{"args", {"sword"}}, {"hands", 1}, {"time", 5.0 / 30.0}, {"blend", 3.0 / 30.0}});
     at(10.0 / 30.0);
     CHECK(run("puppeteerPropInfo", {{"args", {"sword"}}}).at("holder") == handR);
-    for (const json& c : run("grappleInfo", {{"args", {"props_grapple"}}}).at("contacts"))
+    const json listed367 = run("grappleInfo", {{"args", {"props_grapple"}}});
+    for (const json& c : listed367.at("contacts"))
         CHECK(c.at("weight").get<double>() == Approx(0.0));
 }
 
@@ -839,6 +840,56 @@ TEST_CASE("props: a catch times itself to where the arc meets the hand, which re
     MESSAGE("hand to grip at the catch: " << glm::length(hand - grip) << " cm");
     CHECK(glm::length(hand - grip) < 1.0);
     CHECK(run("puppeteerPropInfo", {{"args", {"ball"}}}).at("holds").back().at("side") == "left");
+}
+
+TEST_CASE("props: editing a caught throw's arc catches it again on the new arc, with no jump")
+{
+    manny();
+    ball();
+    holding("ball");
+    const double t0 = 6.0 / 30.0;
+    const json th = run("puppeteerPropThrow", {{"args", {"ball"}}, {"time", t0}, {"speed", 100.0}, {"angle", 80.0}, {"solve", false}});
+    at(0.0);
+    const glm::dvec3 left = pos(jointPath("hand_l"));
+    run("puppeteerPropArc", {{"args", {th.at("arc")}}, {"through", v3(left.x, left.y, left.z)}, {"at", t0 + 0.6}, {"solve", false}});
+    const json c = run("puppeteerPropCatch", {{"args", {"ball"}}, {"hand", "left"}});
+    const double before = c.at("time").get<double>();
+    // A later, higher arc through the same hand.
+    const json e = run("puppeteerPropArc", {{"args", {th.at("arc")}}, {"through", v3(left.x, left.y, left.z)}, {"at", t0 + 0.9}, {"solve", false}});
+    REQUIRE(e.contains("caughtAt"));
+    const double after = e.at("caughtAt").get<double>();
+    MESSAGE("caught at frame " << before * 30.0 << ", then " << after * 30.0 << " after the edit");
+    CHECK(after > before + 4.0 / 30.0);
+    CHECK(std::abs(after - (t0 + 0.9)) < 3.0 / 30.0);
+    // One catch, on the new time, and the hand takes it there.
+    int catches = 0;
+    const json info = run("puppeteerPropInfo", {{"args", {"ball"}}});
+    for (const json& ev : info.at("events"))
+        catches += ev.value("kind", std::string()) == "catch";
+    CHECK(catches == 1);
+    at(after + 0.5);
+    CHECK(run("puppeteerPropInfo", {{"args", {"ball"}}}).at("holder") == jointPath("hand_l"));
+    // No jump: frame to frame steps around the catch stay close to the arc's own speed.
+    double worst = 0.0, typical = 0.0;
+    for (int f = -3; f <= 3; ++f)
+    {
+        at(after + (f - 1) / 30.0);
+        const glm::dvec3 a = pos("ball_mesh");
+        at(after + f / 30.0);
+        const double step = glm::length(pos("ball_mesh") - a);
+        worst = std::max(worst, step);
+        if (f == -3)
+            typical = step;
+    }
+    MESSAGE("largest step around the catch " << worst << " cm, arc step " << typical << " cm");
+    CHECK(worst < 3.0 * typical + 1.0);
+    // Undo puts the first catch back.
+    run("undo", {});
+    bool old = false;
+    const json undone = run("puppeteerPropInfo", {{"args", {"ball"}}});
+    for (const json& ev : undone.at("events"))
+        old = old || (ev.value("kind", std::string()) == "catch" && std::abs(ev.at("time").get<double>() - before) < 0.5 / 30.0);
+    CHECK(old);
 }
 
 TEST_CASE("props: another character catches what one throws")

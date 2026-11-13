@@ -364,6 +364,7 @@ json propJson(Graph& g, const Prop& p)
             {"holster", strOf(g, p.node, "holster")},
             {"points", points},
             {"holds", holds},
+            {"events", eventsOf(g, p)},
             {"holder", holder ? json(g.path(holder)) : json(nullptr)}};
 }
 
@@ -2107,6 +2108,45 @@ json throwCmd(const Args& a)
     return finish(g, p, grapple, a, arc);
 }
 
+/**
+ * Takes a catch out: its event, the hold's space keys, the prop's keys while it settled into the hand, the reaching
+ * contact's weight keys and the catching hand's finger keys over the reach and settle.
+ */
+void uncatch(Graph& g, const Prop& p, const json& ev)
+{
+    const double t = ev.value("time", 0.0), half = 0.5 / fps();
+    const json by = ev.value("catchBy", json::object());
+    const double reach = by.value("reach", 0.3), blend = by.value("blend", 0.2);
+    const double from = t - reach - half, to = t + blend + 1.0 / fps() + half;
+    if (const NodeId curve = anim::curveFor(g, {p.root, Transform::kSpace, -1}))
+        anim::removeKeys(g, curve, t - 1.0 / fps() - half, t + half);
+    clearRootKeys(g, p.root, t - half, to);
+    Node* handJoint = named(g, ev.value("hand", std::string()));
+    if (const NodeId grapple = propGrapple(g, kNoNode, false); grapple && handJoint)
+        for (const PropContact& c : propContacts(g, grapple, p))
+            if (Node* src = named(g, c.source); src && src->id() == handJoint->id())
+                if (const NodeId curve = anim::curveFor(g, plugOf(*g.node(c.node), "weight")))
+                    anim::removeKeys(g, curve, from, to);
+    if (handJoint)
+        if (const NodeId hn = hand::handFor(g, handJoint->id()))
+            if (const std::optional<hand::Hand> h = hand::load(g, hn))
+                for (const hand::Finger& f : h->fingers)
+                {
+                    std::vector<NodeId> joints = f.joints;
+                    if (f.hose)
+                        joints.push_back(f.hose);
+                    for (NodeId j : joints)
+                        for (const anim::AnimatedPlug& ap : anim::animatedPlugs(g, j))
+                            anim::removeKeys(g, ap.curve, from, to);
+                }
+    json kept = json::array();
+    for (const json& e : eventsOf(g, p))
+        if (std::abs(e.value("time", 0.0) - t) > half || e.value("kind", std::string()) != "catch")
+            kept.push_back(e);
+    setPlug(g, p.node, "events", kept.dump());
+    g.evaluate();
+}
+
 json arcCmd(const Args& a)
 {
     Graph& g = Graph::current();
@@ -2143,17 +2183,31 @@ json arcCmd(const Args& a)
         setPlug(g, arcNode, "until", std::max(1.0 / fps(), a.get<double>("until")));
     if (a.has("gravity"))
         setPlug(g, arcNode, "gravity", std::max(0.0, a.get<double>("gravity")));
-    json out = keyArc(g, p, arcNode);
-    out["velocity"] = vecJson(vecOf(g, arcNode, attrOf(*g.node(arcNode), "velocity")));
-    // A catch after it was timed to the old arc: say so rather than leave a jump.
+    // A catch timed to the old arc is taken out and made again on the new one, the same way it was asked for.
+    json recatch;
     for (const json& e : eventsOf(g, p))
-        if (e.value("kind", std::string()) == "catch" && e.value("time", 0.0) > r.start)
+        if (e.value("kind", std::string()) == "catch" && e.value("time", 0.0) > r.start && e.value("arc", std::string()) == g.path(arcNode))
         {
-            log::write(LogLevel::Warning, std::format("{}: {} is caught at frame {:g}, timed to the arc before this edit; catch it again (puppeteerPropCatch)",
-                                                      cmd, g.node(p.root)->name(), e.value("time", 0.0) * fps()));
-            out["caughtAt"] = e.value("time", 0.0);
+            recatch = e;
             break;
         }
+    if (recatch.is_object())
+        uncatch(g, p, recatch);
+    json out = keyArc(g, p, arcNode);
+    out["velocity"] = vecJson(vecOf(g, arcNode, attrOf(*g.node(arcNode), "velocity")));
+    if (recatch.is_object())
+    {
+        const json by = recatch.value("catchBy", json::object());
+        json call = {{"args", {g.path(p.root)}}, {"time", r.start + 0.5 / fps()}, {"solve", false}};
+        for (const char* k : {"character", "hand", "point", "reach", "blend", "fingers"})
+            if (by.contains(k))
+                call[k] = by[k];
+        if (!by.contains("character") && recatch.contains("character"))
+            call["character"] = recatch["character"];
+        const json caught = ops::execute("puppeteerPropCatch", call);
+        out["caughtAt"] = caught.value("time", 0.0);
+        out["caughtBefore"] = recatch.value("time", 0.0);
+    }
     const NodeId grapple = propGrapple(g, kNoNode, false);
     return finish(g, p, grapple, a, out);
 }
@@ -2257,6 +2311,8 @@ json catchCmd(const Args& a)
     if (ev.is_object())
     {
         ev["arc"] = g.path(r.node);
+        ev["catchBy"] = {{"character", g.path(catcher)}, {"hand", side}, {"point", g.node(point)->name()}, {"reach", reach},
+                         {"blend", std::max(0.0, a.get<double>("blend", 0.2))}, {"fingers", a.get<bool>("fingers", true)}};
         recordEvent(g, p, ev);
     }
     return finish(g, p, propGrapple(g, catcher, true), a,
@@ -3166,7 +3222,8 @@ void registerCommands(ext::Context& ctx)
 
     ctx.registerCommand({
         .name = "puppeteerPropInfo",
-        .doc = "A prop's class, points (world positions), holds over time (who or what holds it from when) and its holder now.",
+        .doc = "A prop's settings, points (world positions), holds over time (who or what holds it from when), its keyed "
+               "events (holds, plants, throws, catches, places, passes) and its holder now.",
         .positionalDoc = "prop (default the selection)",
         .undoable = false,
         .run = [](const Args& a) -> json {
