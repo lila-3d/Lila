@@ -364,6 +364,11 @@ void settlementLanes(const std::string& settlement, Network& net)
         laneOf[l["id"].get<int64_t>()] = net.lanes.size();
         net.lanes.push_back(std::move(lane));
     }
+    // A junction's phases: as many as its links name.
+    std::map<int64_t, int> phases;
+    for (const json& k : r.value("linkList", json::array()))
+        if (const int64_t j = k.value("junction", int64_t(-1)); j >= 0)
+            phases[j] = std::max(phases[j], int(k.value("phase", -1)) + 1);
     // Crossings and corners join lanes whose ends don't meet: walk straight across between the nearest ends.
     for (const json& k : r.value("linkList", json::array()))
     {
@@ -381,7 +386,14 @@ void settlementLanes(const std::string& settlement, Network& net)
         if (best < 0.5f)
             continue;
         const std::string move = k.value("move", "");
-        net.lanes.push_back({.points = {pa, pb}, .width = 3.0f, .crossing = move == "crosswalk" || move == "crossing"});
+        Network::Lane link{.points = {pa, pb}, .width = 3.0f, .crossing = move == "crosswalk" || move == "crossing"};
+        if (const int64_t j = k.value("junction", int64_t(-1)); link.crossing && j >= 0 && k.value("phase", -1) >= 0)
+        {
+            link.junction = settlement + "#" + std::to_string(j);
+            link.phase = k.value("phase", -1);
+            link.phases = phases[j];
+        }
+        net.lanes.push_back(std::move(link));
     }
 }
 

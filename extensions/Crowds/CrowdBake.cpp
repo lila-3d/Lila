@@ -6,8 +6,10 @@
 #include <lila/Anim.h>
 #include <lila/Command.h>
 #include <lila/Log.h>
+#include <lila/Math.h>
 #include <lila/Motion.h>
 #include <lila/Paths.h>
+#include <lila/Profile.h>
 #include <lila/Tasks.h>
 #include <lila/Transform.h>
 
@@ -249,6 +251,188 @@ std::string assetName(std::string s)
             c = '_';
     return s;
 }
+/** One agent group as a Mass crowd group: its share of the agents, walking speed (cm/s) and spread, pause and radius. */
+struct MassGroup
+{
+    std::string name;
+    int agents = 0;
+    /** Agents per character the group wears. */
+    std::map<int, int> wears;
+    double speedSum = 0.0, speedMin = 1e9, speedMax = 0.0, radius = 0.0, pause = 2.0, style = 1.3;
+};
+
+/**
+ * Each of the crowd's characters for Mass: its skeletal mesh, and its walk as an animation on that skeleton, cut from a
+ * network agent wearing it while it walks; the root bone's travel is taken out in Unreal so the walk plays in place.
+ * yaw turns the mesh so it faces Unreal's +X, the way Mass agents walk.
+ */
+json massCharacters(Graph& g, NodeId c, const CrowdView& v, const std::string& folder)
+{
+    LILA_ZONE();
+
+    const Setup& su = v.runtime->setup();
+    const fs::path cache = fs::temp_directory_path() / "lila_crowds" / assetName(g.node(c)->name());
+    fs::create_directories(cache);
+    const math::Vector f = math::toUnreal(math::Vector(0.0, 0.0, 1.0));
+    const double yaw = -glm::degrees(std::atan2(f.y, f.x));
+    json out = json::array();
+    progress::Scope bar("Sending the crowd's characters to Unreal", double(v.characters.size()));
+    for (size_t ch = 0; ch < v.characters.size(); ++ch)
+    {
+        bar.step();
+        // An agent wearing it, walking a little after the start.
+        int agent = -1;
+        for (size_t i = 0; i < su.agents.size() && agent < 0; ++i)
+            if (su.agents[i].character == int(ch) && su.groups[size_t(su.agents[i].group)].useNetwork)
+                agent = int(i);
+        const std::string name = assetName(g.node(nodeNamed(g, v.characters[ch]))->name());
+        if (agent < 0)
+        {
+            out.push_back({{"name", name}, {"mesh", ""}, {"walk", ""}, {"yaw", yaw}});
+            continue;
+        }
+        const int64_t start = v.startFrame + int64_t(v.fps), end = start + int64_t(v.fps * 2.0);
+        const json baked = ops::execute("crowdBake", {{"args", {g.path(c)}}, {"agents", {agent}}, {"start", start}, {"end", end}});
+        const std::string root = baked["agents"][0]["node"].get<std::string>();
+        const std::string mesh = folder + "/SK_" + name, walk = folder + "/A_" + name + "_Walk";
+        const fs::path meshFile = cache / ("SK_" + name + ".fbx"), walkFile = cache / ("A_" + name + "_Walk.fbx");
+        ops::execute("exportFbx", {{"args", {paths::toUtf8(meshFile), root}}, {"kind", "skeletal"}, {"animation", false}});
+        const json r = ops::execute("unrealImport", {{"args", {paths::toUtf8(meshFile)}}, {"contentPath", mesh}, {"kind", "skeletal"}, {"wait", true}});
+        std::string skeleton = mesh + "_Skeleton";
+        for (const json& as : r.value("assets", json::array()))
+            if (const std::string p = as.is_string() ? as.get<std::string>() : as.value("path", ""); p.find("Skeleton") != std::string::npos)
+                skeleton = p;
+        ops::execute("exportFbx", {{"args", {paths::toUtf8(walkFile), root}}, {"kind", "animation"}, {"start", double(start)}, {"end", double(end)}});
+        ops::execute("unrealImport", {{"args", {paths::toUtf8(walkFile)}}, {"contentPath", walk}, {"kind", "animation"}, {"skeleton", skeleton}, {"wait", true}});
+        ops::execute("delete", {{"args", {baked["group"]}}});
+        out.push_back({{"name", name}, {"mesh", mesh}, {"walk", walk}, {"yaw", yaw}});
+    }
+    return out;
+}
+
+/**
+ * The crowd as a live Mass crowd in Unreal: its network's lanes (sidewalks, footpaths, curves, and the crossings and corners
+ * joining them) with ground heights, and its network groups' shares, speeds, pauses and radii; LilaLinkCrowd builds the
+ * ZoneGraph lanes, a lane-following StateTree and Mass entity config per group, and a spawner.
+ */
+json sendMass(Graph& g, NodeId c, const Args& a)
+{
+    LILA_ZONE();
+
+    const char* cmd = "crowdSendToUnreal";
+    std::shared_ptr<const CrowdView> v = viewOf(g, c);
+    if (!v || !v->runtime)
+        throw CommandError(std::string(cmd) + ": the crowd can't be set up: " + (v ? v->status : std::string("not a crowd")));
+    const Setup& su = v->runtime->setup();
+    const bool crossings = a.get<bool>("crossings", true);
+    auto ueAt = [&](glm::vec2 p) {
+        double y = v->ground.at(p.x, p.y);
+        if (!std::isfinite(y))
+            y = v->ground.fallback;
+        const math::Vector u = math::toUnreal(math::Vector(p.x * kCm, y * kCm, p.y * kCm));
+        return json::array({u.x, u.y, u.z});
+    };
+    json lanes = json::array();
+    double walkway = 0.0;
+    for (const Network::Lane& l : su.network.lanes)
+    {
+        if (l.crossing && !crossings)
+            continue;
+        json pts = json::array();
+        for (size_t i = 0; i < l.points.size(); ++i)
+        {
+            pts.push_back(ueAt(l.points[i]));
+            if (i > 0 && !l.crossing)
+                walkway += glm::length(l.points[i] - l.points[i - 1]) * kCm;
+        }
+        json lane = {{"points", pts}, {"crossing", l.crossing}};
+        if (l.phase >= 0 && l.phases > 0)
+            lane["signal"] = {{"junction", l.junction}, {"phase", l.phase}, {"phases", l.phases}};
+        lanes.push_back(lane);
+    }
+    if (lanes.empty())
+        throw CommandError(std::string(cmd) + ": mass=True needs the crowd's network (a settlement's sidewalks or curves); set it in the crowd's network");
+
+    std::vector<MassGroup> groups(su.groups.size());
+    for (size_t k = 0; k < su.groups.size(); ++k)
+    {
+        const Group& gr = su.groups[k];
+        groups[k].name = gr.name;
+        groups[k].pause = 0.5 * (gr.pauseMin + gr.pauseMax);
+        groups[k].style = gr.style == "run" ? 3.6 : 1.3;
+    }
+    for (const AgentSpec& s : su.agents)
+        if (s.group >= 0 && size_t(s.group) < groups.size() && su.groups[size_t(s.group)].useNetwork)
+        {
+            MassGroup& m = groups[size_t(s.group)];
+            ++m.agents;
+            ++m.wears[s.character];
+            m.speedSum += s.speed;
+            m.speedMin = std::min(m.speedMin, double(s.speed));
+            m.speedMax = std::max(m.speedMax, double(s.speed));
+            m.radius += s.radius;
+        }
+    json groupsOut = json::array();
+    int total = 0;
+    for (const MassGroup& m : groups)
+        if (m.agents > 0)
+        {
+            const double mean = m.speedSum / m.agents;
+            json wears = json::array();
+            for (const auto& [ch, n] : m.wears)
+                wears.push_back({{"index", ch}, {"share", n}});
+            groupsOut.push_back({{"characters", wears},
+                                 {"name", m.name},
+                                 {"share", m.agents},
+                                 {"speed", m.style * mean * kCm},
+                                 {"speedVariance", mean > 0.0 ? std::clamp((m.speedMax - m.speedMin) * 0.5 / mean, 0.0, 1.0) : 0.0},
+                                 {"pause", m.pause},
+                                 {"radius", m.radius / m.agents * kCm}});
+            total += m.agents;
+        }
+    if (groupsOut.empty())
+        throw CommandError(std::string(cmd) + ": mass=True sends the groups that walk the network; spawn one with crowdSpawn on the network first");
+
+    const int count = int(a.get<int64_t>("count", total));
+    json characters = json::array();
+    if (a.get<bool>("characters", true) && !v->characters.empty() && !a.get<bool>("dryRun", false))
+        characters = massCharacters(g, c, *v, a.get<std::string>("folder", "/Game/Crowds"));
+    // Spawn points along both walking lanes of each walkway, a little more than needed so the spawner picks among them.
+    const double gap = a.has("density") ? 10000.0 / std::max(0.01, a.get<double>("density"))
+                                        : std::max(100.0, 2.0 * walkway / std::max(1, count) * 0.8);
+    const std::string name = g.node(c)->name();
+    const json params = {{"id", name},
+                         {"label", name},
+                         {"folder", a.get<std::string>("folder", "/Game/Crowds")},
+                         {"lanes", lanes},
+                         {"groups", groupsOut},
+                         {"count", count},
+                         {"minGap", std::max(100.0, gap * 0.7)},
+                         {"maxGap", std::max(100.0, gap * 1.3)},
+                         {"mesh", a.get<std::string>("mesh", "/Engine/BasicShapes/Cylinder.Cylinder")},
+                         {"characters", characters},
+                         {"actorDistance", a.get<double>("actorDistance", 5000.0)},
+                         {"visibleDistance", a.get<double>("visibleDistance", 15000.0)},
+                         {"maxActors", a.get<int64_t>("maxActors", 200)},
+                         {"phaseSeconds", a.get<double>("phaseSeconds", 20.0)},
+                         {"clearSeconds", a.get<double>("clearSeconds", 4.0)}};
+    if (a.get<bool>("dryRun", false))
+        return {{"params", params}};
+    const json r = ops::execute("unrealCall", {{"args", {"setMassCrowd"}}, {"params", params}, {"timeoutMs", 300000}});
+    if (!r.value("ok", false))
+    {
+        const std::string error = r.value("error", r.dump());
+        if (error.find("setMassCrowd") != std::string::npos && error.find("nknown") != std::string::npos)
+            throw CommandError(std::string(cmd) + ": enable the LilaLinkCrowd plugin in the Unreal project (Lila's ue/LilaLinkCrowd); it brings "
+                                                  "MassCrowd, MassAI, StateTree and ZoneGraph");
+        throw CommandError(std::string(cmd) + ": Unreal could not make the Mass crowd: " + error);
+    }
+    const json made = r.value("result", json::object());
+    for (const json& w : made.value("warnings", json::array()))
+        log::write(LogLevel::Warning, std::string(cmd) + ": " + w.get<std::string>());
+    return {{"mass", made}, {"agents", count}, {"groups", groupsOut.size()}, {"lanes", lanes.size()}};
+}
+
 } // namespace
 
 void setCharacters(Graph& g, NodeId crowd, const std::vector<std::string>& characters)
@@ -419,7 +603,9 @@ void registerBake(ext::Context& ctx)
         .name = "crowdSendToUnreal",
         .doc = "Send a crowd to the connected Unreal editor as a Level Sequence: each character's skeletal mesh is imported once, each "
                "agent's baked animation becomes its own animation asset on that skeleton, and the sequence holds one skeletal mesh "
-               "actor per agent playing it, placed in the open level.",
+               "actor per agent playing it, placed in the open level. With mass=True it goes as a live Mass crowd instead: the "
+               "network's sidewalks and crossings become ZoneGraph lanes, and the groups walking them a StateTree, Mass entity "
+               "config and spawner each, so Unreal simulates them (needs the LilaLinkCrowd plugin).",
         .positionalDoc = "the crowd",
         .flags = {
             {"folder", "fo", T::String, "/Game/Crowds", "Content folder for the meshes, animations and the sequence."},
@@ -428,11 +614,25 @@ void registerBake(ext::Context& ctx)
             {"start", "st", T::Int, nullptr, "First frame."},
             {"end", "et", T::Int, nullptr, "Last frame."},
             {"keep", "k", T::Bool, false, "Keep the baked characters in the scene afterwards."},
+            {"mass", "ms", T::Bool, false, "Send a live Mass crowd on the network's lanes instead of a baked sequence."},
+            {"count", "n", T::Int, nullptr, "mass: agents to spawn; default as many as walk the network in Lila.", {}, {}, 0.0, 100000.0},
+            {"density", "dn", T::Float, nullptr, "mass: spawn spacing as agents per 100 m of walking lane; default from count.", {}, {}, 0.01},
+            {"crossings", "cx", T::Bool, true, "mass: include the crossings, so agents cross the roads there."},
+            {"characters", "chs", T::Bool, true, "mass: agents show as the crowd's characters, walking, near the camera."},
+            {"actorDistance", "ad", T::Float, 5000.0, "mass: within this many cm of the camera agents show as their characters.", {}, {}, 0.0},
+            {"visibleDistance", "vd", T::Float, 15000.0, "mass: past this many cm agents aren't drawn (they still walk).", {}, {}, 0.0},
+            {"maxActors", "mxa", T::Int, 200, "mass: at most this many agents show as characters at once.", {}, {}, 0.0},
+            {"phaseSeconds", "ps", T::Float, 20.0, "mass: seconds each signal phase lasts; crossings at signals open in the phase that walks them.", {}, {}, 1.0},
+            {"clearSeconds", "cs", T::Float, 4.0, "mass: seconds at the end of a walk phase when no one starts across.", {}, {}, 0.0},
+            {"mesh", "me", T::String, "/Engine/BasicShapes/Cylinder.Cylinder", "mass: static mesh each agent shows as; empty for none."},
+            {"dryRun", "dr", T::Bool, false, "mass: return what would be sent without sending."},
         },
         .undoable = false,
         .run = [](const Args& a) -> json {
             Graph& g = sceneGraph();
             const NodeId c = crowdArg(g, a.objects(), "crowdSendToUnreal");
+            if (a.get<bool>("mass", false))
+                return sendMass(g, c, a);
             const std::string folder = a.get<std::string>("folder", "/Game/Crowds");
             json report;
             std::vector<Baked> baked;
@@ -494,7 +694,7 @@ void registerBake(ext::Context& ctx)
             report["unreal"] = r.value("result", json());
             return report;
         },
-        .examples = {"crowdSendToUnreal('crowd', folder='/Game/Crowds/Plaza')"},
+        .examples = {"crowdSendToUnreal('crowd', folder='/Game/Crowds/Plaza')", "crowdSendToUnreal('crowd', mass=True, count=200)"},
     });
 }
 } // namespace crowds

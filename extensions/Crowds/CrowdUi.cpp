@@ -188,8 +188,9 @@ QWidget* controlsFor(NodeId id, QWidget* parent)
     QWidget* output = box(w, &ol);
     ol->addWidget(controls::grid({controls::row("crowds.simulate", "player-play", output, "Simulate"),
                                   controls::row("crowds.bake", "stack-2", output, "Bake"),
-                                  controls::row("crowds.export", "file-export", output, "Export"),
-                                  controls::row("crowds.sendToUnreal", "send", output, "Send to Unreal")},
+                                  controls::row("crowds.sendToUnreal", "send", output, "Sequence to Unreal"),
+                                  controls::row("crowds.sendMassToUnreal", "route", output, "Mass to Unreal"),
+                                  controls::row("crowds.export", "file-export", output, "Export")},
                                  2, output));
     ol->addWidget(controls::overflow({"crowds.clearCache"}, output));
     v->addWidget(controls::section("Output", output, w, "crowds"));
@@ -432,6 +433,11 @@ void registerUi(ext::Context& ctx)
     actions::add(ctx, {.id = "crowds.sendToUnreal", .label = "Send Crowd to Unreal", .category = cat,
                        .doc = "Bake the agents and send them to Unreal as a Level Sequence: one skeletal mesh actor per agent with its animation.",
                        .command = "crowdSendToUnreal", .icon = "send", .keywords = words({"unreal", "sequencer", "level sequence", "ue5"})});
+    actions::add(ctx, {.id = "crowds.sendMassToUnreal", .label = "Send Mass Crowd to Unreal", .category = cat,
+                       .doc = "Send the crowd to Unreal as a live Mass crowd: its sidewalks and crossings as ZoneGraph lanes, the groups walking "
+                              "them as Mass agents that wander the lanes and cross at the crossings. Needs the LilaLinkCrowd plugin.",
+                       .command = "crowdSendToUnreal", .call = {{"mass", true}}, .icon = "route",
+                       .keywords = words({"unreal", "mass", "masscrowd", "mass ai", "zonegraph", "statetree", "pedestrians", "city sample", "ue5"})});
     actions::add(ctx, {.id = "crowds.clearCache", .label = "Clear Crowd Cache", .category = cat,
                        .doc = "Throw the crowd's cache away; the next frame simulates from the start.", .command = "clearSimCache", .icon = "trash",
                        .keywords = words({"cache", "clear"})});
@@ -458,7 +464,7 @@ void registerUi(ext::Context& ctx)
                 add(std::string("crowds.spawn.") + b.behaviour);
             add("");
         }
-        for (const char* a : {"crowds.simulate", "crowds.bake", "crowds.export", "crowds.sendToUnreal", "crowds.clearCache", "", "crowds.showPaths", "window.crowds"})
+        for (const char* a : {"crowds.simulate", "crowds.bake", "crowds.export", "crowds.sendToUnreal", "crowds.sendMassToUnreal", "crowds.clearCache", "", "crowds.showPaths", "window.crowds"})
             add(a);
     };
     submenu("Animation", "crowds.menu.anim");

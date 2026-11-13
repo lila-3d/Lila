@@ -9,10 +9,13 @@ from lila_link_expressions import _begin_pin, _ensure_rig
 UNIT = "/Script/LilaLinkRig.RigUnit_LilaStrings"
 PREFIX = "LilaStrings_"
 CONTROL_PREFIX = "LS_"
+EXTERNAL_PREFIX = "LS_x_"
 # Lila's mode names in ELilaStringsMode's order: a control's Mode channel holds the index.
 MODES = ["default", "free", "forward", "forwardAll", "backward", "backwardAll", "bidirectional", "all", "ik", "fullBody"]
 MODE_CHANNEL = "Mode"
 ISOLATE_CHANNEL = "Isolate Rotation"
+PIN_CHANNEL = "Pin"
+LOCK_CHANNEL = "Lock"
 
 
 def _add_control(hierarchy, hc, bone):
@@ -62,6 +65,93 @@ def _add_channels(hierarchy, hc, control, mode, isolate):
     _channel(hierarchy, hc, control, ISOLATE_CHANNEL, settings, unreal.RigHierarchy.make_control_value_from_bool(isolate))
 
 
+def _add_external(hierarchy, hc, member):
+    """A control for a prop or another character's joint glued or attached to this character, where it is now."""
+    name = EXTERNAL_PREFIX + "".join(c if c.isalnum() else "_" for c in member["name"])
+    key = unreal.RigElementKey(unreal.RigElementType.CONTROL, name)
+    settings = unreal.RigControlSettings()
+    settings.control_type = unreal.RigControlType.EULER_TRANSFORM
+    settings.display_name = member["name"]
+    settings.shape_name = "Box_Thick"
+    loc, q = member["location"], member["rotation"]
+    t = unreal.Transform(unreal.Vector(*loc), unreal.Quat(*q).rotator(), unreal.Vector(1.0, 1.0, 1.0))
+    if not hierarchy.contains(key):
+        value = unreal.RigHierarchy.make_control_value_from_euler_transform(unreal.EulerTransform(t.translation, t.rotation.rotator(), t.scale3d))
+        hc.add_control(name, unreal.RigElementKey(), settings, value, False, False)
+    unreal.LilaStringsLibrary.place_control(hierarchy, name, unreal.Vector(*loc), unreal.Quat(*q))
+    return name
+
+
+def _add_switch(hierarchy, hc, control, name, on):
+    settings = unreal.RigControlSettings()
+    settings.control_type = unreal.RigControlType.BOOL
+    return _channel(hierarchy, hc, control, name, settings, unreal.RigHierarchy.make_control_value_from_bool(bool(on)))
+
+
+def _lock_sequence(p, rig, mesh, lock_channels, locks, errors):
+    """The chains' lock keys on the rig's Lock channels, in a Level Sequence binding a skeletal mesh actor to the rig."""
+    keyed = [l for l in locks if l.get("keys") and l["bone"] in lock_channels]
+    if not keyed:
+        return None
+    rig_path = rig.get_path_name().split(".")[0]
+    path = p.get("sequence") or rig_path.rsplit("/", 1)[0] + "/LS_" + rig_path.rsplit("/", 1)[1]
+    folder, name = path.rsplit("/", 1)
+    seq = unreal.load_asset(path)
+    if seq is None:
+        seq = unreal.AssetToolsHelpers.get_asset_tools().create_asset(name, folder, unreal.LevelSequence, unreal.LevelSequenceFactoryNew())
+    if seq is None:
+        errors.append("couldn't make the Level Sequence " + path)
+        return None
+    fps = float(p.get("fps") or 30.0)
+    seq.set_display_rate(unreal.FrameRate(int(round(fps)), 1))
+    world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
+    actors = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+    label = mesh.get_name() + " Strings"
+    actor = next((a for a in actors.get_all_level_actors() if isinstance(a, unreal.SkeletalMeshActor) and a.get_actor_label() == label), None)
+    if actor is None:
+        actor = actors.spawn_actor_from_class(unreal.SkeletalMeshActor, unreal.Vector(0.0, 0.0, 0.0))
+        actor.set_actor_label(label)
+    actor.skeletal_mesh_component.set_skeletal_mesh_asset(mesh)
+    binding = next((b for b in seq.get_possessables() if b.get_display_name() == label), None) or seq.add_possessable(actor)
+    track = unreal.ControlRigSequencerLibrary.find_or_create_control_rig_track(world, seq, rig.generated_class(), binding)
+    control_rig = None
+    for proxy in unreal.ControlRigSequencerLibrary.get_control_rigs(seq):
+        if proxy.track == track:
+            control_rig = proxy.control_rig
+    if control_rig is None:
+        errors.append("the Level Sequence has no Control Rig track for " + rig_path)
+        return None
+    sections = track.get_sections() or [track.add_section()]
+    frames = []
+    written = {}
+    for lock in keyed:
+        channel = lock_channels[lock["bone"]]
+        keys = [[int(round(t * fps)), bool(on)] for t, on in lock["keys"]]
+        if not unreal.LilaStringsLibrary.key_rig_bools(sections[0], channel, [k[0] for k in keys], [k[1] for k in keys]):
+            errors.append("couldn't key " + channel + " in " + path)
+        frames += [k[0] for k in keys]
+        written[lock["bone"]] = keys
+    seq.set_playback_start(min(frames))
+    seq.set_playback_end(max(frames) + 1)
+    unreal.EditorAssetLibrary.save_loaded_asset(seq)
+    return {"sequence": path, "keys": written, "channels": lock_channels, "rig": rig_path}
+
+
+def _relation_channel(rel, taken):
+    """Where a glue or attach set's switch goes: an attach's on the member the others follow, a glue's on its first."""
+    members = [m if isinstance(m, str) else m["name"] for m in rel["members"]]
+    bones = [m for m in rel["members"] if isinstance(m, str)]
+    # The switch lives on a bone's control: the leader's for an attach when it is a bone, else the first bone.
+    owner = members[-1] if rel.get("attach") and isinstance(rel["members"][-1], str) else bones[0]
+    others = [m for m in members if m != owner]
+    name = ("Attach " if rel.get("attach") else "Glue ") + others[0] + (" +{}".format(len(others) - 1) if len(others) > 1 else "")
+    base, n = name, 2
+    while (owner, name) in taken:
+        name, n = "{} {}".format(base, n), n + 1
+    taken.add((owner, name))
+    return owner, name
+
+
 def build(p):
     errors, warnings = [], []
     mesh = unreal.load_asset(p["skeletalMesh"])
@@ -90,21 +180,52 @@ def build(p):
     for path in after:
         controller.break_link(begin, path, False)
 
-    web = json.dumps(p["ruleWeb"])
     mode = p.get("mode", "fullBody")
     if mode not in MODES:
         return {"errors": errors + ["no Strings mode " + mode + " (" + ", ".join(MODES) + ")"]}
     isolate = bool(p.get("isolate", False))
-    prev = begin
-    made = []
-    for i, bone in enumerate(p.get("controls", [])):
+    rule_web = dict(p["ruleWeb"])
+    pins = set(rule_web.get("pins", []))
+    locks = {l["bone"]: bool(l.get("locked")) for l in rule_web.get("locks", [])}
+    controls = {}
+    lock_channels = {}
+    for bone in p.get("controls", []):
         control = _add_control(hierarchy, hc, bone)
         if control is None:
             warnings.append("no bone named " + bone + " on " + mesh.get_name())
             continue
         unreal.LilaStringsLibrary.place_control_at_bone(hierarchy, control, bone)
         _add_channels(hierarchy, hc, control, mode, isolate)
-        node = controller.add_unit_node_from_struct_path(UNIT, "Execute", unreal.Vector2D(400.0 + 360.0 * i, 200.0), PREFIX + bone, False)
+        _add_switch(hierarchy, hc, control, PIN_CHANNEL, bone in pins)
+        if bone in locks:
+            lock_channels[bone] = str(_add_switch(hierarchy, hc, control, LOCK_CHANNEL, locks[bone]).name)
+        controls[bone] = control
+    # The units find each bone's Pin and Lock channels, and each set's switch, through the web.
+    rule_web["controls"] = controls
+    glue, taken = [], set()
+    externals = {}
+    for rel in rule_web.get("glue", []):
+        rel = dict(rel)
+        # Props and other characters' joints get a control of their own where they are.
+        members = []
+        for m in rel["members"]:
+            if not isinstance(m, str):
+                m = dict(m)
+                m["control"] = externals.setdefault(m["name"], _add_external(hierarchy, hc, m))
+            members.append(m)
+        rel["members"] = members
+        owner, name = _relation_channel(rel, taken)
+        if owner in controls:
+            _add_switch(hierarchy, hc, controls[owner], name, True)
+            rel["channel"] = {"control": controls[owner], "name": name}
+        glue.append(rel)
+    rule_web["glue"] = glue
+    web = json.dumps(rule_web)
+    prev = begin
+    made = []
+    for i, (bone, control) in enumerate([(b, controls[b]) for b in p.get("controls", []) if b in controls] +
+                                        [("", c) for c in externals.values()]):
+        node = controller.add_unit_node_from_struct_path(UNIT, "Execute", unreal.Vector2D(400.0 + 360.0 * i, 200.0), PREFIX + (bone or control), False)
         if node is None:
             errors.append("couldn't add a Lila Strings unit (is the LilaLinkRig module loaded?)")
             break
@@ -122,8 +243,10 @@ def build(p):
 
     unreal.BlueprintEditorLibrary.compile_blueprint(rig)
     unreal.EditorAssetLibrary.save_loaded_asset(rig)
+    sequence = _lock_sequence(p, rig, mesh, lock_channels, rule_web.get("locks", []), errors)
     return {"rig": rig.get_path_name().split(".")[0], "created": created, "nodes": made, "mode": mode, "isolate": isolate,
-            "errors": errors, "warnings": warnings}
+            "pins": sorted(pins & set(controls)), "locks": sorted(b for b in locks if b in controls),
+            "glue": [g.get("channel") for g in glue], "lockSequence": sequence, "errors": errors, "warnings": warnings}
 
 
 def build_and_print(text):

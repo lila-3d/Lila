@@ -4,6 +4,7 @@
 #include "Units/RigUnit.h"
 
 class URigHierarchy;
+class UMovieSceneSection;
 class USkeletalMesh;
 
 #include "RigUnit_LilaStrings.generated.h"
@@ -34,7 +35,7 @@ struct LILALINKRIG_API FRigUnit_LilaStringsBase : public FRigUnitMutable
 	UPROPERTY(meta = (Input))
 	FTransform Target = FTransform::Identity;
 
-	/** The rule web's contacts hold where they were (feet stay planted). */
+	/** The rule web's contacts hold where they were (feet stay planted). Pins and locks hold either way. */
 	UPROPERTY(meta = (Input))
 	bool bHoldContacts = true;
 
@@ -76,7 +77,9 @@ enum class ELilaStringsMode : uint8
 /**
  * Lila Strings: poses the bone in any Strings mode. When Control has animation channels named Mode (an integer, the
  * mode's index) or Isolate Rotation (a bool), they override Mode and bIsolateRotation, so an animator picks and keys the
- * mode per control.
+ * mode per control. The rule web's pins and locked IK chain ends hold as contacts do (always, not only with
+ * bHoldContacts), and its glue and attach sets follow the bone; the rig's Pin, Lock and Glue/Attach channels, where the
+ * web names them, switch each on and off.
  */
 USTRUCT(meta = (DisplayName = "Lila Strings", Keywords = "Strings,FK,IK,FBIK,Full Body,Backward,Bidirectional,Free,Ephemeral,Lila"))
 struct LILALINKRIG_API FRigUnit_LilaStrings : public FRigUnit_LilaStringsBase
@@ -199,10 +202,30 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Lila|Strings")
 	static bool PlaceControlAtBone(URigHierarchy* Hierarchy, FName Control, FName Bone);
 
+	/** Replaces a bool control's keys (a Lock channel) on a Control Rig track's section: Frames in the sequence's display rate. */
+	UFUNCTION(BlueprintCallable, Category = "Lila|Strings")
+	static bool KeyRigBools(UMovieSceneSection* Section, FName Control, const TArray<int32>& Frames, const TArray<bool>& Values);
+
+	/** A bool control's keyed value at each frame (display rate) of a Control Rig track's section. */
+	UFUNCTION(BlueprintCallable, Category = "Lila|Strings")
+	static TArray<bool> RigBools(UMovieSceneSection* Section, FName Control, const TArray<int32>& Frames);
+
+	/** Puts the control (initial and current) at Location and Rotation, global, in double precision. */
+	UFUNCTION(BlueprintCallable, Category = "Lila|Strings")
+	static bool PlaceControl(URigHierarchy* Hierarchy, FName Control, FVector Location, FQuat Rotation);
+
 	/** Makes an integer control (a Mode channel) a dropdown of the Strings modes; script can't set ControlEnum itself. */
 	UFUNCTION(BlueprintCallable, Category = "Lila|Strings")
 	static bool SetModeEnum(URigHierarchy* Hierarchy, FRigElementKey Channel);
 
 	UFUNCTION(BlueprintCallable, Category = "Lila|Strings")
 	static TMap<FName, FTransform> DragRig(UClass* RigClass, FName Control, const FTransform& Target, FVector TurnVector);
+
+	/**
+	 * DragRig with bool channels set first: each key is "Control/Channel" (LS_hand_l/Pin), its value the channel's. The result
+	 * also has the glued props' and other characters' controls (LS_x_...).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Lila|Strings")
+	static TMap<FName, FTransform> DragRigSwitched(UClass* RigClass, FName Control, const FTransform& Target, FVector TurnVector,
+												   const TMap<FString, bool>& Switches);
 };

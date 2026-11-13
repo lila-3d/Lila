@@ -9,12 +9,14 @@
 #include <lila/Profile.h>
 #include <lila/Curves.h>
 #include <lila/Ghosts.h>
+#include <lila/IkSolver.h>
 #include <lila/OptionBox.h>
 #include <lila/Paths.h>
 #include <lila/Poses.h>
 #include <lila/SplineChain.h>
 #include <lila/Strings.h>
 #include <lila/Tasks.h>
+#include <lila/Transform.h>
 #include <lila/UI.h>
 #include <lila/ViewportTool.h>
 
@@ -978,8 +980,131 @@ json unrealLimit(const ik::JointLimit& l)
 }
 
 /**
+ * An IK chain for the rule web: its end bone, whether it is locked now, and everything Lila's ikHandle solves it from,
+ * carried into Unreal space: solver (twoBone, fabrik, spline), pole (from the start joint), pole angle and roll (radians,
+ * signed for Unreal's handedness), softness, stretch, the spline's curve, per joint its rest local, orient, rotate axis,
+ * limit and preferred angle, and how far the end follows the controller (alignWeight). "unsolved" only when a joint of
+ * the chain isn't a bone of the skeleton.
+ */
+template <class BoneName, class UeVec>
+json unrealLock(Graph& g, NodeId chain, const std::vector<NodeId>& joints, const BoneName& boneName, const UeVec& ueVec, const glm::dmat3& basis)
+{
+    json out = {{"bone", boneName(joints.back())}, {"locked", chainLocked(g, chain, g.time())}};
+    // The lock as Unreal's Lock channel steps through it: a key wherever it turns on or off, frame by frame across its keys.
+    const json times = ops::execute("keyframe", {{"args", {g.node(chain)->path()}}, {"attribute", "lock"}, {"query", true}});
+    if (times.is_array() && !times.empty())
+    {
+        const double fps = ops::execute("playbackOptions", {{"query", true}}).value("fps", 30.0);
+        const int64_t first = int64_t(std::floor(times.front().get<double>() * fps + 1e-6));
+        const int64_t last = int64_t(std::ceil(times.back().get<double>() * fps - 1e-6));
+        json keys = json::array();
+        for (int64_t f = first; f <= last; ++f)
+        {
+            const double t = double(f) / fps;
+            const bool on = chainLocked(g, chain, t);
+            if (keys.empty() || keys.back()[1].get<bool>() != on)
+                keys.push_back({t, on});
+        }
+        out["keys"] = keys;
+    }
+    const NodeId h = lila::scene::rigel::handleOf(g, chain);
+    const Node* handle = h ? g.node(h) : nullptr;
+    if (!handle)
+        return out;
+    json names = json::array();
+    for (NodeId j : joints)
+    {
+        if (boneName(j).empty())
+            return out["unsolved"] = g.node(j)->name() + " isn't a deform joint, so Unreal's skeleton has no bone for it", out;
+        names.push_back(boneName(j));
+    }
+    const double handed = glm::determinant(basis) < 0.0 ? -1.0 : 1.0;
+    auto value = [&](int attr) { return g.value({h, attr, -1}); };
+    auto number = [&](const char* attr) { return std::get<double>(value(attrOf(*handle, attr))); };
+    // A rotation carried into Unreal's local-rotation space, as the rest locals are.
+    auto ueQuat = [&](const glm::dmat3& m) {
+        const glm::dquat q = glm::normalize(glm::quat_cast(basis * m * glm::inverse(basis)));
+        return json::array({q.x, q.y, q.z, q.w});
+    };
+    const int count = int(joints.size());
+    std::string solver = std::get<std::string>(value(attrOf(*handle, "ikSolver")));
+    if (solver.empty())
+        solver = count == 3 ? "ik2BoneSolver" : "ikFabrikSolver";
+    // As the handle does: a solver it can't run on this many joints falls to FABRIK.
+    if (solver == "ik2BoneSolver" && count == 3)
+        out["solver"] = "twoBone";
+    else if (solver == "ikSplineSolver" && count >= 2)
+        out["solver"] = "spline";
+    else
+        out["solver"] = "fabrik";
+    const bool stretch = std::get<bool>(value(attrOf(*handle, "stretch")));
+    out["maxStretch"] = stretch && out["solver"] != "spline" ? std::max(1.0, number("maxStretch")) : 1.0;
+    out["fitCurve"] = stretch;
+    out["softness"] = std::max(0.0, number("softness"));
+    out["twist"] = glm::radians(number("poleAngle")) * handed;
+    out["roll"] = glm::radians(number("roll")) * handed;
+    if (const glm::dvec3 pv = vecOf(g, h, attrOf(*handle, "poleVector")); glm::length(pv) > 1e-12)
+        out["pole"] = ueVec(pv);
+    if (const auto* c = dynamic_cast<const ik::CurvePoints*>(std::get<DataPtr>(value(attrOf(*handle, "inCurve"))).get()))
+    {
+        json curve = json::array();
+        for (const glm::dvec3& p : c->points)
+            curve.push_back(ueVec(p));
+        out["curve"] = curve;
+    }
+    // The handle's slots: each joint's rest local (what the solve starts from), its orient and rotate axis, its limit.
+    const int base = attrOf(*handle, "restLocal0");
+    auto slot = [&](int i, int k) { return value(base + i * 13 + k); };
+    json slots = json::array();
+    for (int i = 0; i < count; ++i)
+    {
+        const glm::dmat4 local = std::get<glm::dmat4>(slot(i, 0));
+        const glm::dmat3 orient(std::get<glm::dmat4>(slot(i, 1))), axis(std::get<glm::dmat4>(slot(i, 2)));
+        const glm::dvec3 t = basis * glm::dvec3(local[3]);
+        json s = {{"rest", {t.x, t.y, t.z}}, {"restRotation", ueQuat(glm::dmat3(local))}, {"orient", ueQuat(orient)}, {"axis", ueQuat(axis)}};
+        if (i + 1 < count)
+        {
+            const int kind = int(std::clamp<int64_t>(std::get<int64_t>(slot(i, 6)), 0, 2));
+            const double stiffness = std::clamp(std::get<double>(slot(i, 11)), 0.0, 1.0);
+            if (kind != 0 || stiffness > 0.0)
+            {
+                const glm::dvec3 a = std::get<glm::dvec3>(slot(i, 7));
+                glm::dvec3 bone(1.0, 0.0, 0.0);
+                if (const glm::dvec3 child(std::get<glm::dmat4>(slot(i + 1, 0))[3]); glm::length(child) > 1e-12)
+                    bone = glm::normalize(axis * child);
+                const glm::dvec3 ua = (glm::length(a) > 1e-12 ? glm::normalize(a) : glm::dvec3(0, 0, 1));
+                s["limit"] = {{"kind", kind == 1 ? "hinge" : kind == 2 ? "cone" : "none"},
+                              {"axis", ueVec(ua * handed)},
+                              {"min", glm::radians(std::get<double>(slot(i, 8)))},
+                              {"max", glm::radians(std::get<double>(slot(i, 9)))},
+                              {"cone", glm::radians(std::get<double>(slot(i, 10)))},
+                              {"bone", ueVec(bone)},
+                              {"stiffness", stiffness}};
+            }
+            if (const glm::dvec3 pref = std::get<glm::dvec3>(slot(i, 12)); pref != glm::dvec3(0.0))
+            {
+                const auto order = RotateOrder(std::clamp<int64_t>(std::get<int64_t>(slot(i, 3)), 0, 5));
+                // Lila's preferred local: frame * preferred * post, where frame and post are the orient and rotate axis.
+                s["preferred"] = ueQuat(orient * glm::dmat3(eulerToMatrix(pref, order)) * axis);
+            }
+        }
+        slots.push_back(s);
+    }
+    out["slots"] = slots;
+    // The end turns with the controller through its align node, by the node's weight.
+    double align = 0.0;
+    if (const Node& c = *g.node(chain); attrOf(c, "align") >= 0)
+        if (const Node* al = g.find(std::get<std::string>(g.value({chain, attrOf(c, "align"), -1}))))
+            align = std::clamp(std::get<double>(g.value({al->id(), attrOf(*al, "weight"), -1})), 0.0, 1.0);
+    out["alignWeight"] = align;
+    out["chain"] = names;
+    return out;
+}
+
+/**
  * The rule web as plain data for Unreal: bone names as the skeleton has them (the joints' names), the hips, contacts,
- * limbs, lines of action, each bone's full-body stiffness and joint limits (in Unreal's local-rotation space). Nothing
+ * limbs, lines of action, each bone's full-body stiffness and joint limits (in Unreal's local-rotation space), the pins,
+ * every IK chain end with whether it is locked now, and the glue and attach sets among the skeleton's bones. Nothing
  * positional: the Rig Units read the skeleton itself.
  */
 json ruleWeb(Graph& g, NodeId character)
@@ -1004,7 +1129,52 @@ json ruleWeb(Graph& g, NodeId character)
         if (b.limit.kind != ik::JointLimit::Kind::None)
             limits[name] = unrealLimit(b.limit);
     }
-    return {{"version", 1},
+    auto boneName = [&](NodeId j) { return k.boneOf(j) >= 0 ? bareJoint(g.node(j)->name()) : std::string(); };
+    json pins = json::array(), locks = json::array(), glue = json::array();
+    for (NodeId p : pinsOf(g, character))
+        if (const std::string n = boneName(p); !n.empty() && std::find(pins.begin(), pins.end(), n) == pins.end())
+            pins.push_back(n);
+    const glm::dmat3 basis = unrealBasis();
+    auto ueVec = [&](const glm::dvec3& v) {
+        const glm::dvec3 u = basis * v;
+        return json::array({u.x, u.y, u.z});
+    };
+    for (NodeId chain : lila::scene::rigel::chains(g))
+        if (const auto js = lila::scene::rigel::chainJoints(g, chain); !js.empty())
+            if (const std::string n = boneName(js.back()); !n.empty())
+                locks.push_back(unrealLock(g, chain, js, boneName, ueVec, basis));
+    // Glue and attach: this skeleton's bones by name; props and other characters' joints as frames in this character's
+    // Unreal space (where they are now), which the rig carries as controls of their own.
+    const NodeId rootParent = g.parent(root);
+    const glm::dmat4 space = glm::inverse(rootParent ? worldOf(g, rootParent) : glm::dmat4(1.0));
+    for (const Relation& rel : relations())
+    {
+        const std::vector<NodeId> members = membersOf(g, rel);
+        json list = json::array();
+        int skeletal = 0;
+        for (NodeId m : members)
+        {
+            if (const std::string n = boneName(m); !n.empty())
+            {
+                list.push_back(n);
+                ++skeletal;
+                continue;
+            }
+            const glm::dmat4 w = space * worldOf(g, m);
+            const glm::dquat q = glm::normalize(glm::quat_cast(basis * math::rotationOf(w) * glm::inverse(basis)));
+            const glm::dvec3 t = basis * glm::dvec3(w[3]);
+            json ext = {{"name", bareName(g.node(m)->path())}, {"location", {t.x, t.y, t.z}}, {"rotation", {q.x, q.y, q.z, q.w}}};
+            const NodeId other = rig::isJoint(*g.node(m)) ? characterFor(g, m) : kNoNode;
+            if (other && other != character)
+                ext["character"] = g.node(other)->name(), ext["bone"] = bareJoint(g.node(m)->name());
+            else
+                ext["prop"] = g.node(m)->path();
+            list.push_back(ext);
+        }
+        if (skeletal >= 1 && list.size() >= 2)
+            glue.push_back({{"members", list}, {"attach", rel.attach}});
+    }
+    return {{"version", 2},
             {"character", g.node(character)->name()},
             {"root", bareJoint(g.node(root)->name())},
             {"hips", k.hips >= 0 ? bareJoint(g.node(k.joints[size_t(k.hips)])->name()) : ""},
@@ -1016,6 +1186,10 @@ json ruleWeb(Graph& g, NodeId character)
             {"modes", r.modes},
             {"stiffness", stiffness},
             {"limits", limits},
+            {"pins", pins},
+            {"locks", locks},
+            {"glue", glue},
+            {"basis", {{"up", ueVec(glm::dvec3(0.0, 1.0, 0.0))}, {"side", ueVec(glm::dvec3(1.0, 0.0, 0.0))}}},
             {"lengthScale", k.problem.lengthScale}};
 }
 
@@ -1036,8 +1210,9 @@ json stringsRuleWeb(const Args& a)
 
 /**
  * The rule web sent to Unreal: LilaLink makes or updates a Control Rig on the skeletal mesh with a control on each hand,
- * foot, head and the hips, each posing its bone through a Lila Strings unit given the web, its Mode and Isolate Rotation
- * channels starting at the mode and setting given.
+ * foot, head and the hips and each pinned, locked or glued joint, each posing its bone through a Lila Strings unit given
+ * the web, its Mode and Isolate Rotation channels starting at the mode and setting given, its Pin and Lock channels at
+ * the joint's pin and lock, and a Glue or Attach channel per set.
  */
 json unrealStringsRig(const Args& a)
 {
@@ -1082,13 +1257,22 @@ json unrealStringsRig(const Args& a)
             addControl(chain.back());
     for (const json& c : web["contacts"])
         addControl(c);
+    for (const json& p : web["pins"])
+        addControl(p);
+    for (const json& l : web["locks"])
+        addControl(l["bone"]);
+    for (const json& rel : web["glue"])
+        for (const json& m : rel["members"])
+            addControl(m);
     const strings::Mode mode = modeArg(a, "unrealStringsRig");
     const json payload = {{"skeletalMesh", mesh},
                           {"rig", rig},
                           {"ruleWeb", web},
                           {"controls", controls},
                           {"mode", strings::modeName(mode)},
-                          {"isolate", a.get<bool>("isolate", isolateRef())}};
+                          {"isolate", a.get<bool>("isolate", isolateRef())},
+                          {"sequence", a.get<std::string>("sequence", "")},
+                          {"fps", ops::execute("playbackOptions", {{"query", true}}).value("fps", 30.0)}};
     if (a.get<bool>("dryRun", false))
         return {{"rig", rig}, {"skeletalMesh", mesh}, {"payload", payload}};
     // Reloaded so a LilaLink update takes effect without restarting the editor.
@@ -1111,7 +1295,16 @@ json unrealStringsRig(const Args& a)
         throw CommandError("unrealStringsRig: Unreal didn't build the rig" + (log.empty() ? std::string() : ":\n" + log));
     if (const json errors = result.value("errors", json::array()); !errors.empty())
         throw CommandError("unrealStringsRig: " + errors[0].get<std::string>());
-    return {{"rig", result.value("rig", rig)}, {"skeletalMesh", mesh}, {"unreal", result}};
+    json out = {{"rig", result.value("rig", rig)}, {"skeletalMesh", mesh}, {"unreal", result}};
+    for (const json& l : web["locks"])
+        if (l.contains("unsolved"))
+        {
+            const std::string w = "the IK chain to " + l["bone"].get<std::string>() + " isn't solved as Lila solves it (" +
+                                  l["unsolved"].get<std::string>() + "); Unreal holds its end where it is while locked";
+            out["warnings"].push_back(w);
+            log::write(LogLevel::Warning, "unrealStringsRig: " + w);
+        }
+    return out;
 }
 
 json stringsRestoreLengths(const Args& a)
@@ -3889,13 +4082,17 @@ void registerStrings(ext::Context& ctx)
         .name = "unrealStringsRig",
         .doc = "Pose the character in Unreal the way Strings poses it here: LilaLink makes or updates a Control Rig on its skeletal "
                "mesh: a control on the hips and the end of each line of action and limb (hands, feet, head) and each contact, each posing its bone through a Lila "
-               "Strings unit given the character's rule web. Each control's Mode and Isolate Rotation channels pick how it poses. "
+               "Strings unit given the character's rule web. Each control's Mode and Isolate Rotation channels pick how it poses; Pin, "
+               "Lock and Glue/Attach channels carry pins, locked IK chains and glue, and keyed locks go into a Level Sequence. "
                "Returns {rig, skeletalMesh, unreal}, or {rig, skeletalMesh, payload} with dryRun.",
         .positionalDoc = "character or one of its joints (default the selection)",
         .flags = {{"skeletalMesh", "sm", T::String, nullptr, "The skeletal mesh asset. Default: the root's skeletal mapping."},
                   {"rig", "r", T::String, nullptr, "The Control Rig asset to make or update. Default: CR_<mesh>_Strings beside the mesh."},
                   {"mode", "m", T::String, nullptr, "The mode the controls start in; default the current one.", modeChoices()},
                   {"isolate", "iso", T::Bool, nullptr, "The controls start with Isolate Rotation on; default the Isolate Rotation setting."},
+                  {"sequence", "sq", T::String, nullptr,
+                   "Level Sequence for the IK chains' lock keys, keyed on the rig's Lock channels. Default: LS_<mesh>_Strings beside the "
+                   "rig when a chain's lock is keyed."},
                   {"dryRun", "dry", T::Bool, false, "Return what would be sent without connecting to Unreal."}},
         .undoable = false,
         .run = unrealStringsRig,
