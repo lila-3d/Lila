@@ -1300,7 +1300,7 @@ TEST_CASE("stringsRuleWeb and unrealStringsRig: the rule web by bone name, writt
     run("stringsRules", {{"args", {"hero"}}, {"contacts", {"foot_l", "foot_r"}}, {"addChain", {"upperarm_l", "hand_l"}}});
     const std::filesystem::path file = std::filesystem::temp_directory_path() / "lila_rule_web_test.json";
     const json web = run("stringsRuleWeb", {{"args", {"hand_l"}}, {"file", file.string()}});
-    CHECK(web["version"] == 1);
+    CHECK(web["version"] == 2);
     CHECK(web["hips"] == "hips");
     CHECK(web["contacts"] == json({"foot_l", "foot_r"}));
     CHECK(web["chains"].back() == json({"upperarm_l", "lowerarm_l", "hand_l"}));
@@ -1324,6 +1324,43 @@ TEST_CASE("stringsRuleWeb and unrealStringsRig: the rule web by bone name, writt
     CHECK(controls.front() == "hips");
     CHECK(std::find(controls.begin(), controls.end(), json("hand_l")) != controls.end());
     CHECK_THROWS(run("unrealStringsRig", {{"args", {"hero"}}, {"dryRun", true}}));
+}
+
+TEST_CASE("stringsRuleWeb: pins, IK chains with their lock and solve, and glue among the skeleton's bones go to Unreal")
+{
+    loadPuppeteer();
+    stringsBiped();
+    run("stringsGlue", {{"remove", true}});
+    run("puppeteerPin", {{"args", {"hand_r"}}, {"pin", true}});
+    const json chain = run("ikChain", {{"args", {"upperarm_l", "hand_l"}}});
+    run("ikLock", {{"args", {chain}}, {"state", true}});
+    run("stringsGlue", {{"args", {"hand_l", "hand_r"}}});
+    run("spaceLocator", {{"name", "cup"}});
+    run("stringsGlue", {{"args", {"foot_l", "cup"}}, {"attach", true}});
+    const json web = run("stringsRuleWeb", {{"args", {"hero"}}});
+    CHECK(web["pins"] == json({"hand_r"}));
+    REQUIRE(web["locks"].size() == 1);
+    const json lock = web["locks"][0];
+    CHECK(lock["bone"] == "hand_l");
+    CHECK(lock["locked"] == true);
+    CHECK(lock["solver"] == "twoBone");
+    CHECK(lock["alignEnd"] == true);
+    CHECK(lock["chain"] == json({"upperarm_l", "lowerarm_l", "hand_l"}));
+    CHECK(lock["rest"].size() == 3);
+    CHECK(lock.contains("pole"));
+    // The attach led by a prop stays in Lila; the glue between the hands goes.
+    CHECK(web["glue"] == json::array({{{"members", {"hand_l", "hand_r"}}, {"attach", false}}}));
+    CHECK(web["basis"]["up"].size() == 3);
+
+    const json sent = run("unrealStringsRig", {{"args", {"hero"}}, {"skeletalMesh", "/Game/Hero/SK_Hero"}, {"dryRun", true}});
+    const json controls = sent["payload"]["controls"];
+    for (const char* b : {"hand_r", "hand_l"})
+        CHECK(std::find(controls.begin(), controls.end(), json(b)) != controls.end());
+
+    run("ikLock", {{"args", {chain}}, {"state", false}});
+    CHECK(run("stringsRuleWeb", {{"args", {"hero"}}})["locks"][0]["locked"] == false);
+    run("stringsGlue", {{"remove", true}});
+    run("puppeteerPin", {{"args", {"hand_r"}}, {"pin", false}});
 }
 
 TEST_CASE("unrealStringsRig: the rule web carries isolate and modes, and the controls start in the mode and Isolate Rotation given")
