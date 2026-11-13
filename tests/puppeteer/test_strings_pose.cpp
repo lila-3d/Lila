@@ -1284,7 +1284,9 @@ TEST_CASE("Strings Rules editor: contacts, limbs and lines toggle on the joint g
     mouse(canvas, QEvent::MouseButtonPress, at("hand_l"));
     mouse(canvas, QEvent::MouseMove, at("hand_l") + QPointF(0.0, -40.0));
     CHECK(pos("hand_l").y > hand.y + 5.0);
-    CHECK(editor->findChild<QLabel*>("stringsRulesStatus")->text().startsWith("Test IK"));
+    const QLabel* status = editor->findChild<QLabel*>("stringsRulesStatus");
+    REQUIRE(status);
+    CHECK(status->text().startsWith("Test IK"));
     mouse(canvas, QEvent::MouseButtonRelease, at("hand_l") + QPointF(0.0, -40.0));
     CHECK(near(pos("hand_l"), hand, 1e-9));
     CHECK(run("undoInfo")["undo"] == undo);
