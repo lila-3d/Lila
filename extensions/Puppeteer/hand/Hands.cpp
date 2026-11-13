@@ -983,8 +983,8 @@ json gripCmd(const Args& a)
                     startedInside = contact(from) >= 0;
                     if (!startedInside)
                         got = wrap(from, to, contact);
-                    else if (const std::optional<std::vector<Angles>> out = f.hose ? std::nullopt : openOut(from, waysOut(f, from), contact))
-                        got = wrap(*out, to, contact);
+                    else if (const std::optional<std::vector<Angles>> opened = f.hose ? std::nullopt : openOut(from, waysOut(f, from), contact))
+                        got = wrap(*opened, to, contact);
                     else
                         stayed = true;
                     before.restore(g);
