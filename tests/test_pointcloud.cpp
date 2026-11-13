@@ -406,3 +406,54 @@ TEST_CASE("relocateScene moves a point cloud and its clip box")
     CHECK(glm::length(glm::dvec3(g.find(cloud)->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]) - (cloudAt + glm::dvec3(1000, 0, -500))) < 1e-9);
     CHECK(glm::length(glm::dvec3(g.find(box)->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]) - (boxAt + glm::dvec3(1000, 0, -500))) < 1e-9);
 }
+
+TEST_CASE("relocating a georeferenced scene keeps the point cloud at its place on the Earth")
+{
+    ops::execute("newScene", json::object());
+    scene::georef::setCurrent(scene::georef::Georeference{"EPSG:32632", {696700.0, 5077800.0, 1300.0}});
+    const json r = ops::execute("importPointCloud", {{"args", {(fs::path(LILA_TEST_E57_DATA) / "bunnyInt32.e57").string()}},
+                                                     {"cache", (fs::temp_directory_path() / "lila_bunny_georelocate.lilapc").string()}});
+    const std::string cloud = r["node"].get<std::string>();
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    const bool zUp = scene::georef::sceneZUp();
+    auto worldOf = [&] { return glm::dvec3(g.find(cloud)->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]); };
+    const glm::dvec3 at = worldOf();
+    const glm::dvec3 onEarth = scene::georef::toProjected(*scene::georef::current(), at, zUp);
+
+    // The whole scene moves; the georeference origin takes the opposite, so the cloud's projected coordinates stay.
+    const json moved = ops::execute("relocateScene", {{"offset", json::array({-120000.0, 300.0, 45000.0})}});
+    g.evaluate();
+    CHECK(glm::length(worldOf() - (at + glm::dvec3(-120000.0, 300.0, 45000.0))) < 1e-9);
+    REQUIRE(scene::georef::current());
+    CHECK(moved.contains("georeferenceOrigin"));
+    CHECK(glm::length(scene::georef::toProjected(*scene::georef::current(), worldOf(), zUp) - onEarth) < 1e-9);
+
+    ops::execute("undo", json::object());
+    g.evaluate();
+    CHECK(glm::length(worldOf() - at) < 1e-9);
+    CHECK(scene::georef::current()->origin == glm::dvec3(696700.0, 5077800.0, 1300.0));
+
+    // Moving the cloud alone changes where it is on the Earth and leaves the georeference.
+    ops::execute("relocateScene", {{"offset", json::array({1000.0, 0.0, 0.0})}, {"nodes", {cloud}}});
+    CHECK(scene::georef::current()->origin == glm::dvec3(696700.0, 5077800.0, 1300.0));
+    ops::execute("undo", json::object());
+
+    // The CRS grid can't turn, so a whole-scene move with a rotation is refused and nothing changes.
+    ops::execute("spaceLocator", {{"name", "Turned"}});
+    ops::execute("setAttr", {{"args", {"Turned.rotate", json::array({0.0, 30.0, 30.0})}}});
+    const json turn = {{"args", {"Turned"}}, {"from", "pivot"}, {"rotation", "full"}};
+    std::string why;
+    try
+    {
+        ops::execute("relocateScene", turn);
+    }
+    catch (const CommandError& e)
+    {
+        why = e.what();
+    }
+    CHECK(why.find("georeferenced") != std::string::npos);
+    CHECK(scene::georef::current()->origin == glm::dvec3(696700.0, 5077800.0, 1300.0));
+    scene::georef::setCurrent(std::nullopt);
+    CHECK_NOTHROW(ops::execute("relocateScene", turn));
+}
