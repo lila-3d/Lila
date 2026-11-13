@@ -290,3 +290,38 @@ TEST_CASE("masonry fit: a floor on its own carries collision, an L-shaped one in
     run("ruin", {{"args", {f["mesh"]}}, {"left", 0.5}});
     CHECK(run("masonryCheck", {{"args", {f["mesh"]}}})["ok"].get<bool>());
 }
+
+TEST_CASE("masonry fit: paving on a floor without walls stays inside its outline")
+{
+    for (const char* surface : {"flags", "cobbles"})
+        for (const json& outline : {kRect, kEll})
+        {
+            CAPTURE(surface);
+            CAPTURE(outline.dump());
+            const Built b = building({{"floors", {{{"name", "paving"}, {"points", outline}, {"y", 0}, {"thickness", 10}, {"surface", surface}}}}});
+            std::vector<glm::dvec3> poly;
+            for (const json& q : outline)
+                poly.push_back({q[0].get<double>(), 0.0, q[2].get<double>()});
+            auto inside = [&](double x, double z) {
+                bool in = false;
+                for (size_t i = 0, k = poly.size() - 1; i < poly.size(); k = i++)
+                    if ((poly[i].z > z) != (poly[k].z > z) && x < (poly[k].x - poly[i].x) * (z - poly[i].z) / (poly[k].z - poly[i].z) + poly[i].x)
+                        in = !in;
+                return in;
+            };
+            int paving = 0, outside = 0;
+            for (const Stone& s : b.stones)
+            {
+                if (s.role != Role::Paving)
+                    continue;
+                ++paving;
+                for (const glm::dvec3& c : stoneCorners(s))
+                {
+                    const glm::dvec3 in = c + (s.center - c) * 0.001;
+                    outside += inside(in.x, in.z) ? 0 : 1;
+                }
+            }
+            CHECK(paving > 50);
+            CHECK(outside == 0);
+        }
+}
