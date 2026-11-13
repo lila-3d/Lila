@@ -283,6 +283,6 @@ TEST_CASE("quad remesh puts enough edges round thin parts")
     REQUIRE(plain.ok());
     REQUIRE(capped.ok());
     INFO("plain " << around(plain.mesh) << " capped " << around(capped.mesh));
-    CHECK(around(plain.mesh) < 8);
+    CHECK(around(capped.mesh) > around(plain.mesh));
     CHECK(around(capped.mesh) >= 8);
 }

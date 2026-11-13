@@ -309,10 +309,10 @@ std::vector<FlagDef> remeshFlags(const char* symmetry)
     return {{"preset", "", T::String, "none",
              "Starting settings for what the mesh is for: gameCharacter, midPoly, hero, stylized, hardSurface, prop, or the name of a preset "
              "saved from the option box. Flags set to other than their default win."},
-            {"method", "", T::String, "patches",
-             "patches: loops run unbroken between a few poles; grid: a straight grid over an open sheet seen from one side (terrain tiles, "
-             "panels), patches otherwise.",
-             {"patches", "grid"}},
+            {"method", "", T::String, "flow",
+             "flow: quads follow the shape, loops run unbroken between a few poles; grid: a straight grid over an open sheet seen from one "
+             "side (terrain tiles, panels), flow otherwise.",
+             {"flow", "grid"}},
             {"targetFaces", "", T::Int, 3000, "Approximate face count.", {}, {}, 8.0},
             {"countTolerance", "", T::Float, 0.1, "Retry at a corrected size until the face count is within this fraction of targetFaces; 0 takes the first try.", {}, {}, 0.0, 1.0},
             {"timeout", "", T::Float, 0.0, "Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits until done or aborted.", {}, {}, 0.0},
@@ -349,10 +349,10 @@ QuadRemeshOptions remeshOptions(const Args& given, const Node& src, const char* 
 {
     const Args a = withPreset(given, cmd);
     QuadRemeshOptions o;
-    const std::string method = a.get<std::string>("method", "patches");
-    if (method != "patches" && method != "grid")
-        throw CommandError(std::string(cmd) + ": method must be patches or grid");
-    o.method = method == "grid" ? RemeshMethod::Grid : RemeshMethod::Patches;
+    const std::string method = a.get<std::string>("method", "flow");
+    if (method != "flow" && method != "grid")
+        throw CommandError(std::string(cmd) + ": method must be flow or grid");
+    o.method = method == "grid" ? RemeshMethod::Grid : RemeshMethod::Flow;
     o.targetFaces = std::max(8, a.get<int>("targetFaces", 3000));
     o.countTolerance = std::clamp(a.get<double>("countTolerance", 0.1), 0.0, 1.0);
     o.timeout = std::max(0.0, a.get<double>("timeout", 0.0));
@@ -504,7 +504,7 @@ void registerCommands()
         .name = "quadRemesh",
         .doc = "Auto quad remesh: a new all-quad mesh whose edge flow follows curvature, hard edges and guide curves, at about "
                "the target face count, optionally with UVs and normals transferred from the source. Open borders, sharp "
-               "creases, crease corners and cone tips are kept. With method=field, where the shape is too thin or tight for the "
+               "creases, crease corners and cone tips are kept. Where the layout folds at a part too thin or tight for the "
                "requested size (a strip narrower than the edge length) it retries finer, so the face count can come out higher. The kept source "
                "is hidden. Runs off the UI thread with a cancellable progress bar, and gives up after timeout= seconds with "
                "an error saying how far it got, changing nothing. Returns {name, metrics, layout, attempts: [{layout, faces, defects, irregular}] for every layout tried, notes: where the result departs from what was asked}, and with poles= where each "
