@@ -10,6 +10,8 @@
 #include "scene/Simulation.h"
 #include "scene/Transform.h"
 
+#include <glm/glm.hpp>
+
 #include <cmath>
 
 using namespace lila;
@@ -166,4 +168,36 @@ TEST_CASE("crowd scene: relocating the scene moves the crowd and its simulation 
     // Undo puts the groups back where they were.
     run("undo");
     CHECK(run("crowdGroups", {{"args", {crowd}}})[0]["center"][0].get<double>() == doctest::Approx(400.0));
+}
+
+TEST_CASE("crowdSendToUnreal mass: the network's lanes in Unreal space and the network groups with their speeds and shares")
+{
+    loadPackages();
+    run("newScene");
+    run("curveEP", {{"points", json::array({json::array({0.0, 0.0, 0.0}), json::array({2000.0, 0.0, 0.0}), json::array({2000.0, 0.0, 1500.0})})},
+                    {"degree", 1},
+                    {"name", "walk"}});
+    const std::string crowd = run("crowdCreate", {{"network", {"walk"}}}).get<std::string>();
+    run("crowdSpawn", {{"args", {crowd}}, {"count", 6}, {"behaviour", "wander"}, {"onNetwork", true}, {"speedMin", 1.0}, {"speedMax", 1.0}, {"seed", 2}});
+    run("crowdSpawn", {{"args", {crowd}}, {"count", 2}, {"behaviour", "idle"}, {"center", {500.0, 0.0, 500.0}}});
+    const json sent = run("crowdSendToUnreal", {{"args", {crowd}}, {"mass", true}, {"dryRun", true}})["params"];
+    REQUIRE(sent["lanes"].size() >= 1);
+    // Whatever the axes, a 2000 cm straight run stays 2000 cm long.
+    const json& pts = sent["lanes"][0]["points"];
+    REQUIRE(pts.size() >= 2);
+    const glm::dvec3 a(pts[0][0].get<double>(), pts[0][1].get<double>(), pts[0][2].get<double>());
+    const glm::dvec3 b(pts[1][0].get<double>(), pts[1][1].get<double>(), pts[1][2].get<double>());
+    CHECK(glm::length(b - a) == doctest::Approx(2000.0).epsilon(1e-6));
+    // Only the group on the network goes, at the walk's 130 cm/s.
+    REQUIRE(sent["groups"].size() == 1);
+    CHECK(sent["groups"][0]["share"] == 6);
+    CHECK(sent["groups"][0]["speed"].get<double>() == doctest::Approx(130.0));
+    CHECK(sent["count"] == 6);
+    CHECK(sent["minGap"].get<double>() >= 100.0);
+    CHECK(run("crowdSendToUnreal", {{"args", {crowd}}, {"mass", true}, {"count", 40}, {"density", 10.0}, {"dryRun", true}})["params"]["count"] == 40);
+
+    run("newScene");
+    const std::string bare = run("crowdCreate").get<std::string>();
+    run("crowdSpawn", {{"args", {bare}}, {"count", 3}, {"behaviour", "wander"}});
+    CHECK_THROWS(run("crowdSendToUnreal", {{"args", {bare}}, {"mass", true}, {"dryRun", true}}));
 }
