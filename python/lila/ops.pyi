@@ -11486,11 +11486,11 @@ def uvOptimize(uvSet: str | None = None, mode: str | None = None, mix: float | N
     """
 
 def uvOrient(uvSet: str | None = None, mode: str | None = None) -> Any:
-    """Rotate the selected islands upright: by bounding box, principal axis, longest edge or edge grid.
+    """Rotate the selected islands upright: by bounding box, principal axis, longest edge, edge grid or surface flow.
 
     Args:
         uvSet: UV set; the current one (uvSetCurrent) when not given.
-        mode: bbox, principal, edge or grid (polygon edges along U and V). One of 'bbox', 'principal', 'edge', 'grid'. Default 'bbox'.
+        mode: bbox, principal, edge, grid (polygon edges along U and V), flow (the surface's curvature and creases along U and V) or auto (grid, else flow, else bbox). One of 'bbox', 'principal', 'edge', 'grid', 'flow', 'auto'. Default 'bbox'.
     """
 
 def uvPack(uvSet: str | None = None, finalMesh: bool | None = None, resolution: int | None = None, padding: float | None = None, margin: float | None = None, paddingMips: int | None = None, rotateStep: int | None = None, angles: Sequence[Any] | None = None, freeRotation: bool | None = None, flip: bool | None = None, orient: bool | None = None, scaleMode: str | None = None, normalize: bool | None = None, stack: bool | None = None, stackMirrored: bool | None = None, stackTolerance: float | None = None, tilesU: int | None = None, tilesV: int | None = None, region: Sequence[Any] | None = None, texelsPerUnit: float | None = None, effort: int | None = None, timeLimit: float | None = None, workingResolution: int | None = None, layout: str | None = None, groupBy: str | None = None, groupAttr: str | None = None, keep: str | None = None, fixPinned: bool | None = None, perObject: bool | None = None, *, fm: bool | None = None) -> Any:
