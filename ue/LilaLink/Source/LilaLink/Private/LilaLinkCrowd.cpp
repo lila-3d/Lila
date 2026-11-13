@@ -86,7 +86,7 @@ TSharedPtr<FJsonValue> CreateCrowdSequence(const TSharedPtr<FJsonObject>& Params
 	UMovieScene* Scene = Sequence->GetMovieScene();
 	const FFrameRate Rate(FMath::Max(1, FMath::RoundToInt(Fps)), 1);
 	Scene->SetDisplayRate(Rate);
-	const FFrameNumber End = FFrameRate::TransformTime(FFrameTime(FFrameNumber(FMath::RoundToInt(Frames))), Rate, Scene->GetTickResolution()).FloorToFrame();
+	const FFrameNumber End = FFrameRate::TransformTime(FFrameTime(FFrameNumber(static_cast<int32>(FMath::RoundToInt(Frames)))), Rate, Scene->GetTickResolution()).FloorToFrame();
 	Scene->SetPlaybackRange(TRange<FFrameNumber>(FFrameNumber(0), FMath::Max(End, FFrameNumber(1))));
 
 	// Actors from an earlier send of this sequence go first.
