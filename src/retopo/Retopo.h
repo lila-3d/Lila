@@ -162,7 +162,7 @@ struct QuadRemeshOptions
     /** How hard poles are kept out of joints (crotch, armpits, finger webs) onto flatter parts nearby; 0 off. */
     double jointPoleAvoidance = 30.0;
     /** Extra faces at joints (crotch, armpits, finger webs), where the mesh bends: 0 none, 1 about three times as dense there. */
-    double jointDensity = 0.5;
+    double jointDensity = 0.0;
     /** How far Joint Density's extra faces reach from a fold, in faces; they halve every two. */
     double jointDensityReach = 6.0;
     /** Align to edges flagged "hard". */

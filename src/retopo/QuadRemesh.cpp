@@ -10,6 +10,7 @@
 #include "retopo/IntegerGrid.h"
 #include "retopo/Isotropic.h"
 
+#include <AutoRemesher/AutoRemesher>
 #include <AutoRemesher/Parameterizer>
 #include <AutoRemesher/QuadExtractor>
 
@@ -21,6 +22,7 @@
 #include <climits>
 #include <cmath>
 #include <complex>
+#include <cstring>
 #include <optional>
 #include <unordered_map>
 
@@ -621,6 +623,25 @@ struct Work
     geo::SymmetryPlane plane;
     /** The mean quad edge asked for. */
     double h0 = 0.0;
+    double adaptivity = 0.0;
+    /**
+     * Laid out by AutoRemesher's own stages as they come: its simplifier, isotropic triangles, curvature sizes and quad
+     * extraction. A smooth closed shape with nothing to hold (no creases, borders, pins or asked poles) takes this;
+     * the stock extraction fills a border in or leaves it ragged.
+     */
+    bool stock = false;
+    /**
+     * Sized by the stock layout's curvature measure, with Lila's size controls as factors and limits on it. Creased
+     * shapes keep Lila's own size field: read across a crease, that measure calls every edge of a cube curved.
+     */
+    bool stockSizes = false;
+    /** The quads asked of the stock layout, over all of iso. */
+    double stockQuads = 0.0;
+    /**
+     * A symmetric remesh laid out on the closed whole: iso is the positive half joined to its mirror image, with its edges
+     * along the plane hard so the layout keeps them as one edge loop.
+     */
+    bool wholeLayout = false;
     /** The surface simplified to a few triangles per working triangle, which the working triangles lie on. */
     geo::Mesh simple;
     std::optional<geo::MeshBvh> simpleBvh;
@@ -818,6 +839,112 @@ std::vector<double> sizeField(const Surface& s, const Work& w, const QuadRemeshO
     return size;
 }
 
+/**
+ * Makes a working surface mirror symmetric with an edge chain along the plane: points near the plane go onto it, the
+ * triangles still crossing are cut there, and the positive half is joined to its mirror image. Returns the chain.
+ */
+std::unordered_set<uint64_t> symmetrize(Surface& iso, const geo::SymmetryPlane& plane, int axis)
+{
+    // A point within reach of the plane moves onto it, so the cut passes no closer than that to any point it leaves:
+    // no slivers along the chain.
+    constexpr double kReach = 0.3;
+    for (Index v = 0; v < iso.vertexCount(); ++v)
+    {
+        double length = 0.0;
+        const Index n = iso.adjStart[v + 1] - iso.adjStart[v];
+        for (Index k = iso.adjStart[v]; k < iso.adjStart[v + 1]; ++k)
+            length += glm::distance(iso.pos[v], iso.pos[iso.adj[k]]);
+        if (n > 0 && std::abs(plane.distance(iso.pos[v])) < kReach * length / double(n))
+            iso.pos[v] = plane.project(iso.pos[v]);
+    }
+    clipSurface(iso, plane, axis);
+    iso.buildTopology();
+    std::vector<Index> mirrorOf;
+    Surface whole = mirrorSurface(iso, plane, mirrorOf);
+    std::unordered_set<uint64_t> chain;
+    for (size_t e = 0; e < iso.edges.size(); ++e)
+    {
+        const Index a = iso.edges[e][0], b = iso.edges[e][1];
+        if (iso.edgeTriCount[e] == 1 && mirrorOf[a] == a && mirrorOf[b] == b)
+            chain.insert(edgeKey(a, b));
+    }
+    iso = std::move(whole);
+    iso.buildTopology();
+    iso.buildGeometry();
+    return chain;
+}
+
+/** Working triangles per quad for the stock stages, which size their quads off the triangles' mean edge. */
+constexpr double kStockTriangles = 6.0;
+
+/**
+ * The stock stages' working triangles. False when the simplified surface turns out to have creases to hold, which the
+ * stock isotropic pass can't be told about; s is then spent and has to be read again.
+ */
+bool prepareStock(Work& w, const QuadRemeshOptions& opts, double faces, double halves, Stopwatch& clock)
+{
+    LILA_ZONE();
+
+    Surface& s = w.s;
+    std::vector<AutoRemesher::Vector3> vertices;
+    vertices.reserve(s.pos.size());
+    for (const glm::dvec3& p : s.pos)
+        vertices.push_back(AutoRemesher::Vector3(p.x, p.y, p.z));
+    std::vector<std::vector<size_t>> triangles;
+    triangles.reserve(s.tris.size());
+    for (const auto& t : s.tris)
+        triangles.push_back({size_t(t[0]), size_t(t[1]), size_t(t[2])});
+    const double voxel = std::sqrt(s.totalArea() / (kStockTriangles * faces * halves) / (0.86602540378 * 0.5));
+    std::vector<AutoRemesher::Vector3> simpleVertices;
+    std::vector<std::vector<size_t>> simpleTriangles;
+    const AutoRemesher::ProgressHandler progress = [](float, const char*) { Budget::checkpoint(); };
+    // Creases are Lila's to find (by angle and length, below); the stock pass's own angle test takes a sculpt's every
+    // sharp wrinkle for one.
+    AutoRemesher::AutoRemesher::resample(vertices, triangles, voxel, 4.0 * opts.adaptivity, 180.0, 0.0, 0, nullptr, nullptr, &progress,
+                                         &simpleVertices, &simpleTriangles);
+    auto fill = [](Surface& to, const std::vector<AutoRemesher::Vector3>& v, const std::vector<std::vector<size_t>>& t) {
+        to.pos.clear();
+        to.tris.clear();
+        for (const auto& p : v)
+            to.pos.push_back(glm::dvec3(p.x(), p.y(), p.z()));
+        for (const auto& f : t)
+            to.tris.push_back({Index(f[0]), Index(f[1]), Index(f[2])});
+        to.density.assign(to.pos.size(), 1.0f);
+        to.hard.clear();
+        to.buildTopology();
+        to.buildGeometry();
+    };
+    fill(s, simpleVertices, simpleTriangles);
+    s.detectFeatures(opts.sharpAngle, 75.0, 2.0 * w.h0);
+    for (uint8_t feature : s.edgeFeature)
+        if (feature)
+            return false;
+    clock.lap("surface");
+    {
+        std::vector<Index> sizes(s.tris.size(), 3), corners;
+        corners.reserve(s.tris.size() * 3);
+        for (const auto& t : s.tris)
+            corners.insert(corners.end(), t.begin(), t.end());
+        w.simple = geo::Mesh::fromPolygons(s.pos, sizes, corners);
+        w.simpleBvh.emplace(w.simple);
+    }
+    fill(w.iso, vertices, triangles);
+    if (w.symmetric)
+    {
+        w.iso.hard = symmetrize(w.iso, w.plane, opts.symmetryAxis);
+        w.wholeLayout = true;
+    }
+    w.iso.detectFeatures(-1.0, 75.0, 0.0);
+    w.isoSize.assign(w.iso.pos.size(), w.h0);
+    w.stock = w.stockSizes = true;
+    w.stockQuads = opts.targetEdgeLength > 0.0 ? s.totalArea() / (w.h0 * w.h0) : faces * halves;
+    if (std::getenv("LILA_STAGE_LOG"))
+        std::fprintf(stderr, "stock triangles: %zu simplified, %zu working, edge %g\n", s.tris.size(), w.iso.tris.size(), voxel);
+    Budget::note(std::to_string(w.iso.tris.size()) + " working triangles for about " + std::to_string(int(faces * halves)) + " faces");
+    clock.lap("isotropic");
+    return true;
+}
+
 void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts, Stopwatch& clock)
 {
     LILA_ZONE();
@@ -829,6 +956,7 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
     }
     w.src = source;
     w.src.compact();
+    w.adaptivity = opts.adaptivity;
     w.bvh.emplace(w.src);
     w.closed = isClosed(w.src);
     clock.lap("bvh");
@@ -850,6 +978,16 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
     w.h0 = opts.targetEdgeLength > 0.0 ? opts.targetEdgeLength : std::sqrt(area / faces);
     const double triEdge = w.h0 / triangleRatio();
     const double workTris = std::max(64.0, area / (0.433 * triEdge * triEdge));
+    // Anything the stock stages can't hold takes Lila's own feature-aware triangles and sizes.
+    const bool plain = w.closed && s.hard.empty() && opts.pinnedPoints.empty() && opts.featureGuides.empty() && !opts.poles &&
+                       !std::getenv("LILA_QR_OWN");
+    if (plain)
+    {
+        if (prepareStock(w, opts, faces, halves, clock))
+            return;
+        s = surfaceFromMesh(w.src, opts.useHardEdges);
+        s.pins = opts.pinnedPoints;
+    }
     const bool decimated = double(s.tris.size()) > 8.0 * halves * workTris;
     if (decimated)
         decimateSurface(s, Index(4.0 * halves * workTris));
@@ -914,6 +1052,13 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
     w.iso.detectFeatures(-1.0, 75.0, 0.0);
     // The quads' own sizes, measured on the working triangles where curvature reads at about the quads' scale.
     w.isoSize = sizeField(w.iso, w, opts, faces, CurvatureSizing::Quads);
+    w.stockQuads = opts.targetEdgeLength > 0.0 ? w.iso.totalArea() / (w.h0 * w.h0) : faces;
+    // Creased is a crease for every fifty quads' worth of surface or so: a sculpt's few stray sharp edges don't count.
+    double creased = 0.0;
+    for (size_t e = 0; e < w.iso.edges.size(); ++e)
+        if (w.iso.edgeFeature[e] && !w.iso.edgeBoundary[e])
+            creased += glm::distance(w.iso.pos[w.iso.edges[e][0]], w.iso.pos[w.iso.edges[e][1]]);
+    w.stockSizes = creased * w.h0 < 0.02 * w.iso.totalArea() && !std::getenv("LILA_QR_OWN_SIZES");
     if (const char* dump = std::getenv("LILA_ISO_DUMP"))
         if (FILE* f = std::fopen(dump, "w"))
         {
@@ -938,7 +1083,81 @@ struct CoverInput
     std::vector<AutoRemesher::FaceHint> hints;
     std::vector<double> stiffness;
     std::vector<AutoRemesher::Vector3> guidance;
+    /** For the stock layout: a factor on its own sizes, and the longest edge allowed, each empty when it does nothing. */
+    std::vector<double> sizeFactor, sizeLimit;
 };
+
+/**
+ * What Lila's own size controls ask of the stock layout, per working triangle. factor: painted density, joints and
+ * handles, as a multiple of the size curvature gives. limit: the longest edge gaps and thin parts allow, 0 where they
+ * don't care. Each stays empty when nothing asks.
+ */
+void stockSizes(const Work& w, const QuadRemeshOptions& opts, std::vector<double>& factor, std::vector<double>& limit)
+{
+    const Surface& iso = w.iso;
+    auto perTriangle = [&](const std::vector<double>& at) {
+        std::vector<double> out(iso.tris.size());
+        for (size_t t = 0; t < iso.tris.size(); ++t)
+            out[t] = (at[iso.tris[t][0]] + at[iso.tris[t][1]] + at[iso.tris[t][2]]) / 3.0;
+        return out;
+    };
+    bool painted = false;
+    for (float d : iso.density)
+        painted = painted || d != 1.0f;
+    if (painted || opts.jointDensity > 0.0 || !opts.densityHandles.empty())
+    {
+        QuadRemeshOptions flat = opts;
+        flat.adaptivity = 0.0;
+        flat.resolveGaps = false;
+        flat.edgesAround = 0;
+        flat.targetEdgeLength = w.h0;
+        const std::vector<double> size = sizeField(iso, w, flat, 1.0, CurvatureSizing::Quads);
+        bool any = false;
+        for (double v : size)
+            any = any || std::abs(v / w.h0 - 1.0) > 0.02;
+        if (any)
+        {
+            factor = perTriangle(size);
+            for (double& f : factor)
+                f /= w.h0;
+        }
+    }
+    if (w.closed && (opts.resolveGaps || opts.edgesAround > 0))
+    {
+        // The stock sizes run from a third of the mean to three times it, and each fit looks only as far as the size it
+        // is given and stops at a fraction of it: one from each end and the mean, the tightest of the three.
+        constexpr double kLargest = 3.0;
+        const std::vector<double> curvature = opts.edgesAround > 0 ? estimateCurvature(iso).magnitude : std::vector<double>();
+        std::vector<double> size(iso.pos.size(), kLargest * w.h0);
+        for (double from : {kLargest * w.h0, w.h0, w.h0 / kLargest})
+        {
+            std::vector<double> fitted(iso.pos.size(), from);
+            if (opts.resolveGaps)
+                fitGaps(iso, w.src, *w.bvh, fitted);
+            if (opts.edgesAround > 0)
+                fitThickness(iso, w.src, *w.bvh, curvature, opts.edgesAround, 1.0, fitted);
+            for (size_t v = 0; v < size.size(); ++v)
+                if (fitted[v] < 0.98 * from)
+                    size[v] = std::min(size[v], fitted[v]);
+        }
+        bool any = false;
+        for (double& v : size)
+        {
+            any = any || v < 0.98 * kLargest * w.h0;
+            if (v >= 0.98 * kLargest * w.h0)
+                v = 0.0;
+        }
+        if (any)
+        {
+            // A triangle is limited by its tightest corner; a corner with no limit doesn't loosen the others.
+            limit.assign(iso.tris.size(), 0.0);
+            for (size_t t = 0; t < iso.tris.size(); ++t)
+                for (Index v : iso.tris[t])
+                    if (size[v] > 0.0)
+                        limit[t] = limit[t] > 0.0 ? std::min(limit[t], size[v]) : size[v];
+        }
+    }
+}
 
 AutoRemesher::Vector3 toAr(const glm::dvec3& p) { return AutoRemesher::Vector3(p.x, p.y, p.z); }
 glm::dvec3 fromAr(const AutoRemesher::Vector3& p) { return glm::dvec3(p.x(), p.y(), p.z()); }
@@ -1078,12 +1297,22 @@ CoverInput coverInput(const Work& w, const QuadRemeshOptions& opts, std::string&
         in.faceSize[t] = (w.isoSize[f[0]] + w.isoSize[f[1]] + w.isoSize[f[2]]) / 3.0;
     }
     auto centre = [&](size_t t) { return (iso.pos[iso.tris[t][0]] + iso.pos[iso.tris[t][1]] + iso.pos[iso.tris[t][2]]) / 3.0; };
+    if (w.stockSizes)
+        stockSizes(w, opts, in.sizeFactor, in.sizeLimit);
 
     // Flow guides: faces the curve passes over follow it.
     if (!opts.guides.empty())
     {
-        FeatureLines dummy;
-        for (const auto& guide : opts.guides)
+        // A layout made whole has the mirrored side to steer too.
+        std::vector<std::vector<glm::dvec3>> guides = opts.guides;
+        if (w.wholeLayout)
+            for (const auto& guide : opts.guides)
+            {
+                guides.push_back(guide);
+                for (glm::dvec3& p : guides.back())
+                    p = w.plane.reflect(p);
+            }
+        for (const auto& guide : guides)
             for (size_t i = 0; i + 1 < guide.size(); ++i)
             {
                 const glm::dvec3 a = guide[i], b = guide[i + 1], ab = b - a;
@@ -1164,7 +1393,7 @@ CoverInput coverInput(const Work& w, const QuadRemeshOptions& opts, std::string&
             in.guidance[t] = toAr(len > 0.0 ? sum / len : anyTangent(n));
         }
     }
-    else if (w.symmetric)
+    else if (w.symmetric && !w.wholeLayout)
         in.guidance = symmetricFlow(w, in, error);
     return in;
 }
@@ -1178,8 +1407,36 @@ void setUp(AutoRemesher::Parameterizer& pz, const CoverInput& in, const Work& w)
             edge += glm::distance(w.iso.pos[t[k]], w.iso.pos[t[(k + 1) % 3]]);
     edge /= std::max<size_t>(1, count);
     // The cover's unit is scaling times the mean edge; with this it is one, so the face sizes are lengths.
-    pz.setScaling(1.0 / std::max(edge, 1e-12));
-    pz.setFaceScaling(&in.faceSize);
+    if (w.stock)
+    {
+        pz.setGradientAdaptivity(4.0 * w.adaptivity);
+        pz.setTargetQuadCount(w.stockQuads);
+        pz.setFeatureEdges(&in.features);
+        if (!in.sizeFactor.empty())
+            pz.setFaceScalingMultiplier(&in.sizeFactor);
+        if (!in.sizeLimit.empty())
+            pz.setFaceSizeLimit(&in.sizeLimit);
+        if (!in.hints.empty())
+            pz.setFaceHints(&in.hints);
+        if (!in.stiffness.empty())
+            pz.setFieldStiffness(&in.stiffness);
+        pz.setProgressHandler([](float, const char*) { Budget::checkpoint(); });
+        return;
+    }
+    if (!w.stockSizes)
+    {
+        pz.setScaling(1.0 / std::max(edge, 1e-12));
+        pz.setFaceScaling(&in.faceSize);
+    }
+    else
+    {
+        pz.setGradientAdaptivity(4.0 * w.adaptivity);
+        pz.setTargetQuadCount(w.stockQuads);
+        if (!in.sizeFactor.empty())
+            pz.setFaceScalingMultiplier(&in.sizeFactor);
+        if (!in.sizeLimit.empty())
+            pz.setFaceSizeLimit(&in.sizeLimit);
+    }
     pz.setFeatureEdges(&in.features);
     if (!in.pinned.empty())
         pz.setPinnedVertices(&in.pinned);
@@ -1486,10 +1743,12 @@ size_t pairOddFaces(std::vector<glm::dvec3>& points, std::vector<std::vector<Ind
 
 /**
  * Collapses edges shorter than a tenth of a quad and drops the faces that leaves with fewer than three points, plus any
- * face repeating another's points: the extraction now and then squashes a quad onto a line or lays one twice.
+ * face repeating another's points: the extraction now and then squashes a quad onto a line or lays one twice. With no
+ * h, a quad is as long as the face's own mean edge, for a layout whose sizes vary.
  */
 void cleanSoup(std::vector<std::vector<Index>>& faces, const std::vector<glm::dvec3>& points, double h)
 {
+    const bool local = h <= 0.0;
     std::vector<Index> to(points.size());
     for (Index p = 0; p < Index(points.size()); ++p)
         to[p] = p;
@@ -1499,6 +1758,13 @@ void cleanSoup(std::vector<std::vector<Index>>& faces, const std::vector<glm::dv
         return p;
     };
     for (const auto& f : faces)
+    {
+        if (local)
+        {
+            h = 0.0;
+            for (size_t k = 0; k < f.size(); ++k)
+                h += glm::distance(points[f[k]], points[f[(k + 1) % f.size()]]) / double(f.size());
+        }
         for (size_t k = 0; k < f.size(); ++k)
         {
             const Index a = f[k], b = f[(k + 1) % f.size()];
@@ -1509,6 +1775,7 @@ void cleanSoup(std::vector<std::vector<Index>>& faces, const std::vector<glm::dv
                     to[std::max(ra, rb)] = std::min(ra, rb);
             }
         }
+    }
     std::unordered_set<std::string> seen;
     for (auto& f : faces)
     {
@@ -1534,6 +1801,160 @@ void cleanSoup(std::vector<std::vector<Index>>& faces, const std::vector<glm::dv
         f = std::move(g);
     }
     faces.erase(std::remove_if(faces.begin(), faces.end(), [](const std::vector<Index>& f) { return f.empty(); }), faces.end());
+}
+
+/**
+ * Merges each pair of faces that share two edges round a point of their own (a point with only those two faces) into
+ * one face without it: two quads make a quad. Pairing odd faces leaves a few.
+ */
+void mergeDoublets(std::vector<std::vector<Index>>& faces, size_t pointCount)
+{
+    for (bool again = true; again;)
+    {
+        again = false;
+        std::vector<std::array<size_t, 2>> at(pointCount, {SIZE_MAX, SIZE_MAX});
+        std::vector<int> count(pointCount, 0);
+        std::unordered_map<uint64_t, int> uses;
+        for (size_t f = 0; f < faces.size(); ++f)
+            for (size_t k = 0; k < faces[f].size(); ++k)
+            {
+                const Index p = faces[f][k];
+                if (count[p] < 2)
+                    at[p][count[p]] = f;
+                ++count[p];
+                ++uses[edgeKey(p, faces[f][(k + 1) % faces[f].size()])];
+            }
+        std::vector<uint8_t> touched(faces.size(), 0);
+        for (Index p = 0; p < Index(pointCount); ++p)
+        {
+            if (count[p] != 2 || touched[at[p][0]] || touched[at[p][1]])
+                continue;
+            std::vector<Index>& f = faces[at[p][0]];
+            std::vector<Index>& g = faces[at[p][1]];
+            const size_t nf = f.size(), ng = g.size();
+            if (nf + ng - 4 < 3 || nf + ng - 4 > 5)
+                continue;
+            const size_t kf = size_t(std::find(f.begin(), f.end(), p) - f.begin()), kg = size_t(std::find(g.begin(), g.end(), p) - g.begin());
+            const Index a = f[(kf + 1) % nf], b = f[(kf + nf - 1) % nf];
+            // Both of p's edges are shared by the two faces, so p is no border point and the faces close round it.
+            if (g[(kg + 1) % ng] != b || g[(kg + ng - 1) % ng] != a || uses[edgeKey(p, a)] != 2 || uses[edgeKey(p, b)] != 2)
+                continue;
+            std::vector<Index> merged;
+            for (size_t k = 1; k < nf; ++k)
+                merged.push_back(f[(kf + k) % nf]);
+            for (size_t k = 2; k + 1 < ng; ++k)
+                merged.push_back(g[(kg + k) % ng]);
+            std::vector<Index> sorted = merged;
+            std::sort(sorted.begin(), sorted.end());
+            if (std::adjacent_find(sorted.begin(), sorted.end()) != sorted.end())
+                continue;
+            f = std::move(merged);
+            g.clear();
+            touched[at[p][0]] = touched[at[p][1]] = 1;
+            again = true;
+        }
+        faces.erase(std::remove_if(faces.begin(), faces.end(), [](const std::vector<Index>& f) { return f.empty(); }), faces.end());
+    }
+}
+
+/**
+ * Keeps the positive half of a layout made whole, for mirroring. The points along the cut go onto the plane, and a
+ * triangle with an edge there (where the layout broke its middle edge loop) closes up along that edge, so the loop runs
+ * on through one point instead of round a kite.
+ */
+void keepPositiveHalf(std::vector<glm::dvec3>& points, std::vector<std::vector<Index>>& faces, const geo::SymmetryPlane& plane)
+{
+    auto edgeUses = [&] {
+        std::unordered_map<uint64_t, int> uses;
+        for (const auto& f : faces)
+            for (size_t k = 0; k < f.size(); ++k)
+                ++uses[edgeKey(f[k], f[(k + 1) % f.size()])];
+        return uses;
+    };
+    const std::unordered_map<uint64_t, int> whole = edgeUses();
+    auto behind = [&](const std::vector<Index>& f) {
+        glm::dvec3 c(0.0);
+        for (Index v : f)
+            c += points[v];
+        return plane.distance(c / double(f.size())) < 0.0;
+    };
+    faces.erase(std::remove_if(faces.begin(), faces.end(), behind), faces.end());
+    // The cut is the border the half has that the whole didn't: a border of the source's own stays where it is.
+    std::unordered_map<uint64_t, int> uses = edgeUses();
+    std::vector<uint8_t> onCut(points.size(), 0);
+    for (auto& [key, n] : uses)
+    {
+        if (n == 1 && whole.at(key) == 2)
+            onCut[key >> 32] = onCut[key & 0xffffffffu] = 1;
+        else if (n == 1)
+            n = 0;
+    }
+    for (Index p = 0; p < Index(points.size()); ++p)
+        if (onCut[p])
+            points[p] = plane.project(points[p]);
+    std::vector<Index> to(points.size());
+    for (Index p = 0; p < Index(points.size()); ++p)
+        to[p] = p;
+    auto find = [&](Index p) {
+        while (to[p] != p)
+            p = to[p] = to[to[p]];
+        return p;
+    };
+    // A face with a corner on the cut and no other face at it (the loop turned a corner there) would share both edges
+    // with its mirror image: the corner's two neighbours close onto it.
+    std::vector<int> faceCount(points.size(), 0);
+    for (const auto& f : faces)
+        for (Index p : f)
+            ++faceCount[p];
+    for (const auto& f : faces)
+        for (size_t k = 0; k < f.size(); ++k)
+        {
+            const Index a = f[(k + f.size() - 1) % f.size()], p = f[k], b = f[(k + 1) % f.size()];
+            if (onCut[a] && onCut[p] && onCut[b] && faceCount[p] == 1)
+                to[find(a)] = to[find(b)] = find(p);
+        }
+    for (auto& f : faces)
+    {
+        if (f.size() != 3)
+            continue;
+        for (size_t k = 0; k < 3; ++k)
+        {
+            const Index a = find(f[k]), b = find(f[(k + 1) % 3]);
+            if (a != b && onCut[a] && onCut[b] && uses[edgeKey(f[k], f[(k + 1) % 3])] == 1)
+            {
+                points[a] = 0.5 * (points[a] + points[b]);
+                to[b] = a;
+                break;
+            }
+        }
+    }
+    for (auto& f : faces)
+    {
+        std::vector<Index> g;
+        for (Index v : f)
+            if (const Index q = find(v); std::find(g.begin(), g.end(), q) == g.end())
+                g.push_back(q);
+        f = g.size() >= 3 ? std::move(g) : std::vector<Index>{};
+    }
+    faces.erase(std::remove_if(faces.begin(), faces.end(), [](const std::vector<Index>& f) { return f.empty(); }), faces.end());
+}
+
+/** Drops the points no face uses. */
+void compactSoup(std::vector<glm::dvec3>& points, std::vector<std::vector<Index>>& faces)
+{
+    std::vector<Index> id(points.size(), kInvalid);
+    std::vector<glm::dvec3> kept;
+    for (auto& f : faces)
+        for (Index& v : f)
+        {
+            if (id[v] == kInvalid)
+            {
+                id[v] = Index(kept.size());
+                kept.push_back(points[v]);
+            }
+            v = id[v];
+        }
+    points = std::move(kept);
 }
 
 /**
@@ -2077,7 +2498,7 @@ bool coverSoup(Work& w, const QuadRemeshOptions& opts, std::vector<glm::dvec3>& 
         std::vector<size_t> singular = pz.singularVertexIndices();
         const FeatureLines& border = w.border;
         const double h0 = w.h0;
-        if (!std::getenv("LILA_AR_EXTRACT"))
+        if (!std::getenv("LILA_AR_EXTRACT") && !w.stock)
             gridSoup(w, originalUvs, points, faces);
         if (faces.empty())
         {
@@ -2189,10 +2610,14 @@ QuadRemeshResult coverRemesh(Work& w, const QuadRemeshOptions& opts, Stopwatch& 
         Surface whole = std::move(w.iso);
         std::vector<double> wholeSize = std::move(w.isoSize);
         auto parts = surfaceParts(whole, wholeSize);
+        const double wholeArea = whole.totalArea(), wholeQuads = w.stockQuads;
         for (auto& [part, size] : parts)
         {
             w.iso = std::move(part);
             w.isoSize = std::move(size);
+            // Each part's share of the stock layout's quads goes by its area.
+            if (parts.size() > 1 && wholeArea > 0.0)
+                w.stockQuads = wholeQuads * w.iso.totalArea() / wholeArea;
             std::vector<glm::dvec3> partPoints;
             std::vector<std::vector<Index>> partFaces;
             if (!coverSoup(w, opts, partPoints, partFaces, out.error, clock))
@@ -2208,6 +2633,7 @@ QuadRemeshResult coverRemesh(Work& w, const QuadRemeshOptions& opts, Stopwatch& 
         }
         w.iso = std::move(whole);
         w.isoSize = std::move(wholeSize);
+        w.stockQuads = wholeQuads;
         if (!out.ok())
             return out;
     }
@@ -2226,16 +2652,22 @@ QuadRemeshResult coverRemesh(Work& w, const QuadRemeshOptions& opts, Stopwatch& 
             }
             std::fclose(f);
         }
-    cleanSoup(faces, points, w.h0);
+    const bool refine = !std::getenv("LILA_QR_RAW");
+    if (refine)
+        cleanSoup(faces, points, w.stock ? 0.0 : w.h0);
     // Dropping faces left lying in the plane can bare another row of border points next to it, so twice.
-    if (w.symmetric)
+    if (w.wholeLayout)
+        keepPositiveHalf(points, faces, w.plane);
+    else if (w.symmetric)
         for (int pass = 0; pass < 2; ++pass)
             weldSeam(points, faces, w.plane, opts.symmetryAxis, w.h0);
-    if (opts.pureQuads)
+    if (opts.pureQuads && refine)
     {
         std::function<bool(Index, Index)> seam;
         std::unordered_set<uint64_t> border;
-        if (w.symmetric)
+        // A triangle walked onto the cut meets its mirror image in a kite across the middle edge loop, which a whole
+        // layout has no need to break.
+        if (w.symmetric && !w.wholeLayout)
         {
             std::unordered_map<uint64_t, int> uses;
             for (const auto& f : faces)
@@ -2250,7 +2682,9 @@ QuadRemeshResult coverRemesh(Work& w, const QuadRemeshOptions& opts, Stopwatch& 
             };
         }
         pairOddFaces(points, faces, seam);
+        mergeDoublets(faces, points.size());
     }
+    compactSoup(points, faces);
     std::vector<Index> sizes, indices;
     for (const auto& f : faces)
     {
@@ -2278,10 +2712,13 @@ QuadRemeshResult coverRemesh(Work& w, const QuadRemeshOptions& opts, Stopwatch& 
                 m.setPosition(p, at);
             }
     std::vector<FeatureKind> feature = pointFeatures(m, w.creases, w.border, 0.3 * h0);
-    projectPoints(m, feature, *w.simpleBvh, w.creases, w.border, 0.3 * h0);
-    freeCreaseFlaps(m, feature, *w.simpleBvh, h0);
-    relaxAlongFeatures(m, feature, *w.simpleBvh, w.creases, w.border, h0, opts.relaxIterations, axis);
-    unfold(m, feature, src, bvh, *w.simpleBvh, axis, h0);
+    if (refine)
+    {
+        projectPoints(m, feature, *w.simpleBvh, w.creases, w.border, 0.3 * h0);
+        freeCreaseFlaps(m, feature, *w.simpleBvh, h0);
+        relaxAlongFeatures(m, feature, *w.simpleBvh, w.creases, w.border, h0, opts.relaxIterations, axis);
+        unfold(m, feature, src, bvh, *w.simpleBvh, axis, h0);
+    }
     clock.lap("refine");
 
     if (w.symmetric)

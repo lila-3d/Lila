@@ -42,3 +42,42 @@ Scope from Jared: UV reuse items 1-4 from the retopo rebase, plus the remaining 
 - Nothing from the remesher fits the per-point solve, so this item is the gap found while looking: clearance ran only between lows. Each low now also traces its own surface: front faces only (the faces a ray leaves from look away), from a few epsilons out.
 - Share: another low keeps 0.9 of the gap as before; across a fold of the same low both sides move into one gap, so each keeps 0.45.
 - Measured: new fold test 20.6 cm -> 2.25 cm under the slab, open areas unchanged; benchmark miss rates identical (2.856% / 2.876%), time within noise. Open sheets seen from behind don't clamp (back faces).
+
+# Quad Remesh back on AutoRemesher's own stages (main, 2026-11-14)
+
+Jared's report: at the same settings the result was far worse than AutoRemesher 1.2.0 itself, and the symmetry centre line broke. Measured on the head (neusculpt2), same face count, symmetry off: AutoRemesher 5461 faces, 98 poles; Lila 5399 faces, 128 poles, flat density over the face, no eye loops.
+
+## What was wrong
+
+- The rebase had kept only AutoRemesher's field and cover and replaced the rest: its simplifier and isotropic pass (Lila's own), its curvature sizes (Lila's size field through setFaceScaling), its extraction (integer grid, which failed on the head anyway and fell back). Swapping stages one at a time, Lila's size field did the most damage, then the triangles.
+- Symmetry laid out a clipped half with the field passed as guidance, which switches off the singularity simplifier, then welded the cut by distance.
+- "Target Quads" in AutoRemesher's UI is half its triangle target, and its quads come out near a third of the number typed, so 16000 there is about 5400 faces. The earlier comparison was never at equal count.
+
+## Decisions
+
+- Vendored the missing upstream stages unchanged (autoremesher.cpp, its IsotropicRemesher wrapper, thirdparty isotropicremesher), linked meshoptimizer. One edit: resample and its helpers are public.
+- Stock path: a closed shape with no creases (after Lila's own crease detection on the simplified surface), no pins, feature guides or asked poles runs AutoRemesher's stages as they come. Inside Lila this reproduces the app: 5482 faces, 99 poles on the head.
+- Creases are Lila's to find. AutoRemesher's angle test at Lila's default 40 degrees wrecks a sculpt (205 poles, 50 n-gons); at its own 90 it gives 109; off gives 75. The stock stages run with it off and take Lila's feature set, which is empty on that path.
+- Symmetry on the stock path: the working triangles are made mirror symmetric with an edge chain on the plane (points within 0.3 of an edge snap onto it, the rest is cut, the half is mirrored), the layout is solved on the closed whole with the chain as feature edges, then the positive half is kept and mirrored. The cut is found by topology (edges the whole had twice and the half has once). A triangle with an edge on the cut, or a corner of the loop with one face, closes up instead of mirroring into a kite or a doublet. Odd faces no longer walk onto the cut.
+- Face count: Parameterizer takes a target quad count. It sets the scaling from the scaling field, measures the cover's uv area (one quad per unit), and searches the scaling (up to 3 solves, 5 on small meshes), keeping the closest. Head: 5554 for 5450, 15920 for 16000.
+- Lila's size controls on the stock sizes: painted density, joints and handles as a factor; gaps and thin parts as a length limit, fitted from three sizes because the stock sizes span 1/3 to 3 times the mean. The limits' extra quads are counted on top of the target. Parts share the target by area.
+- Joint Density default 0.5 -> 0. On the head it cost 25 to 80 poles and rows of triangles; the character presets still set it.
+- Joint Pole Avoidance stays on for the stock path: head 84 -> 64 poles, Mochi 132 -> 102.
+- Six working triangles per quad, AutoRemesher's own ratio. 3 gave 50 flaws at 16000; 9 and 12 were worse at 5450 (104 and 169 poles) and up to twice as slow.
+- cleanSoup's short-edge threshold is relative to the face on the stock path; against the mean edge it collapsed legitimate small quads at the nostrils into triangle fans.
+- Open or creased shapes keep Lila's own triangles, features and integer grid: the stock extraction fills a border in or leaves it ragged. Uncreased ones (crease length times edge under 2% of the area) now take the stock sizes there too: open bust 110 -> 88 poles and on count.
+
+## Measured (defaults)
+
+- Head, 5450, symmetry Z: 5554 faces, 2 n-gons, 64 poles, 8 s. AutoRemesher: 5461 faces, 16 non-quads, 98 poles, not symmetric.
+- Head, 16000, symmetry Z, adaptivity 0.15: 15920 faces, 6 non-quads, 104 poles, 0 defects, 20 s.
+- Mochi, 6000, symmetry X: 5898 faces, 102 poles (last night 106 at 7613 faces).
+- Suites retopo, rig, uv, bake pass.
+
+## Left
+
+- At 16000 with adaptivity 0.25 a pinch at the nostril crease (thin quads converging) comes from the stock layout itself.
+- Pairing odd faces adds about 1.5 poles per face it removes; a few triangles or pentagons remain.
+- Density handles test still parked: the factor reaches the cover but the layout evens it out.
+- Corpus (parked): cone now passes, pipe now fails (hausdorff 0.048); starPrism, combPrism, spiralFace, bentStar, twistedGrid, tent as before.
+- Open sculpts and creased shapes are still on the old triangles and extraction.

@@ -72,7 +72,10 @@ TEST_CASE("quad remesh lands near the asked face count")
         o.targetFaces = target;
         retopo::QuadRemeshResult r = retopo::quadRemesh(controlSphere(), o);
         REQUIRE(r.ok());
-        INFO(target << " -> " << r.mesh.numFaces());
+        std::string tried;
+        for (const auto& attempt : r.attempts)
+            tried += " " + std::to_string(attempt.faces);
+        INFO(target << " -> " << r.mesh.numFaces() << ", attempts" << tried);
         CHECK(controlOffCount(r, target) <= o.countTolerance);
         CHECK(!r.attempts.empty());
         CHECK(!r.layout.empty());
@@ -279,11 +282,11 @@ TEST_CASE("quad remesh puts enough edges round thin parts")
     o.targetFaces = 600;
     o.edgesAround = 0;
     retopo::QuadRemeshResult plain = retopo::quadRemesh(m, o);
-    o.edgesAround = 8;
+    o.edgesAround = 12;
     retopo::QuadRemeshResult capped = retopo::quadRemesh(m, o);
     REQUIRE(plain.ok());
     REQUIRE(capped.ok());
     INFO("plain " << around(plain.mesh) << " capped " << around(capped.mesh));
     CHECK(around(capped.mesh) > around(plain.mesh));
-    CHECK(around(capped.mesh) >= 8);
+    CHECK(around(capped.mesh) >= 12);
 }

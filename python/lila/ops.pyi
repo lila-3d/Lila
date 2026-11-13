@@ -7406,7 +7406,7 @@ def quadRemesh(*objects: Any, preset: str | None = None, method: str | None = No
         featureGuidePoints: Feature guide polylines as lists of world [x, y, z].
         densityHandles: Local face size as {position: world [x, y, z], radius, scale}: scale times the edge length at the centre (0.35 to 2.8), easing out to the radius.
         pureQuads: All quads; false allows a few triangles and pentagons. Default True.
-        jointDensity: Extra faces at joints, armpits and finger webs, where the mesh bends: 0 none, 1 about three times as dense there. Default 0.5.
+        jointDensity: Extra faces at joints, armpits and finger webs, where the mesh bends: 0 none, 1 about three times as dense there. Default 0.0.
         jointDensityReach: How far Joint Density's extra faces reach from a fold, in faces; lower keeps them tight to the joint. Default 6.0.
         jointPoleAvoidance: Keeps poles out of joints, armpits and finger webs; higher pushes them further onto flatter parts. 0 off. Default 30.0.
         edgesAround: Thin round parts of a closed shape, like fingers, get at least this many edges round them, at the cost of faces elsewhere; 0 off. Default 12.
@@ -8076,7 +8076,7 @@ def retopoPoles(*objects: Any, preset: str | None = None, method: str | None = N
         featureGuidePoints: Feature guide polylines as lists of world [x, y, z].
         densityHandles: Local face size as {position: world [x, y, z], radius, scale}: scale times the edge length at the centre (0.35 to 2.8), easing out to the radius.
         pureQuads: All quads; false allows a few triangles and pentagons. Default True.
-        jointDensity: Extra faces at joints, armpits and finger webs, where the mesh bends: 0 none, 1 about three times as dense there. Default 0.5.
+        jointDensity: Extra faces at joints, armpits and finger webs, where the mesh bends: 0 none, 1 about three times as dense there. Default 0.0.
         jointDensityReach: How far Joint Density's extra faces reach from a fold, in faces; lower keeps them tight to the joint. Default 6.0.
         jointPoleAvoidance: Keeps poles out of joints, armpits and finger webs; higher pushes them further onto flatter parts. 0 off. Default 30.0.
         edgesAround: Thin round parts of a closed shape, like fingers, get at least this many edges round them, at the cost of faces elsewhere; 0 off. Default 12.
