@@ -27,6 +27,7 @@ public:
         kDetail,
         kClipBoxes,
         kClipMode,
+        kEyeDomeLighting,
         kCount
     };
     enum ColorMode

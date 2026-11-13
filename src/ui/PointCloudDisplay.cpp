@@ -393,6 +393,7 @@ void draw(render::FrameState& s, const ViewInfo& view, double heightPx, scene::G
         render::PointCloudDraw d;
         d.world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
         d.pointSize = float(std::max(n->as<double>(PointCloud::kPointSize), 0.5));
+        d.edl = float(std::clamp(n->as<double>(PointCloud::kEyeDomeLighting), 0.0, 4.0));
         d.colorMode = render::PointCloudDraw::ColorMode(std::clamp<int64_t>(n->as<int64_t>(PointCloud::kColorMode), 0, 4));
         if (d.colorMode == render::PointCloudDraw::Rgb && !f->hasColor())
             d.colorMode = render::PointCloudDraw::Intensity;

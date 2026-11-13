@@ -15,7 +15,7 @@ struct CloudPush
     uint clipCount;
     uint clipMode;     // 0 off, 1 keep inside, 2 cut inside
     uint colorMode;    // 0 rgb, 1 intensity, 2 elevation, 3 classification, 4 single
-    uint pad;
+    float edl;         // eye-dome lighting strength, carried in alpha to the shading pass; 0 off
 };
 
 [[vk::push_constant]] CloudPush pc;
@@ -108,4 +108,11 @@ VSOut cloudVS(uint id : SV_VertexID)
 float4 cloudPS(nointerpolation float3 color : COLOR) : SV_Target
 {
     return float4(sceneCompress(color), 1.0);
+}
+
+/** Into the clouds' own target for eye-dome lighting: the strength in alpha, which also marks the pixel as a point. */
+[shader("fragment")]
+float4 cloudEdlTargetPS(nointerpolation float3 color : COLOR) : SV_Target
+{
+    return float4(sceneCompress(color), max(saturate(pc.edl * 0.25), 1.0 / 255.0));
 }

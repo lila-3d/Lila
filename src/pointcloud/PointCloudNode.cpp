@@ -65,6 +65,11 @@ std::vector<AttrDef> cloudAttrs()
     at(PointCloud::kClipMode) = {.name = "clipMode", .type = PlugType::Enum, .defaultValue = int64_t(1), .flags = AttrInput | AttrStorable,
                                  .enumNames = kClipModes, .enumDocs = {"Boxes are ignored.", "Only points inside a box show.", "Points inside the boxes are cut away."},
                                  .doc = "How the clip boxes cut the cloud."};
+    at(PointCloud::kEyeDomeLighting) = {.name = "eyeDomeLighting", .type = PlugType::Float, .defaultValue = 0.3,
+                                        .flags = AttrInput | AttrStorable | AttrChannelBox,
+                                        .doc = "Shades the points by how much nearer their neighbours are, so a scan without normals reads as "
+                                               "surfaces. 0 turns it off.",
+                                        .minValue = 0.0, .maxValue = 4.0};
     return a;
 }
 

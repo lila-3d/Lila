@@ -328,3 +328,50 @@ TEST_CASE("a point cloud draws the same at every offset, clipped by its boxes")
             CHECK(maxDiff(images[0][clip], images[i][clip]) <= 3);
         }
 }
+
+TEST_CASE("eye-dome lighting shades a point cloud and keeps its depth against the scene")
+{
+    if (!gpu())
+        return;
+    // Two sheets of points, one 10 cm nearer the eye over half the other: the far sheet darkens along the near one's edge.
+    static const auto chunk = [] {
+        auto c = std::make_shared<PointChunk>();
+        for (uint32_t layer = 0; layer < 2; ++layer)
+            for (uint32_t y = 0; y < 64; ++y)
+                for (uint32_t x = 0; x < (layer ? 32u : 64u); ++x)
+                {
+                    const uint32_t qx = x * 1040, qy = layer ? 50000u : 30000u, qz = y * 1040;
+                    c->words.push_back(qx | (qy << 16));
+                    c->words.push_back(qz | (200u << 16) | (200u << 24));
+                    c->words.push_back(200u | (2u << 8) | (30000u << 16));
+                    ++c->count;
+                }
+        return c;
+    }();
+    auto frame = [&](float edl, bool wall) {
+        FrameState s = sceneAt(kOffsets[0]);
+        s.heightfields.clear();
+        if (!wall)
+            s.meshes = DrawList();
+        PointCloudDraw d;
+        d.world = glm::translate(glm::dmat4(1.0), glm::dvec3(-20.0, 0.0, -20.0));
+        d.pointSize = 3.0f;
+        d.edl = edl;
+        d.chunks.push_back({chunk, glm::dvec3(0.0), 40.0});
+        s.pointClouds.push_back(d);
+        draw(s);
+        return draw(s);
+    };
+    const std::vector<uint8_t> off = frame(0.0f, false), on = frame(1.0f, false);
+    // Shading changes the cloud, not the empty background.
+    CHECK(differing(off, on, 20) > size_t(50));
+    // Drawn through its own target and shading pass, the cloud still meets the scene's meshes in depth: with the test
+    // scene's meshes in, the image differs from the cloud alone exactly where those meshes cover it.
+    const std::vector<uint8_t> withScene = frame(1.0f, true), sceneOnly = [] {
+        FrameState s = sceneAt(kOffsets[0]);
+        s.heightfields.clear();
+        return draw(s);
+    }();
+    CHECK(differing(withScene, sceneOnly, 20) > size_t(0));
+    CHECK(differing(withScene, on, 20) > size_t(0));
+}

@@ -130,6 +130,7 @@ struct PointCloudDraw
     std::vector<Chunk> chunks;
     glm::dmat4 world{1.0};
     float pointSize = 2.0f; // device pixels
+    float edl = 0.3f;       // eye-dome lighting strength, 0 off
     enum ColorMode : uint32_t
     {
         Rgb,

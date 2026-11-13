@@ -354,9 +354,15 @@ struct CloudPush
     uint32_t clipCount = 0;
     uint32_t clipMode = 0;
     uint32_t colorMode = 0;
-    uint32_t pad = 0;
+    float edl = 0.0f;
 };
 static_assert(sizeof(CloudPush) == 208, "matches CloudPush in pointcloud.slang");
+
+struct EdlPush
+{
+    glm::mat4 invProj{1.0f};
+    glm::vec4 params{1.5f, 8.0f, 0.0f, 0.0f}; // radius in pixels, samples
+};
 
 
 
@@ -571,6 +577,9 @@ struct Viewport
     // Viewport post: the scene resolved here, then filtered into the frame with the prepass depth and normals.
     Image postColor;
     VkDescriptorSet postSet = VK_NULL_HANDLE;
+    /** Point clouds drawn on their own for eye-dome lighting, single-sampled; edlSet reads them in the shading pass. */
+    Image cloudColor, cloudDepth;
+    VkDescriptorSet edlSet = VK_NULL_HANDLE;
     // The scene target (MSAA, resolved into scene), its resolved depth, and the temporal history read by the compose pass.
     Image sceneMs, scene, sceneDepth;
     std::array<Image, 2> history;
@@ -750,6 +759,9 @@ struct Renderer::Impl
     VkPipelineLayout strandsLayout = VK_NULL_HANDLE;
     VkPipeline cloudPipeline = VK_NULL_HANDLE;
     VkPipelineLayout cloudLayout = VK_NULL_HANDLE;
+    /** Point clouds into their own target, and the eye-dome lighting pass that shades them into the scene. */
+    VkPipeline cloudTargetPipeline = VK_NULL_HANDLE, edlPipeline = VK_NULL_HANDLE;
+    VkPipelineLayout edlLayout = VK_NULL_HANDLE;
     std::unordered_map<uint64_t, GpuChunk> chunkCache; // render thread only
     size_t chunkBytes = 0;
     VkPipelineLayout pointsLayout = VK_NULL_HANDLE, pointsCullLayout = VK_NULL_HANDLE;
@@ -981,7 +993,7 @@ struct Renderer::Impl
         v.images.clear();
         destroyImage(v.color);
         destroyImage(v.depth);
-        for (Image* img : {&v.aoDepth, &v.aoNormal, &v.aoRaw, &v.aoFinal, &v.bevel, &v.rtShadow, &v.postColor, &v.sceneMs, &v.scene, &v.sceneDepth, &v.history[0], &v.history[1],
+        for (Image* img : {&v.aoDepth, &v.aoNormal, &v.aoRaw, &v.aoFinal, &v.bevel, &v.rtShadow, &v.postColor, &v.cloudColor, &v.cloudDepth, &v.sceneMs, &v.scene, &v.sceneDepth, &v.history[0], &v.history[1],
                            &v.bloomDown, &v.bloomUp, &v.histogram, &v.exposureState})
             destroyImage(*img);
         for (std::vector<VkImageView>* views : {&v.bloomDownViews, &v.bloomUpViews})
@@ -1177,6 +1189,7 @@ struct Renderer::Impl
         v.denoiseSet = allocateSet(aoPool, aoComputeLayout);
         v.aoSampleSet = allocateSet(aoPool, aoSampleLayout);
         v.postSet = allocateSet(aoPool, aoSampleLayout);
+        v.edlSet = allocateSet(aoPool, aoSampleLayout);
         for (auto& sets : v.taaSets)
             for (VkDescriptorSet& set : sets)
                 set = allocateSet(aoPool, aoComputeLayout);
@@ -3221,6 +3234,13 @@ struct Renderer::Impl
         writeImage(v.postSet, 0, sampler, v.postColor.view, shaderRead);
         writeImage(v.postSet, 1, sampler, v.aoDepth.view, depthRead);
         writeImage(v.postSet, 2, sampler, v.aoNormal.view, shaderRead);
+
+        v.cloudColor = createImage(sceneFormat, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | sampled, extent, VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+        v.cloudDepth = createImage(kDepthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | sampled, extent, VK_SAMPLE_COUNT_1_BIT,
+                                   VK_IMAGE_ASPECT_DEPTH_BIT);
+        writeImage(v.edlSet, 0, sampler, v.cloudColor.view, shaderRead);
+        writeImage(v.edlSet, 1, sampler, v.cloudDepth.view, depthRead);
+        writeImage(v.edlSet, 2, sampler, v.aoNormal.view, shaderRead);
     }
 
     /** The scene target, its resolved depth and the temporal history, with the sets the TAA and compose passes read them through. */
@@ -4096,7 +4116,16 @@ struct Renderer::Impl
             // No vertex input: the shader reads each node's packed points through the push constants.
             VkPipelineVertexInputStateCreateInfo cvin{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
             cloudPipeline = buildPipeline(cloudLayout, cloud, "cloudVS", "cloudPS", sceneFormat, VK_PRIMITIVE_TOPOLOGY_POINT_LIST, cvin, true, false);
+            cloudTargetPipeline = buildPipeline(cloudLayout, cloud, "cloudVS", "cloudEdlTargetPS", sceneFormat, VK_PRIMITIVE_TOPOLOGY_POINT_LIST, cvin,
+                                                true, false, true, 0.0f, false, true);
             vkDestroyShaderModule(vk.device, cloud, nullptr);
+        }
+        edlLayout = layoutFor(sizeof(EdlPush), VK_SHADER_STAGE_FRAGMENT_BIT, aoSampleLayout);
+        if (VkShaderModule edl = module(loadSpirv("edl.spv")))
+        {
+            VkPipelineVertexInputStateCreateInfo evin{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+            edlPipeline = buildPipeline(edlLayout, edl, "edlVS", "edlPS", sceneFormat, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, evin, true, false);
+            vkDestroyShaderModule(vk.device, edl, nullptr);
         }
         overlayTrisLayout = layoutFor(sizeof(glm::vec2), VK_SHADER_STAGE_VERTEX_BIT, atlasSetLayout);
 
@@ -4400,13 +4429,13 @@ struct Renderer::Impl
                               &heightfields.wire, &heightfields.prepass, &heightfields.shadow,
                               &composeOverPipeline, &postPipeline, &externalPipeline,
                               &taaPipeline, &composePipeline, &composeSinglePipeline,
-                              &bloomDownPipeline, &bloomUpPipeline, &histogramPipeline, &averagePipeline, &shadowPipeline, &rtaoPipeline, &bevelPipeline, &rtShadowPipeline, &strandsPipeline, &cloudPipeline})
+                              &bloomDownPipeline, &bloomUpPipeline, &histogramPipeline, &averagePipeline, &shadowPipeline, &rtaoPipeline, &bevelPipeline, &rtShadowPipeline, &strandsPipeline, &cloudPipeline, &cloudTargetPipeline, &edlPipeline})
             if (*p)
             {
                 vkDestroyPipeline(vk.device, *p, nullptr);
                 *p = VK_NULL_HANDLE;
             }
-        for (VkPipelineLayout* l : {&gridLayout, &linesLayout, &overlayTrisLayout, &meshLayout, &wireLayout, &contactLayout, &aoLayout, &aoApplyLayout, &pointsLayout, &pointsCullLayout, &strandsLayout, &cloudLayout,
+        for (VkPipelineLayout* l : {&gridLayout, &linesLayout, &overlayTrisLayout, &meshLayout, &wireLayout, &contactLayout, &aoLayout, &aoApplyLayout, &pointsLayout, &pointsCullLayout, &strandsLayout, &cloudLayout, &edlLayout,
                                     &imagePlaneLayout, &postLayout, &externalLayout, &taaLayout, &composeLayout, &bloomLayout,
                                     &exposureLayout, &rtaoLayout, &bevelLayout, &rtShadowLayout})
             if (*l)
@@ -4814,6 +4843,11 @@ struct Renderer::Impl
         constexpr auto sampledRead = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
         barrier(cmd, v.images[imageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, colorStage, 0, colorStage,
                 colorWrite, VK_IMAGE_ASPECT_COLOR_BIT);
+        // Eye-dome lighting: the clouds first into their own target, which the scene pass then shades from.
+        const bool edl = edlPipeline && cloudTargetPipeline && v.cloudColor.image &&
+                         std::ranges::any_of(s.pointClouds, [](const PointCloudDraw& d) { return d.edl > 0.0f && !d.chunks.empty(); });
+        if (edl)
+            recordCloudTarget(cmd, f, v, s, sceneViewProj);
         if (v.color.image)
             barrier(cmd, v.color.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, colorStage, colorWrite, colorStage,
                     colorWrite, VK_IMAGE_ASPECT_COLOR_BIT);
@@ -4938,7 +4972,10 @@ struct Renderer::Impl
         drawMeshes(cmd, s, vpScene, (ao && !aoFast) || frameBevel || frameRtShadow ? v.aoSampleSet : whiteAoSet, v.extent.height,
                    sceneChunks ? &f : nullptr, &ri);
         drawStrands(cmd, s, vpScene, v.extent.height);
-        drawClouds(cmd, f, s, sceneViewProj);
+        if (edl)
+            drawEdl(cmd, v, s);
+        else
+            drawClouds(cmd, f, s, sceneViewProj, cloudPipeline);
         if (aoFast)
         {
             vkCmdEndRendering(cmd);
@@ -6426,9 +6463,9 @@ struct Renderer::Impl
     }
 
     /** Streamed point clouds in the scene pass (pointcloud.slang): each resident chunk as points, through its cube. */
-    void drawClouds(VkCommandBuffer cmd, Frame& f, const FrameState& s, const glm::dmat4& viewProj)
+    void drawClouds(VkCommandBuffer cmd, Frame& f, const FrameState& s, const glm::dmat4& viewProj, VkPipeline pipeline)
     {
-        if (!cloudPipeline || s.pointClouds.empty())
+        if (!pipeline || s.pointClouds.empty())
             return;
         LILA_ZONE();
         size_t clipCount = 0;
@@ -6441,7 +6478,7 @@ struct Renderer::Impl
             f.cloudClips = compute::makeBuffer(vk, std::max<size_t>(bytes * 2, 64 * sizeof(glm::mat4)), 0, compute::Host::Write);
         }
         auto* clips = static_cast<glm::mat4*>(f.cloudClips.mapped);
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, cloudPipeline);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         const float* range = vk.properties.limits.pointSizeRange;
         const float maxSize = vk.largePoints ? range[1] : 1.0f;
         const glm::dmat4 fromRelative = glm::translate(glm::dmat4(1.0), s.renderOrigin);
@@ -6461,6 +6498,7 @@ struct Renderer::Impl
             p.clipCount = uint32_t(n);
             p.clipMode = uint32_t(d.clipMode);
             p.colorMode = uint32_t(d.colorMode);
+            p.edl = d.edl;
             clipAt += n;
             for (const PointCloudDraw::Chunk& c : d.chunks)
             {
@@ -6479,6 +6517,63 @@ struct Renderer::Impl
             }
         }
         vmaFlushAllocation(vk.allocator, f.cloudClips.alloc, 0, VK_WHOLE_SIZE);
+    }
+
+    /** The clouds alone into v.cloudColor and v.cloudDepth (single-sampled), left readable for the eye-dome lighting pass. */
+    void recordCloudTarget(VkCommandBuffer cmd, Frame& f, Viewport& v, const FrameState& s, const glm::dmat4& viewProj)
+    {
+        LILA_ZONE();
+        constexpr auto colorStage = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        constexpr auto colorWrite = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+        constexpr auto depthStage = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        constexpr auto depthAccess = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+        constexpr auto fragmentStage = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+        constexpr auto sampledRead = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
+        barrier(cmd, v.cloudColor.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, fragmentStage, 0, colorStage, colorWrite,
+                VK_IMAGE_ASPECT_COLOR_BIT);
+        barrier(cmd, v.cloudDepth.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, fragmentStage, 0, depthStage, depthAccess,
+                VK_IMAGE_ASPECT_DEPTH_BIT);
+        VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        color.imageView = v.cloudColor.view;
+        color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        color.clearValue.color = {{0.0f, 0.0f, 0.0f, 0.0f}};
+        VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        depth.imageView = v.cloudDepth.view;
+        depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        depth.clearValue.depthStencil = {0.0f, 0}; // reversed-Z
+        VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        ri.renderArea = {{0, 0}, v.extent};
+        ri.layerCount = 1;
+        ri.colorAttachmentCount = 1;
+        ri.pColorAttachments = &color;
+        ri.pDepthAttachment = &depth;
+        vkCmdBeginRendering(cmd, &ri);
+        const VkViewport viewport{0, 0, float(v.extent.width), float(v.extent.height), 0, 1};
+        const VkRect2D scissor{{0, 0}, v.extent};
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
+        drawClouds(cmd, f, s, viewProj, cloudTargetPipeline);
+        vkCmdEndRendering(cmd);
+        barrier(cmd, v.cloudColor.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, colorStage, colorWrite,
+                fragmentStage, sampledRead, VK_IMAGE_ASPECT_COLOR_BIT);
+        barrier(cmd, v.cloudDepth.image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, depthStage, depthAccess,
+                fragmentStage, sampledRead, VK_IMAGE_ASPECT_DEPTH_BIT);
+    }
+
+    /** In the scene pass: the clouds from their own target, shaded by eye-dome lighting, at their own depth. */
+    void drawEdl(VkCommandBuffer cmd, Viewport& v, const FrameState& s)
+    {
+        LILA_ZONE();
+        EdlPush p;
+        p.invProj = glm::mat4(glm::inverse(s.proj));
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, edlPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, edlLayout, 0, 1, &v.edlSet, 0, nullptr);
+        vkCmdPushConstants(cmd, edlLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
     }
 
     /** Hair strands as ribbons in the scene pass (strands.slang), lit by a key light over the camera. */

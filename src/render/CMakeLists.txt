@@ -70,6 +70,7 @@ lila_add_shaders(lila_render FILES
     shaders/points.slang
     shaders/strands.slang
     shaders/pointcloud.slang
+    shaders/edl.slang
     shaders/points_cull.slang
     shaders/mesh.slang
     shaders/mesh_bindless.slang
