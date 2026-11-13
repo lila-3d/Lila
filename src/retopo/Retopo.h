@@ -167,6 +167,8 @@ struct QuadRemeshOptions
     double jointDensityReach = 6.0;
     /** Align to edges flagged "hard". */
     bool useHardEdges = true;
+    /** Smooth the simplified working surface first: for stair-stepped sources such as voxel shells, which read as noise in the flow. */
+    bool smoothInput = false;
     /** Also align to edges whose faces meet sharper than this many degrees; negative disables. */
     double sharpAngle = 40.0;
     /** -1 off, 0/1/2 for a mirror plane through the origin across x/y/z: the result is exactly symmetric. */

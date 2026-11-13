@@ -2,6 +2,7 @@
 
 #include "core/Profile.h"
 #include "core/Progress.h"
+#include "geo/Knife.h"
 #include "geo/Normals.h"
 #include "geo/Ops.h"
 #include "geo/Topology.h"
@@ -348,136 +349,221 @@ double handleDensity(const glm::dvec3& p, const std::vector<DensityHandle>& hand
 }
 
 /**
- * Lays each feature guide onto the working surface as hard edges: the surface vertex path nearest the polyline, with its
- * vertices moved onto the polyline where that leaves their triangles facing the same way, so the crease runs straight.
+ * Joins the loose ends of a cut's chain: each end to the nearest other end within reach, by the shortest path along the
+ * mesh's edges. An open guide keeps the two ends farthest apart.
  */
-void embedFeatureGuides(Surface& s, const std::vector<std::vector<glm::dvec3>>& guides, const geo::MeshBvh& bvh)
+void closeChainGaps(const geo::Mesh& m, std::vector<std::array<Index, 2>>& chainEdges, std::unordered_set<uint64_t>& have, double reach,
+                    bool closed)
+{
+    std::unordered_map<Index, int> degree;
+    for (const auto& [a, b] : chainEdges)
+    {
+        ++degree[a];
+        ++degree[b];
+    }
+    std::vector<Index> ends;
+    for (const auto& [v, d] : degree)
+        if (d == 1)
+            ends.push_back(v);
+    if (!closed && ends.size() >= 2)
+    {
+        // The guide's own two ends: the pair farthest apart.
+        size_t bi = 0, bj = 1;
+        double far = -1.0;
+        for (size_t i = 0; i < ends.size(); ++i)
+            for (size_t j = i + 1; j < ends.size(); ++j)
+                if (const double d = glm::distance(m.position(ends[i]), m.position(ends[j])); d > far)
+                {
+                    far = d;
+                    bi = i;
+                    bj = j;
+                }
+        const Index keepA = ends[bi], keepB = ends[bj];
+        ends.erase(std::remove_if(ends.begin(), ends.end(), [&](Index v) { return v == keepA || v == keepB; }), ends.end());
+    }
+    std::unordered_set<Index> joined;
+    for (Index a : ends)
+    {
+        if (joined.contains(a))
+            continue;
+        std::unordered_map<Index, double> dist{{a, 0.0}};
+        std::unordered_map<Index, Index> from;
+        std::vector<std::pair<double, Index>> heap{{0.0, a}};
+        Index found = kInvalid;
+        while (!heap.empty())
+        {
+            std::pop_heap(heap.begin(), heap.end(), std::greater<>());
+            const auto [d, u] = heap.back();
+            heap.pop_back();
+            if (d > dist[u])
+                continue;
+            if (u != a && degree.contains(u) && degree[u] == 1 && !joined.contains(u))
+            {
+                found = u;
+                break;
+            }
+            m.forEachPointEdge(u, [&](Index e) {
+                const Index w = m.edgeOtherPoint(e, u);
+                const double nd = d + m.edgeLength(e);
+                if (nd > reach)
+                    return;
+                auto it = dist.find(w);
+                if (it == dist.end() || nd < it->second)
+                {
+                    dist[w] = nd;
+                    from[w] = u;
+                    heap.push_back({nd, w});
+                    std::push_heap(heap.begin(), heap.end(), std::greater<>());
+                }
+            });
+        }
+        if (found == kInvalid)
+            continue;
+        for (Index u = found; u != a; u = from[u])
+        {
+            const Index p = from[u];
+            if (have.insert(edgeKey(p, u)).second)
+                chainEdges.push_back({p, u});
+        }
+        joined.insert(a);
+        joined.insert(found);
+    }
+}
+
+/**
+ * Cuts each feature guide into the mesh with the knife, so an edge chain runs exactly along it; returns those edges
+ * as point pairs. Guide points are taken onto the surface, a few per source edge apart, so the cut between two of them
+ * follows the surface closely.
+ */
+std::vector<std::array<Index, 2>> imprintGuides(geo::Mesh& m, const std::vector<std::vector<glm::dvec3>>& guides)
 {
     LILA_ZONE();
 
-    if (guides.empty())
-        return;
-    s.buildTopology();
-    s.buildGeometry();
-    const Index n = s.vertexCount();
-    std::vector<std::vector<Index>> vertexTris(n);
-    for (size_t t = 0; t < s.tris.size(); ++t)
-        for (Index v : s.tris[t])
-            vertexTris[v].push_back(Index(t));
-    std::vector<uint8_t> border(n, 0);
-    for (size_t e = 0; e < s.edges.size(); ++e)
-        if (s.edgeTriCount[e] == 1)
-            border[s.edges[e][0]] = border[s.edges[e][1]] = 1;
-    const auto nearestVertex = [&](const glm::dvec3& p) {
-        Index best = kInvalid;
-        double bestD = std::numeric_limits<double>::max();
-        for (Index v = 0; v < n; ++v)
-            if (const double d = glm::dot(s.pos[v] - p, s.pos[v] - p); d < bestD)
-            {
-                bestD = d;
-                best = v;
-            }
-        return best;
+    double edge = 0.0;
+    Index count = 0;
+    for (Index e = 0; e < m.edgeCapacity(); ++e)
+        if (m.edgeValid(e))
+        {
+            edge += m.edgeLength(e);
+            ++count;
+        }
+    const double step = std::max(1e-9, 2.0 * edge / std::max<Index>(1, count));
+    std::vector<std::array<Index, 2>> out;
+    // A guide along the mesh's own border is an edge loop already; cutting along it would tear the border.
+    auto alongBorder = [&](const std::vector<glm::dvec3>& guide) {
+        std::vector<std::array<glm::dvec3, 2>> segs;
+        for (Index e = 0; e < m.edgeCapacity(); ++e)
+            if (m.edgeValid(e) && m.isBoundaryEdge(e))
+                segs.push_back({m.position(m.edgePoint(e, 0)), m.position(m.edgePoint(e, 1))});
+        if (segs.empty())
+            return false;
+        for (const glm::dvec3& p : guide)
+            if (glm::distance(closestOnSegments(p, segs), p) > 0.5 * step)
+                return false;
+        return true;
     };
-    const double step = std::max(s.meanEdgeLength() * 0.5, 1e-12);
-    std::vector<double> dist(n, std::numeric_limits<double>::max());
-    std::vector<Index> from(n, kInvalid), touched;
     for (const auto& guide : guides)
     {
-        std::vector<glm::dvec3> samples;
-        for (size_t i = 0; i + 1 < guide.size(); ++i)
-        {
-            const int count = std::max(1, int(std::ceil(glm::distance(guide[i], guide[i + 1]) / step)));
-            for (int k = 0; k < count; ++k)
-                samples.push_back(glm::mix(guide[i], guide[i + 1], double(k) / count));
-        }
-        if (!guide.empty())
-            samples.push_back(guide.back());
-        std::vector<Index> path;
-        for (const glm::dvec3& p : samples)
-        {
-            const Index v = nearestVertex(p);
-            if (v == kInvalid || (!path.empty() && path.back() == v))
-                continue;
-            if (path.empty())
-            {
-                path.push_back(v);
-                continue;
-            }
-            // Shortest edge path from the last vertex, which is a few edges away at most.
-            const Index a = path.back();
-            for (Index t : touched)
-            {
-                dist[t] = std::numeric_limits<double>::max();
-                from[t] = kInvalid;
-            }
-            touched.assign({a});
-            dist[a] = 0.0;
-            std::vector<std::pair<double, Index>> heap{{0.0, a}};
-            while (!heap.empty())
-            {
-                std::pop_heap(heap.begin(), heap.end(), std::greater<>());
-                auto [d, u] = heap.back();
-                heap.pop_back();
-                if (u == v || d > dist[u])
-                    break;
-                for (Index k = s.adjStart[u]; k < s.adjStart[u + 1]; ++k)
-                {
-                    const Index w = s.adj[k];
-                    const double nd = d + glm::distance(s.pos[u], s.pos[w]);
-                    if (nd < dist[w] && nd < 8.0 * step)
-                    {
-                        if (dist[w] == std::numeric_limits<double>::max())
-                            touched.push_back(w);
-                        dist[w] = nd;
-                        from[w] = u;
-                        heap.push_back({nd, w});
-                        std::push_heap(heap.begin(), heap.end(), std::greater<>());
-                    }
-                }
-            }
-            if (from[v] == kInvalid)
-            {
-                path.push_back(v);
-                continue;
-            }
-            std::vector<Index> leg;
-            for (Index u = v; u != a; u = from[u])
-                leg.push_back(u);
-            path.insert(path.end(), leg.rbegin(), leg.rend());
-        }
-        for (Index v : path)
-        {
-            glm::dvec3 best = s.pos[v];
-            double bestD = std::numeric_limits<double>::max();
-            for (size_t i = 0; i + 1 < guide.size(); ++i)
-            {
-                const glm::dvec3 a = guide[i], ab = guide[i + 1] - a;
-                const double len2 = glm::dot(ab, ab);
-                const glm::dvec3 q = a + ab * (len2 > 0.0 ? std::clamp(glm::dot(s.pos[v] - a, ab) / len2, 0.0, 1.0) : 0.0);
-                if (const double d = glm::dot(q - s.pos[v], q - s.pos[v]); d < bestD)
-                {
-                    bestD = d;
-                    best = q;
-                }
-            }
+        if (guide.size() < 2 || alongBorder(guide))
+            continue;
+        const geo::MeshBvh bvh(m);
+        const bool closed = glm::distance(guide.front(), guide.back()) < 1e-6 * step;
+        std::vector<geo::KnifePoint> points;
+        auto add = [&](const glm::dvec3& p) {
             geo::BvhClosest c;
-            if (bvh.closestPoint(best, c))
-                best = c.point;
-            bool keeps = !border[v];
-            for (Index t : vertexTris[v])
+            if (bvh.closestPoint(p, c) && c.face != kInvalid)
+                points.push_back(geo::KnifePoint::face(c.face, c.point));
+        };
+        const size_t last = closed ? guide.size() - 1 : guide.size();
+        for (size_t i = 0; i < last; ++i)
+        {
+            add(guide[i]);
+            if (i + 1 < guide.size())
             {
-                std::array<glm::dvec3, 3> p;
-                for (int k = 0; k < 3; ++k)
-                    p[k] = s.tris[t][k] == v ? best : s.pos[s.tris[t][k]];
-                keeps &= glm::dot(glm::cross(p[1] - p[0], p[2] - p[0]), s.triNormal[t]) > 0.0;
+                const int pieces = int(std::ceil(glm::distance(guide[i], guide[i + 1]) / step));
+                for (int k = 1; k < pieces; ++k)
+                    add(glm::mix(guide[i], guide[i + 1], double(k) / pieces));
             }
-            if (keeps)
-                s.pos[v] = best;
         }
-        for (size_t i = 0; i + 1 < path.size(); ++i)
-            s.hard.insert(edgeKey(path[i], path[i + 1]));
+        if (points.size() < 2)
+            continue;
+        geo::KnifeOptions ko;
+        ko.closed = closed;
+        auto borderEdges = [](const geo::Mesh& mesh) {
+            Index n = 0;
+            for (Index e = 0; e < mesh.edgeCapacity(); ++e)
+                n += mesh.edgeValid(e) && mesh.isBoundaryEdge(e);
+            return n;
+        };
+        // A cut that opens the mesh (a guide grazing a border, a knife path that misses) is undone.
+        const geo::Mesh before = m;
+        const Index open = borderEdges(m);
+        const std::vector<Index> cut = geo::knifeCut(m, points, ko);
+        if (borderEdges(m) > open)
+        {
+            m = before;
+            continue;
+        }
+        // The cut's own edges, not the diagonals it adds inside the faces it splits: ends and middle on the cut's path.
+        std::vector<std::array<glm::dvec3, 2>> segs;
+        for (size_t i = 0; i + 1 < points.size(); ++i)
+            segs.push_back({points[i].position, points[i + 1].position});
+        if (closed)
+            segs.push_back({points.back().position, points.front().position});
+        auto onPath = [&](const glm::dvec3& at) { return glm::distance(closestOnSegments(at, segs), at) < 0.05 * step; };
+        std::unordered_set<Index> chain;
+        for (Index e : cut)
+        {
+            if (!m.edgeValid(e))
+                continue;
+            const glm::dvec3 a = m.position(m.edgePoint(e, 0)), b = m.position(m.edgePoint(e, 1));
+            if (onPath(a) && onPath(b) && onPath(0.5 * (a + b)))
+            {
+                out.push_back({m.edgePoint(e, 0), m.edgePoint(e, 1)});
+                chain.insert(m.edgePoint(e, 0));
+                chain.insert(m.edgePoint(e, 1));
+            }
+        }
+        // The knife leaves out stretches that already run along an edge: an edge between two of the chain's points,
+        // along the path, closes such a gap.
+        std::unordered_set<uint64_t> have;
+        for (const auto& [x, y] : out)
+            have.insert(edgeKey(x, y));
+        for (Index p : chain)
+            m.forEachPointEdge(p, [&](Index e) {
+                const Index q = m.edgeOtherPoint(e, p);
+                if (p < q && chain.contains(q) && !have.contains(edgeKey(p, q)) && onPath(0.5 * (m.position(p) + m.position(q))))
+                {
+                    out.push_back({p, q});
+                    have.insert(edgeKey(p, q));
+                }
+            });
+        closeChainGaps(m, out, have, step, closed);
     }
+    return out;
+}
+
+/** The same on a working surface: its hard edges, density and pins carry over, and the guides' edges join the hard set. */
+void imprintGuides(Surface& s, const std::vector<std::vector<glm::dvec3>>& guides)
+{
+    std::vector<Index> sizes(s.tris.size(), 3), corners;
+    corners.reserve(s.tris.size() * 3);
+    for (const auto& t : s.tris)
+        corners.insert(corners.end(), t.begin(), t.end());
+    geo::Mesh m = geo::Mesh::fromPolygons(s.pos, sizes, corners);
+    if (m.pointCapacity() != Index(s.pos.size()))
+        return;
+    const std::vector<std::array<Index, 2>> cut = imprintGuides(m, guides);
+    Surface out = surfaceFromMesh(m, false);
+    if (out.pos.size() < s.pos.size())
+        return;
+    for (size_t v = 0; v < s.density.size(); ++v)
+        out.density[v] = s.density[v];
+    out.hard = s.hard;
+    for (const auto& [a, b] : cut)
+        out.hard.insert(edgeKey(a, b));
+    out.pins = s.pins;
+    s = std::move(out);
 }
 
 /**
@@ -745,7 +831,6 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
     w.src.compact();
     w.bvh.emplace(w.src);
     w.closed = isClosed(w.src);
-    const geo::MeshBvh& bvh = *w.bvh;
     clock.lap("bvh");
 
     Surface& s = w.s;
@@ -765,7 +850,8 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
     w.h0 = opts.targetEdgeLength > 0.0 ? opts.targetEdgeLength : std::sqrt(area / faces);
     const double triEdge = w.h0 / triangleRatio();
     const double workTris = std::max(64.0, area / (0.433 * triEdge * triEdge));
-    if (double(s.tris.size()) > 8.0 * halves * workTris)
+    const bool decimated = double(s.tris.size()) > 8.0 * halves * workTris;
+    if (decimated)
         decimateSurface(s, Index(4.0 * halves * workTris));
     if (w.symmetric)
     {
@@ -778,16 +864,36 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
     }
     // Long source triangles split down first: remeshing straight from a few long slivers piles up short edges it can't
     // collapse.
-    refineSurface(s, opts.featureGuides.empty() ? triEdge : 0.5 * triEdge);
-    embedFeatureGuides(s, opts.featureGuides, bvh);
+    refineSurface(s, triEdge);
+    if (!opts.featureGuides.empty())
+        imprintGuides(s, opts.featureGuides);
     s.buildTopology();
     s.buildGeometry();
     s.detectFeatures(opts.sharpAngle, 75.0, 2.0 * w.h0);
+    if (decimated && opts.smoothInput)
+    {
+        smoothSurface(s, *w.bvh, 8);
+        s.buildGeometry();
+        s.detectFeatures(opts.sharpAngle, 75.0, 2.0 * w.h0);
+    }
     clock.lap("surface");
 
     w.border.build(s, 0.5 * w.h0, true);
     w.creases.build(s, 0.5 * w.h0, false, true);
     std::vector<double> target = sizeField(s, w, opts, faces, CurvatureSizing::Triangles);
+    if (std::getenv("LILA_STAGE_LOG"))
+    {
+        std::vector<double> sorted = target;
+        std::sort(sorted.begin(), sorted.end());
+        int borders = 0, corners = 0;
+        for (size_t e = 0; e < s.edges.size(); ++e)
+            borders += s.edgeBoundary[e];
+        for (Index v = 0; v < s.vertexCount(); ++v)
+            corners += s.feature[v] == FeatureKind::Corner;
+        std::fprintf(stderr, "surface: %zu triangles, h0 %g, quad size p10 %g p50 %g p90 %g, mean edge %g, %zu hard, %d border edges, %d corners\n",
+                     s.tris.size(), w.h0, sorted[sorted.size() / 10], sorted[sorted.size() / 2], sorted[sorted.size() * 9 / 10], s.meanEdgeLength(),
+                     s.hard.size(), borders, corners);
+    }
     clock.lap("density");
     for (double& t : target)
         t /= triangleRatio();
@@ -1756,6 +1862,14 @@ bool coverSoup(Work& w, const QuadRemeshOptions& opts, std::vector<glm::dvec3>& 
             return false;
         }
         clock.lap("cover");
+        if (std::getenv("LILA_STAGE_LOG"))
+        {
+            int flipped = 0;
+            for (const auto& uv : pz.originalTriangleUvs())
+                flipped += (uv[1].x() - uv[0].x()) * (uv[2].y() - uv[0].y()) - (uv[1].y() - uv[0].y()) * (uv[2].x() - uv[0].x()) < 0.0;
+            std::fprintf(stderr, "cover: %zu triangles, %d flipped, %zu feature edges, %zu singular\n", in.triangles.size(), flipped,
+                         in.features.size(), pz.singularVertexIndices().size());
+        }
         std::unique_ptr<std::vector<std::vector<AutoRemesher::Vector2>>> uvs = pz.takeTriangleUvs();
         std::vector<std::vector<AutoRemesher::Vector2>> originalUvs = pz.originalTriangleUvs();
         std::vector<size_t> singular = pz.singularVertexIndices();
@@ -2036,6 +2150,16 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
                                    std::to_string(int(std::lround(100.0 * off))) + "% of it has no mirror image), so this mirrors its +" +
                                    std::string(1, char('X' + opts.symmetryAxis)) + " half; set Symmetry to Off for it");
     QuadRemeshResult r = coverRemesh(w, opts, clock);
+    if (!r.ok() && !opts.featureGuides.empty())
+    {
+        // Edge loop curves that can't be laid in (a curve the layout can't follow) shouldn't cost the whole remesh.
+        QuadRemeshOptions plain = opts;
+        plain.featureGuides.clear();
+        QuadRemeshResult again = quadRemeshOnce(source, plain);
+        if (again.ok())
+            again.notes.insert(again.notes.begin(), "the edge loop curves couldn't be laid into the layout (" + r.error + "), so this follows the flow without them");
+        return again;
+    }
     if (!r.ok())
     {
         result.error = r.error;
