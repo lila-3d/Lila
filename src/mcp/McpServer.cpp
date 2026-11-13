@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
+#include <atomic>
 #include <future>
 #include <map>
 #include <optional>
@@ -81,6 +82,8 @@ struct Server::Impl
     std::thread thread;
     std::string token;
     int port = 0;
+    /** False while the host is still starting: main-thread calls wait for it instead of running inside startup's event pumping. */
+    std::atomic<bool> ready{true};
 
     json handle(const json& req)
     {
@@ -190,6 +193,13 @@ struct Server::Impl
     /** Runs fn on the main thread and waits; an exception becomes an error text block. */
     std::pair<json, bool> onMain(std::function<json()> fn)
     {
+        const auto startupDeadline = std::chrono::steady_clock::now() + kToolTimeout;
+        while (!ready.load())
+        {
+            if (std::chrono::steady_clock::now() > startupDeadline)
+                return {textContent("timed out waiting for Lila to finish starting"), true};
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
         auto promise = std::make_shared<std::promise<std::pair<json, bool>>>();
         auto future = promise->get_future();
         mainq::post([fn, promise] {
@@ -466,6 +476,14 @@ void Server::stop()
 }
 
 bool Server::running() const { return m->http != nullptr; }
+
+void Server::holdUntilReady() { m->ready = false; }
+
+void Server::setReady()
+{
+    if (!m->ready.exchange(true))
+        log::info("mcp: ready");
+}
 int Server::port() const { return m->port; }
 std::string Server::url() const { return "http://127.0.0.1:" + std::to_string(m->port) + "/mcp"; }
 std::string Server::token() const { return m->token; }
