@@ -2083,25 +2083,32 @@ void registerContractCommands(ext::Context& ctx)
                 return {{"known", false}, {"revision", now}, {"regions", json::array()}};
             const int tile = int(a.get<int64_t>("tile", 64));
             json regions = json::array();
+            std::vector<const std::vector<float>*> oldMasks;
+            for (const auto& [name, v] : h.masks)
+            {
+                const std::vector<float>* o = old->findMask(name);
+                oldMasks.push_back(o && o->size() == v.size() ? o : nullptr);
+            }
             for (int tz = 0; tz < h.nz; tz += tile)
                 for (int tx = 0; tx < h.nx; tx += tile)
                 {
-                    bool dirty = false;
-                    for (int z = tz; z < std::min(h.nz, tz + tile) && !dirty; ++z)
-                        for (int x = tx; x < std::min(h.nx, tx + tile) && !dirty; ++x)
+                    // The changed samples' own bounds in the tile, so a small edit on a coarse terrain stays small.
+                    int x0 = h.nx, z0 = h.nz, x1 = -1, z1 = -1;
+                    for (int z = tz; z < std::min(h.nz, tz + tile); ++z)
+                        for (int x = tx; x < std::min(h.nx, tx + tile); ++x)
                         {
                             const size_t i = h.index(x, z);
-                            dirty = h.heights[i] != old->heights[i];
-                            for (const auto& [name, v] : h.masks)
-                                if (!dirty)
-                                {
-                                    const std::vector<float>* o = old->findMask(name);
-                                    dirty = !o || o->size() != v.size() || (*o)[i] != v[i];
-                                }
+                            bool dirty = h.heights[i] != old->heights[i];
+                            size_t m = 0;
+                            for (auto it = h.masks.begin(); it != h.masks.end() && !dirty; ++it, ++m)
+                                dirty = !oldMasks[m] || (*oldMasks[m])[i] != it->second[i];
+                            if (dirty)
+                                x0 = std::min(x0, x), z0 = std::min(z0, z), x1 = std::max(x1, x), z1 = std::max(z1, z);
                         }
-                    if (!dirty)
+                    if (x1 < 0)
                         continue;
-                    const glm::dvec2 lo = h.samplePos(tx, tz), hi = h.samplePos(std::min(h.nx, tx + tile) - 1, std::min(h.nz, tz + tile) - 1);
+                    const glm::dvec2 lo = h.samplePos(std::max(0, x0 - 1), std::max(0, z0 - 1)),
+                                     hi = h.samplePos(std::min(h.nx - 1, x1 + 1), std::min(h.nz - 1, z1 + 1));
                     const glm::dvec3 a0 = f.frame.world(lo.x, 0.0, lo.y), a1 = f.frame.world(hi.x, 0.0, hi.y);
                     regions.push_back({{"min", vec2(glm::min(groundOf(a0), groundOf(a1)))}, {"max", vec2(glm::max(groundOf(a0), groundOf(a1)))}});
                 }

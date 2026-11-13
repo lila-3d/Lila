@@ -10,6 +10,7 @@
 
 #include <doctest/doctest.h>
 
+#include <chrono>
 #include <cmath>
 #include <set>
 
@@ -322,6 +323,50 @@ TEST_CASE("settlement terrain: terrainBatch makes the same terrain as its calls 
     CHECK(bad["errors"][0]["index"] == 0);
     CHECK(run("terrainStamps", {{"args", {many}}})["layers"]["City"].size() == 3);
     CHECK_THROWS(run("terrainBatch", {{"calls", json::array({{{"command", "terrainErode"}, {"flags", {{"args", {many}}}}}})}}));
+}
+
+TEST_CASE("settlement terrain: a big graded town is fast, agrees with settlementCheck, and keeps its plan through buildings and a small sculpt")
+{
+    terrainLoadPackages();
+    run("newScene");
+    // 12 m samples, as on a large map.
+    const std::string t = terrainMesh(300000.0, 257, 6000.0, 3);
+    const json made = run("settlementCreate", {{"profile", "medievalTown"}, {"size", 50000.0}, {"seed", 3}, {"ground", t}});
+    const std::string mesh = made["mesh"].get<std::string>();
+    const auto start = std::chrono::steady_clock::now();
+    const json graded = run("settlementGrade", {{"args", {mesh}}});
+    const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    CAPTURE(graded.dump());
+    MESSAGE("graded " << graded["pads"] << " pads and " << graded["streets"] << " streets in " << seconds << " s");
+    CHECK(graded["errors"].empty());
+    REQUIRE(graded["pads"].get<int>() > 100);
+    // The terrain is written and evaluated once for the whole town, not once per pad and road.
+    CHECK(seconds < 30.0);
+
+    // settlementCheck judges graded streets as their terrain roads were built, as overGrade does.
+    std::set<std::string> over;
+    for (const json& o : graded["overGrade"])
+        over.insert("street:" + std::to_string(o["id"].get<uint64_t>()));
+    const json check = run("settlementCheck", {{"args", {mesh}}});
+    CAPTURE(check.dump());
+    CHECK(check["counts"]["grade"].get<size_t>() == over.size());
+    for (const json& i : check["issues"])
+        if (i["check"] == "grade")
+            CHECK(over.contains(i["id"].get<std::string>()));
+
+    // A buildings route only changes how envelopes are built, so the plan stays pinned.
+    run("settlementBuildings", {{"args", {mesh}}, {"route", "massing"}});
+    CHECK(run("settlementInfo", {{"args", {mesh}}})["plan"] == "pinned");
+
+    // A 40 m sculpt in one corner re-plans the blocks near it and keeps the rest.
+    run("terrainSculpt", {{"args", {t}}, {"op", "raise"}, {"points", json::array({json::array({15000, 15000})})}, {"radius", 4000.0}, {"strength", 800.0}, {"stage", "final"}});
+    const json dirty = run("settlementReplan", {{"args", {mesh}}});
+    CAPTURE(dirty.dump());
+    REQUIRE(dirty["mode"] == "dirty");
+    CHECK(dirty["keptBlocks"].get<int>() > 2 * dirty["droppedBlocks"].get<int>());
+    const json again = run("settlementGrade", {{"args", {mesh}}});
+    CHECK(again["errors"].empty());
+    CHECK(again["unchanged"].get<int>() > again["stampsSent"].get<int>());
 }
 
 TEST_CASE("settlement terrain: re-planning keeps untouched blocks byte for byte")
