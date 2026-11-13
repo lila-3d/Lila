@@ -184,6 +184,7 @@ TEST_CASE("corpus: quad remesh" * doctest::may_fail())
     {
         if (only && c.name != only)
             continue;
+        dump(c.mesh, "corpus_source_" + c.name);
         retopo::QuadRemeshOptions o;
         o.targetFaces = 600;
         retopo::QuadRemeshResult r = retopo::quadRemesh(c.mesh, o);

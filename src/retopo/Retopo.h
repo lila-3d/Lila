@@ -173,6 +173,11 @@ struct QuadRemeshOptions
     double sharpAngle = 40.0;
     /** -1 off, 0/1/2 for a mirror plane through the origin across x/y/z: the result is exactly symmetric. */
     int symmetryAxis = -1;
+    /**
+     * With symmetry, how far the faces beside the middle edge loop leave the source to fill a groove along
+     * it (a sternum, a spine), which otherwise dents every row that crosses: 0 stays on the source.
+     */
+    double middleSmoothing = 0.0;
     /** Polylines on (or near) the surface the edge flow should follow. */
     std::vector<std::vector<glm::dvec3>> guides;
     /** Polylines on the surface an edge loop lands on, like a hard edge: the flow follows them and points snap onto them. */

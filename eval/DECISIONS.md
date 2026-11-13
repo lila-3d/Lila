@@ -81,3 +81,17 @@ Jared's report: at the same settings the result was far worse than AutoRemesher 
 - Density handles test still parked: the factor reaches the cover but the layout evens it out.
 - Corpus (parked): cone now passes, pipe now fails (hausdorff 0.048); starPrism, combPrism, spiralFace, bentStar, twistedGrid, tent as before.
 - Open sculpts and creased shapes are still on the old triangles and extraction.
+
+# Quad Remesh follow-up: open meshes, pinch, pure quads, middle groove (main, 2026-11-14)
+
+- Open meshes take the stock stages: each border loop of the working triangles is capped (a fan to its centre, remeshed by AutoRemesher's isotropic pass with the loop left whole), the border edges are feature edges so the layout runs a loop along them, and the quads on the caps are dropped. The working border is evened out first (12 passes along the loop): a border left by deleting faces is a sawtooth and the layout turned at every tooth. Cap faces are left out of the curvature sizing (setUnsizedFaces). Caps over 30% of the surface (a sheet) keep Lila's own path. Open bust 110 -> 84 poles, all quads; open Mochi torso 77 -> 44.
+- Nostril pinch: the stock scaling field jumps from triangle to triangle and its anisotropy stretches quads 2.3 to 1 along a crease. Three smoothing passes over the field and a 1.5 to 1 cap: over five cases poles 369 -> 325, and at 16000 with adaptivity 0.25, 148 poles and 30 flaws -> 86 and none. Either change alone did less.
+- Pure quads: the odd-face pairing searched breadth first, so paths wandered and left a pole pair at every turn (+50 poles for 8 faces at 16000). Now cheapest first with a turn costing four steps: an odd face carried along one row leaves nothing behind. Three rounds, each allowing less square quads. All five reference cases come out all quads; 16000 at 0.25: 136 poles -> 94.
+- Two faces back to back on the same four points (left by pairing two pentagons side by side) are dropped.
+- Thin-part limit fitted at 0.85 of the ask: with quads stretching less, the layout rounded 12 round an arm down to 10. Costs Mochi faces (6778 for 6000 before the count fit).
+- Creased shapes compared with AutoRemesher 1.2.0 itself (sharp edge 90) on the corpus: Lila's own path is far ahead (cube 8 irregular points vs 76, cylinder 12 vs 58, bevelCube 52 vs 65, no non-quads vs 6 to 22). Only starPrism is behind (71 vs 58). Nothing ported.
+- Mochi's hands: surface coverage equal to AutoRemesher's (max 1.07 vs 0.94 of a unit on a 180 unit figure, both at sampling noise).
+- Middle Smoothing (flag middleSmoothing, 0 to 1, default 0, enabled only with symmetry): fills a groove along the middle loop. Averaging across the middle only (neighbours a ring nearer and further, six rings), and only straight outwards. Taubin kept the groove; plain smoothing softened the profile; inward moves flattened the nose; sliding along the surface squashed the lips.
+- A test's corpus sources are dumped with LILA_RETOPO_DUMP (corpus_source_*), for running other remeshers on them.
+
+Measured, defaults, count tolerance 0: head 5450 Z 5786 faces all quads 52 poles 9 s; head 5450 off 5436, 85; Mochi 6000 X 6778, 120; head 16000 Z adaptivity 0.15 16780, 88, 22 s; at 0.25 16276, 94. Suites retopo, rig, uv, bake pass.

@@ -11,6 +11,7 @@
 #include "retopo/Isotropic.h"
 
 #include <AutoRemesher/AutoRemesher>
+#include <AutoRemesher/IsotropicRemesher>
 #include <AutoRemesher/Parameterizer>
 #include <AutoRemesher/QuadExtractor>
 
@@ -24,6 +25,7 @@
 #include <complex>
 #include <cstring>
 #include <optional>
+#include <queue>
 #include <unordered_map>
 
 namespace lila::retopo
@@ -259,6 +261,75 @@ void relaxAlongFeatures(geo::Mesh& m, const std::vector<FeatureKind>& feature, c
         for (Index p = 0; p < m.pointCapacity(); ++p)
             if (m.pointValid(p))
                 m.setPosition(p, next[p]);
+    }
+}
+
+/**
+ * Fills a groove along the middle of a mirrored result: the points on the plane and six rings either side are smoothed
+ * off the source, less with each ring out, and only straight outwards, so a ridge along the middle (a nose) and the
+ * layout on the surface stay as they are. Each point is averaged only with its neighbours a ring nearer
+ * and a ring further, so the smoothing runs across the middle along the rows and the profile along it (a nose, a
+ * chin) keeps its shape. Plain averaging: a groove is several faces wide, and a pass that kept the broad shape
+ * (Taubin) kept the groove with it.
+ */
+void smoothMiddle(geo::Mesh& m, int axis, double strength)
+{
+    constexpr int kRings = 6, kPasses = 20;
+    const auto nb = pointNeighbours(m);
+    std::vector<int> ring(m.pointCapacity(), -1);
+    std::vector<Index> front;
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        if (m.pointValid(p) && m.position(p)[axis] == 0.0)
+        {
+            ring[p] = 0;
+            front.push_back(p);
+        }
+    for (int r = 1; r <= kRings; ++r)
+    {
+        std::vector<Index> next;
+        for (Index p : front)
+            for (Index o : nb[p])
+                if (ring[o] < 0)
+                {
+                    ring[o] = r;
+                    next.push_back(o);
+                }
+        front.swap(next);
+    }
+    std::vector<glm::dvec3> moved(m.pointCapacity());
+    for (int pass = 0; pass < kPasses; ++pass)
+    {
+        const double step = 0.5;
+        const std::vector<glm::vec3> normals = geo::pointNormals(m);
+        for (Index p = 0; p < m.pointCapacity(); ++p)
+        {
+            if (!m.pointValid(p))
+                continue;
+            moved[p] = m.position(p);
+            if (ring[p] < 0 || nb[p].empty())
+                continue;
+            glm::dvec3 mean(0.0);
+            int across = 0;
+            for (Index o : nb[p])
+                if (ring[o] != ring[p])
+                {
+                    mean += m.position(o);
+                    ++across;
+                }
+            if (across == 0)
+                continue;
+            mean /= double(across);
+            const double weight = strength * (1.0 - double(ring[p]) / double(kRings + 1));
+            glm::dvec3 move = weight * step * (mean - moved[p]);
+            const glm::dvec3 n(normals[p]);
+            // Straight out only: sliding along the surface as well would drag the faces off the shape they sit on.
+            moved[p] += std::max(0.0, glm::dot(move, n)) * n;
+            if (ring[p] == 0)
+                moved[p][axis] = 0.0;
+        }
+        for (Index p = 0; p < m.pointCapacity(); ++p)
+            if (m.pointValid(p) && ring[p] >= 0)
+                m.setPosition(p, moved[p]);
     }
 }
 
@@ -626,8 +697,8 @@ struct Work
     double adaptivity = 0.0;
     /**
      * Laid out by AutoRemesher's own stages as they come: its simplifier, isotropic triangles, curvature sizes and quad
-     * extraction. A smooth closed shape with nothing to hold (no creases, borders, pins or asked poles) takes this;
-     * the stock extraction fills a border in or leaves it ragged.
+     * extraction. A smooth shape with nothing to hold (no creases, pins or asked poles) takes this, an open one with
+     * its borders capped: the stock extraction fills a border in or leaves it ragged.
      */
     bool stock = false;
     /**
@@ -642,6 +713,24 @@ struct Work
      * along the plane hard so the layout keeps them as one edge loop.
      */
     bool wholeLayout = false;
+    /**
+     * The caps an open shape's borders were closed with for the stock layout, which only lays out closed shapes well:
+     * the border edges are hard in iso, so the layout runs a loop along each, and the quads on the caps are dropped.
+     */
+    geo::Mesh caps;
+    std::optional<geo::MeshBvh> capsBvh;
+    /** The caps' part of iso's area. */
+    double capShare = 0.0;
+    /** Whether a point of the capped surface lies on a cap rather than on the source. */
+    bool onCap(const glm::dvec3& p) const
+    {
+        if (!capsBvh)
+            return false;
+        geo::BvhClosest onCaps, onSource;
+        if (!capsBvh->closestPoint(p, onCaps))
+            return false;
+        return !simpleBvh->closestPoint(p, onSource) || glm::distance(onCaps.point, p) < glm::distance(onSource.point, p);
+    }
     /** The surface simplified to a few triangles per working triangle, which the working triangles lie on. */
     geo::Mesh simple;
     std::optional<geo::MeshBvh> simpleBvh;
@@ -874,6 +963,141 @@ std::unordered_set<uint64_t> symmetrize(Surface& iso, const geo::SymmetryPlane& 
     return chain;
 }
 
+/**
+ * Closes an open working surface with a cap over each border loop: a fan to the loop's centre, remeshed to the working
+ * triangles' size with the loop left as it is. The border edges are returned, for the layout to hold as edge loops.
+ * False when a border isn't a plain loop, or the caps would be a large part of the result (a sheet seen from one side
+ * has a border all round it and a cap the size of itself).
+ */
+bool capBorders(Surface& iso, geo::Mesh& caps, std::unordered_set<uint64_t>& chain, double& capShare)
+{
+    constexpr double kLargestShare = 0.3;
+    // Each border edge the way its triangle runs it, so the caps face the same way round.
+    std::unordered_map<Index, Index> next;
+    for (const auto& t : iso.tris)
+        for (int k = 0; k < 3; ++k)
+        {
+            const Index a = t[k], b = t[(k + 1) % 3];
+            for (Index j = iso.adjStart[a]; j < iso.adjStart[a + 1]; ++j)
+                if (iso.adj[j] == b && iso.edgeTriCount[iso.adjEdge[j]] == 1)
+                {
+                    if (next.contains(a))
+                        return false;
+                    next[a] = b;
+                }
+        }
+    if (next.empty())
+        return true;
+    const double edge = iso.meanEdgeLength();
+    std::vector<Index> capCorners;
+    std::vector<std::array<Index, 3>> added;
+    std::vector<glm::dvec3> addedPoints;
+    double capArea = 0.0;
+    std::unordered_set<Index> done;
+    std::vector<std::vector<Index>> loops;
+    const double surfaceArea = iso.totalArea();
+    for (const auto& [first, unused] : next)
+    {
+        if (done.contains(first))
+            continue;
+        std::vector<Index> loop;
+        for (Index at = first; !done.contains(at); at = next.at(at))
+        {
+            done.insert(at);
+            loop.push_back(at);
+            if (!next.contains(next.at(at)))
+                return false;
+        }
+        if (loop.size() < 3 || next.at(loop.back()) != first)
+            return false;
+        // Before any cap is built: one too large isn't worth remeshing to find out.
+        glm::dvec3 middle(0.0);
+        for (Index v : loop)
+            middle += iso.pos[v] / double(loop.size());
+        for (size_t i = 0; i < loop.size(); ++i)
+            capArea += 0.5 * glm::length(glm::cross(iso.pos[loop[i]] - middle, iso.pos[loop[(i + 1) % loop.size()]] - middle));
+        if (capArea > kLargestShare * surfaceArea)
+            return false;
+        loops.push_back(std::move(loop));
+    }
+    capArea = 0.0;
+    for (const std::vector<Index>& loop : loops)
+    {
+        // A border left by deleting faces is a sawtooth, and the layout would turn at every tooth. The working border
+        // is evened out along itself; the result's border points go back onto the source's own.
+        for (int pass = 0; pass < 12; ++pass)
+        {
+            std::vector<glm::dvec3> evened(loop.size());
+            for (size_t i = 0; i < loop.size(); ++i)
+                evened[i] = 0.5 * iso.pos[loop[i]] + 0.25 * (iso.pos[loop[(i + loop.size() - 1) % loop.size()]] + iso.pos[loop[(i + 1) % loop.size()]]);
+            for (size_t i = 0; i < loop.size(); ++i)
+                iso.pos[loop[i]] = evened[i];
+        }
+        glm::dvec3 centre(0.0);
+        double longest = 0.0;
+        for (size_t i = 0; i < loop.size(); ++i)
+        {
+            centre += iso.pos[loop[i]] / double(loop.size());
+            longest = std::max(longest, glm::distance(iso.pos[loop[i]], iso.pos[loop[(i + 1) % loop.size()]]));
+        }
+        std::vector<AutoRemesher::Vector3> vertices;
+        std::vector<std::vector<size_t>> triangles;
+        for (Index v : loop)
+            vertices.push_back(AutoRemesher::Vector3(iso.pos[v].x, iso.pos[v].y, iso.pos[v].z));
+        vertices.push_back(AutoRemesher::Vector3(centre.x, centre.y, centre.z));
+        for (size_t i = 0; i < loop.size(); ++i)
+        {
+            // Against the surface's own direction along the edge.
+            triangles.push_back({(i + 1) % loop.size(), i, loop.size()});
+            capArea += 0.5 * glm::length(glm::cross(iso.pos[loop[i]] - centre, iso.pos[loop[(i + 1) % loop.size()]] - centre));
+        }
+        // No shorter than the loop's own edges, which stay whole: the cap has to meet the surface point for point.
+        AutoRemesher::IsotropicRemesher remesher(vertices, triangles);
+        remesher.setTargetEdgeLength(std::max(edge, longest));
+        remesher.setSharpEdgeDegrees(180.0);
+        if (!remesher.remesh())
+            return false;
+        std::map<std::array<double, 3>, Index> onLoop;
+        for (Index v : loop)
+            onLoop[{iso.pos[v].x, iso.pos[v].y, iso.pos[v].z}] = v;
+        std::vector<Index> id;
+        size_t met = 0;
+        for (const auto& p : remesher.remeshedVertices())
+        {
+            const glm::dvec3 at(p.x(), p.y(), p.z());
+            if (auto it = onLoop.find({at.x, at.y, at.z}); it != onLoop.end())
+            {
+                id.push_back(it->second);
+                ++met;
+            }
+            else
+            {
+                id.push_back(Index(iso.pos.size() + addedPoints.size()));
+                addedPoints.push_back(at);
+            }
+        }
+        if (met != loop.size())
+            return false;
+        for (const auto& t : remesher.remeshedTriangles())
+            added.push_back({id[t[0]], id[t[1]], id[t[2]]});
+        for (size_t i = 0; i < loop.size(); ++i)
+            chain.insert(edgeKey(loop[i], loop[(i + 1) % loop.size()]));
+    }
+    capShare = capArea / (capArea + surfaceArea);
+    iso.pos.insert(iso.pos.end(), addedPoints.begin(), addedPoints.end());
+    iso.density.resize(iso.pos.size(), 1.0f);
+    std::vector<Index> sizes(added.size(), 3);
+    for (const auto& t : added)
+    {
+        iso.tris.push_back(t);
+        capCorners.insert(capCorners.end(), t.begin(), t.end());
+    }
+    caps = geo::Mesh::fromPolygons(iso.pos, sizes, capCorners);
+    iso.buildTopology();
+    iso.buildGeometry();
+    return true;
+}
+
 /** Working triangles per quad for the stock stages, which size their quads off the triangles' mean edge. */
 constexpr double kStockTriangles = 6.0;
 
@@ -916,9 +1140,10 @@ bool prepareStock(Work& w, const QuadRemeshOptions& opts, double faces, double h
     };
     fill(s, simpleVertices, simpleTriangles);
     s.detectFeatures(opts.sharpAngle, 75.0, 2.0 * w.h0);
-    for (uint8_t feature : s.edgeFeature)
-        if (feature)
+    for (size_t e = 0; e < s.edges.size(); ++e)
+        if (s.edgeFeature[e] && !s.edgeBoundary[e])
             return false;
+    w.border.build(s, 0.5 * w.h0, true);
     clock.lap("surface");
     {
         std::vector<Index> sizes(s.tris.size(), 3), corners;
@@ -934,10 +1159,21 @@ bool prepareStock(Work& w, const QuadRemeshOptions& opts, double faces, double h
         w.iso.hard = symmetrize(w.iso, w.plane, opts.symmetryAxis);
         w.wholeLayout = true;
     }
+    if (!w.closed)
+    {
+        if (!capBorders(w.iso, w.caps, w.iso.hard, w.capShare))
+        {
+            w.iso = Surface();
+            w.wholeLayout = false;
+            return false;
+        }
+        w.capsBvh.emplace(w.caps);
+    }
     w.iso.detectFeatures(-1.0, 75.0, 0.0);
     w.isoSize.assign(w.iso.pos.size(), w.h0);
     w.stock = w.stockSizes = true;
-    w.stockQuads = opts.targetEdgeLength > 0.0 ? s.totalArea() / (w.h0 * w.h0) : faces * halves;
+    // The quads on the caps are laid out too and then dropped.
+    w.stockQuads = (opts.targetEdgeLength > 0.0 ? s.totalArea() / (w.h0 * w.h0) : faces * halves) / (1.0 - w.capShare);
     if (std::getenv("LILA_STAGE_LOG"))
         std::fprintf(stderr, "stock triangles: %zu simplified, %zu working, edge %g\n", s.tris.size(), w.iso.tris.size(), voxel);
     Budget::note(std::to_string(w.iso.tris.size()) + " working triangles for about " + std::to_string(int(faces * halves)) + " faces");
@@ -979,7 +1215,7 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
     const double triEdge = w.h0 / triangleRatio();
     const double workTris = std::max(64.0, area / (0.433 * triEdge * triEdge));
     // Anything the stock stages can't hold takes Lila's own feature-aware triangles and sizes.
-    const bool plain = w.closed && s.hard.empty() && opts.pinnedPoints.empty() && opts.featureGuides.empty() && !opts.poles &&
+    const bool plain = s.hard.empty() && opts.pinnedPoints.empty() && opts.featureGuides.empty() && !opts.poles &&
                        !std::getenv("LILA_QR_OWN");
     if (plain)
     {
@@ -1085,6 +1321,8 @@ struct CoverInput
     std::vector<AutoRemesher::Vector3> guidance;
     /** For the stock layout: a factor on its own sizes, and the longest edge allowed, each empty when it does nothing. */
     std::vector<double> sizeFactor, sizeLimit;
+    /** Per triangle, whether it is on a cap. Empty without caps. */
+    std::vector<uint8_t> onCap;
 };
 
 /**
@@ -1134,8 +1372,9 @@ void stockSizes(const Work& w, const QuadRemeshOptions& opts, std::vector<double
             std::vector<double> fitted(iso.pos.size(), from);
             if (opts.resolveGaps)
                 fitGaps(iso, w.src, *w.bvh, fitted);
+            // A little under the ask: the layout rounds the count round a part to a whole number, down as often as up.
             if (opts.edgesAround > 0)
-                fitThickness(iso, w.src, *w.bvh, curvature, opts.edgesAround, 1.0, fitted);
+                fitThickness(iso, w.src, *w.bvh, curvature, opts.edgesAround, 0.85, fitted);
             for (size_t v = 0; v < size.size(); ++v)
                 if (fitted[v] < 0.98 * from)
                     size[v] = std::min(size[v], fitted[v]);
@@ -1299,6 +1538,11 @@ CoverInput coverInput(const Work& w, const QuadRemeshOptions& opts, std::string&
     auto centre = [&](size_t t) { return (iso.pos[iso.tris[t][0]] + iso.pos[iso.tris[t][1]] + iso.pos[iso.tris[t][2]]) / 3.0; };
     if (w.stockSizes)
         stockSizes(w, opts, in.sizeFactor, in.sizeLimit);
+    if (w.capsBvh)
+    {
+        in.onCap.resize(iso.tris.size());
+        tbb::parallel_for(size_t(0), iso.tris.size(), [&](size_t t) { in.onCap[t] = w.onCap(centre(t)); });
+    }
 
     // Flow guides: faces the curve passes over follow it.
     if (!opts.guides.empty())
@@ -1398,6 +1642,17 @@ CoverInput coverInput(const Work& w, const QuadRemeshOptions& opts, std::string&
     return in;
 }
 
+/**
+ * The stock sizes as they come pinch rows of thin quads together at the end of a sharp crease (a nostril's): the size
+ * jumps from triangle to triangle and the quads stretch up to 2.3 to 1 along it. Smoothed a little and held to 1.5 to 1,
+ * the head and Mochi come out with fewer poles and folds at every size tried.
+ */
+void tameSizes(AutoRemesher::Parameterizer& pz)
+{
+    pz.setScalingSmoothing(3);
+    pz.setMaxAspectRatio(1.5);
+}
+
 void setUp(AutoRemesher::Parameterizer& pz, const CoverInput& in, const Work& w)
 {
     double edge = 0.0;
@@ -1410,7 +1665,10 @@ void setUp(AutoRemesher::Parameterizer& pz, const CoverInput& in, const Work& w)
     if (w.stock)
     {
         pz.setGradientAdaptivity(4.0 * w.adaptivity);
+        tameSizes(pz);
         pz.setTargetQuadCount(w.stockQuads);
+        if (!in.onCap.empty())
+            pz.setUnsizedFaces(&in.onCap);
         pz.setFeatureEdges(&in.features);
         if (!in.sizeFactor.empty())
             pz.setFaceScalingMultiplier(&in.sizeFactor);
@@ -1431,6 +1689,7 @@ void setUp(AutoRemesher::Parameterizer& pz, const CoverInput& in, const Work& w)
     else
     {
         pz.setGradientAdaptivity(4.0 * w.adaptivity);
+        tameSizes(pz);
         pz.setTargetQuadCount(w.stockQuads);
         if (!in.sizeFactor.empty())
             pz.setFaceScalingMultiplier(&in.sizeFactor);
@@ -1582,7 +1841,7 @@ bool splitTowards(const std::vector<glm::dvec3>& points, const std::vector<Index
  * image meets it into a quad once mirrored. Returns how many odd faces are left.
  */
 size_t pairOddFaces(std::vector<glm::dvec3>& points, std::vector<std::vector<Index>>& faces, const std::function<bool(Index, Index)>& seam = {},
-                    size_t maxPath = 120)
+                    size_t maxPath = 120, double unsquare = 3.0)
 {
     LILA_ZONE();
 
@@ -1625,36 +1884,75 @@ size_t pairOddFaces(std::vector<glm::dvec3>& points, std::vector<std::vector<Ind
         {
             if (faces[start].empty() || used[start] || !isOdd(start))
                 continue;
-            // Breadth first through quads; the first few odd faces (or, for a triangle, quads on the seam) are candidates.
-            std::unordered_map<size_t, size_t> from{{start, SIZE_MAX}};
-            std::vector<size_t> frontier{start}, candidates;
-            for (size_t depth = 0; depth < maxPath && candidates.size() < 6 && !frontier.empty(); ++depth)
+            // Cheapest first through quads, where going straight on across a quad costs one and turning in it costs
+            // more: an odd face carried along one row leaves no poles behind it, and every turn leaves a pair. The first
+            // few odd faces reached (or, for a triangle, quads on the seam) are candidates.
+            constexpr double kTurn = 4.0;
+            using State = std::pair<size_t, size_t>; // a face, and the face it was entered from
+            std::map<State, std::pair<double, State>> reached;
+            std::priority_queue<std::pair<double, State>, std::vector<std::pair<double, State>>, std::greater<>> open;
+            const State origin{start, SIZE_MAX};
+            reached[origin] = {0.0, origin};
+            open.push({0.0, origin});
+            std::vector<State> candidates;
+            auto sharedEdge = [&](size_t f, size_t g) {
+                for (size_t k = 0; k < faces[f].size(); ++k)
+                {
+                    const auto& list = byEdge[edgeKey(faces[f][k], faces[f][(k + 1) % faces[f].size()])];
+                    if (list.size() == 2 && (list[0] == g || list[1] == g))
+                        return k;
+                }
+                return SIZE_MAX;
+            };
+            while (!open.empty() && candidates.size() < 6)
             {
-                std::vector<size_t> next;
-                for (size_t f : frontier)
-                    for (size_t g : neighbours(f))
+                const auto [cost, at] = open.top();
+                open.pop();
+                if (cost > reached[at].first || cost > double(maxPath))
+                    continue;
+                const size_t f = at.first;
+                const size_t cameBy = at.second == SIZE_MAX ? SIZE_MAX : sharedEdge(f, at.second);
+                for (size_t k = 0; k < faces[f].size(); ++k)
+                {
+                    const auto& list = byEdge[edgeKey(faces[f][k], faces[f][(k + 1) % faces[f].size()])];
+                    if (list.size() != 2)
+                        continue;
+                    const size_t g = list[0] == f ? list[1] : list[0];
+                    if (used[g] || g == at.second || g == start)
+                        continue;
+                    const bool straight = cameBy == SIZE_MAX || faces[f].size() != 4 || (k + 4 - cameBy) % 4 == 2;
+                    const double to = cost + 1.0 + (straight ? 0.0 : kTurn);
+                    const State next{g, f};
+                    auto it = reached.find(next);
+                    if (it != reached.end() && it->second.first <= to)
+                        continue;
+                    reached[next] = {to, at};
+                    Index sx, sy;
+                    if (isOdd(g))
+                        candidates.push_back(next);
+                    else if (faces[g].size() == 4)
                     {
-                        if (used[g] || from.contains(g))
-                            continue;
-                        from[g] = f;
-                        Index sx, sy;
-                        if (isOdd(g))
-                            candidates.push_back(g);
-                        else if (faces[g].size() == 4)
-                        {
-                            if (faces[start].size() == 3 && seamEdgeOf(g, sx, sy))
-                                candidates.push_back(g);
-                            next.push_back(g);
-                        }
+                        if (faces[start].size() == 3 && seamEdgeOf(g, sx, sy))
+                            candidates.push_back(next);
+                        open.push({to, next});
                     }
-                frontier.swap(next);
+                }
             }
-            for (size_t found : candidates)
+            for (const State& end : candidates)
             {
+                const size_t found = end.first;
                 std::vector<size_t> path;
-                for (size_t f = found; f != SIZE_MAX; f = from[f])
-                    path.push_back(f);
+                for (State at = end;; at = reached[at].second)
+                {
+                    path.push_back(at.first);
+                    if (at == origin || path.size() > 4 * maxPath)
+                        break;
+                }
                 std::reverse(path.begin(), path.end());
+                std::vector<size_t> once = path;
+                std::sort(once.begin(), once.end());
+                if (path.front() != start || std::adjacent_find(once.begin(), once.end()) != once.end())
+                    continue;
                 bool toSeam = !isOdd(found);
                 // The odd face walks along copies, so a step that fails leaves the faces as they were.
                 std::vector<std::vector<Index>> work;
@@ -1706,9 +2004,9 @@ size_t pairOddFaces(std::vector<glm::dvec3>& points, std::vector<std::vector<Ind
                 }
                 // Two odd faces side by side always merge: an odd-shaped quad beats two faces that aren't quads.
                 for (const auto& q : ending)
-                    ok = ok && (path.size() == 2 ? squareness(points, q) < 1e9 : squareness(points, q) < 3.0);
+                    ok = ok && (path.size() == 2 ? squareness(points, q) < 1e9 : squareness(points, q) < unsquare);
                 for (size_t i = 0; ok && i < steps; ++i)
-                    ok = squareness(points, work[i]) < 3.0;
+                    ok = squareness(points, work[i]) < unsquare;
                 if (!ok)
                     continue;
                 for (size_t i = 0; i < steps; ++i)
@@ -1847,8 +2145,17 @@ void mergeDoublets(std::vector<std::vector<Index>>& faces, size_t pointCount)
             std::vector<Index> sorted = merged;
             std::sort(sorted.begin(), sorted.end());
             if (std::adjacent_find(sorted.begin(), sorted.end()) != sorted.end())
-                continue;
-            f = std::move(merged);
+            {
+                // The same points both ways round: a pocket of two faces back to back, closed on itself.
+                std::vector<Index> sf = f, sg = g;
+                std::sort(sf.begin(), sf.end());
+                std::sort(sg.begin(), sg.end());
+                if (sf != sg)
+                    continue;
+                f.clear();
+            }
+            else
+                f = std::move(merged);
             g.clear();
             touched[at[p][0]] = touched[at[p][1]] = 1;
             again = true;
@@ -2117,7 +2424,7 @@ int uncovered(const geo::Mesh& m, const Work& w)
     for (Index v = 0; v < iso.vertexCount(); ++v)
     {
         glm::dvec3 at = iso.pos[v];
-        if (w.symmetric && w.plane.distance(at) < 0.0)
+        if ((w.symmetric && w.plane.distance(at) < 0.0) || w.onCap(at))
             continue;
         geo::BvhClosest c;
         if (!result.closestPoint(at, c, 2.0 * w.h0))
@@ -2652,6 +2959,16 @@ QuadRemeshResult coverRemesh(Work& w, const QuadRemeshOptions& opts, Stopwatch& 
             }
             std::fclose(f);
         }
+    if (w.capsBvh)
+    {
+        auto capped = [&](const std::vector<Index>& f) {
+            glm::dvec3 c(0.0);
+            for (Index v : f)
+                c += points[v];
+            return w.onCap(c / double(f.size()));
+        };
+        faces.erase(std::remove_if(faces.begin(), faces.end(), capped), faces.end());
+    }
     const bool refine = !std::getenv("LILA_QR_RAW");
     if (refine)
         cleanSoup(faces, points, w.stock ? 0.0 : w.h0);
@@ -2681,7 +2998,10 @@ QuadRemeshResult coverRemesh(Work& w, const QuadRemeshOptions& opts, Stopwatch& 
                        std::abs(w.plane.distance(points[b])) < 1e-9 * w.h0;
             };
         }
-        pairOddFaces(points, faces, seam);
+        // The squarest pairings first; what is left pairs through quads less square, which the relax evens out after.
+        for (double unsquare : {3.0, 6.0, 12.0})
+            if (pairOddFaces(points, faces, seam, 120, unsquare) == 0)
+                break;
         mergeDoublets(faces, points.size());
     }
     compactSoup(points, faces);
@@ -2739,6 +3059,8 @@ QuadRemeshResult coverRemesh(Work& w, const QuadRemeshOptions& opts, Stopwatch& 
         m.compact();
         joinSeamTriangles(m, w.plane, h0);
         m.compact();
+        if (opts.middleSmoothing > 0.0)
+            smoothMiddle(m, axis, opts.middleSmoothing);
     }
     if (!opts.featureGuides.empty())
         layLoopsOnGuides(m, opts.featureGuides, bvh, h0);

@@ -322,6 +322,10 @@ std::vector<FlagDef> remeshFlags(const char* symmetry)
             {"sharpAngle", "", T::Float, 40.0, "Also follow creases sharper than this, degrees; negative disables.", {}, {}, {}, 180.0},
             {"symmetry", "", T::String, symmetry, "off, x, y or z: remesh half and mirror, exactly symmetric. The mesh has to be symmetric across that plane through its origin.",
              {"off", "x", "y", "z"}},
+            {"middleSmoothing", "", T::Float, 0.0,
+             "With symmetry, fills a groove along the middle edge loop (a sternum, a spine) so the rows cross it level: 0 follows "
+             "the source, 1 smooths six faces either side.",
+             {}},
             nodeFlag({"guides", "", T::List, nullptr,
                       "Curves, or meshes whose edges trace lines, that the edge flow turns to follow. Draw them on the mesh with Curves > "
                       "Pencil Curve (S draws on the surface)."},
@@ -364,6 +368,7 @@ QuadRemeshOptions remeshOptions(const Args& given, const Node& src, const char* 
     if (sym != "off" && (sym.size() != 1 || sym[0] < 'x' || sym[0] > 'z'))
         throw CommandError(std::string(cmd) + ": symmetry must be off, x, y or z");
     o.symmetryAxis = sym == "off" ? -1 : sym[0] - 'x';
+    o.middleSmoothing = std::clamp(a.get<double>("middleSmoothing", 0.0), 0.0, 1.0);
     o.guides = guidesFor(a, src);
     o.featureGuides = guidesFor(a, src, "featureGuides", "featureGuidePoints");
     if (a.has("densityHandles") && !a.flags["densityHandles"].is_null())
