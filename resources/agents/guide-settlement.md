@@ -39,13 +39,13 @@ r = 25000
 town = settlementCreate(outline=[[x - r, z - r], [x + r, z - r], [x + r, z + r], [x - r, z + r]],
                         attractors=[[x, z]], ground=T, profile='medievalTown', eras='walledTown', name='Town')
 mesh = town['mesh']
-settlementBuildings(mesh, route='massing')      # before grading: changing it later unpins the plan
-g = settlementGrade(mesh)                       # streets become terrain roads, lots building pads; slow, see below
+g = settlementGrade(mesh)                       # streets become terrain roads, lots building pads
+settlementBuildings(mesh, route='massing')
 g['overGrade'], g['errors']
 settlementCheck(mesh)['ok'], terrainCheck(T)['ok']
 ```
 
-- Order: terrain shape, erosion and water first (read `lila://guide/terrain`), then the settlement, its buildings route and edits, then `settlementGrade` once at the end. Grading stamps in the terrain's `City` layer after erosion, so erosion never re-cuts it.
+- Order: terrain shape, erosion and water first (read `lila://guide/terrain`), then the settlement and its edits, then `settlementGrade`. The buildings route can change before or after grading. Grading stamps in the terrain's `City` layer after erosion, so erosion never re-cuts it.
 - `kind` for siting: `town`, `market`, `port`, `mining`, `fort`, `farming`, `mill`; `rules={'defense': 0.9}` weights terms yourself. On a Terrain the terms come from its own analysis (fords, harbours, buildable land).
 - On a Terrain, main roads are routed with `terrainRoute` and rivers crossing the outline come in as water (`terrainWater=False` leaves them out). Only main roads bridge rivers; no lot lies in water.
 - Grading is the slow step: about 4 minutes for a 500 m town of 300 lots and 170 streets, 10 minutes for 1000 lots, on a 257 terrain. Iterate on the layout ungraded; `lots=False` or `streets=False` grades only part. `settlementCheck` works before grading.
