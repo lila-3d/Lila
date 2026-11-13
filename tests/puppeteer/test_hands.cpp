@@ -513,6 +513,40 @@ TEST_CASE("hands: grip closes the fingers onto a cylinder until they touch")
     CHECK(handInfo("hand_r")["shape"]["curl"].get<double>() == Approx(0.0).epsilon(0.02));
 }
 
+TEST_CASE("hands: a finger that starts in what it grips opens out and closes back onto its surface")
+{
+    mannyWithHands();
+    // A bar straight through the flat fingers' middle bones.
+    run("puppeteerHandPose", {{"args", {"hand_r"}}, {"pose", "flat"}});
+    const glm::dvec3 centre = (pos("index_02_r") + pos("middle_02_r") + pos("ring_02_r")) / 3.0;
+    const glm::dvec3 axis = glm::normalize(pos("index_01_r") - pos("pinky_01_r"));
+    const double radius = 1.4, thickness = 0.8;
+    run("polyCylinder", {{"radius", radius}, {"height", 20.0}, {"name", "bar"}});
+    const glm::dvec3 x = glm::normalize(glm::dvec3(axis.y, -axis.x, 0.0)), z = glm::cross(x, axis);
+    graph().setValue(graph().plug("bar.rotate"), lila::scene::eulerNear(glm::dmat3(x, axis, z), lila::scene::RotateOrder::XYZ, glm::dvec3(0.0)));
+    graph().setValue(graph().plug("bar.translate"), centre);
+    auto fromAxis = [&](const std::string& j) {
+        const glm::dvec3 d = pos(j) - centre;
+        return glm::length(d - axis * glm::dot(d, axis));
+    };
+    REQUIRE(fromAxis("middle_02_r") < radius);
+
+    const json r = run("puppeteerHandGrip", {{"args", {"hand_r"}}, {"target", "bar"}, {"thickness", thickness}}).at(0)["fingers"];
+    for (const char* f : {"index", "middle", "ring"})
+    {
+        CAPTURE(f);
+        CHECK(r[f]["startedInside"].get<bool>());
+        CHECK_FALSE(r[f]["stayed"].get<bool>());
+        CHECK(r[f]["touching"].get<bool>());
+        // Out of the bar, and on it: the closest joint sits about a finger's thickness off its surface.
+        double closest = 1e9;
+        for (const char* k : {"_01_r", "_02_r", "_03_r"})
+            closest = std::min(closest, fromAxis(std::string(f) + k));
+        CHECK(closest > radius);
+        CHECK(closest < radius + thickness + 1.0);
+    }
+}
+
 TEST_CASE("hands: rubber hose fingers pose through their hose, and a plain named rig gets its hand")
 {
     lila::curve::registerTypes();

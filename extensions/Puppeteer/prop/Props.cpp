@@ -589,8 +589,9 @@ std::set<NodeId> handsHolding(Graph& g, NodeId grapple, const Prop& p, double t)
 }
 
 /**
- * Closes the hand's fingers onto the prop from open, at the current time, keyed. A finger that starts inside the prop
- * (its grip placed too deep) keeps the class pose; puppeteerHandGrip logs which.
+ * Closes the hand's fingers onto the prop from open, at the current time, keyed. A finger that starts in the prop opens
+ * out of it and closes back onto it; only one that can't get out (its knuckle in the prop) keeps the class pose, which
+ * puppeteerHandGrip logs.
  */
 void wrapFingers(Graph& g, const hand::Hand& h, const Prop& p, const std::string& pose, bool trigger)
 {
@@ -603,13 +604,13 @@ void wrapFingers(Graph& g, const hand::Hand& h, const Prop& p, const std::string
     const json fingers = trigger ? json::array({"thumb", "middle", "ring", "pinky"}) : json::array({"thumb", "index", "middle", "ring", "pinky"});
     ops::execute("puppeteerHandPose", {{"args", {hn}}, {"pose", "flat"}, {"fingers", fingers}, {"key", false}});
     const json got = ops::execute("puppeteerHandGrip", {{"args", {hn}}, {"target", targets}, {"fingers", fingers}, {"key", true}});
-    json inside = json::array();
+    json stuck = json::array();
     const json fingerResults = got.is_array() && !got.empty() ? got.at(0).value("fingers", json::object()) : json::object();
     for (const auto& [role, r] : fingerResults.items())
-        if (r.value("startedInside", false))
-            inside.push_back(role);
-    if (!inside.empty())
-        ops::execute("puppeteerHandPose", {{"args", {hn}}, {"pose", pose}, {"fingers", inside}, {"key", true}});
+        if (r.value("stayed", false))
+            stuck.push_back(role);
+    if (!stuck.empty())
+        ops::execute("puppeteerHandPose", {{"args", {hn}}, {"pose", pose}, {"fingers", stuck}, {"key", true}});
 }
 
 /** Keys a hand's fingers at t0 as they are, then poses (and wraps onto the prop's meshes) at t1. */
