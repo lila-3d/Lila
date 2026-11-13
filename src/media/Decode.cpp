@@ -716,6 +716,8 @@ struct AudioStream::Impl
     size_t bytes = 0;
     int64_t wanted = -1;
     int64_t last = -1;
+    int dir = 1;
+    double lastPrefetch = -1.0;
     std::atomic<bool> quit{false};
     std::atomic<int64_t> frames{0};
     std::atomic<int64_t> seeks{0};
@@ -808,9 +810,27 @@ struct AudioStream::Impl
 
     int64_t blockCount() const { return (frames.load() + o.blockFrames - 1) / o.blockFrames; }
 
+    /** The first block not decoded yet among last + step * k for k in [from, to]; -1 when all are in. */
+    int64_t firstMissing(int step, int from, int to) const
+    {
+        for (int k = from; k <= to; ++k)
+        {
+            const int64_t i = last + int64_t(step) * k;
+            if (i < 0 || i >= blockCount())
+                break;
+            if (!cache.contains(i))
+                return i;
+        }
+        return -1;
+    }
+
     void runDecode()
     {
-        const int ahead = std::max(1, int(std::ceil(o.readAheadSeconds * o.rate / o.blockFrames)));
+        // Both windows fit the cache with a block to spare, or filling one would evict the other forever.
+        const size_t blockBytes = size_t(o.blockFrames) * 2 * sizeof(float);
+        const int room = std::max(1, int(o.cacheBytes / blockBytes) - 1);
+        const int ahead = std::clamp(int(std::ceil(o.readAheadSeconds * o.rate / o.blockFrames)), 1, room);
+        const int behind = std::clamp(int(std::ceil(o.readBehindSeconds * o.rate / o.blockFrames)), 0, room - ahead);
         std::unique_lock lk(m);
         while (!quit)
         {
@@ -822,17 +842,9 @@ struct AudioStream::Impl
                     job = -1;
             }
             if (job < 0 && last >= 0)
-                for (int k = 0; k <= ahead; ++k)
-                {
-                    const int64_t i = last + k;
-                    if (i >= blockCount())
-                        break;
-                    if (!cache.contains(i))
-                    {
-                        job = i;
-                        break;
-                    }
-                }
+                job = firstMissing(dir, 0, ahead);
+            if (job < 0 && last >= 0)
+                job = firstMissing(-dir, 1, behind);
             if (job < 0)
             {
                 wake.wait(lk);
@@ -993,9 +1005,32 @@ AudioStream::Block AudioStream::block(int64_t index)
     return nullptr;
 }
 
-void AudioStream::prefetch(double seconds)
+void AudioStream::prefetch(double seconds, int direction)
 {
+    {
+        std::lock_guard lk(mImpl->m);
+        Impl& d = *mImpl;
+        if (direction != 0)
+            d.dir = direction > 0 ? 1 : -1;
+        else if (d.lastPrefetch >= 0.0 && seconds != d.lastPrefetch)
+            d.dir = seconds < d.lastPrefetch ? -1 : 1;
+        // A play start is no reference for the next scrub's direction: the first scrub after it keeps the play's.
+        d.lastPrefetch = direction != 0 ? -1.0 : seconds;
+    }
+    mImpl->wake.notify_one();
     block(std::max<int64_t>(0, int64_t(seconds * rate()) / blockFrames()));
+}
+
+int AudioStream::direction() const
+{
+    std::lock_guard lk(mImpl->m);
+    return mImpl->dir;
+}
+
+bool AudioStream::ready(int64_t index) const
+{
+    std::lock_guard lk(mImpl->m);
+    return mImpl->cache.contains(index);
 }
 
 bool AudioStream::waitFor(double seconds, double timeoutSeconds)

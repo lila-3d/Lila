@@ -182,8 +182,10 @@ LILA_SCENE_API Peaks peaks(const AudioBuffer& buffer, double secondsPerBucket);
 /**
  * A long sound decoded in blocks on a thread of its own instead of whole: music beds and long takes keep a window of
  * blocks around where they are heard (stereo float at rate). block() never waits, so the audio callback can read it:
- * a block not decoded yet is silence until it lands, and asking for it moves the read-ahead there. Stepping to the next
- * block decodes on; any other block seeks. A second thread scans the whole file once for the waveform and exact length.
+ * a block not decoded yet is silence until it lands, and asking for it moves the read-ahead there. The read-ahead runs
+ * in the play or scrub direction (backwards too), and a shorter window is kept on the other side of the playhead, so
+ * turning around or scrubbing back finds its blocks decoded. Stepping to the next block decodes on; any other block
+ * seeks. A second thread scans the whole file once for the waveform and exact length.
  */
 class LILA_SCENE_API AudioStream
 {
@@ -196,6 +198,8 @@ public:
         /** Decoded blocks kept; the ones furthest from the last request go first. */
         size_t cacheBytes = size_t(48) << 20;
         double readAheadSeconds = 6.0;
+        /** Decoded and kept behind the playhead (against the direction), after the read-ahead is in. */
+        double readBehindSeconds = 3.0;
         double peakSeconds = 1.0 / 400.0;
     };
     using Block = std::shared_ptr<const std::vector<float>>;
@@ -213,8 +217,15 @@ public:
     double duration() const { return rate() > 0 ? double(frames()) / rate() : 0.0; }
     /** Any thread, never blocks: block index (frames index x blockFrames on), null while it decodes. */
     Block block(int64_t index);
-    /** Starts decoding at seconds into the file, ahead of playing or scrubbing there. */
-    void prefetch(double seconds);
+    /**
+     * Starts decoding at seconds into the file, ahead of playing or scrubbing there. direction is +1 forwards, -1
+     * backwards, 0 to take it from the move since the previous prefetch (scrubbing); it holds until the next prefetch.
+     */
+    void prefetch(double seconds, int direction = 0);
+    /** +1 or -1: the way the read-ahead runs. */
+    int direction() const;
+    /** Whether block index has decoded, without asking for it or moving the read-ahead; for tests. */
+    bool ready(int64_t index) const;
     /** Blocks until the block holding seconds has decoded or timeoutSeconds pass; for tests. */
     bool waitFor(double seconds, double timeoutSeconds);
     /** The waveform scanned so far; complete once scanned(). */
