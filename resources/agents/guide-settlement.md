@@ -89,7 +89,7 @@ settlementPlaceLandmark(mesh, at=lots[5]['center'], name='castle', use='civic')
 settlementSubdivide(mesh, at=lots[9]['center'], type='courtyard')
 ```
 
-- Lots have two ids: `lotId` (stable, for `lot=` in `settlementLandUse` and `settlementPlaceLandmark`) and `lot` (for `settlementExplain(mesh, id='lot:<lot>')`). `at=` points must fall inside a lot: use a lot's `center`.
+- Lots have two ids: `lotId` (stable, for `lot=` and `settlementExplain(mesh, id='lot:<lotId>')`) and `lot` (its index in this layout, also taken by explain). An `at=` point off every lot in `settlementLandUse` or `settlementPlaceLandmark` takes the nearest lot within 100 m and returns it as `snapped`.
 - `settlementStreets` returns a list: `id`, `class`, `profile`, `name`, `width`, `lengthM`, `path`, `points`. Classes: `arterial`, `collector`, `local`, `alley`, `path`. Road profiles: `settlementRoadProfiles()`.
 - A street runs on through junctions until another street of its own class meets it, so side streets and drawn streets joining or crossing it keep its id. A street of its own class laid across it splits it into new ids. An edit whose street the layout no longer makes shows in `settlementInfo(mesh)['checks']['staleOverrides']`.
 

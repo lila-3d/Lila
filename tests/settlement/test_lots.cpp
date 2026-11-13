@@ -538,7 +538,7 @@ TEST_CASE("settlement lots: commands list, override by id with undo, choose rout
     CHECK_THROWS_WITH_AS(run("settlementFoundations", {{"args", {mesh}}}), doctest::Contains("flat ground"), std::exception);
 }
 
-TEST_CASE("settlement lots: explain takes the stable lotId")
+TEST_CASE("settlement lots: explain takes the stable lotId, and a landmark off every lot snaps to the nearest")
 {
     lotsLoadPackage();
     run("newScene");
@@ -553,6 +553,17 @@ TEST_CASE("settlement lots: explain takes the stable lotId")
     CHECK(byKey["reasons"] == byIndex["reasons"]);
     const json block = run("settlementBlocks", {{"args", {mesh}}})["blocks"][0];
     CHECK(run("settlementExplain", {{"args", {mesh}}, {"id", "block:" + std::to_string(block["blockId"].get<uint64_t>())}})["kind"] == "block");
+
+    // A point on a street, between lots: the nearest lot takes the landmark and the result says so.
+    const json street = run("settlementStreets", {{"args", {mesh}}, {"streetClass", "arterial"}})[0];
+    const json& q = street["points"][street["points"].size() / 2];
+    const json placed = run("settlementPlaceLandmark", {{"args", {mesh}}, {"at", json::array({q[0], q.back()})}, {"name", "castle"}, {"use", "civic"}});
+    CHECK(placed["landmark"] == "castle");
+    REQUIRE(placed.contains("snapped"));
+    CHECK(placed["snapped"]["lotId"] == placed["lotId"]);
+    CHECK(placed["snapped"]["distanceM"].get<double>() < 100.0);
+    CHECK_THROWS_WITH_AS(run("settlementPlaceLandmark", {{"args", {mesh}}, {"at", json::array({0.0, 900000.0})}, {"name", "far"}}),
+                         doctest::Contains("the nearest is lotId"), std::exception);
 }
 
 TEST_CASE("settlement lots: foundations measured on a Terrain with terrainRegionStats")
