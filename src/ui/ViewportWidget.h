@@ -280,18 +280,25 @@ private:
     std::optional<CameraEdit> mCameraEdit;
     QTimer* mWheelCommit = nullptr; // a run of wheel clicks on a camera node commits once it stops
     /**
-     * Camera smoothing: the camera the view draws, easing toward mCamera at the display's refresh. mCamera stays what
-     * navigation, picking and tools use; only the picture lags.
+     * Camera smoothing: input arrives unevenly, so the view draws the camera a moment in the past, interpolated between the
+     * timestamped states around that moment, at the display's refresh. mCamera stays what navigation, picking and tools use.
      */
+    struct CameraSample
+    {
+        double ms = 0.0;
+        Camera camera;
+    };
+    std::deque<CameraSample> mCameraSamples;
+    /** Running estimates of the time between camera updates while moving, and of how much it varies, ms. */
+    double mInputIntervalMs = 16.0, mInputSpreadMs = 4.0;
     Camera mShownCamera;
     bool mShownValid = false;
     QTimer* mEaseTimer = nullptr;
-    qint64 mEaseLastMs = 0;
-    /** mCamera, or the eased camera while smoothing is on. */
+    /** mCamera, or the delayed, interpolated camera while smoothing is on. */
     const Camera& shownCamera();
-    /** Starts easing when the drawn camera is behind mCamera. */
+    /** Records mCamera when it changed and starts playback. */
     void startCameraEase();
-    /** One display frame of easing; stops once the drawn camera has caught up. */
+    /** One display frame of playback; stops once the drawn camera has reached mCamera. */
     void easeCamera();
     double mLockedWarnMs = 0.0;
     scene::isolation::Set mIsolation;

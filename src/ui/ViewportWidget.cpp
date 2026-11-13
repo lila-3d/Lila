@@ -10,7 +10,7 @@
 #include "ui/DroneCamera.h"
 #include "ui/ViewportDisplay.h"
 
-#include <QDateTime>
+#include <QElapsedTimer>
 #include <QGuiApplication>
 #include <QScreen>
 #include <QTimer>
@@ -340,37 +340,94 @@ double lookSmoothing() { return smoothingPref(viewportDisplay::kCameraLookSmooth
 double moveSmoothing() { return smoothingPref(viewportDisplay::kCameraMoveSmoothing); }
 double cameraSmoothing() { return std::max(lookSmoothing(), moveSmoothing()); }
 
-/** The share of the gap one frame of dt closes: all of it when off, 63% in 0.12 s at smoothing 1. */
-double easeShare(double smoothing, double dt) { return smoothing <= 0.0 ? 1.0 : 1.0 - std::exp(-dt / (smoothing * 0.12)); }
+/** Milliseconds on a steady clock, with sub-millisecond resolution for spacing camera samples. */
+double sampleClockMs()
+{
+    static QElapsedTimer clock = [] {
+        QElapsedTimer t;
+        t.start();
+        return t;
+    }();
+    return double(clock.nsecsElapsed()) / 1e6;
+}
 
 /** The shortest turn from a to b, degrees. */
 double angleToward(double a, double b) { return std::remainder(b - a, 360.0); }
+
+bool sameView(const Camera& a, const Camera& b)
+{
+    return a.target == b.target && a.distance == b.distance && a.yaw == b.yaw && a.pitch == b.pitch && a.focalLength == b.focalLength &&
+           a.orthoWidth == b.orthoWidth;
+}
+
+/**
+ * The two samples to blend for playback time t and the blend, past 1 when t runs beyond the newest sample: playback
+ * then carries on at the last speed, fading to a stop over carry ms, and glides back to the newest sample over the next
+ * carry ms if no input followed (the mouse stopped).
+ */
+template <class Samples> std::tuple<const Camera*, const Camera*, double> around(const Samples& s, double t, double carry)
+{
+    if (t <= s.front().ms)
+        return {&s.front().camera, &s.front().camera, 0.0};
+    for (size_t i = 1; i < s.size(); ++i)
+        if (t <= s[i].ms)
+            return {&s[i - 1].camera, &s[i].camera, (t - s[i - 1].ms) / std::max(s[i].ms - s[i - 1].ms, 1e-3)};
+    // Only a stream of motion carries on: a single step (a wheel click, a frame) arrives as two samples and stops there.
+    if (s.size() < 3 || carry <= 0.0)
+        return {&s.back().camera, &s.back().camera, 1.0};
+    const auto& a = s[s.size() - 2];
+    const auto& b = s.back();
+    const double span = std::max(b.ms - a.ms, 1e-3), over = t - b.ms;
+    const double x = std::min(over, carry), peak = 1.0 + (carry * 0.5) / span;
+    double f = 1.0 + (x - x * x / (2.0 * carry)) / span;
+    if (over > carry)
+    {
+        const double back = std::clamp((over - carry) / carry, 0.0, 1.0);
+        f = peak + (1.0 - peak) * back * back * (3.0 - 2.0 * back);
+    }
+    return {&a.camera, &b.camera, f};
+}
 } // namespace
 
 const Camera& ViewportWidget::shownCamera()
 {
-    // Off, or a change no easing can bridge: the camera as it is.
-    if (cameraSmoothing() <= 0.0 || !mShownValid || mShownCamera.ortho != mCamera.ortho ||
-        mShownCamera.free != mCamera.free || mShownCamera.zUp != mCamera.zUp)
+    // Off, or a change no playback can bridge: the camera as it is.
+    if (cameraSmoothing() <= 0.0 || !mShownValid || mShownCamera.ortho != mCamera.ortho || mShownCamera.free != mCamera.free ||
+        mShownCamera.zUp != mCamera.zUp)
         return mCamera;
     return mShownCamera;
 }
 
 void ViewportWidget::startCameraEase()
 {
-    if (!mShownValid || mShownCamera.ortho != mCamera.ortho || mShownCamera.free != mCamera.free || mShownCamera.zUp != mCamera.zUp)
+    const double now = sampleClockMs();
+    if (!mShownValid || mCameraSamples.empty() || mShownCamera.ortho != mCamera.ortho || mShownCamera.free != mCamera.free ||
+        mShownCamera.zUp != mCamera.zUp)
     {
         mShownCamera = mCamera;
         mShownValid = true;
+        mCameraSamples.assign(1, {now, mCamera});
         return;
     }
-    const Camera& s = mShownCamera;
-    if (s.target == mCamera.target && s.distance == mCamera.distance && s.yaw == mCamera.yaw && s.pitch == mCamera.pitch &&
-        s.focalLength == mCamera.focalLength && s.orthoWidth == mCamera.orthoWidth)
+    if (sameView(mCameraSamples.back().camera, mCamera))
+        return;
+    const double gap = now - mCameraSamples.back().ms;
+    if (gap > 4.0 * mInputIntervalMs + 50.0)
     {
-        mShownCamera = mCamera;
-        return;
+        // Starting after a pause: the old state held until one interval ago, so motion ramps in instead of jumping.
+        const Camera held = mCameraSamples.back().camera;
+        mCameraSamples.assign(1, {now - mInputIntervalMs, held});
     }
+    else
+    {
+        // How often updates arrive while moving, and how unevenly: the delay that keeps playback between two samples.
+        const double g = std::clamp(gap, 1.0, 100.0);
+        mInputSpreadMs += (std::abs(g - mInputIntervalMs) - mInputSpreadMs) * 0.1;
+        mInputIntervalMs += (g - mInputIntervalMs) * 0.1;
+    }
+    mCameraSamples.push_back({now, mCamera});
+    while (mCameraSamples.size() > 2 && mCameraSamples[1].ms < now - 500.0)
+        mCameraSamples.pop_front();
     if (!mEaseTimer)
     {
         mEaseTimer = new QTimer(this);
@@ -381,38 +438,41 @@ void ViewportWidget::startCameraEase()
         return;
     const QScreen* screen = window() && window()->screen() ? window()->screen() : QGuiApplication::primaryScreen();
     mEaseTimer->setInterval(std::max(2, int(1000.0 / std::max(screen ? screen->refreshRate() : 60.0, 30.0))));
-    mEaseLastMs = QDateTime::currentMSecsSinceEpoch();
     mEaseTimer->start();
+    easeCamera();
 }
 
 void ViewportWidget::easeCamera()
 {
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    const double dt = std::clamp(double(now - mEaseLastMs) / 1000.0, 0.0, 0.1);
-    mEaseLastMs = now;
-    Camera& s = mShownCamera;
-    const Camera& c = mCamera;
-    if (cameraSmoothing() <= 0.0)
+    if (cameraSmoothing() <= 0.0 || mCameraSamples.empty())
     {
-        s = c;
-        mEaseTimer->stop();
+        mShownCamera = mCamera;
+        if (mEaseTimer)
+            mEaseTimer->stop();
         return;
     }
-    const double k = easeShare(moveSmoothing(), dt), turn = easeShare(lookSmoothing(), dt);
-    const Camera from = s;
-    s = c;
-    s.target = from.target + (c.target - from.target) * k;
-    s.distance = std::exp(std::log(std::max(from.distance, 1e-6)) + (std::log(std::max(c.distance, 1e-6)) - std::log(std::max(from.distance, 1e-6))) * k);
-    s.orthoWidth = std::exp(std::log(std::max(from.orthoWidth, 1e-6)) + (std::log(std::max(c.orthoWidth, 1e-6)) - std::log(std::max(from.orthoWidth, 1e-6))) * k);
-    s.yaw = from.yaw + angleToward(from.yaw, c.yaw) * turn;
-    s.pitch = from.pitch + (c.pitch - from.pitch) * turn;
-    s.focalLength = from.focalLength + (c.focalLength - from.focalLength) * k;
-    const bool settled = glm::length(s.target - c.target) < 1e-4 * std::max(c.distance, 1.0) && std::abs(std::log(s.distance / c.distance)) < 1e-4 &&
-                         std::abs(angleToward(s.yaw, c.yaw)) < 0.01 && std::abs(s.pitch - c.pitch) < 0.01 && std::abs(s.focalLength - c.focalLength) < 1e-3 &&
-                         std::abs(std::log(s.orthoWidth / c.orthoWidth)) < 1e-4;
-    if (settled)
+    // Smoothing 1 plays back two update intervals (plus their spread) behind the input, 0.5 about one. A short carry past
+    // the newest sample covers the long gaps between updates without stopping.
+    const double base = std::clamp(mInputIntervalMs + mInputSpreadMs, 4.0, 60.0), carry = base;
+    const double now = sampleClockMs(), lookDelay = lookSmoothing() * 2.0 * base, moveDelay = moveSmoothing() * 2.0 * base;
+    Camera& s = mShownCamera;
+    s = mCamera;
     {
-        s = c;
+        const auto [a, b, f] = around(mCameraSamples, now - moveDelay, moveDelay > 0.0 ? carry : 0.0);
+        s.target = a->target + (b->target - a->target) * f;
+        s.distance = std::exp(std::log(std::max(a->distance, 1e-6)) + (std::log(std::max(b->distance, 1e-6)) - std::log(std::max(a->distance, 1e-6))) * f);
+        s.orthoWidth = std::exp(std::log(std::max(a->orthoWidth, 1e-6)) + (std::log(std::max(b->orthoWidth, 1e-6)) - std::log(std::max(a->orthoWidth, 1e-6))) * f);
+        s.focalLength = a->focalLength + (b->focalLength - a->focalLength) * f;
+    }
+    {
+        const auto [a, b, f] = around(mCameraSamples, now - lookDelay, lookDelay > 0.0 ? carry : 0.0);
+        s.yaw = a->yaw + angleToward(a->yaw, b->yaw) * f;
+        s.pitch = a->pitch + (b->pitch - a->pitch) * f;
+    }
+    // Caught up once both playback times are past the newest sample and the glide back from carrying on.
+    if (now - std::max(lookDelay, moveDelay) >= mCameraSamples.back().ms + 2.0 * carry)
+    {
+        s = mCamera;
         mEaseTimer->stop();
     }
     submit();
