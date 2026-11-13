@@ -411,6 +411,21 @@ bool Parameterizer::parameterize()
     }
     if (m_featureEdges)
         topology.setFeatureEdges(m_featureEdges);
+    if (m_faceScalingMultiplier && m_faceScalingMultiplier->size() == faceScalingField.size())
+        for (size_t f = 0; f < faceScalingField.size(); ++f)
+            faceScalingField[f] *= (*m_faceScalingMultiplier)[f];
+    if (m_targetQuadCount > 0.0) {
+        // A quad on face f has area (scale * faceScaling[f])^2, so the count is the sum of area over that.
+        double quads = 0.0;
+        for (size_t f = 0; f < m_triangles->size(); ++f) {
+            const auto& it = (*m_triangles)[f];
+            quads += Vector3::area((*m_vertices)[it[0]], (*m_vertices)[it[1]], (*m_vertices)[it[2]])
+                / (faceScalingField[f] * faceScalingField[f]);
+        }
+        const double edge = topology.averageEdgeLength();
+        if (quads > 0.0 && edge > 0.0)
+            m_scaling = std::sqrt(quads / m_targetQuadCount) / edge;
+    }
 
     report(0.03f, "Solving frame field");
     if (!solveFieldOn(topology))
@@ -436,13 +451,65 @@ bool Parameterizer::parameterize()
     CoverConstraints constraints;
     constraints.featureEdges = m_featureEdges;
     constraints.pinnedVertices = m_pinnedVertices;
-    if (!QuadParameterizer::parameterize(*m_vertices, *m_triangles,
-            &field, m_scaling, m_sharpEdgeDegrees, &cover,
-            &faceScalingField, &faceScalingU, &faceScalingV,
-            coverProgress ? &coverProgress : nullptr, &constraints)) {
-        AutoRemesher::log() << "Quad cover solve failed" << std::endl;
-        return false;
+    // Each quad is a unit square of the cover, so its area in uv is the count it will give. The curl correction and the
+    // rounding move that off the count the scaling asked for, so the cover is solved again at a corrected scaling.
+    const bool limited = m_faceSizeLimit && m_faceSizeLimit->size() == faceScalingField.size();
+    std::vector<double> limitedScalingField;
+    // The count comes in steps (a whole number of quads round every loop), so the scaling is searched: corrected in
+    // proportion until the count is bracketed, then halved between the two sides, and the closest cover is kept.
+    QuadParameterizer::Result closest;
+    double closestOff = -1.0, below = 0.0, above = 0.0;
+    const int attempts = m_targetQuadCount > 0.0 ? (m_triangles->size() < 30000 ? 5 : 3) : 1;
+    for (int attempt = 0; attempt < attempts; ++attempt) {
+        cover = QuadParameterizer::Result();
+        // The count asked for is the layout's before the limits; the quads they add come on top, or the scaling would
+        // chase a count the limited faces can't give up.
+        double wanted = m_targetQuadCount;
+        if (limited) {
+            const double scale = m_scaling * topology.averageEdgeLength();
+            limitedScalingField = faceScalingField;
+            double with = 0.0, without = 0.0;
+            for (size_t f = 0; f < limitedScalingField.size(); ++f) {
+                if ((*m_faceSizeLimit)[f] > 0.0 && scale > 0.0)
+                    limitedScalingField[f] = std::min(limitedScalingField[f], (*m_faceSizeLimit)[f] / scale);
+                const auto& it = (*m_triangles)[f];
+                const double area = Vector3::area((*m_vertices)[it[0]], (*m_vertices)[it[1]], (*m_vertices)[it[2]]);
+                with += area / (limitedScalingField[f] * limitedScalingField[f]);
+                without += area / (faceScalingField[f] * faceScalingField[f]);
+            }
+            if (without > 0.0)
+                wanted *= with / without;
+        }
+        if (!QuadParameterizer::parameterize(*m_vertices, *m_triangles,
+                &field, m_scaling, m_sharpEdgeDegrees, &cover,
+                limited ? &limitedScalingField : &faceScalingField, &faceScalingU, &faceScalingV,
+                coverProgress ? &coverProgress : nullptr, &constraints)) {
+            if (closestOff >= 0.0)
+                break;
+            AutoRemesher::log() << "Quad cover solve failed" << std::endl;
+            return false;
+        }
+        if (m_targetQuadCount <= 0.0) {
+            closest = std::move(cover);
+            closestOff = 0.0;
+            break;
+        }
+        double quads = 0.0;
+        for (const auto& uv : cover.triangleUvs)
+            quads += .5 * std::fabs((uv[1].x() - uv[0].x()) * (uv[2].y() - uv[0].y()) - (uv[1].y() - uv[0].y()) * (uv[2].x() - uv[0].x()));
+        AutoRemesher::log() << "Cover holds " << quads << " quads of " << wanted << " at scaling " << m_scaling << std::endl;
+        const double off = quads > 0.0 ? std::fabs(quads / wanted - 1.0) : 1e9;
+        if (closestOff < 0.0 || off < closestOff) {
+            closest = std::move(cover);
+            closestOff = off;
+        }
+        if (quads <= 0.0 || off < .04)
+            break;
+        // A larger scaling gives fewer quads.
+        (quads > wanted ? below : above) = m_scaling;
+        m_scaling = below > 0.0 && above > 0.0 ? std::sqrt(below * above) : m_scaling * std::sqrt(quads / wanted);
     }
+    cover = std::move(closest);
     report(0.99f, "Collecting singularities");
     m_originalTriangleUvs = cover.triangleUvs;
     m_triangleUvs = std::make_unique<std::vector<std::vector<Vector2>>>(cover.triangleUvs);

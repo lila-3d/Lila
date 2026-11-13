@@ -43,8 +43,10 @@ target_link_libraries(lila_retopo_cmds PUBLIC lila_retopo lila_scene)
 
 set(_ar ${CMAKE_SOURCE_DIR}/third_party/autoremesher)
 lila_quiet_module(lila_autoremesher Scene
+    ${_ar}/src/AutoRemesher/autoremesher.cpp
     ${_ar}/src/AutoRemesher/constrainedleastsquares.cpp
     ${_ar}/src/AutoRemesher/framefield.cpp
+    ${_ar}/src/AutoRemesher/isotropicremesher.cpp
     ${_ar}/src/AutoRemesher/meshseparator.cpp
     ${_ar}/src/AutoRemesher/mixedintegerleastsquares.cpp
     ${_ar}/src/AutoRemesher/parameterizer.cpp
@@ -53,9 +55,11 @@ lila_quiet_module(lila_autoremesher Scene
     ${_ar}/src/AutoRemesher/quadparameterizer.cpp
     ${_ar}/src/AutoRemesher/singularitysimplifier.cpp
     ${_ar}/src/AutoRemesher/surfacemesh.cpp
-    ${_ar}/isotropicremesher/axisalignedboundingboxtree.cpp)
+    ${_ar}/isotropicremesher/axisalignedboundingboxtree.cpp
+    ${_ar}/isotropicremesher/isotropichalfedgemesh.cpp
+    ${_ar}/isotropicremesher/isotropicremesher.cpp)
 target_include_directories(lila_autoremesher SYSTEM PUBLIC ${_ar}/include PRIVATE ${_ar}/isotropicremesher)
 target_compile_definitions(lila_autoremesher PRIVATE NDEBUG _USE_MATH_DEFINES NOMINMAX)
-target_link_libraries(lila_autoremesher PUBLIC TBB::tbb PRIVATE Eigen3::Eigen)
+target_link_libraries(lila_autoremesher PUBLIC TBB::tbb PRIVATE Eigen3::Eigen meshoptimizer::meshoptimizer)
 set_target_properties(lila_autoremesher PROPERTIES LILA_NO_UNITY ON)
 target_link_libraries(lila_retopo PRIVATE lila_autoremesher)

@@ -107,6 +107,12 @@ public:
     void setFaceScaling(const std::vector<double>* scaling) { m_faceScalingOverride = scaling; }
     void setFaceHints(const std::vector<FaceHint>* hints) { m_faceHints = hints; }
     void setFieldStiffness(const std::vector<double>* stiffness) { m_fieldStiffness = stiffness; }
+    /** Per triangle, a factor on the quad size the curvature adaptivity gives. */
+    void setFaceScalingMultiplier(const std::vector<double>* multiplier) { m_faceScalingMultiplier = multiplier; }
+    /** Per triangle, the longest quad edge allowed there, as a length; anything not above zero is no limit. */
+    void setFaceSizeLimit(const std::vector<double>* limit) { m_faceSizeLimit = limit; }
+    /** Sets the scaling from the quad count wanted, once the scaling field is known; 0 keeps the scaling as set. */
+    void setTargetQuadCount(double count) { m_targetQuadCount = count; }
 
     /** Solves and simplifies the cross field only; singularVertexIndices and singularVertexCharges are set after. */
     bool solveField();
@@ -137,6 +143,9 @@ private:
     const std::vector<double>* m_faceScalingOverride = nullptr;
     const std::vector<FaceHint>* m_faceHints = nullptr;
     const std::vector<double>* m_fieldStiffness = nullptr;
+    double m_targetQuadCount = 0.0;
+    const std::vector<double>* m_faceScalingMultiplier = nullptr;
+    const std::vector<double>* m_faceSizeLimit = nullptr;
     std::vector<Vector3> m_field;
     std::vector<int> m_singularVertexCharges;
 
