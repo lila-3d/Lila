@@ -313,18 +313,53 @@ QString roleLabel(Role r)
     return kLabels[std::clamp(int(r), 0, int(Role::Count) - 1)];
 }
 
-/** The prop's holds in time order, the scene's own place before the first left out. */
+/** A hand's row label, with its character's name when the scene has more than one. */
+QString handLabel(Graph& g, const Hold& h)
+{
+    QString label = holdLabel(h);
+    if (characters(g).size() > 1)
+        if (const NodeId c = h.target ? characterFor(g, h.target) : kNoNode)
+            label = QString::fromStdString(g.node(c)->name()) + ", " + label.toLower();
+    return label;
+}
+
+/** The prop's holds and handoffs in time order, each named by what happened; the scene's own place before the first left out. */
 std::vector<TrackRow> trackRows(Graph& g, const Prop& p)
 {
     std::vector<TrackRow> out;
     const std::vector<Hold> holds = holdsOf(g, p);
+    const json events = eventsOf(g, p);
+    const double half = 0.5 / std::max(anim::playback().fps, 1e-6);
     bool held = false;
     for (const Hold& h : holds)
     {
         if (h.kind == "parent" && &h == &holds.front() && holds.size() > 1)
             continue;
         held |= h.kind != "parent";
-        out.push_back({h.time, holdLabel(h), QString::fromStdString(h.space), {}});
+        json ev;
+        for (const json& e : events)
+            if (std::abs(e.value("time", 0.0) - h.time) < half)
+                ev = e;
+        const std::string kind = ev.is_object() ? ev.value("kind", std::string()) : std::string();
+        QString label = h.kind == "hand" ? handLabel(g, h) : holdLabel(h), select;
+        if (kind == "take")
+            label = "Taken, " + label.toLower();
+        else if (kind == "catch")
+            label = "Caught, " + label.toLower();
+        else if (kind == "pass")
+            label = "Passed, " + label.toLower();
+        else if (kind == "drop")
+            label = "Dropped";
+        else if (kind == "plant")
+            label = "Planted";
+        else if (kind == "throw")
+        {
+            label = ev.value("physics", false) ? "Thrown, physics" : "Thrown";
+            select = QString::fromStdString(ev.value("arc", std::string()));
+        }
+        else if (kind == "place")
+            label = "On " + QString::fromStdString(bare(ev.value("on", std::string())));
+        out.push_back({h.time, label, QString::fromStdString(h.space), select});
     }
     if (!held)
         out.clear();
@@ -460,6 +495,13 @@ public:
         form->addWidget(mMainPose, row++, 1);
         label(form, "Other pose", row, setBox);
         form->addWidget(mOffPose, row++, 1);
+        mShape = new QComboBox(setBox);
+        for (const char* shapeName : {"Auto", "Blade", "Haft", "Pole", "Firearm", "Tube", "Plate", "Bow", "Other"})
+            mShape->addItem(shapeName);
+        mShape->setToolTip("Shape: how Fit Points reads the mesh. Auto reads it from the mesh; pick one when it reads wrong, then Fit Points");
+        connect(mShape, &QComboBox::activated, this, [](int i) { setPropAttr("fitShape", i); });
+        label(form, "Shape", row, setBox);
+        form->addWidget(mShape, row++, 1);
         mTrigger = new QCheckBox("Trigger finger", setBox);
         mTrigger->setToolTip("Trigger finger: the main hand's index finger stays posed instead of wrapping");
         connect(mTrigger, &QCheckBox::clicked, this, [](bool on) { setPropAttr("trigger", on); });
@@ -519,6 +561,16 @@ public:
         hv->addLayout(blendRow);
         v->addWidget(controls::section("Hold", holdBox, this, kSections));
 
+        // Handoffs: the prop leaving the hand and coming back, each with its option box.
+        auto* offBox = new QWidget(this);
+        auto* ov = new QVBoxLayout(offBox);
+        ov->setContentsMargins(0, 0, 0, 0);
+        ov->addWidget(controls::grid({controls::row("puppeteer.prop.plant", "arrow-bar-to-down", offBox), controls::row("puppeteer.prop.place", "table", offBox),
+                                      controls::row("puppeteer.prop.throw", "ball-baseball", offBox), controls::row("puppeteer.prop.catch", "hand-move", offBox),
+                                      controls::row("puppeteer.prop.take", "hand-finger", offBox), controls::row("puppeteer.prop.pass", "transfer", offBox)},
+                                     2, offBox));
+        v->addWidget(controls::section("Handoff", offBox, this, kSections));
+
         // Aim: the prop's own style (Settings); here only on, off and how fully.
         auto* aimBox = new QWidget(this);
         auto* av = new QVBoxLayout(aimBox);
@@ -555,14 +607,17 @@ public:
         mHolds->header()->setStretchLastSection(true);
         mHolds->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
         mHolds->setMinimumHeight(70);
-        mHolds->setToolTip("Who or what has the prop from which frame. Click a row to go to its frame");
         connect(mHolds, &QTreeWidget::itemClicked, this, [](QTreeWidgetItem* it) {
-            runCommand("currentTime", {{"args", {it->data(0, Qt::UserRole).toDouble()}}});
-            if (const QString sel = it->data(1, Qt::UserRole).toString(); !sel.isEmpty())
+            // Going to the frame rebuilds the list, so the row is read first.
+            const double time = it->data(0, Qt::UserRole).toDouble();
+            const QString sel = it->data(1, Qt::UserRole).toString();
+            runCommand("currentTime", {{"args", {time}}});
+            if (!sel.isEmpty())
                 runCommand("select", {{"args", {sel.toStdString()}}});
         });
         lv->addWidget(mHolds);
         mHoldsEmpty = new QLabel("Not held yet. Hold puts it in a hand at the current frame.", listBox);
+        mHolds->setToolTip("Who or what has the prop from which frame. Click a row to go to its frame (a throw selects its arc to drag)");
         mHoldsEmpty->setWordWrap(true);
         mHoldsEmpty->setForegroundRole(QPalette::PlaceholderText);
         lv->addWidget(mHoldsEmpty);
@@ -699,6 +754,7 @@ public:
             box->setCurrentIndex(i);
         }
         mTrigger->setChecked(st.trigger);
+        mShape->setCurrentIndex(int(st.shape));
 
         {
             const QSignalBlocker b(mPoints);
@@ -761,7 +817,7 @@ private:
     controls::Segmented *mHand = nullptr, *mHands = nullptr, *mAim = nullptr;
     QDoubleSpinBox *mBlend = nullptr, *mReach = nullptr, *mDrop = nullptr;
     controls::SliderField* mWeight = nullptr;
-    QComboBox *mHolster = nullptr, *mMainPose = nullptr, *mOffPose = nullptr;
+    QComboBox *mHolster = nullptr, *mMainPose = nullptr, *mOffPose = nullptr, *mShape = nullptr;
     QCheckBox* mTrigger = nullptr;
     QTreeWidget *mHolds = nullptr, *mPoints = nullptr;
     QLineEdit *mBone = nullptr, *mSocket = nullptr;
@@ -865,6 +921,241 @@ void addAction(ext::Context& ctx, const char* id, const char* label, std::functi
     actions::add(ctx, {.id = id, .label = label, .category = kCat, .run = std::move(run), .enabled = std::move(enabled), .doc = doc, .icon = icon,
                        .keywords = kw});
 }
+
+/** A handoff action: its command run on the current prop at the current frame with the option box's values. */
+void addHandoff(ext::Context& ctx, const char* id, const char* label, const char* command, std::function<bool(Graph&, const Prop&, json&)> fill,
+                const char* doc, const char* icon, std::vector<std::string> extra)
+{
+    std::vector<std::string> kw = keywords();
+    kw.insert(kw.end(), extra.begin(), extra.end());
+    actions::add(ctx, {.id = id,
+                       .label = label,
+                       .category = kCat,
+                       .run =
+                           [command, fill] {
+                               Graph& g = Graph::current();
+                               const std::optional<Prop> p = current(g);
+                               if (!p)
+                                   return void(log::write(LogLevel::Warning, "Props: select a prop first"));
+                               json call = {{"args", {g.path(p->root)}}, {"time", g.time()}};
+                               if (fill && !fill(g, *p, call))
+                                   return;
+                               actions::runWithOptions(command, call);
+                           },
+                       .enabled = hasProp,
+                       .doc = doc,
+                       .command = command,
+                       .icon = icon,
+                       .keywords = kw});
+}
+
+/** The selected transforms that are neither part of the prop nor of a character. */
+std::vector<NodeId> otherSelected(Graph& g, const Prop& p)
+{
+    std::vector<NodeId> out;
+    for (NodeId id : g.selection())
+        if (Node* n = g.node(id); n && n->type().attrIndex("worldMatrix") >= 0 && propFor(g, id) != p.node && !characterFor(g, id) && !isUnder(g, id, p.root))
+            out.push_back(id);
+    return out;
+}
+
+/** The selected character that isn't the one holding the prop now, else the only other character. */
+NodeId otherCharacter(Graph& g, const Prop& p)
+{
+    const NodeId holder = holderNow(g, p);
+    const NodeId holding = holder ? characterFor(g, holder) : kNoNode;
+    for (NodeId id : g.selection())
+        if (const NodeId c = characterFor(g, id); c && c != holding)
+            return c;
+    std::vector<NodeId> others;
+    for (NodeId c : characters(g))
+        if (c != holding)
+            others.push_back(c);
+    return others.size() == 1 ? others.front() : kNoNode;
+}
+
+// Throw arcs in the viewport --------------------------------------------------------------------------------------------
+
+/** An arc's path as keyed: seconds and the prop's middle there. */
+std::vector<std::pair<double, glm::dvec3>> arcPath(const Node& arc)
+{
+    std::vector<std::pair<double, glm::dvec3>> out;
+    const json j = json::parse(textOf(arc, "path").empty() ? std::string("[]") : textOf(arc, "path"), nullptr, false);
+    if (j.is_array())
+        for (const json& s : j)
+            if (s.is_array() && s.size() == 4)
+                out.push_back({s[0].get<double>(), {s[1].get<double>(), s[2].get<double>(), s[3].get<double>()}});
+    return out;
+}
+
+/** Shown while the arc, its prop, or a point of it is selected. */
+bool arcShown(Graph& g, NodeId arc)
+{
+    const NodeId pn = propFor(g, arc);
+    for (NodeId id : g.selection())
+        if (id == arc || (pn && propFor(g, id) == pn))
+            return true;
+    return false;
+}
+
+/** The path a drag would give: the arc again through a point at a time, keyed arcs only, before it is keyed. */
+struct ArcPreview
+{
+    NodeId arc = kNoNode;
+    std::vector<std::pair<double, glm::dvec3>> path;
+    QString readout;
+};
+ArcPreview& arcPreview()
+{
+    static ArcPreview p;
+    return p;
+}
+
+const glm::vec4 kArcPath{0.78f, 0.78f, 0.78f, 0.9f};
+const glm::vec4 kArcHot{1.0f, 1.0f, 1.0f, 1.0f};
+
+void drawArcPath(OverlayPainter& painter, const ViewInfo& view, const std::vector<std::pair<double, glm::dvec3>>& path, int hot, bool dashed)
+{
+    std::vector<QPointF> pts;
+    for (const auto& [t, p] : path)
+        if (const auto q = view.project(p))
+            pts.push_back(*q);
+    if (pts.size() < 2)
+        return;
+    if (dashed)
+        painter.dashedPolyline(pts, 1.5f, 6.0f, kArcPath);
+    else
+        painter.polyline(pts, 1.5f, kArcPath);
+    for (size_t i = 0; i < path.size(); ++i)
+        if (const auto q = view.project(path[i].second))
+            painter.smoothDisc(*q, int(i) == hot ? 4.5 : 2.5, int(i) == hot ? kArcHot : kArcPath);
+    // Where it ends: landed, caught or out of time.
+    if (const auto q = view.project(path.back().second))
+        painter.arc(*q, 6.0, 0.0, 360.0, 1.5f, kArcPath);
+}
+
+void drawArc(drawOverrides::DrawContext& c)
+{
+    Graph& g = Graph::current();
+    if (!arcShown(g, c.node.id()))
+        return;
+    const ArcPreview& pv = arcPreview();
+    if (pv.arc == c.node.id() && !pv.path.empty())
+    {
+        drawArcPath(c.painter, c.view, arcPath(c.node), -1, true);
+        drawArcPath(c.painter, c.view, pv.path, -1, false);
+        return;
+    }
+    drawArcPath(c.painter, c.view, arcPath(c.node), -1, false);
+}
+
+std::optional<double> pickArc(const drawOverrides::PickContext& c)
+{
+    Graph& g = Graph::current();
+    if (!arcShown(g, c.node.id()))
+        return std::nullopt;
+    double best = 1e300;
+    for (const auto& [t, p] : arcPath(c.node))
+        if (const auto q = c.view.project(p))
+        {
+            if (!c.click)
+            {
+                if (QRectF(c.a, c.b).normalized().contains(*q))
+                    return 0.0;
+                continue;
+            }
+            best = std::min(best, std::hypot(c.a.x() - q->x(), c.a.y() - q->y()));
+        }
+    return c.click && best <= drawOverrides::kClickPixels ? std::optional<double>(best) : std::nullopt;
+}
+
+/** Dragging a frame of the arc: the prop passes through the cursor there, the launch kept; one command on release. */
+class ArcDrag final : public nodeHandles::Drag
+{
+public:
+    ArcDrag(NodeId arc, int frame, const ViewInfo& view) : mArc(arc), mFrame(frame)
+    {
+        Graph& g = Graph::current();
+        const Node& n = *g.node(arc);
+        mPath = arcPath(n);
+        mTime = mPath[size_t(frame)].first;
+        mAt = mPath[size_t(frame)].second;
+        mStart = n.as<double>(attrOf(n, "start"));
+        mLaunch = n.as<glm::dvec3>(attrOf(n, "launch"));
+        mGravity = n.as<double>(attrOf(n, "gravity"));
+        mPhysics = n.as<bool>(attrOf(n, "physics"));
+        mNormal = view.viewDir(mAt);
+    }
+    void move(QPointF px, const ViewInfo& view, Qt::KeyboardModifiers) override
+    {
+        glm::dvec3 o, d;
+        view.ray(px, o, d);
+        const double den = glm::dot(d, mNormal);
+        if (std::abs(den) < 1e-9)
+            return;
+        mTo = o + d * (glm::dot(mAt - o, mNormal) / den);
+        mMoved = true;
+        // The keyed arc through the cursor, drawn until the command keys it.
+        const double tau = std::max(mTime - mStart, 1e-3);
+        const glm::dvec3 gv = -lila::math::axisBasis().up * mGravity;
+        const glm::dvec3 v = (mTo - mLaunch - 0.5 * gv * tau * tau) / tau;
+        ArcPreview& pv = arcPreview();
+        pv.arc = mArc;
+        pv.path.clear();
+        for (const auto& [t, p] : mPath)
+        {
+            const double s = t - mStart;
+            pv.path.push_back({t, mLaunch + v * s + 0.5 * gv * s * s});
+        }
+        pv.readout = QString("%1 cm/s%2").arg(glm::length(v), 0, 'f', 0).arg(mPhysics ? ", physics on release" : "");
+        viewportTools::requestRedraw();
+    }
+    void release(bool moved) override
+    {
+        arcPreview() = {};
+        if (!moved || !mMoved)
+            return;
+        Graph& g = Graph::current();
+        runCommand("puppeteerPropArc", {{"args", {g.path(mArc)}}, {"through", {mTo.x, mTo.y, mTo.z}}, {"at", mTime}});
+    }
+    void cancel() override
+    {
+        arcPreview() = {};
+        viewportTools::requestRedraw();
+    }
+    QString readout() const override { return arcPreview().readout; }
+
+private:
+    NodeId mArc;
+    int mFrame;
+    std::vector<std::pair<double, glm::dvec3>> mPath;
+    double mTime = 0.0, mStart = 0.0, mGravity = 981.0;
+    glm::dvec3 mAt{0.0}, mLaunch{0.0}, mNormal{0.0, 0.0, 1.0}, mTo{0.0};
+    bool mPhysics = false, mMoved = false;
+};
+
+void drawArcHandles(OverlayPainter& p, const nodeHandles::Context& c, int hovered, int active)
+{
+    if (arcPreview().arc == c.node.id())
+        return;
+    drawArcPath(p, c.view, arcPath(c.node), active >= 0 ? active : hovered, false);
+}
+
+int pickArcHandle(QPointF px, const nodeHandles::Context& c)
+{
+    const auto path = arcPath(c.node);
+    int best = -1;
+    double bestD = 8.0;
+    // The launch frame stays put: it is where the hand let go.
+    for (size_t i = 1; i < path.size(); ++i)
+        if (const auto q = c.view.project(path[i].second))
+            if (const double d = std::hypot(px.x() - q->x(), px.y() - q->y()); d < bestD)
+            {
+                bestD = d;
+                best = int(i);
+            }
+    return best;
+}
 } // namespace
 } // namespace puppeteer::prop
 
@@ -882,6 +1173,74 @@ void registerPropUi(lila::ext::Context& ctx)
                       .keywords = keywords(),
                       .docs = "props"});
     drawOverrides::add(ctx, {.id = "puppeteer.propPoint", .nodeType = kPointType, .draw = drawPoint, .pick = pickPoint});
+    drawOverrides::add(ctx, {.id = "puppeteer.propArc", .nodeType = kArcType, .draw = drawArc, .pick = pickArc});
+    nodeHandles::add(ctx, {.id = "puppeteer.propArc",
+                           .nodeType = kArcType,
+                           .draw = drawArcHandles,
+                           .pick = pickArcHandle,
+                           .begin = [](int handle, QPointF, const nodeHandles::Context& c) -> std::unique_ptr<nodeHandles::Drag> {
+                               return std::make_unique<ArcDrag>(c.node.id(), handle, c.view);
+                           }});
+
+    addHandoff(ctx, "puppeteer.prop.plant", "Plant", "puppeteerPropPlant", nullptr,
+               "Stand the held prop on its tip or base on the ground or a surface ahead from the current frame, leaning; the hands carry "
+               "it down and let go.",
+               "arrow-bar-to-down", {"plant", "stand", "stick in ground", "lean", "rest"});
+    addHandoff(ctx, "puppeteer.prop.throw", "Throw", "puppeteerPropThrow", nullptr,
+               "Throw the held prop from the current frame: a keyed arc with spin (or physics), from the hand's motion or the option "
+               "box's speed and angle. Select its row in Track to drag the arc.",
+               "ball-baseball", {"throw", "toss", "launch", "lob", "physics", "arc", "trajectory"});
+    addHandoff(ctx, "puppeteer.prop.catch", "Catch", "puppeteerPropCatch",
+               [](Graph& g, const Prop& p, json& call) {
+                   for (NodeId id : g.selection())
+                       if (const NodeId c = characterFor(g, id))
+                       {
+                           call["character"] = g.path(c);
+                           break;
+                       }
+                   (void)p;
+                   return true;
+               },
+               "Catch the thrown prop where its arc meets a hand (the selected character's, else the thrower's); the hand reaches to take it.",
+               "hand-move", {"catch", "grab", "receive"});
+    addHandoff(ctx, "puppeteer.prop.place", "Put On", "puppeteerPropPlace",
+               [](Graph& g, const Prop& p, json& call) {
+                   const std::vector<NodeId> others = otherSelected(g, p);
+                   if (others.empty())
+                   {
+                       log::write(LogLevel::Warning, "Props: select the object to put it on too (a table, a rack)");
+                       return false;
+                   }
+                   call["on"] = g.path(others.front());
+                   if (others.size() > 1)
+                       call["hook"] = g.path(others.back());
+                   return true;
+               },
+               "Put the held prop on the other selected object from the current frame (on its top, or hung from a second selected "
+               "transform as a hook); it rides the object after.",
+               "table", {"put down", "place", "set down", "table", "rack", "hook", "hang", "shelf"});
+    addHandoff(ctx, "puppeteer.prop.take", "Take", "puppeteerPropHold",
+               [](Graph&, const Prop&, json& call) {
+                   call["reach"] = std::max(blendSeconds(), 0.1);
+                   call["blend"] = 0.0;
+                   return true;
+               },
+               "Take the prop where it is (on a table, the ground, a rack) at the current frame, the hand reaching for it over the "
+               "panel's Blend before.",
+               "hand-finger", {"pick up", "take", "grab", "lift"});
+    addHandoff(ctx, "puppeteer.prop.pass", "Pass", "puppeteerPropPass",
+               [](Graph& g, const Prop& p, json& call) {
+                   const NodeId to = otherCharacter(g, p);
+                   if (!to)
+                   {
+                       log::write(LogLevel::Warning, "Props: select the character to pass it to");
+                       return false;
+                   }
+                   call["to"] = g.path(to);
+                   return true;
+               },
+               "Hand the held prop to the selected (or only other) character from the current frame, both hands sharing it.",
+               "transfer", {"pass", "hand over", "give", "handoff", "exchange"});
 
     for (const Preset& p : presets())
         actions::add(ctx, {.id = std::string("puppeteer.prop.preset.") + p.id,
@@ -919,7 +1278,7 @@ void registerPropUi(lila::ext::Context& ctx)
               {"sheathe", "put away", "stow", "back", "hip"});
     addAction(ctx, "puppeteer.prop.drop", "Drop", [] { simpleAction("puppeteerPropDrop"); },
               "Let go of the prop at the current frame: it stays in the world where it is and the hands open.", "hand-stop",
-              {"release", "let go", "throw", "detach"});
+              {"release", "let go", "detach"});
     addAction(ctx, "puppeteer.prop.aim", "Aim", aimAction,
               "Aim the held prop at the other selected object, or at a new target placed in front of the character, from the current frame; "
               "the arms and body follow.",
@@ -974,7 +1333,8 @@ void registerPropUi(lila::ext::Context& ctx)
     for (const std::string m : {"Puppeteer/Props", "Animation/Props"})
     {
         for (const char* a : {"window.puppeteerProps", "puppeteer.prop.make", "", "puppeteer.prop.hold", "puppeteer.prop.handOff", "puppeteer.prop.holster",
-                              "puppeteer.prop.drop", "", "puppeteer.prop.aim", "puppeteer.prop.aimOff", "", "puppeteer.prop.solve", "puppeteer.prop.fit",
+                              "puppeteer.prop.drop", "", "puppeteer.prop.plant", "puppeteer.prop.place", "puppeteer.prop.throw", "puppeteer.prop.catch",
+                              "puppeteer.prop.take", "puppeteer.prop.pass", "", "puppeteer.prop.aim", "puppeteer.prop.aimOff", "", "puppeteer.prop.solve", "puppeteer.prop.fit",
                               "puppeteer.prop.addGrip", "puppeteer.prop.removePoint", "puppeteer.prop.unreal"})
             if (*a)
                 menus::addItem(ctx, {.id = "puppeteer.props." + m + "." + a, .menu = m, .action = a});
