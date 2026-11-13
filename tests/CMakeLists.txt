@@ -83,6 +83,7 @@ add_executable(lila_tests
     test_georef.cpp
     test_geo_sidecar.cpp
     test_pointcloud.cpp
+    test_3dtiles.cpp
     test_ifc.cpp
     test_light.cpp
     test_showcase.cpp
@@ -109,7 +110,7 @@ target_link_libraries(lila_tests PRIVATE miniz::miniz)
 # test_pointcloud writes an E57 to read back.
 find_package(E57Format CONFIG REQUIRED)
 target_link_libraries(lila_tests PRIVATE E57Format)
-target_compile_definitions(lila_tests PRIVATE LILA_TEST_E57_DATA="${CMAKE_SOURCE_DIR}/tests/data/e57")
+target_compile_definitions(lila_tests PRIVATE LILA_TEST_E57_DATA="${CMAKE_SOURCE_DIR}/tests/data/e57" LILA_TEST_3DTILES_DATA="${CMAKE_SOURCE_DIR}/tests/data/3dtiles")
 # The batch run tests start real lilabatch workers.
 add_dependencies(lila_tests lilabatch)
 add_test(NAME lila_tests COMMAND lila_tests)

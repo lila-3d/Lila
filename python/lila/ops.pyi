@@ -4762,6 +4762,22 @@ def imagePlaneGuide(*objects: Any, lines: Any | None = None, remove: int | None 
         clear: Remove every guide. Short form cl. Default False.
     """
 
+def import3dTiles(*objects: Any, maxError: float | None = None, centre: Sequence[Any] | None = None, radius: float | None = None, maxTiles: int | None = None, georeference: bool | None = None, name: str | None = None, n: str | None = None) -> Any:
+    """Import a 3D Tiles tileset (tileset.json, 1.0 or 1.1) from a local folder, or a single b3dm, i3dm, pnts, cmpt or glb tile. Tiles are picked by geometric error: along each branch the first tile within maxError, or the finest. Meshes come in through the glTF importer (Draco and meshopt included) and point tiles as point clouds, all placed from the tileset's Earth-centred frame into the scene's georeference; a scene without one takes the UTM zone around the tileset. Returns the group and counts; skipped content is listed and logged.
+
+    Args:
+        objects: path.
+        maxError: Geometric error to stop refining at, metres; 0 takes the finest tiles. Default 0.0.
+        centre: With radius: only tiles reaching within radius of this [latitude, longitude, height].
+        radius: Metres around centre (or the tileset's centre) to bring in; 0 takes everything. Default 0.0.
+        maxTiles: Stop after this many tiles, and say so. Default 1000.
+        georeference: Set the scene's georeference from the tileset when it has none. Default True.
+        name: Name of the group the tiles go under. Short form n.
+
+    Examples:
+        import3dTiles("D:/city/tileset.json", maxError=2, centre=[45.8257, 11.5324], radius=500)
+    """
+
 def importAlembic(*objects: Any, profile: str | None = None, scale: float | None = None, parent: str | None = None, setPlayback: bool | None = None, report: bool | None = None, select: bool | None = None, ax: str | None = None, sc: float | None = None, p: str | None = None) -> Any:
     """Import an Alembic (.abc) file's PolyMeshes as meshes, each placed through its transforms at its first sample. A mesh whose points move over time gets a meshCache deformer playing every sample (interpolated between them); one whose topology changes keeps its first sample. Returns the new mesh names, or with report=True a dict of nodes, meshCaches, start, end and warnings.
 

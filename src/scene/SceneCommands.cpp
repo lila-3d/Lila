@@ -42,6 +42,7 @@
 #include "scene/Georef.h"
 #include "pointcloud/PointCloudNode.h"
 #include "ifc/IfcImport.h"
+#include "tiles/Tiles3d.h"
 #include "scene/RenderSettings.h"
 #include "scene/Rig.h"
 #include "scene/SceneData.h"
@@ -298,6 +299,7 @@ void registerCommands()
     georef::registerCommands();
     pointcloud::registerCommands();
     ifc::registerCommands();
+    tiles::registerCommands();
 
     loadNamingPolicy();
     PrefStore::get().onChanged([](const std::string& file) {
