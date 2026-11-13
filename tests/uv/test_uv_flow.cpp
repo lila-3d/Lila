@@ -9,12 +9,36 @@
 #include <glm/gtc/constants.hpp>
 
 #include <cmath>
+#include <map>
+#include <tuple>
 
 using namespace lila;
 using geo::Index;
 
 namespace
 {
+/** Each triangle its own face, as a chart built from a triangle mesh has them. */
+void addFaces(uv::Chart& ch)
+{
+    for (size_t t = 0; t < ch.tris.size(); ++t)
+    {
+        ch.faces.push_back(Index(t));
+        ch.faceStart.push_back(Index(ch.corners.size()));
+        for (Index v : ch.tris[t])
+        {
+            ch.cornerVertex.push_back(v);
+            ch.corners.push_back(Index(ch.corners.size()));
+        }
+        ch.triFace.push_back(Index(t));
+    }
+    ch.faceStart.push_back(Index(ch.corners.size()));
+    for (size_t v = 0; v < ch.pos.size(); ++v)
+        ch.vertexPoint.push_back(Index(v));
+    if (ch.uv.size() != ch.pos.size())
+        ch.uv.assign(ch.pos.size(), glm::dvec2(0.0));
+    ch.pinned.assign(ch.pos.size(), 0);
+}
+
 /** A patch of a unit cylinder about Y, unrolled flat and then turned by `turn` in uv. */
 uv::Chart cylinderPatch(double turn, int around = 16, int rows = 10, double span = 1.6)
 {
@@ -34,7 +58,7 @@ uv::Chart cylinderPatch(double turn, int around = 16, int rows = 10, double span
             ch.tris.push_back({id(r, k), id(r, k + 1), id(r + 1, k + 1)});
             ch.tris.push_back({id(r, k), id(r + 1, k + 1), id(r + 1, k)});
         }
-    ch.pinned.assign(ch.pos.size(), 0);
+    addFaces(ch);
     return ch;
 }
 
@@ -107,23 +131,7 @@ uv::Chart sphereCap(double polar, double height = 1.0, int rings = 12, int aroun
             ch.tris.push_back({id(r, k), id(r, k + 1), id(r + 1, k + 1)});
             ch.tris.push_back({id(r, k), id(r + 1, k + 1), id(r + 1, k)});
         }
-    ch.uv.assign(ch.pos.size(), glm::dvec2(0.0));
-    ch.pinned.assign(ch.pos.size(), 0);
-    // Each triangle its own face, as a chart built from a triangle mesh has them.
-    for (size_t t = 0; t < ch.tris.size(); ++t)
-    {
-        ch.faces.push_back(Index(t));
-        ch.faceStart.push_back(Index(ch.corners.size()));
-        for (Index v : ch.tris[t])
-        {
-            ch.cornerVertex.push_back(v);
-            ch.corners.push_back(Index(ch.corners.size()));
-        }
-        ch.triFace.push_back(Index(t));
-    }
-    ch.faceStart.push_back(Index(ch.corners.size()));
-    for (size_t v = 0; v < ch.pos.size(); ++v)
-        ch.vertexPoint.push_back(Index(v));
+    addFaces(ch);
     return ch;
 }
 
@@ -198,4 +206,119 @@ TEST_CASE("auto seams dart a pointed cap rather than splitting it")
         CHECK(darted.charts.size() == 1);
         CHECK(darted.seamEdges < plain.seamEdges);
     }
+}
+
+namespace
+{
+/** A strip folded square along x = 1: flat in z = 0 up to the fold, then up along +z, 2 long and 1 wide. */
+uv::Chart foldedStrip(int along = 24, int across = 10)
+{
+    uv::Chart ch;
+    for (int r = 0; r <= across; ++r)
+        for (int k = 0; k <= along; ++k)
+        {
+            const double x = 2.0 * k / along, y = double(r) / across;
+            ch.pos.push_back(x <= 1.0 ? glm::dvec3(x, y, 0.0) : glm::dvec3(1.0, y, x - 1.0));
+            // Scrambled uvs: the unwrap starts from nothing it can lean on.
+            ch.uv.push_back({std::sin(7.0 * x + 3.0 * y), std::cos(5.0 * y - 2.0 * x)});
+        }
+    auto id = [&](int r, int k) { return Index(r * (along + 1) + k); };
+    for (int r = 0; r < across; ++r)
+        for (int k = 0; k < along; ++k)
+        {
+            ch.tris.push_back({id(r, k), id(r, k + 1), id(r + 1, k + 1)});
+            ch.tris.push_back({id(r, k), id(r + 1, k + 1), id(r + 1, k)});
+        }
+    addFaces(ch);
+    return ch;
+}
+
+double boxArea(const uv::Chart& ch)
+{
+    const glm::dvec2 d = ch.uvMax() - ch.uvMin();
+    return d.x * d.y;
+}
+} // namespace
+
+TEST_CASE("flow unwrap lays a folded panel out as an exact rectangle at 3D scale")
+{
+    uv::Chart ch = foldedStrip();
+    const uv::FlowUnwrapResult r = uv::flowUnwrap(ch);
+    REQUIRE(r.ok);
+    CHECK(r.folded == 0);
+    CHECK(r.straightened > 0);
+    // Already square to the axes, so its box is the island itself, 2 by 1.
+    CHECK(std::abs(ch.areaUv()) == doctest::Approx(2.0).epsilon(0.02));
+    CHECK(boxArea(ch) == doctest::Approx(std::abs(ch.areaUv())).epsilon(0.02));
+}
+
+TEST_CASE("flow unwrap keeps a cylinder's rings straight rows")
+{
+    uv::Chart ch = cylinderPatch(0.0);
+    for (glm::dvec2& p : ch.uv)
+        p = glm::dvec2(std::sin(3.0 * p.x), p.y * p.x);
+    const uv::FlowUnwrapResult r = uv::flowUnwrap(ch);
+    REQUIRE(r.ok);
+    CHECK(r.folded == 0);
+    double spread = 0.0;
+    for (int k = 1; k <= 16; ++k)
+        spread = std::max(spread, std::min(std::abs(ch.uv[k].x - ch.uv[0].x), std::abs(ch.uv[k].y - ch.uv[0].y)));
+    CHECK(spread < 1e-3);
+    CHECK(std::abs(ch.areaUv()) == doctest::Approx(ch.area3d()).epsilon(0.02));
+}
+
+TEST_CASE("flow unwrap cuts a cap open at its turning point and lays it out without folds")
+{
+    uv::Chart ch = sphereCap(1.3, 1.8, 16, 48), loose = ch;
+    uv::FlowUnwrapOptions o;
+    o.straighten = false;
+    const uv::FlowUnwrapResult rl = uv::flowUnwrap(loose, o);
+    MESSAGE("cap unstraightened: " << rl.folded << " folded");
+    const uv::FlowUnwrapResult r = uv::flowUnwrap(ch);
+    REQUIRE(r.ok);
+    MESSAGE("cap: " << r.darts << " darts, " << r.straightened << " edges straightened, " << r.folded << " folded");
+    CHECK(r.darts > 0);
+    CHECK(r.folded == 0);
+}
+
+namespace
+{
+/** Three unit squares meeting at a cube's corner (the origin), n by n quads each, as one island. */
+uv::Chart cubeCorner(int n = 8)
+{
+    uv::Chart ch;
+    std::map<std::tuple<int, int, int>, Index> ids;
+    auto point = [&](int x, int y, int z) {
+        auto [it, fresh] = ids.try_emplace({x, y, z}, Index(ch.pos.size()));
+        if (fresh)
+            ch.pos.push_back(glm::dvec3(x, y, z) / double(n));
+        return it->second;
+    };
+    auto square = [&](auto at) {
+        for (int i = 0; i < n; ++i)
+            for (int j = 0; j < n; ++j)
+            {
+                const Index a = at(i, j), b = at(i + 1, j), c = at(i + 1, j + 1), d = at(i, j + 1);
+                ch.tris.push_back({a, b, c});
+                ch.tris.push_back({a, c, d});
+            }
+    };
+    // Wound so every face looks outward, away from the cube's inside at +x +y +z.
+    square([&](int i, int j) { return point(j, i, 0); });
+    square([&](int i, int j) { return point(0, j, i); });
+    square([&](int i, int j) { return point(i, 0, j); });
+    addFaces(ch);
+    return ch;
+}
+} // namespace
+
+TEST_CASE("flow unwrap opens a cube's corner with one dart and lays its three faces flat")
+{
+    uv::Chart ch = cubeCorner();
+    const uv::FlowUnwrapResult r = uv::flowUnwrap(ch);
+    REQUIRE(r.ok);
+    MESSAGE("corner: " << r.darts << " darts, " << r.folded << " folded, " << r.repaired << " repaired, uv area " << std::abs(ch.areaUv()));
+    CHECK(r.darts == 1);
+    CHECK(r.repaired == 0);
+    CHECK(std::abs(ch.areaUv()) == doctest::Approx(3.0).epsilon(0.01));
 }

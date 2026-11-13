@@ -19,6 +19,16 @@ Scope from Jared: UV reuse items 1-4 from the retopo rebase, plus the remaining 
 - Measured on Mochi and the head (quad and triangulated, 8 runs): seams 10-22% shorter and 2-6 fewer islands where darts apply, but coverage 4-8% lower (notched islands pack looser) and about 3x the time (2-7 s). So darts are off by default and offered as the flag; the default output is unchanged.
 - Found while testing: BFF cones only cut along polygon faces, so a chart with no faces gets cones that do nothing. Real charts have faces; only the test helper needed them.
 
+## 3. Flow Unwrap (straight UVs for hard surface and trims)
+
+- New `uvFlowUnwrap` (Flow Unwrap) rather than feeding the AutoRemesher cover into UVs: its integer lattice and cut graph are built for whole closed surfaces, and per island a combed field plus one least-squares solve does the same job without lattice rounding. Per island: the cross field held to the border and creases (soft crease pull at 15 degrees for bevel segments), darts from each singular point to the border (from the singular triangle's most curved corner), the field combed across the cut island with transport over folds, then u and v solved so their gradients follow it at 3D scale.
+- Straighten: border and crease edges within 12 degrees (option) of U or V are held to one line by a penalty (1000x) in a second solve.
+- Flat islands (all faces within 1 degree of a plane) are projected onto their plane and turned so the border runs along U/V: zero stretch, and round caps no longer need four darts.
+- Folds: the folded triangles plus three rings are re-solved by the existing pinned LSCM+SLIM unwrap with the rest held; a repair that moves the held part is dropped. An island still folded or overlapping itself is unwrapped for least stretch instead and counted in `fellBack`, with a note in the result.
+- Two bugs found and fixed on the way: combing projected directions across a 90 degree crease (zeroed them; now rotated about the fold), and per-triangle directions projected the vertex field from averaged normals at crease junctions (wrong quarter turns, a 180 degree jump at a cube corner; now transported from each vertex's tangent plane).
+- Measured: folded panel exact 2x1 rectangle; cube corner unfolds with one 90 degree dart, area 2.99 of 3; bevelled box 2 islands as clean nets, 0 overlap, mean angle distortion 0.012. Organic meshes (head, Mochi) fall back on about half their islands, reported; Flow Unwrap is for hard surface and trims, Auto UV stays the organic default.
+- UI: Flow Unwrap in the UV menu and the Unwrap section's overflow (weekly tool, the section already has 11 entries); BFF Unwrap with Flow Cones in the Conformal split row; Auto Seams with Darts in the Seams split row; option labels "Straighten Within" (deg) and "Cones From" (Stretch, Flow).
+
 ## 4. Cage paint: own-fold clearance
 
 - Nothing from the remesher fits the per-point solve, so this item is the gap found while looking: clearance ran only between lows. Each low now also traces its own surface: front faces only (the faces a ray leaves from look away), from a few epsilons out.

@@ -11302,7 +11302,7 @@ def uvAuto(uvSet: str | None = None, iterations: int | None = None, finalMesh: b
         maxDistortion: Split islands that stretch more than this when flattened. Default 0.08.
         visibility: Hide cuts where they are least visible. Default True.
         merge: Merge islands back while they still flatten well. Default True.
-        darts: Before splitting an island that stretches, try short cuts in from where it caps over (fingertips, a nose). Default True.
+        darts: Before splitting an island that stretches, try short cuts in from where it caps over (fingertips, a nose). Default False.
         method: split (hard edges, open to disks, split where stretched) or optcuts (Auto Seams 2: seams and distortion optimised together). One of 'split', 'optcuts'. Default 'split'.
         distortionBound: optcuts: stretch (symmetric Dirichlet excess, all islands) to get under. Default 0.05.
         seamWeight: optcuts: price of seam length against stretch; higher keeps seams shorter. Default 0.5.
@@ -11341,7 +11341,7 @@ def uvAutoSeams(hardAngle: float | None = None, useHardEdges: bool | None = None
         maxDistortion: Split islands that stretch more than this when flattened. Default 0.08.
         visibility: Hide cuts where they are least visible. Default True.
         merge: Merge islands back while they still flatten well. Default True.
-        darts: Before splitting an island that stretches, try short cuts in from where it caps over (fingertips, a nose). Default True.
+        darts: Before splitting an island that stretches, try short cuts in from where it caps over (fingertips, a nose). Default False.
         method: split (hard edges, open to disks, split where stretched) or optcuts (Auto Seams 2: seams and distortion optimised together). One of 'split', 'optcuts'. Default 'split'.
         distortionBound: optcuts: stretch (symmetric Dirichlet excess, all islands) to get under. Default 0.05.
         seamWeight: optcuts: price of seam length against stretch; higher keeps seams shorter. Default 0.5.
@@ -11382,6 +11382,17 @@ def uvDelete(uvSet: str | None = None) -> Any:
 
     Args:
         uvSet: UV set; the current one (uvSetCurrent) when not given.
+    """
+
+def uvFlowUnwrap(uvSet: str | None = None, straighten: bool | None = None, straightAngle: float | None = None, pack: bool | None = None, finalMesh: bool | None = None, *, fm: bool | None = None) -> Any:
+    """Unwrap the selected faces' islands so U and V follow the surface's flow (its curvature, creases and borders): panels come out as rectangles and bevels as straight strips, ready for trim sheets. Each island is cut open from the points its flow turns round; one that would fold or overlap itself that way is unwrapped for least stretch instead and counted in fellBack. Islands keep their place unless pack=True or they had no uvs.
+
+    Args:
+        uvSet: UV set; the current one (uvSetCurrent) when not given.
+        straighten: Lay border and crease edges that run nearly along U or V exactly along it. Default True.
+        straightAngle: How close to U or V an edge must run to be straightened, degrees. Default 12.0.
+        pack: Pack the islands into 0-1 afterwards. Default False.
+        finalMesh: Measure and solve on the mesh as exported, after modifiers that move its surface (bevel, subdivision); False works on the base mesh alone. Short form fm. Default True.
     """
 
 def uvHose(uvSet: str | None = None, maxAspect: float | None = None, maxLength: float | None = None, visibility: bool | None = None, keepSeams: bool | None = None, useViews: bool | None = None, views: Sequence[Any] | None = None, pack: bool | None = None, finalMesh: bool | None = None, resolution: int | None = None, padding: float | None = None, margin: float | None = None, paddingMips: int | None = None, rotateStep: int | None = None, angles: Sequence[Any] | None = None, freeRotation: bool | None = None, flip: bool | None = None, orient: bool | None = None, scaleMode: str | None = None, normalize: bool | None = None, stack: bool | None = None, stackMirrored: bool | None = None, stackTolerance: float | None = None, tilesU: int | None = None, tilesV: int | None = None, region: Sequence[Any] | None = None, texelsPerUnit: float | None = None, effort: int | None = None, timeLimit: float | None = None, workingResolution: int | None = None, *, fm: bool | None = None) -> Any:

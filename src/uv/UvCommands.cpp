@@ -2129,13 +2129,29 @@ void registerCommands()
         },
     });
 
-    for (const char* cmd : {"uvUnwrap", "uvOptimize", "uvLiveRelax", "uvPack", "uvAuto", "uvHose", "uvBff", "uvMosaic", "uvTexelDensity", "uvLayout"})
+    for (const char* cmd : {"uvUnwrap", "uvOptimize", "uvLiveRelax", "uvPack", "uvAuto", "uvHose", "uvBff", "uvFlowUnwrap", "uvMosaic", "uvTexelDensity", "uvLayout"})
     {
         ops::options::Override o;
         if (const ops::options::Override* had = ops::options::findOverride(cmd))
             o = *had;
         o.labels["finalMesh"] = "After Modifiers";
         ops::options::setOverride(cmd, std::move(o));
+    }
+    {
+        ops::options::Override o;
+        if (const ops::options::Override* had = ops::options::findOverride("uvFlowUnwrap"))
+            o = *had;
+        o.labels["straightAngle"] = "Straighten Within";
+        o.ranges["straightAngle"] = {0.0, 45.0, 1.0, " deg"};
+        ops::options::setOverride("uvFlowUnwrap", std::move(o));
+    }
+    {
+        ops::options::Override o;
+        if (const ops::options::Override* had = ops::options::findOverride("uvBff"))
+            o = *had;
+        o.labels["coneSource"] = "Cones From";
+        o.choices["coneSource"] = {{"stretch", "Stretch"}, {"flow", "Flow"}};
+        ops::options::setOverride("uvBff", std::move(o));
     }
     for (const char* cmd : {"uvAuto", "uvAutoSeams", "uvHose"})
     {

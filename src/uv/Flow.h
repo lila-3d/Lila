@@ -28,6 +28,37 @@ LILA_SCENE_API double flowAngle(const Chart& chart, double* agreement = nullptr)
  */
 LILA_SCENE_API double uprightAngle(const Chart& chart);
 
+struct FlowUnwrapOptions
+{
+    /** Border and crease edges already within straightAngle degrees of U or V are laid exactly along it. */
+    bool straighten = true;
+    double straightAngle = 12.0;
+};
+
+struct FlowUnwrapResult
+{
+    bool ok = false;
+    /** The island was flat: projected onto its plane, its border turned onto U and V. */
+    bool flat = false;
+    /** Singular points the island was cut open from. */
+    size_t darts = 0;
+    /** Edges laid exactly along U or V. */
+    size_t straightened = 0;
+    /** Points round folds re-solved by the stretch unwrap, the rest held. */
+    size_t repaired = 0;
+    /** Triangles still flipped or flat after that. */
+    size_t folded = 0;
+};
+
+/**
+ * Flattens a disk chart so U and V run along the surface's flow: the cross field (held to the border and creases) is
+ * combed over the island, cut open from each of its singular points to the border, and the uvs solved so their
+ * gradients follow it at 3D scale. Borders and creases along the flow come out straight: a panel is a rectangle, a
+ * bevel a straight strip. A flat island is projected onto its plane instead. Cuts change the chart's vertices, as
+ * BFF's do.
+ */
+LILA_SCENE_API FlowUnwrapResult flowUnwrap(Chart& chart, const FlowUnwrapOptions& opts = {});
+
 /** A point the chart's flow turns round: where it can't lie flat without a cut or a cone. */
 struct FlowCone
 {

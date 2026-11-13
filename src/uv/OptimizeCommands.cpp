@@ -227,6 +227,85 @@ void registerOptimizeCommands()
     });
 
     ops::registerCommand({
+        .name = "uvFlowUnwrap",
+        .doc = "Unwrap the selected faces' islands so U and V follow the surface's flow (its curvature, creases and borders): panels come "
+               "out as rectangles and bevels as straight strips, ready for trim sheets. Each island is cut open from the points its flow "
+               "turns round; one that would fold or overlap itself that way is unwrapped for least stretch instead and counted in fellBack. Islands keep "
+               "their place unless pack=True or they had no uvs.",
+        .flags = {uvSetFlag(),
+                  {"straighten", "", T::Bool, true, "Lay border and crease edges that run nearly along U or V exactly along it."},
+                  {"straightAngle", "", T::Float, 12.0, "How close to U or V an edge must run to be straightened, degrees.", {}, {}, 0.0, 45.0},
+                  {"pack", "", T::Bool, false, "Pack the islands into 0-1 afterwards."},
+                  finalMeshFlag()},
+        .run = [](const Args& a) -> json {
+            const bool final = a.get<bool>("finalMesh", true);
+            FlowUnwrapOptions fo;
+            fo.straighten = a.get<bool>("straighten", true);
+            fo.straightAngle = std::clamp(a.get<double>("straightAngle", 12.0), 0.0, 45.0);
+            const bool pack = a.get<bool>("pack", false);
+            std::string set = uvSetOf(a);
+            return editUvMeshes("UV Flow Unwrap", K::Face, symmetricUvEdit(set, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
+                LILA_ZONE_N("uvFlowUnwrap");
+                std::vector<Index> faces = liveFaces(m, f);
+                Index opened = cutToDisks(m, faces);
+                ChartOptions co;
+                co.uvSet = set;
+                std::vector<Chart> charts = buildCharts(m, faces, co);
+                std::atomic<size_t> fellBack{0}, darts{0}, straightened{0}, repaired{0}, folded{0};
+                std::vector<uint8_t> place(charts.size(), 0);
+                tbb::parallel_for(size_t(0), charts.size(), size_t(1), [&](size_t i) {
+                    Chart& ch = charts[i];
+                    const bool had = usableUvs(ch);
+                    const glm::dvec2 c0 = ch.uvCentroid();
+                    const double a0 = std::abs(ch.areaUv());
+                    Chart trial = ch;
+                    const FlowUnwrapResult r = flowUnwrap(trial, fo);
+                    if (r.ok && r.folded == 0 && !chartOverlaps(trial))
+                    {
+                        ch = std::move(trial);
+                        darts += r.darts;
+                        straightened += r.straightened;
+                        repaired += r.repaired;
+                    }
+                    else
+                    {
+                        ++fellBack;
+                        UnwrapOptions uo;
+                        uo.usePins = false;
+                        if (!unwrapChart(ch, uo).ok)
+                            ++folded;
+                    }
+                    if (had && !pack)
+                        fitChart(ch, c0, a0);
+                    else
+                        place[i] = 1;
+                });
+                std::vector<Chart> toPack;
+                for (size_t i = 0; i < charts.size(); ++i)
+                    if (place[i])
+                        toPack.push_back(std::move(charts[i]));
+                if (!toPack.empty())
+                    packCharts(toPack, {});
+                for (size_t i = 0, k = 0; i < charts.size(); ++i)
+                    if (place[i])
+                        charts[i] = std::move(toPack[k++]);
+                writeCharts(m, charts, set);
+                if (darts > 0)
+                    markSeamsFromUvs(m, faces, set);
+                json out = {{"islands", charts.size()},       {"darts", darts.load()},       {"straightened", straightened.load()},
+                            {"repaired", repaired.load()},    {"fellBack", fellBack.load()}, {"failed", folded.load()},
+                            {"seamsAdded", opened}};
+                if (fellBack > 0)
+                    out["note"] = std::to_string(fellBack.load()) + " island(s) couldn't follow their flow without folding or overlapping and were unwrapped for least stretch instead";
+                const PackOptions packing;
+                if (json fm = finishOnExport(m, faces, set, n, final, pack ? &packing : nullptr); !fm.is_null())
+                    out["finalMesh"] = std::move(fm);
+                return out;
+            }));
+        },
+    });
+
+    ops::registerCommand({
         .name = "uvOptimize",
         .doc = "Optimise the selected uv islands from where they are: conformal (keep angles), authalic (keep areas), blend (both, weighted by "
                "mix) or isometric (SLIM). Islands keep their place, size and pins, and never fold.",
