@@ -597,8 +597,9 @@ void ViewportWidget::drawHud(OverlayPainter& p)
             requestFrame();
         });
     }
-    flushToolMessages(p, ctx.view, drawn);
+    // The drone's key list takes the corner before the tool messages fill it with the layout's.
     drone::draw(p, this);
+    flushToolMessages(p, ctx.view, drawn);
     viewportToast::draw(p, ctx.view, this, drawn);
 }
 
