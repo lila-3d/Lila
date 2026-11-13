@@ -13,6 +13,8 @@ CONTROL_PREFIX = "LS_"
 MODES = ["default", "free", "forward", "forwardAll", "backward", "backwardAll", "bidirectional", "all", "ik", "fullBody"]
 MODE_CHANNEL = "Mode"
 ISOLATE_CHANNEL = "Isolate Rotation"
+PIN_CHANNEL = "Pin"
+LOCK_CHANNEL = "Lock"
 
 
 def _add_control(hierarchy, hc, bone):
@@ -62,6 +64,25 @@ def _add_channels(hierarchy, hc, control, mode, isolate):
     _channel(hierarchy, hc, control, ISOLATE_CHANNEL, settings, unreal.RigHierarchy.make_control_value_from_bool(isolate))
 
 
+def _add_switch(hierarchy, hc, control, name, on):
+    settings = unreal.RigControlSettings()
+    settings.control_type = unreal.RigControlType.BOOL
+    _channel(hierarchy, hc, control, name, settings, unreal.RigHierarchy.make_control_value_from_bool(bool(on)))
+
+
+def _relation_channel(rel, taken):
+    """Where a glue or attach set's switch goes: an attach's on the member the others follow, a glue's on its first."""
+    members = rel["members"]
+    owner = members[-1] if rel.get("attach") else members[0]
+    others = [m for m in members if m != owner]
+    name = ("Attach " if rel.get("attach") else "Glue ") + others[0] + (" +{}".format(len(others) - 1) if len(others) > 1 else "")
+    base, n = name, 2
+    while (owner, name) in taken:
+        name, n = "{} {}".format(base, n), n + 1
+    taken.add((owner, name))
+    return owner, name
+
+
 def build(p):
     errors, warnings = [], []
     mesh = unreal.load_asset(p["skeletalMesh"])
@@ -90,20 +111,41 @@ def build(p):
     for path in after:
         controller.break_link(begin, path, False)
 
-    web = json.dumps(p["ruleWeb"])
     mode = p.get("mode", "fullBody")
     if mode not in MODES:
         return {"errors": errors + ["no Strings mode " + mode + " (" + ", ".join(MODES) + ")"]}
     isolate = bool(p.get("isolate", False))
-    prev = begin
-    made = []
-    for i, bone in enumerate(p.get("controls", [])):
+    rule_web = dict(p["ruleWeb"])
+    pins = set(rule_web.get("pins", []))
+    locks = {l["bone"]: bool(l.get("locked")) for l in rule_web.get("locks", [])}
+    controls = {}
+    for bone in p.get("controls", []):
         control = _add_control(hierarchy, hc, bone)
         if control is None:
             warnings.append("no bone named " + bone + " on " + mesh.get_name())
             continue
         unreal.LilaStringsLibrary.place_control_at_bone(hierarchy, control, bone)
         _add_channels(hierarchy, hc, control, mode, isolate)
+        _add_switch(hierarchy, hc, control, PIN_CHANNEL, bone in pins)
+        if bone in locks:
+            _add_switch(hierarchy, hc, control, LOCK_CHANNEL, locks[bone])
+        controls[bone] = control
+    # The units find each bone's Pin and Lock channels, and each set's switch, through the web.
+    rule_web["controls"] = controls
+    glue, taken = [], set()
+    for rel in rule_web.get("glue", []):
+        rel = dict(rel)
+        owner, name = _relation_channel(rel, taken)
+        if owner in controls:
+            _add_switch(hierarchy, hc, controls[owner], name, True)
+            rel["channel"] = {"control": controls[owner], "name": name}
+        glue.append(rel)
+    rule_web["glue"] = glue
+    web = json.dumps(rule_web)
+    prev = begin
+    made = []
+    for i, bone in enumerate(b for b in p.get("controls", []) if b in controls):
+        control = controls[bone]
         node = controller.add_unit_node_from_struct_path(UNIT, "Execute", unreal.Vector2D(400.0 + 360.0 * i, 200.0), PREFIX + bone, False)
         if node is None:
             errors.append("couldn't add a Lila Strings unit (is the LilaLinkRig module loaded?)")
@@ -123,7 +165,8 @@ def build(p):
     unreal.BlueprintEditorLibrary.compile_blueprint(rig)
     unreal.EditorAssetLibrary.save_loaded_asset(rig)
     return {"rig": rig.get_path_name().split(".")[0], "created": created, "nodes": made, "mode": mode, "isolate": isolate,
-            "errors": errors, "warnings": warnings}
+            "pins": sorted(pins & set(controls)), "locks": sorted(b for b in locks if b in controls),
+            "glue": [g.get("channel") for g in glue], "errors": errors, "warnings": warnings}
 
 
 def build_and_print(text):

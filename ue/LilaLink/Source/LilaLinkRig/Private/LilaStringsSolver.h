@@ -167,4 +167,32 @@ TArray<int32> LimbOf(const FProblem& P, int32 Bone, int32 Hips, int32 Stop = IND
 /** The mode Default poses R's grabbed bone in: its rule, else IK for a move of a bone with a limb or the hips, else Forward. */
 EMode ResolveDefault(const FProblem& P, const FRequest& R);
 FResult SolveRequest(const FProblem& P, const FRequest& R);
+/**
+ * Brings each hold's bone to its world by bending its limb (LimbOf) from pose S, leaving every other bone as it is (Lila's
+ * strings::holdLimbs). Soft gives positions the limbs lean toward without having to meet. Returns the largest hold error left.
+ */
+/** A locked IK chain as Lila's ikHandle solves it, start to end; its end effector keeps its local rotation. */
+struct FChainIk
+{
+	TArray<int32> Bones;
+	bool bTwoBone = true;
+	/** Where the bend points, as an offset from the start bone. */
+	TOptional<FVector> Pole;
+	/** Roll of the bend plane about the start-to-target axis, radians, already signed for this space. */
+	double Twist = 0.0;
+	double Softness = 0.0;
+	/** Lila's world up and side axes in this space: the bend a chain falls back to without a pole or bend. */
+	FVector Up = FVector::ZAxisVector;
+	FVector Side = FVector::XAxisVector;
+	/** The bones' locals the chain solves from, under the start bone's parent as it is now; empty solves from the pose. */
+	TArray<FMatrix> RestLocals;
+	/** The end keeps its world rotation (Lila's align node on the end effector). */
+	bool bAlignEnd = false;
+};
+
+/** Turns the chain's bones (all but the end) so its end reaches Target, as Lila's two-bone or FABRIK solver does. */
+void SolveChain(const FProblem& P, FPose& S, const FChainIk& C, const FMatrix& Target);
+
+double HoldLimbs(const FProblem& P, FPose& S, const TArray<FHold>& Holds, int32 Hips, double MaxStretch, const TArray<TPair<int32, FVector>>& Soft = {},
+				 const FRules* Rules = nullptr);
 } // namespace LilaStrings

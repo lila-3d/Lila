@@ -664,7 +664,8 @@ FResult FullBody(const FProblem& P, const FRequest& R)
 	return Out;
 }
 
-/** Brings each hold's bone to its world by bending its limb from pose S. Returns the largest hold error left. */
+} // namespace
+
 double HoldLimbs(const FProblem& P, FPose& S, const TArray<FHold>& Holds, const int32 Hips, const double MaxStretch,
 				 const TArray<TPair<int32, FVector>>& Soft, const FRules* Rules)
 {
@@ -744,6 +745,8 @@ double HoldLimbs(const FProblem& P, FPose& S, const TArray<FHold>& Holds, const 
 	return HoldError(Worlds(P, S), Holds);
 }
 
+namespace
+{
 FMatrix TurnedAround(const FMatrix& World, const FVector& C, const FQuat& Q) { return Mul(Mul(Mul(Translate(C), RotationMatrix(Q)), Translate(-C)), World); }
 
 /** glm::slerp from identity to Q by A, Q already on the short side, so half turns match Lila's to the bit. */
@@ -1208,5 +1211,246 @@ FResult SolveRequest(const FProblem& P, const FRequest& R)
 		}
 	}
 	return Out;
+}
+
+namespace
+{
+// Lila's ikHandle solvers (src/scene/Ik.cpp), on positions and world turns.
+
+FQuat AxisAngle(const FVector& Axis, const double Radians) { return FQuat(Axis.GetUnsafeNormal(), Radians); }
+
+/** Shortest turn taking direction A onto B (both unit). */
+FQuat Arc(const FVector& A, const FVector& B)
+{
+	const double C = FMath::Clamp(FVector::DotProduct(A, B), -1.0, 1.0);
+	const FVector Axis = FVector::CrossProduct(A, B);
+	if (Axis.Size() < 1e-12)
+	{
+		if (C > 0.0)
+		{
+			return FQuat::Identity;
+		}
+		const FVector Any = FMath::Abs(A.X) < 0.9 ? FVector(1, 0, 0) : FVector(0, 1, 0);
+		return AxisAngle(FVector::CrossProduct(A, Any), UE_DOUBLE_PI);
+	}
+	return AxisAngle(Axis, FMath::Atan2(Axis.Size(), C));
+}
+
+FVector Perpendicular(const FVector& V, const FVector& Axis)
+{
+	const FVector P = V - FVector::DotProduct(V, Axis) * Axis;
+	return P.Size() > 1e-9 ? P.GetUnsafeNormal() : FVector::ZeroVector;
+}
+
+FVector BendDirection(const FChainIk& C, const FVector& Root, const FVector& Dir, const FVector& FkBend)
+{
+	FVector U = C.Pole ? Perpendicular(Root + *C.Pole - Root, Dir) : FVector::ZeroVector;
+	if (U.IsZero())
+	{
+		U = Perpendicular(FkBend, Dir);
+	}
+	if (U.IsZero())
+	{
+		U = Perpendicular(FMath::Abs(FVector::DotProduct(Dir, C.Up)) < 0.9 ? C.Up : C.Side, Dir);
+	}
+	if (C.Twist != 0.0)
+	{
+		U = AxisAngle(Dir, C.Twist).RotateVector(U);
+	}
+	return U;
+}
+
+/** The turn taking frame (X, Y, X x Y) onto (A, B, A x B). */
+FQuat FrameTurn(const FVector& FromX, const FVector& FromY, const FVector& ToX, const FVector& ToY)
+{
+	const FQuat From(FMatrix(FromX, FromY, FVector::CrossProduct(FromX, FromY), FVector::ZeroVector));
+	const FQuat To(FMatrix(ToX, ToY, FVector::CrossProduct(ToX, ToY), FVector::ZeroVector));
+	return (To * From.Inverse()).GetNormalized();
+}
+
+TArray<FQuat> TwoBoneTurns(const FChainIk& C, const TArray<FVector>& Pos, const FVector& Target)
+{
+	const FVector P0 = Pos[0], P1 = Pos[1], P2 = Pos[2];
+	const double A = (P1 - P0).Size(), B = (P2 - P1).Size();
+	const FVector ToTarget = Target - P0, FkToEnd = P2 - P0;
+	const double D = ToTarget.Size();
+	if (D < 1e-12 || A < 1e-12 || B < 1e-12 || FkToEnd.Size() < 1e-12)
+	{
+		return {FQuat::Identity, FQuat::Identity};
+	}
+	const FVector Dir = ToTarget / D;
+	const FVector FkDir = FkToEnd.GetUnsafeNormal();
+	const FVector U = BendDirection(C, P0, Dir, Perpendicular(P1 - P0, Dir).IsZero() ? Arc(FkDir, Dir).RotateVector(P1 - P0) : P1 - P0);
+	FVector FkU = Perpendicular(P1 - P0, FkDir);
+	if (FkU.IsZero())
+	{
+		FkU = Perpendicular(Arc(Dir, FkDir).RotateVector(U), FkDir);
+	}
+	const FVector N = FVector::CrossProduct(Dir, U);
+	const FQuat Align = FrameTurn(FkDir, FkU, Dir, U);
+	const double Reach = FMath::Clamp(D, FMath::Abs(A - B), A + B);
+	const double AngleNew = FMath::Acos(FMath::Clamp((A * A + Reach * Reach - B * B) / (2.0 * A * Reach), -1.0, 1.0));
+	const FVector Upper = (P1 - P0).GetUnsafeNormal();
+	const double AngleFk = FMath::Atan2(FVector::DotProduct(Upper, FkU), FVector::DotProduct(Upper, FkDir));
+	const FQuat Turn0 = AxisAngle(N, AngleNew - AngleFk) * Align;
+	const FVector Elbow = P0 + Turn0.RotateVector(P1 - P0);
+	const FVector Want = P0 + Dir * Reach - Elbow;
+	FQuat Turn1 = Turn0;
+	if (Want.Size() > 1e-12)
+	{
+		Turn1 = Arc(Turn0.RotateVector(P2 - P1).GetUnsafeNormal(), Want.GetUnsafeNormal()) * Turn0;
+	}
+	return {Turn0, Turn1};
+}
+
+TArray<FQuat> FabrikTurns(const FChainIk& C, const TArray<FVector>& Start, const FVector& Target)
+{
+	const int32 N = Start.Num();
+	TArray<FVector> Pos = Start;
+	TArray<double> Len;
+	double Reach = 0.0;
+	for (int32 I = 0; I + 1 < N; ++I)
+	{
+		Reach += Len.Add_GetRef((Pos[I + 1] - Pos[I]).Size());
+	}
+	const FVector Root = Pos[0];
+	auto SafeDir = [](const FVector& V) { return V.Size() > 1e-12 ? V.GetUnsafeNormal() : FVector(1, 0, 0); };
+	if ((Target - Root).Size() >= Reach)
+	{
+		const FVector Dir = SafeDir(Target - Root);
+		for (int32 I = 0; I + 1 < N; ++I)
+		{
+			Pos[I + 1] = Pos[I] + Dir * Len[I];
+		}
+	}
+	else
+	{
+		const FVector Line = SafeDir(Target - Root);
+		bool bOnLine = true;
+		for (int32 I = 1; I + 1 < N && bOnLine; ++I)
+		{
+			bOnLine = ((Pos[I] - Root) - FVector::DotProduct(Pos[I] - Root, Line) * Line).Size() < 1e-9;
+		}
+		if (bOnLine && N > 2 && (Pos[N - 1] - Root).Size() > 1e-12)
+		{
+			const FQuat Aim = Arc((Pos[N - 1] - Root).GetUnsafeNormal(), Line);
+			for (int32 I = 1; I < N; ++I)
+			{
+				Pos[I] = Root + Aim.RotateVector(Pos[I] - Root);
+			}
+		}
+		for (int32 It = 0; It < 256 && (Pos[N - 1] - Target).Size() > 1e-9; ++It)
+		{
+			Pos[N - 1] = Target;
+			for (int32 I = N - 1; I-- > 0;)
+			{
+				Pos[I] = Pos[I + 1] + SafeDir(Pos[I] - Pos[I + 1]) * Len[I];
+			}
+			Pos[0] = Root;
+			for (int32 I = 0; I + 1 < N; ++I)
+			{
+				Pos[I + 1] = Pos[I] + SafeDir(Pos[I + 1] - Pos[I]) * Len[I];
+			}
+		}
+	}
+	FVector Axis = Pos[N - 1] - Root;
+	if (N > 2 && Axis.Size() > 1e-12 && (C.Pole || C.Twist != 0.0))
+	{
+		Axis = Axis.GetUnsafeNormal();
+		FVector Mid = FVector::ZeroVector;
+		for (int32 I = 1; I + 1 < N; ++I)
+		{
+			Mid += Pos[I] - Root;
+		}
+		const FVector Bend = Perpendicular(Mid, Axis);
+		if (!Bend.IsZero())
+		{
+			const FVector Want = BendDirection(C, Root, Axis, Bend);
+			const FQuat Swing = AxisAngle(Axis, FMath::Atan2(FVector::DotProduct(FVector::CrossProduct(Bend, Want), Axis), FVector::DotProduct(Bend, Want)));
+			for (int32 I = 1; I + 1 < N; ++I)
+			{
+				Pos[I] = Root + Swing.RotateVector(Pos[I] - Root);
+			}
+		}
+	}
+	// Each joint turns by the shortest arc from where its bone points after its parent turned to where it should point.
+	TArray<FQuat> Turns;
+	FQuat Inherited = FQuat::Identity;
+	for (int32 I = 0; I + 1 < N; ++I)
+	{
+		const FVector FkDir = Start[I + 1] - Start[I], NewDir = Pos[I + 1] - Pos[I];
+		FQuat Turn = Inherited;
+		if (FkDir.Size() > 1e-12 && NewDir.Size() > 1e-12)
+		{
+			Turn = Arc(Inherited.RotateVector(FkDir.GetUnsafeNormal()).GetUnsafeNormal(), NewDir.GetUnsafeNormal()) * Inherited;
+		}
+		Turns.Add(Turn);
+		Inherited = Turn;
+	}
+	return Turns;
+}
+} // namespace
+
+void SolveChain(const FProblem& P, FPose& S, const FChainIk& C, const FMatrix& Goal)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaStrings::SolveChain);
+
+	const int32 N = C.Bones.Num();
+	if (N < 2 || (C.bTwoBone && N != 3))
+	{
+		return;
+	}
+	const TArray<FMatrix> Now = Worlds(P, S);
+	TArray<FMatrix> W;
+	if (C.RestLocals.Num() == N)
+	{
+		FMatrix Parent = ParentWorldOf(P, Now, C.Bones[0]);
+		for (const FMatrix& Local : C.RestLocals)
+		{
+			W.Add(Parent = Mul(Parent, Local));
+		}
+	}
+	else
+	{
+		for (const int32 B : C.Bones)
+		{
+			W.Add(Now[B]);
+		}
+	}
+	TArray<FVector> Pos;
+	for (const FMatrix& M : W)
+	{
+		Pos.Add(M.GetOrigin());
+	}
+	FVector Target = Goal.GetOrigin();
+	// Soft IK: the target eases in over the last Softness cm of reach.
+	if (C.Softness > 0.0)
+	{
+		double Reach = 0.0;
+		for (int32 I = 0; I + 1 < N; ++I)
+		{
+			Reach += (Pos[I + 1] - Pos[I]).Size();
+		}
+		const double D = (Target - Pos[0]).Size();
+		double Soft = FMath::Min(D, Reach);
+		if (Reach > 1e-12)
+		{
+			const double Ds = FMath::Min(C.Softness, Reach), Da = Reach - Ds;
+			Soft = D > Da ? Da + Ds * (1.0 - FMath::Exp(-(D - Da) / Ds)) : D;
+		}
+		if (D > 1e-12)
+		{
+			Target = Pos[0] + (Target - Pos[0]) * (FMath::Min(D, Soft) / D);
+		}
+	}
+	const TArray<FQuat> Turns = C.bTwoBone ? TwoBoneTurns(C, Pos, Target) : FabrikTurns(C, Pos, Target);
+	for (int32 I = 0; I + 1 < N && I < Turns.Num(); ++I)
+	{
+		Place(P, S, Worlds(P, S), C.Bones[I], TurnedAbout(W[I], Turns[I]), false);
+	}
+	if (C.bAlignEnd)
+	{
+		Place(P, S, Worlds(P, S), C.Bones.Last(), Goal, false);
+	}
 }
 } // namespace LilaStrings

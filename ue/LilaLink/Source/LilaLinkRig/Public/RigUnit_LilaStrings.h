@@ -34,7 +34,7 @@ struct LILALINKRIG_API FRigUnit_LilaStringsBase : public FRigUnitMutable
 	UPROPERTY(meta = (Input))
 	FTransform Target = FTransform::Identity;
 
-	/** The rule web's contacts hold where they were (feet stay planted). */
+	/** The rule web's contacts hold where they were (feet stay planted). Pins and locks hold either way. */
 	UPROPERTY(meta = (Input))
 	bool bHoldContacts = true;
 
@@ -76,7 +76,9 @@ enum class ELilaStringsMode : uint8
 /**
  * Lila Strings: poses the bone in any Strings mode. When Control has animation channels named Mode (an integer, the
  * mode's index) or Isolate Rotation (a bool), they override Mode and bIsolateRotation, so an animator picks and keys the
- * mode per control.
+ * mode per control. The rule web's pins and locked IK chain ends hold as contacts do (always, not only with
+ * bHoldContacts), and its glue and attach sets follow the bone; the rig's Pin, Lock and Glue/Attach channels, where the
+ * web names them, switch each on and off.
  */
 USTRUCT(meta = (DisplayName = "Lila Strings", Keywords = "Strings,FK,IK,FBIK,Full Body,Backward,Bidirectional,Free,Ephemeral,Lila"))
 struct LILALINKRIG_API FRigUnit_LilaStrings : public FRigUnit_LilaStringsBase
@@ -205,4 +207,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Lila|Strings")
 	static TMap<FName, FTransform> DragRig(UClass* RigClass, FName Control, const FTransform& Target, FVector TurnVector);
+
+	/** DragRig with bool channels set first: each key is "Control/Channel" (LS_hand_l/Pin), its value the channel's. */
+	UFUNCTION(BlueprintCallable, Category = "Lila|Strings")
+	static TMap<FName, FTransform> DragRigSwitched(UClass* RigClass, FName Control, const FTransform& Target, FVector TurnVector,
+												   const TMap<FString, bool>& Switches);
 };
