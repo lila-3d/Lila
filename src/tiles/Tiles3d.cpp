@@ -165,6 +165,8 @@ struct Importer
     fs::path work;
 
     size_t tiles = 0, meshes = 0, points = 0, culled = 0;
+    /** The tile being read's bounding volume centre, Earth-centred: where its content is, whatever its transform says. */
+    std::optional<glm::dvec3> where;
     std::vector<std::string> skipped;
     bool truncated = false;
 
@@ -197,9 +199,9 @@ struct Importer
     }
 
     /** A glb (bytes) or glTF file through the glTF importer, under a group placed by tile (glTF space to Earth-centred). */
-    void importGltfContent(const fs::path& file, const glm::dmat4& tile, const std::string& name)
+    void importGltfContent(const fs::path& file, const glm::dmat4& tile, const std::string& name, bool place = true)
     {
-        const glm::dvec3 centre(tile[3]);
+        const glm::dvec3 centre = where.value_or(glm::dvec3(tile[3]));
         // The importer turns glTF metres to scene cm in the scene's axes (F); the group undoes that and places the tile.
         glm::dmat4 importer(100.0);
         importer[3][3] = 1.0;
@@ -207,10 +209,6 @@ struct Importer
             importer = importer * kYUpToZUp;
         const glm::dmat4 m = affineAt(centre) * tile * kYUpToZUp * glm::inverse(importer);
         scene::Node* group = g.createNode(*scene::types::find("transform"), name, root, true);
-        json flat = json::array();
-        for (int i = 0; i < 16; ++i)
-            flat.push_back(m[i / 4][i % 4]);
-        ops::execute("xform", {{"args", {group->path()}}, {"matrix", flat}});
         gltf::ImportOptions o;
         o.parent = group->id();
         o.animation = false;
@@ -224,6 +222,19 @@ struct Importer
             return;
         }
         meshes += r.roots.size();
+        if (!place)
+            return;
+        // Each root composed in double and set whole: a glb's root can sit at its Earth-centred place (about 6e8 cm), where
+        // a transform's small shear dropped by translate/rotate/scale would move it by kilometres if m went on the group.
+        g.evaluate();
+        for (NodeId id : r.roots)
+        {
+            const glm::dmat4 w = m * g.node(id)->as<glm::dmat4>(scene::Transform::kMatrix);
+            json flat = json::array();
+            for (int i = 0; i < 16; ++i)
+                flat.push_back(w[i / 4][i % 4]);
+            ops::execute("xform", {{"args", {g.node(id)->path()}}, {"matrix", flat}});
+        }
     }
 
     void glbBytes(std::span<const uint8_t> glb, const glm::dmat4& tile, const std::string& name)
@@ -290,7 +301,8 @@ struct Importer
             file = dir / std::string(reinterpret_cast<const char*>(b.data() + at), end - at);
         // Each instance: tile * translate(rtc + position) * [right, up x right, up] * scale, then glTF's Y up to Z up.
         const size_t before = g.nodes().size();
-        importGltfContent(file, tile, name + "_source");
+        // The source stays as imported, hidden; each instance carries its whole placement.
+        importGltfContent(file, tile, name + "_source", false);
         scene::Node* source = g.find(name + "_source");
         if (!source || g.nodes().size() == before)
             return;
@@ -505,6 +517,10 @@ struct Importer
             }
             ++tiles;
             const std::string name = std::format("Tile_{}", tiles);
+            where.reset();
+            if (tile.contains("boundingVolume"))
+                if (const auto s = sphereOf(tile["boundingVolume"], t))
+                    where = s->first;
             if (file.extension() == ".gltf")
                 importGltfContent(file, t, name);
             else
