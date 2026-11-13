@@ -319,6 +319,10 @@ bool Parameterizer::solveFieldOn(const SurfaceMesh& topology)
         simplifier.setMaximumPairDistance(m_maximumSingularityPairDistance);
         simplifier.simplify();
     }
+    if (m_fieldOverrides)
+        for (const auto& it : *m_fieldOverrides)
+            if (it.first < m_field.size())
+                m_field[it.first] = it.second;
     const std::vector<int> charges = simplifier.vertexCharges();
     m_singularVertexIndices.clear();
     m_singularVertexCharges.clear();
@@ -480,6 +484,7 @@ bool Parameterizer::parameterize()
     CoverConstraints constraints;
     constraints.featureEdges = m_featureEdges;
     constraints.pinnedVertices = m_pinnedVertices;
+    constraints.forcedCorners = m_forcedCorners;
     // Each quad is a unit square of the cover, so its area in uv is the count it will give. The curl correction and the
     // rounding move that off the count the scaling asked for, so the cover is solved again at a corrected scaling.
     const bool limited = m_faceSizeLimit && m_faceSizeLimit->size() == faceScalingField.size();

@@ -36,6 +36,11 @@ namespace AutoRemesher {
 struct CoverConstraints {
     const std::unordered_set<uint64_t>* featureEdges = nullptr;
     const std::vector<size_t>* pinnedVertices = nullptr;
+    /**
+     * Corners (3 * face + side) whose feature edge is held to the lattice direction it is nearer however far off it
+     * is: the two sides of a corner too sharp for the field to lie along both.
+     */
+    const std::unordered_set<size_t>* forcedCorners = nullptr;
 };
 
 class QuadParameterizer {

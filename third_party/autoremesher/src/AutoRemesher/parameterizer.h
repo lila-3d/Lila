@@ -120,6 +120,10 @@ public:
     void setFaceScalingMultiplier(const std::vector<double>* multiplier) { m_faceScalingMultiplier = multiplier; }
     /** Per triangle, the longest quad edge allowed there, as a length; anything not above zero is no limit. */
     void setFaceSizeLimit(const std::vector<double>* limit) { m_faceSizeLimit = limit; }
+    /** Field directions for single faces, put in place of the solved ones before the cover. */
+    void setFieldOverrides(const std::vector<std::pair<size_t, Vector3>>* overrides) { m_fieldOverrides = overrides; }
+    /** See CoverConstraints::forcedCorners. */
+    void setForcedCorners(const std::unordered_set<size_t>* corners) { m_forcedCorners = corners; }
     /** Sets the scaling from the quad count wanted, once the scaling field is known; 0 keeps the scaling as set. */
     void setTargetQuadCount(double count) { m_targetQuadCount = count; }
 
@@ -153,6 +157,8 @@ private:
     const std::vector<FaceHint>* m_faceHints = nullptr;
     const std::vector<double>* m_fieldStiffness = nullptr;
     double m_targetQuadCount = 0.0;
+    const std::vector<std::pair<size_t, Vector3>>* m_fieldOverrides = nullptr;
+    const std::unordered_set<size_t>* m_forcedCorners = nullptr;
     int m_scalingSmoothing = 0;
     const std::vector<uint8_t>* m_unsizedFaces = nullptr;
     const std::vector<double>* m_faceScalingMultiplier = nullptr;

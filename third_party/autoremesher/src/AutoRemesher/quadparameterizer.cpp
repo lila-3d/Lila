@@ -78,7 +78,7 @@ namespace {
         ConstraintU = 1,
         ConstraintV = 2 };
     int edgeConstraint(const SurfaceMesh& mesh, size_t c, const std::vector<Vector3>& field,
-        const std::vector<Vector3>& normals, double hardEdgeDegrees)
+        const std::vector<Vector3>& normals, double hardEdgeDegrees, bool forced)
     {
         if (!mesh.isFeature(c, hardEdgeDegrees * M_PI / 180.0))
             return ConstraintNone;
@@ -90,7 +90,7 @@ namespace {
         // left free wanders off into a band of missing quads.
         const double toB = std::acos(std::max(-1.0, std::min(1.0, std::fabs(Vector3::dotProduct(edge, b)))));
         const double toBr = std::acos(std::max(-1.0, std::min(1.0, std::fabs(Vector3::dotProduct(edge, br)))));
-        if (std::min(toB, toBr) > 30.0 * M_PI / 180.0)
+        if (!forced && std::min(toB, toBr) > 30.0 * M_PI / 180.0)
             return ConstraintNone;
         return toB < toBr ? ConstraintV : ConstraintU;
     }
@@ -235,13 +235,15 @@ namespace {
     }
 
     std::vector<signed char> computeCornerConstraints(const SurfaceMesh& mesh,
-        const std::vector<Vector3>& field, const std::vector<Vector3>& normals, double hardEdgeDegrees)
+        const std::vector<Vector3>& field, const std::vector<Vector3>& normals, double hardEdgeDegrees,
+        const std::unordered_set<size_t>* forcedCorners)
     {
         const size_t corners = mesh.cornerCount();
         std::vector<signed char> cornerConstraints(corners, ConstraintNone);
         tbb::parallel_for(tbb::blocked_range<size_t>(0, corners), [&](const tbb::blocked_range<size_t>& range) {
             for (size_t c = range.begin(); c != range.end(); ++c)
-                cornerConstraints[c] = static_cast<signed char>(edgeConstraint(mesh, c, field, normals, hardEdgeDegrees));
+                cornerConstraints[c] = static_cast<signed char>(edgeConstraint(mesh, c, field, normals, hardEdgeDegrees,
+                    forcedCorners && forcedCorners->count(c) > 0));
         });
         return cornerConstraints;
     }
@@ -700,7 +702,7 @@ bool QuadParameterizer::parameterize(const std::vector<Vector3>& vertices,
     const std::vector<int> rotation = computeCornerRotations(mesh, result->field, normals);
     result->cornerRotations = rotation;
     const std::vector<signed char> cornerConstraints = computeCornerConstraints(mesh, result->field,
-        normals, hardEdgeDegrees);
+        normals, hardEdgeDegrees, constraints ? constraints->forcedCorners : nullptr);
     if (trackDirectionalScale)
         applyDirectionalSwaps(mesh, fieldBeforeBrush, result->field, normals,
             &activeScalingU, &activeScalingV);
