@@ -6,6 +6,8 @@
 #include "Dom/JsonObject.h"
 #include "Engine/SkeletalMesh.h"
 #include "Misc/ScopeLock.h"
+#include "MovieScene.h"
+#include "Sections/MovieSceneParameterSection.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "Rigs/RigHierarchy.h"
 #include "Rigs/RigHierarchyController.h"
@@ -41,14 +43,10 @@ struct FRuleWeb
 	{
 		FName Bone;
 		bool bLocked = false;
-		/** Empty when Unreal can't solve the chain as Lila does: its end is only held. */
+		/** The chain's bones, start to end; empty when one isn't a bone of the skeleton (the end is then only held). */
 		TArray<FName> Chain;
-		bool bTwoBone = true;
-		TOptional<FVector> Pole;
-		double Twist = 0.0;
-		double Softness = 0.0;
-		TArray<FMatrix> Rest;
-		bool bAlignEnd = false;
+		/** How the handle solves it; its Bones are filled per evaluation. */
+		FChainIk Ik;
 	};
 	TArray<FLock> Locks;
 	FVector Up = FVector::ZAxisVector;
@@ -62,6 +60,17 @@ struct FRuleWeb
 		FName Channel;
 	};
 	TArray<FRelation> Relations;
+	/**
+	 * Glue and attach members outside the skeleton: props and other characters' joints, each a frame in this character's
+	 * space and the rig's control for it. A relation names one as "@" and its name.
+	 */
+	struct FExternal
+	{
+		FName Name;
+		FMatrix Frame = FMatrix::Identity;
+		FName Control;
+	};
+	TArray<FExternal> Externals;
 	/** The rig's control for a bone, where its Pin and Lock channels live. */
 	TMap<FName, FName> Controls;
 	double LengthScale = 0.0;
@@ -125,6 +134,14 @@ FVector ReadVector3(const TSharedPtr<FJsonObject>& Obj, const TCHAR* Field, cons
 {
 	const TArray<TSharedPtr<FJsonValue>>* V = nullptr;
 	return Obj->TryGetArrayField(Field, V) && V->Num() == 3 ? FVector((*V)[0]->AsNumber(), (*V)[1]->AsNumber(), (*V)[2]->AsNumber()) : Fallback;
+}
+
+/** A quaternion [x, y, z, w], identity when the field is missing. */
+FQuat ReadQuat(const TSharedPtr<FJsonObject>& Obj, const TCHAR* Field)
+{
+	const TArray<TSharedPtr<FJsonValue>>* V = nullptr;
+	return Obj->TryGetArrayField(Field, V) && V->Num() == 4 ? FQuat((*V)[0]->AsNumber(), (*V)[1]->AsNumber(), (*V)[2]->AsNumber(), (*V)[3]->AsNumber()).GetNormalized()
+																 : FQuat::Identity;
 }
 
 /** A bone's limit as stringsRuleWeb writes it, already in Unreal's local-rotation space. */
@@ -228,24 +245,56 @@ TSharedPtr<FRuleWeb> Parse(const FString& Text)
 			if (Obj->TryGetArrayField(TEXT("chain"), Chain))
 			{
 				Lock.Chain = ReadNames(*Chain);
-				Lock.bTwoBone = Obj->GetStringField(TEXT("solver")) != TEXT("fabrik");
+				FChainIk& C = Lock.Ik;
+				const FString Solver = Obj->GetStringField(TEXT("solver"));
+				C.Solver = Solver == TEXT("twoBone") ? FChainIk::ESolver::TwoBone : Solver == TEXT("spline") ? FChainIk::ESolver::Spline : FChainIk::ESolver::Fabrik;
 				if (Obj->HasField(TEXT("pole")))
 				{
-					Lock.Pole = ReadVector3(Obj, TEXT("pole"), FVector::ZeroVector);
+					C.Pole = ReadVector3(Obj, TEXT("pole"), FVector::ZeroVector);
 				}
-				Obj->TryGetNumberField(TEXT("twist"), Lock.Twist);
-				Obj->TryGetNumberField(TEXT("softness"), Lock.Softness);
-				Obj->TryGetBoolField(TEXT("alignEnd"), Lock.bAlignEnd);
-				const TArray<TSharedPtr<FJsonValue>>* Rest = nullptr;
-				if (Obj->TryGetArrayField(TEXT("rest"), Rest))
+				Obj->TryGetNumberField(TEXT("twist"), C.Twist);
+				Obj->TryGetNumberField(TEXT("roll"), C.Roll);
+				Obj->TryGetNumberField(TEXT("softness"), C.Softness);
+				Obj->TryGetNumberField(TEXT("maxStretch"), C.MaxStretch);
+				Obj->TryGetBoolField(TEXT("fitCurve"), C.bFitCurve);
+				Obj->TryGetNumberField(TEXT("alignWeight"), C.AlignWeight);
+				const TArray<TSharedPtr<FJsonValue>>* Curve = nullptr;
+				if (Obj->TryGetArrayField(TEXT("curve"), Curve))
 				{
-					for (const TSharedPtr<FJsonValue>& R : *Rest)
+					for (const TSharedPtr<FJsonValue>& P : *Curve)
 					{
-						const TArray<TSharedPtr<FJsonValue>>& V = R->AsArray();
-						if (V.Num() == 7)
+						const TArray<TSharedPtr<FJsonValue>>& V = P->AsArray();
+						C.Curve.Emplace(V[0]->AsNumber(), V[1]->AsNumber(), V[2]->AsNumber());
+					}
+				}
+				const TArray<TSharedPtr<FJsonValue>>* Slots = nullptr;
+				if (Obj->TryGetArrayField(TEXT("slots"), Slots))
+				{
+					for (const TSharedPtr<FJsonValue>& SV : *Slots)
+					{
+						const TSharedPtr<FJsonObject> So = SV->AsObject();
+						FChainSlot& Slot = C.Slots.AddDefaulted_GetRef();
+						Slot.Rest = ReadVector3(So, TEXT("rest"), FVector::ZeroVector);
+						Slot.RestRotation = ReadQuat(So, TEXT("restRotation"));
+						Slot.Orient = ReadQuat(So, TEXT("orient"));
+						Slot.Axis = ReadQuat(So, TEXT("axis"));
+						if (So->HasField(TEXT("preferred")))
 						{
-							const FQuat Q = FQuat(V[3]->AsNumber(), V[4]->AsNumber(), V[5]->AsNumber(), V[6]->AsNumber()).GetNormalized();
-							Lock.Rest.Add(FQuatRotationTranslationMatrix(Q, FVector(V[0]->AsNumber(), V[1]->AsNumber(), V[2]->AsNumber())));
+							Slot.Preferred = ReadQuat(So, TEXT("preferred"));
+						}
+						const TSharedPtr<FJsonObject>* Limit = nullptr;
+						if (So->TryGetObjectField(TEXT("limit"), Limit))
+						{
+							FLimit& Lim = Slot.Limit;
+							const FString Kind = (*Limit)->GetStringField(TEXT("kind"));
+							Lim.Kind = Kind == TEXT("hinge") ? FLimit::EKind::Hinge : Kind == TEXT("cone") ? FLimit::EKind::Cone : FLimit::EKind::None;
+							Lim.Axis = ReadVector3(*Limit, TEXT("axis"), FVector::ZAxisVector);
+							Lim.BoneDir = ReadVector3(*Limit, TEXT("bone"), FVector::XAxisVector);
+							(*Limit)->TryGetNumberField(TEXT("min"), Lim.Min);
+							(*Limit)->TryGetNumberField(TEXT("max"), Lim.Max);
+							(*Limit)->TryGetNumberField(TEXT("cone"), Lim.Cone);
+							(*Limit)->TryGetNumberField(TEXT("stiffness"), Slot.Stiffness);
+							Lim.Post = Slot.Axis;
 						}
 					}
 				}
@@ -261,7 +310,28 @@ TSharedPtr<FRuleWeb> Parse(const FString& Text)
 			const TArray<TSharedPtr<FJsonValue>>* Members = nullptr;
 			if (Obj->TryGetArrayField(TEXT("members"), Members))
 			{
-				R.Members = ReadNames(*Members);
+				for (const TSharedPtr<FJsonValue>& M : *Members)
+				{
+					const TSharedPtr<FJsonObject>* Ext = nullptr;
+					if (!M->TryGetObject(Ext))
+					{
+						R.Members.Add(FName(*M->AsString()));
+						continue;
+					}
+					const FName Name(*(*Ext)->GetStringField(TEXT("name")));
+					if (!Web->Externals.ContainsByPredicate([&](const FRuleWeb::FExternal& E) { return E.Name == Name; }))
+					{
+						FRuleWeb::FExternal& E = Web->Externals.AddDefaulted_GetRef();
+						E.Name = Name;
+						E.Frame = FQuatRotationTranslationMatrix(ReadQuat(*Ext, TEXT("rotation")), ReadVector3(*Ext, TEXT("location"), FVector::ZeroVector));
+						FString Control;
+						if ((*Ext)->TryGetStringField(TEXT("control"), Control))
+						{
+							E.Control = FName(*Control);
+						}
+					}
+					R.Members.Add(FName(*(TEXT("@") + Name.ToString())));
+				}
 			}
 			Obj->TryGetBoolField(TEXT("attach"), R.bAttach);
 			const TSharedPtr<FJsonObject>* Channel = nullptr;
@@ -595,10 +665,19 @@ TArray<FHold> Followers(const URigHierarchy* H, const FRuleWeb& W, const TArray<
 		{
 			continue;
 		}
+		// Bones by index, externals after them.
 		TArray<int32> Members;
 		for (const FName& M : R.Members)
 		{
-			if (const int32 B = W.Bones.IndexOfByKey(M); B != INDEX_NONE)
+			if (const FString Text = M.ToString(); Text.StartsWith(TEXT("@")))
+			{
+				const FName Name(*Text.RightChop(1));
+				if (const int32 E = W.Externals.IndexOfByPredicate([&](const FRuleWeb::FExternal& X) { return X.Name == Name; }); E != INDEX_NONE)
+				{
+					Members.Add(W.Bones.Num() + E);
+				}
+			}
+			else if (const int32 B = W.Bones.IndexOfByKey(M); B != INDEX_NONE)
 			{
 				Members.Add(B);
 			}
@@ -643,6 +722,156 @@ TArray<FHold> Followers(const URigHierarchy* H, const FRuleWeb& W, const TArray<
 	return Out;
 }
 
+/** The rule web's locked IK chains (Lock channel where the rig has one), each with its controller: where its end is in Raw. */
+TArray<TPair<FChainIk, FMatrix>> LockedChains(const URigHierarchy* H, const FRuleWeb& W, const TArray<FMatrix>& Raw)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaStrings::LockedChains);
+
+	TArray<TPair<FChainIk, FMatrix>> Out;
+	for (const FRuleWeb::FLock& L : W.Locks)
+	{
+		const FName* LockControl = W.Controls.Find(L.Bone);
+		if (L.Chain.Num() < 2 || !SwitchOr(H, LockControl ? *LockControl : NAME_None, TEXT("Lock"), L.bLocked))
+		{
+			continue;
+		}
+		FChainIk C = L.Ik;
+		for (const FName& N : L.Chain)
+		{
+			C.Bones.Add(W.Bones.IndexOfByKey(N));
+		}
+		if (C.Bones.Contains(INDEX_NONE))
+		{
+			continue;
+		}
+		C.Up = W.Up;
+		C.Side = W.Side;
+		// The controller: the end's control in a rig, else where the end is.
+		const FName* EndControl = W.Controls.Find(L.Bone);
+		const FRigElementKey EndKey(EndControl ? *EndControl : NAME_None, ERigElementType::Control);
+		const bool bDragged = EndControl && H->Contains(EndKey) && !FRigComputedTransform::Equals(H->GetGlobalTransform(EndKey), H->GetGlobalTransform(EndKey, true), 1e-9f);
+		// Resting, the control sits where the bone rests; that rest, in double precision, rather than the control's single.
+		const FMatrix Controller = bDragged											? H->GetGlobalTransform(EndKey).ToMatrixWithScale()
+								   : EndControl && H->Contains(EndKey)				? H->GetGlobalTransform(BoneKey(L.Bone), true).ToMatrixWithScale()
+																					: Raw[C.Bones.Last()];
+		Out.Emplace(MoveTemp(C), Controller);
+	}
+	return Out;
+}
+
+/** Makes S the problem's own pose: offsets and stretches folded into each bone, its rotation the reference. */
+void FoldPose(FProblem& P, const FPose& S)
+{
+	for (int32 I = 0; I < P.Bones.Num(); ++I)
+	{
+		FBone& B = P.Bones[I];
+		B.Before = Mul(FTranslationMatrix(S.Offset[I] + (S.Stretch[I] - 1.0) * B.Before.GetOrigin()), B.Before);
+		B.Rotation = B.Reference = S.Rotation[I];
+	}
+}
+
+/** Where each external member is: its control (as it started, or as it is now) where the rig has one, else its frame. */
+TArray<FMatrix> ExternalWorlds(const URigHierarchy* H, const FRuleWeb& W, const bool bInitial)
+{
+	TArray<FMatrix> Out;
+	for (const FRuleWeb::FExternal& E : W.Externals)
+	{
+		const FRigElementKey Key(E.Control, ERigElementType::Control);
+		Out.Add(!E.Control.IsNone() && H->Contains(Key) ? H->GetGlobalTransform(Key, bInitial).ToMatrixWithScale() : E.Frame);
+	}
+	return Out;
+}
+
+/**
+ * External controls a bone's unit moved this evaluation: their own units, which run after, leave them be rather than
+ * drag the bones a second time.
+ */
+TSet<FName>& PlacedBy(const URigHierarchy* H, FCriticalSection*& OutLock)
+{
+	static FCriticalSection Lock;
+	static TMap<const URigHierarchy*, TSet<FName>> Placed;
+	OutLock = &Lock;
+	return Placed.FindOrAdd(H);
+}
+
+/** Moves the external followers' controls where the glue puts them. */
+void PlaceExternals(URigHierarchy* H, const FRuleWeb& W, const TArray<FHold>& Followers)
+{
+	for (const FHold& F : Followers)
+	{
+		if (const int32 E = F.Bone - W.Bones.Num(); W.Externals.IsValidIndex(E))
+		{
+			const FRigElementKey Key(W.Externals[E].Control, ERigElementType::Control);
+			if (!W.Externals[E].Control.IsNone() && H->Contains(Key))
+			{
+				H->SetGlobalTransform(Key, FTransform(F.World), false, false);
+				FCriticalSection* Lock = nullptr;
+				TSet<FName>& Placed = PlacedBy(H, Lock);
+				FScopeLock Guard(Lock);
+				Placed.Add(W.Externals[E].Control);
+			}
+		}
+	}
+}
+
+/**
+ * A prop or another character's joint dragged by its control: the glued and attached bones of this character bend their
+ * limbs to keep their place on it, its pins, contacts and locks holding (Lila's follow).
+ */
+bool RunFollow(URigHierarchy* H, const FRuleWeb& W, FProblem& P, const FRules& Rules, const int32 External, const bool bHoldContacts, float& OutError)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaStrings::RunFollow);
+
+	{
+		FCriticalSection* Lock = nullptr;
+		TSet<FName>& Placed = PlacedBy(H, Lock);
+		FScopeLock Guard(Lock);
+		if (Placed.Remove(W.Externals[External].Control) > 0)
+		{
+			OutError = 0.0f;
+			return true;
+		}
+	}
+	// Lila's follow solves on the skeleton as it is, without the full-body stiffness a drag uses.
+	for (FBone& B : P.Bones)
+	{
+		B.Stiffness = 0.0;
+	}
+
+	const TArray<FMatrix> Start = Worlds(P, StartPose(P));
+	TArray<FMatrix> W0 = Start, W1 = Start;
+	TArray<FMatrix> Now = ExternalWorlds(H, W, false);
+	TArray<FMatrix> Before = Now;
+	Before[External] = ExternalWorlds(H, W, true)[External];
+	W0.Append(Before);
+	W1.Append(Now);
+	TArray<FHold> Holds;
+	for (const int32 Bone : HeldBones(H, W, bHoldContacts))
+	{
+		Holds.Add({Bone, Start[Bone], true});
+	}
+	const TArray<FHold> Moved = Followers(H, W, W0, W1, W.Bones.Num() + External);
+	bool bBones = false;
+	for (const FHold& F : Moved)
+	{
+		if (F.Bone < W.Bones.Num())
+		{
+			Holds.RemoveAll([&](const FHold& Hold) { return Hold.Bone == F.Bone; });
+			Holds.Add(F);
+			bBones = true;
+		}
+	}
+	PlaceExternals(H, W, Moved);
+	if (bBones)
+	{
+		FPose S = StartPose(P);
+		const int32 Hips = W.Bones.IndexOfByKey(W.Hips);
+		OutError = float(HoldLimbs(P, S, Holds, Hips, 1.0, {}, &Rules));
+		ApplyPose(H, W, P, S);
+	}
+	return true;
+}
+
 /** Poses Ask.Bone in Mode as Lila's stringsPose does, from the hierarchy's pose. False (with a warning) when it can't. */
 bool Run(URigHierarchy* H, EMode Mode, const FAsk& Ask, float& OutError, const TFunctionRef<void(const FString&)> Warn)
 {
@@ -668,6 +897,17 @@ bool Run(URigHierarchy* H, EMode Mode, const FAsk& Ask, float& OutError, const T
 		return false;
 	}
 	const int32 Grabbed = W.Bones.IndexOfByKey(Ask.Bone);
+	if (const int32 External = W.Externals.IndexOfByPredicate([&](const FRuleWeb::FExternal& E) { return !Ask.Control.IsNone() && E.Control == Ask.Control; });
+		Grabbed == INDEX_NONE && External != INDEX_NONE)
+	{
+		const FRigElementKey Key(Ask.Control, ERigElementType::Control);
+		if (!H->Contains(Key) || FRigComputedTransform::Equals(H->GetGlobalTransform(Key), H->GetGlobalTransform(Key, true), 1e-9f))
+		{
+			OutError = 0.0f;
+			return true;
+		}
+		return RunFollow(H, W, P, Rules, External, Ask.bHoldContacts, OutError);
+	}
 	if (Grabbed == INDEX_NONE)
 	{
 		Warn(FString::Printf(TEXT("%s isn't a bone the rule web poses"), *Ask.Bone.ToString()));
@@ -681,13 +921,38 @@ bool Run(URigHierarchy* H, EMode Mode, const FAsk& Ask, float& OutError, const T
 		ModeFromChannels(H, ControlKey, Mode, bIsolate);
 	}
 	const FTransform Goal = bControl ? H->GetGlobalTransform(ControlKey) : Ask.Target;
+	// Locked IK chains hold their joints as Lila's handle does whatever else poses them, toward where their ends are
+	// before it: the pose every interaction starts from, as Lila evaluates it.
+	const TArray<FMatrix> Raw = Worlds(P, StartPose(P));
+	TArray<TPair<FChainIk, FMatrix>> Chains = LockedChains(H, W, Raw);
+	if (!Chains.IsEmpty())
+	{
+		const bool bIdle = bControl && FRigComputedTransform::Equals(Goal, H->GetGlobalTransform(ControlKey, true), 1e-9f);
+		FPose S0 = StartPose(P);
+		for (const TPair<FChainIk, FMatrix>& C : Chains)
+		{
+			// An end turned part way to its controller blends from its FK rotation, which a second pass would blend
+			// again: only the unit that poses applies it, so it lands once.
+			FChainIk Once = C.Key;
+			if (bIdle && Once.AlignWeight < 1.0)
+			{
+				Once.AlignWeight = 0.0;
+			}
+			SolveChain(P, S0, Once, C.Value);
+		}
+		FoldPose(P, S0);
+	}
 	// A control left where it started asks for nothing: posing toward it would undo what the dragged controls' units did.
 	if (bControl && FRigComputedTransform::Equals(Goal, H->GetGlobalTransform(ControlKey, true), 1e-9f))
 	{
+		if (!Chains.IsEmpty())
+		{
+			ApplyPose(H, W, P, StartPose(P));
+		}
 		OutError = 0.0f;
 		return true;
 	}
-	const FTransform Now = H->GetGlobalTransform(BoneKey(Ask.Bone));
+	const FTransform Now = Chains.IsEmpty() ? H->GetGlobalTransform(BoneKey(Ask.Bone)) : FTransform(Worlds(P, StartPose(P))[Grabbed]);
 
 	FRequest R;
 	R.Mode = Mode;
@@ -747,9 +1012,15 @@ bool Run(URigHierarchy* H, EMode Mode, const FAsk& Ask, float& OutError, const T
 	{
 		TArray<FHold> Glued = R.Holds;
 		bool bFollowed = false;
-		for (const FHold& F : Followers(H, W, Start, Worlds(P, Res.Pose), Grabbed))
+		const TArray<FMatrix> Externals = ExternalWorlds(H, W, false);
+		TArray<FMatrix> W0 = Start, W1 = Worlds(P, Res.Pose);
+		W0.Append(Externals);
+		W1.Append(Externals);
+		const TArray<FHold> Moved = Followers(H, W, W0, W1, Grabbed);
+		PlaceExternals(H, W, Moved);
+		for (const FHold& F : Moved)
 		{
-			if (F.Bone != Grabbed)
+			if (F.Bone != Grabbed && F.Bone < W.Bones.Num())
 			{
 				Glued.RemoveAll([&](const FHold& Hold) { return Hold.Bone == F.Bone; });
 				Glued.Add(F);
@@ -761,32 +1032,10 @@ bool Run(URigHierarchy* H, EMode Mode, const FAsk& Ask, float& OutError, const T
 			Res.Error = FMath::Max(Res.Error, HoldLimbs(P, Res.Pose, Glued, R.Hips, R.MaxStretch, {}, &Rules));
 		}
 	}
-	// Locked IK chains then solve as Lila's ikHandle does, toward where their end was.
-	for (const FRuleWeb::FLock& L : W.Locks)
+	// Locked IK chains then solve as Lila's ikHandle does, toward their controllers.
+	for (const TPair<FChainIk, FMatrix>& C : Chains)
 	{
-		const FName* LockControl = W.Controls.Find(L.Bone);
-		if (L.Chain.Num() < 2 || !SwitchOr(H, LockControl ? *LockControl : NAME_None, TEXT("Lock"), L.bLocked))
-		{
-			continue;
-		}
-		FChainIk C;
-		for (const FName& N : L.Chain)
-		{
-			C.Bones.Add(W.Bones.IndexOfByKey(N));
-		}
-		if (C.Bones.Contains(INDEX_NONE))
-		{
-			continue;
-		}
-		C.bTwoBone = L.bTwoBone;
-		C.Pole = L.Pole;
-		C.Twist = L.Twist;
-		C.Softness = L.Softness;
-		C.Up = W.Up;
-		C.Side = W.Side;
-		C.RestLocals = L.Rest;
-		C.bAlignEnd = L.bAlignEnd;
-		SolveChain(P, Res.Pose, C, Start[C.Bones.Last()]);
+		SolveChain(P, Res.Pose, C.Key, C.Value);
 	}
 	ApplyPose(H, W, P, Res.Pose);
 	Blend.Apply(H, Ask.Alpha);
@@ -933,6 +1182,78 @@ bool ULilaStringsLibrary::PlaceControlAtBone(URigHierarchy* Hierarchy, const FNa
 	return true;
 }
 
+namespace
+{
+/** The section's channel for a bool control, from its parameter curves (a protected property, reached by reflection). */
+FMovieSceneBoolChannel* BoolChannelOf(UMovieSceneSection* Section, const FName Control)
+{
+	const FProperty* Curves = Section ? Section->GetClass()->FindPropertyByName(TEXT("BoolParameterNamesAndCurves")) : nullptr;
+	if (!Curves)
+	{
+		return nullptr;
+	}
+	for (FBoolParameterNameAndCurve& C : *Curves->ContainerPtrToValuePtr<TArray<FBoolParameterNameAndCurve>>(Section))
+	{
+		if (C.ParameterName == Control)
+		{
+			return &C.ParameterCurve;
+		}
+	}
+	return nullptr;
+}
+
+FFrameNumber TickOf(const UMovieSceneSection* Section, const int32 Frame)
+{
+	const UMovieScene* Scene = Section->GetTypedOuter<UMovieScene>();
+	return FFrameRate::TransformTime(FFrameTime(Frame), Scene->GetDisplayRate(), Scene->GetTickResolution()).RoundToFrame();
+}
+} // namespace
+
+bool ULilaStringsLibrary::KeyRigBools(UMovieSceneSection* Section, const FName Control, const TArray<int32>& Frames, const TArray<bool>& Values)
+{
+	FMovieSceneBoolChannel* Channel = BoolChannelOf(Section, Control);
+	if (!Channel || Frames.Num() != Values.Num())
+	{
+		return false;
+	}
+	Section->Modify();
+	TMovieSceneChannelData<bool> Data = Channel->GetData();
+	Data.Reset();
+	for (int32 I = 0; I < Frames.Num(); ++I)
+	{
+		Data.UpdateOrAddKey(TickOf(Section, Frames[I]), Values[I]);
+	}
+	return true;
+}
+
+TArray<bool> ULilaStringsLibrary::RigBools(UMovieSceneSection* Section, const FName Control, const TArray<int32>& Frames)
+{
+	TArray<bool> Out;
+	if (FMovieSceneBoolChannel* Channel = BoolChannelOf(Section, Control))
+	{
+		for (const int32 F : Frames)
+		{
+			bool Value = false;
+			Channel->Evaluate(FFrameTime(TickOf(Section, F)), Value);
+			Out.Add(Value);
+		}
+	}
+	return Out;
+}
+
+bool ULilaStringsLibrary::PlaceControl(URigHierarchy* Hierarchy, const FName Control, const FVector Location, const FQuat Rotation)
+{
+	const FRigElementKey Key(Control, ERigElementType::Control);
+	if (!Hierarchy || !Hierarchy->Contains(Key))
+	{
+		return false;
+	}
+	const FTransform T(Rotation.GetNormalized(), Location);
+	Hierarchy->SetGlobalTransform(Key, T, true, false);
+	Hierarchy->SetGlobalTransform(Key, T, false, false);
+	return true;
+}
+
 bool ULilaStringsLibrary::SetModeEnum(URigHierarchy* Hierarchy, const FRigElementKey Channel)
 {
 	const FRigControlElement* Control = Hierarchy ? Hierarchy->Find<FRigControlElement>(Channel) : nullptr;
@@ -995,6 +1316,14 @@ TMap<FName, FTransform> ULilaStringsLibrary::DragRigSwitched(UClass* RigClass, c
 	Rig->Execute(FRigUnit_BeginExecution::EventName);
 	H->ForEach<FRigBoneElement>([&](FRigBoneElement* E) {
 		Out.Add(E->GetFName(), H->GetGlobalTransform(E->GetKey()));
+		return true;
+	});
+	// The glued props' and other characters' controls too, under their own names.
+	H->ForEach<FRigControlElement>([&](FRigControlElement* E) {
+		if (E->GetFName().ToString().StartsWith(TEXT("LS_x_")))
+		{
+			Out.Add(E->GetFName(), H->GetGlobalTransform(E->GetKey()));
+		}
 		return true;
 	});
 	return Out;

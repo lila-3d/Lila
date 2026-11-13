@@ -1344,12 +1344,24 @@ TEST_CASE("stringsRuleWeb: pins, IK chains with their lock and solve, and glue a
     CHECK(lock["bone"] == "hand_l");
     CHECK(lock["locked"] == true);
     CHECK(lock["solver"] == "twoBone");
-    CHECK(lock["alignEnd"] == true);
+    CHECK(lock["alignWeight"] == 1.0);
     CHECK(lock["chain"] == json({"upperarm_l", "lowerarm_l", "hand_l"}));
-    CHECK(lock["rest"].size() == 3);
+    CHECK(lock["slots"].size() == 3);
     CHECK(lock.contains("pole"));
-    // The attach led by a prop stays in Lila; the glue between the hands goes.
-    CHECK(web["glue"] == json::array({{{"members", {"hand_l", "hand_r"}}, {"attach", false}}}));
+    CHECK(!lock.contains("unsolved"));
+    // A joint limit and preferred angle go with the chain's slots.
+    run("ikLimit", {{"args", {"lowerarm_l"}}, {"type", "hinge"}, {"axis", "z"}, {"min", -30.0}, {"max", 30.0}, {"preferredAngle", v3(0, 0, 20)}});
+    run("ikHandle", {{"args", run("ls", {{"type", "ikHandle"}})}, {"refresh", true}});
+    const json slot = run("stringsRuleWeb", {{"args", {"hero"}}})["locks"][0]["slots"][1];
+    CHECK(slot["limit"]["kind"] == "hinge");
+    CHECK(slot["limit"]["max"].get<double>() == doctest::Approx(glm::radians(30.0)));
+    CHECK(slot.contains("preferred"));
+    // The glue between the hands goes by name; the prop attached to a foot goes as a frame of its own.
+    REQUIRE(web["glue"].size() == 2);
+    CHECK(web["glue"][0] == json({{"members", {"hand_l", "hand_r"}}, {"attach", false}}));
+    CHECK(web["glue"][1]["members"][0] == "foot_l");
+    CHECK(web["glue"][1]["members"][1]["prop"].get<std::string>().ends_with("cup"));
+    CHECK(web["glue"][1]["members"][1]["location"].size() == 3);
     CHECK(web["basis"]["up"].size() == 3);
 
     const json sent = run("unrealStringsRig", {{"args", {"hero"}}, {"skeletalMesh", "/Game/Hero/SK_Hero"}, {"dryRun", true}});
@@ -1359,6 +1371,14 @@ TEST_CASE("stringsRuleWeb: pins, IK chains with their lock and solve, and glue a
 
     run("ikLock", {{"args", {chain}}, {"state", false}});
     CHECK(run("stringsRuleWeb", {{"args", {"hero"}}})["locks"][0]["locked"] == false);
+    // A keyed lock goes as its on and off steps, for the rig's Lock channel in a Level Sequence.
+    run("ikLock", {{"args", {chain}}, {"time", 0.0}, {"state", true}});
+    run("ikLock", {{"args", {chain}}, {"time", 1.0}, {"state", false}});
+    const json keys = run("stringsRuleWeb", {{"args", {"hero"}}})["locks"][0]["keys"];
+    REQUIRE(keys.size() == 2);
+    CHECK(keys[0][1] == true);
+    CHECK(keys[1][1] == false);
+    CHECK(keys[1][0].get<double>() == doctest::Approx(1.0));
     // Glue is kept by joint name for the session: free everything, with nothing selected, so later tests start clean.
     run("select", {{"clear", true}});
     run("stringsGlue", {{"remove", true}});
