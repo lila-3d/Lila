@@ -38,6 +38,7 @@
 #include "scene/Rig.h"
 #include "scene/Skin.h"
 
+#include <nlohmann/json.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <tbb/parallel_for.h>
 
@@ -53,6 +54,8 @@
 
 namespace lila::maya
 {
+using json = nlohmann::json;
+
 namespace
 {
 using geo::Index;
