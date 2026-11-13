@@ -178,8 +178,11 @@ TEST_CASE("corpus: relax")
 
 TEST_CASE("corpus: quad remesh")
 {
+    const char* only = std::getenv("LILA_CORPUS_ONLY");
     for (const Case& c : all())
     {
+        if (only && c.name != only)
+            continue;
         retopo::QuadRemeshOptions o;
         o.targetFaces = 600;
         retopo::QuadRemeshResult r = retopo::quadRemesh(c.mesh, o);

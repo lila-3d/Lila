@@ -29,6 +29,12 @@ Scope from Jared: UV reuse items 1-4 from the retopo rebase, plus the remaining 
 - Measured: folded panel exact 2x1 rectangle; cube corner unfolds with one 90 degree dart, area 2.99 of 3; bevelled box 2 islands as clean nets, 0 overlap, mean angle distortion 0.012. Organic meshes (head, Mochi) fall back on about half their islands, reported; Flow Unwrap is for hard surface and trims, Auto UV stays the organic default.
 - UI: Flow Unwrap in the UV menu and the Unwrap section's overflow (weekly tool, the section already has 11 entries); BFF Unwrap with Flow Cones in the Conformal split row; Auto Seams with Darts in the Seams split row; option labels "Straighten Within" (deg) and "Cones From" (Stretch, Flow).
 
+## Quad Remesh gaps
+
+- Cylinder fold (flow layout test): a row of cap points beside the rim crease was taken onto it, leaving a quad lying flat along the rim. `freeCreaseFlaps` frees the points of a face under 0.08 h² whose corners are all on features, except the two on its crease edge, and puts them back at their neighbours' mean on the surface. Test passes; angle deviation max 87 -> 49 degrees. Committed 3ff2e1e5.
+- CAD corpus (cone, starPrism, combPrism, spiralFace, bentStar, twistedGrid, tent over hausdorff 0.035): not fixed. Found: tips sharper than 45 degrees collapse because both sides of the tip snap to the same lattice direction, and the isotropic pass leaves 10-22 short edges near tips bending sharply without feature flags. Tried and reverted: (a) forcing the two sides of a sector under 60 degrees onto different directions in the cover constraints (cone and tent pass, bentStar 0.07 -> 0.19); (b) the same propagated along the whole straight side (worse everywhere); (c) adding sharp-dihedral iso edges to the feature set (starPrism and twistedGrid better, cone and bentComb worse); (d) moving the nearest line point onto each unclaimed corner (no measurable change). The real fix is corner-aware field constraints: the field itself has to turn at a sharp corner (MIQ-style corner valences), so its singularities and the constraints agree. That is a stage of its own; the tests keep their 0.035 bar rather than being loosened.
+- `LILA_CORPUS_ONLY=<name>` runs one corpus case, for this kind of chase.
+
 ## 4. Cage paint: own-fold clearance
 
 - Nothing from the remesher fits the per-point solve, so this item is the gap found while looking: clearance ran only between lows. Each low now also traces its own surface: front faces only (the faces a ray leaves from look away), from a few epsilons out.
