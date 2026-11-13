@@ -1,6 +1,6 @@
 {
     "name": "Delft 3DBAG",
-    "description": "The historic centre of Delft, every building in 3D from the Dutch national 3DBAG, read from its 3D Tiles and placed at its real coordinates.",
+    "description": "Delft's historic centre from the Dutch national 3DBAG: 12,207 buildings over 5.8 km² (2.4 × 2.4 km), read from its 3D Tiles and placed at their real coordinates.",
     "files": [
         {
             "url": "https://data.3dbag.nl/v20250903/cesium3dtiles/lod22/tileset.json",
@@ -55,7 +55,7 @@
     "diskSize": 30000000,
     "license": "CC BY 4.0",
     "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
-    "credit": "\u00a9 3DBAG by tudelft3d and 3DGI (https://docs.3dbag.nl/en/copyright), CC BY 4.0. A 350 m area of the LoD2.2 tileset.",
+    "credit": "© 3DBAG by tudelft3d and 3DGI (https://docs.3dbag.nl/en/copyright), CC BY 4.0. A 350 m area of the LoD2.2 tileset.",
     "source": "https://3dbag.nl",
     "scene": "delft.lila",
     "after": "AsiagoDroneSurvey"

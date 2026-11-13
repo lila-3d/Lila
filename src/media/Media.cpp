@@ -299,11 +299,11 @@ void setStreamSeconds(double seconds)
     streamThreshold() = seconds;
 }
 
-void prefetch(const std::vector<Voice>& voices, double sceneTime)
+void prefetch(const std::vector<Voice>& voices, double sceneTime, int direction)
 {
     for (const Voice& v : voices)
         if (v.stream)
-            v.stream->prefetch(std::max(v.from, sceneTime - v.start + v.from));
+            v.stream->prefetch(std::max(v.from, sceneTime - v.start + v.from), direction);
 }
 
 int addSoundListener(std::function<void()> fn)

@@ -21,10 +21,11 @@ using namespace lila::scene;
 
 namespace puppeteer::anim
 {
+using T = ArgType;
+
 namespace
 {
 namespace sa = lila::scene::anim;
-using T = ArgType;
 
 Graph& graph() { return Graph::current(); }
 double fps() { return std::max(1.0, sa::playback().fps); }

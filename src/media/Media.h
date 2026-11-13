@@ -106,8 +106,11 @@ LILA_SCENE_API void setStreamSeconds(double seconds);
  * is empty until done. Main thread.
  */
 LILA_SCENE_API Sound loadTrack(const std::string& stored, int track, bool wait = true, std::string* err = nullptr);
-/** Starts decoding the streamed voices where they will be heard from sceneTime on. */
-LILA_SCENE_API void prefetch(const std::vector<Voice>& voices, double sceneTime);
+/**
+ * Starts decoding the streamed voices where they will be heard from sceneTime on, reading ahead in direction (+1, -1,
+ * or 0 to follow the move since the previous call, as scrubbing does).
+ */
+LILA_SCENE_API void prefetch(const std::vector<Voice>& voices, double sceneTime, int direction = 0);
 
 /**
  * A sound file decoded at the output rate, by stored path (resolved from the workspace). Without wait it decodes on a

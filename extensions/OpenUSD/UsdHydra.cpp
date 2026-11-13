@@ -10,6 +10,7 @@
 #include "UsdHydraScene.h"
 #include "UsdStage.h"
 
+#include <lila/GpuImage.h>
 #include <lila/Log.h>
 #include <lila/Prefs.h>
 #include <lila/Profile.h>

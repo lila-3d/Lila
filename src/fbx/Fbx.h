@@ -353,6 +353,11 @@ struct ImportOptions
     bool instances = true;
     /** Place the roots by the LilaGeoreference* document properties a georeferenced Lila export carries. */
     bool georeference = true;
+    /**
+     * Turn characters from Z-up files to face Lila's forward (see characterTurn). Off keeps the file's own facing, as
+     * Maya places an FBX reference; every local transform is then conjugated by ImportAxes::toLila alone.
+     */
+    bool turnCharacters = true;
 };
 
 struct ImportResult

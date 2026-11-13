@@ -36,6 +36,8 @@
 
 namespace lila::bake
 {
+using Clock = std::chrono::steady_clock;
+
 namespace
 {
 using detail::edgeFunction;
@@ -43,10 +45,9 @@ using detail::meshByName;
 using detail::mix3;
 using detail::worldOf;
 
-using Clock = std::chrono::steady_clock;
 
 /** Adds the seconds since t0 to timings[key]. */
-void addTiming(json& timings, const char* key, Clock::time_point t0)
+void addStageTiming(json& timings, const char* key, Clock::time_point t0)
 {
     timings[key] = timings.value(key, 0.0) + std::chrono::duration<double>(Clock::now() - t0).count();
 }
@@ -459,7 +460,7 @@ std::unique_ptr<Prepared> prepare(scene::Graph& g, scene::NodeId group, json* ti
         p->inputs = buildInputs(g, project->id(), {group}, true);
     }
     if (timings)
-        addTiming(*timings, "prepare:inputs", t0);
+        addStageTiming(*timings, "prepare:inputs", t0);
     if (p->inputs.groups.size() != 1)
         throw std::runtime_error(grp->name() + ": nothing to bake");
     if (p->inputs.groups[0].highs.empty())
@@ -475,7 +476,7 @@ std::unique_ptr<Prepared> prepare(scene::Graph& g, scene::NodeId group, json* ti
         });
     }
     if (timings)
-        addTiming(*timings, "prepare:highs", t0);
+        addStageTiming(*timings, "prepare:highs", t0);
     return p;
 }
 } // namespace
@@ -614,7 +615,7 @@ CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& se
         if (const int32_t k = gi.highSelfLow[h]; k >= 0 && size_t(k) < states.size() && !shells[h].empty())
             matchShells(states[size_t(k)], uint32_t(h), gi.highs[h].soup, shells[h]);
     const Walker walk(*tracer, group, shells);
-    addTiming(est.timings, "lowInputs", t0);
+    addStageTiming(est.timings, "lowInputs", t0);
     t0 = Clock::now();
 
     // The other lows, for clearance: rays go into each one's own space, where t stays the world distance.
@@ -644,7 +645,7 @@ CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& se
         return float(best);
     };
 
-    addTiming(est.timings, "clearance", t0);
+    addStageTiming(est.timings, "clearance", t0);
     t0 = Clock::now();
     std::vector<float> inward;
     {
@@ -711,7 +712,7 @@ CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& se
         }
     }
 
-    addTiming(est.timings, "walk", t0);
+    addStageTiming(est.timings, "walk", t0);
     t0 = Clock::now();
     // Lone needs far above the rest (a stray high piece) are clamped; coverage passes put back any that were real.
     std::vector<float> all;
@@ -772,12 +773,12 @@ CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& se
             total.misses += c.misses;
             total.backfaces += c.backfaces;
         }
-        addTiming(est.timings, "cover", c0);
+        addStageTiming(est.timings, "cover", c0);
         return total;
     };
 
     fit();
-    addTiming(est.timings, "solve", t0);
+    addStageTiming(est.timings, "solve", t0);
     std::vector<std::vector<TexelSample>> missed(states.size());
     {
         progress::Scope pass("Checking coverage", double(states.size()));
@@ -847,7 +848,7 @@ CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& se
             clampToClearance(s);
         }
         fit();
-        addTiming(est.timings, "refine", t0);
+        addStageTiming(est.timings, "refine", t0);
         for (auto& m : missed)
             m.clear();
         est.after = cover(&missed);
@@ -1020,7 +1021,7 @@ json estimateGroupCage(scene::Graph& g, scene::NodeId group, const CageEstimateO
     scene::Node* grp = g.node(group);
     GroupSettings s = groupSettings(*grp);
     GroupInputs& gi = p->inputs.groups[0];
-    addTiming(timings, "prepare", t0);
+    addStageTiming(timings, "prepare", t0);
 
     t0 = Clock::now();
     CageCoverage before;
@@ -1029,7 +1030,7 @@ json estimateGroupCage(scene::Graph& g, scene::NodeId group, const CageEstimateO
         const CageParams cp{gi.frontal, gi.rear, float(s.cageOffset), float(s.skew)};
         progress::runOnWorker([&] { before = sumCoverage(gi, cp, *p->backend, options.resolution); });
     }
-    addTiming(timings, "before", t0);
+    addStageTiming(timings, "before", t0);
     root.checkCancel();
 
     t0 = Clock::now();
@@ -1051,14 +1052,14 @@ json estimateGroupCage(scene::Graph& g, scene::NodeId group, const CageEstimateO
         lowIds.push_back(n->id());
         bases.push_back(base);
     }
-    addTiming(timings, "export", t0);
+    addStageTiming(timings, "export", t0);
     t0 = Clock::now();
     CageEstimate est;
     {
         progress::Scope stage("", 1.0, progress::None, kEstimateSpan);
         progress::runOnWorker([&] { est = estimateCage(lows, s, p->inputs, 0, *p->backend, options); });
     }
-    addTiming(timings, "estimate", t0);
+    addStageTiming(timings, "estimate", t0);
     root.checkCancel();
 
     // Lows whose modifiers change their points get the estimate painted back onto their base points; bakeOffset rides
@@ -1094,11 +1095,11 @@ json estimateGroupCage(scene::Graph& g, scene::NodeId group, const CageEstimateO
         setGroupSettings(g, group, s);
         if (!s.cage.empty())
             cageFromPaint(g, group);
-        addTiming(timings, "apply", t0);
+        addStageTiming(timings, "apply", t0);
         t0 = Clock::now();
         if (!mapped.empty())
             est.after = remeasure(g, group, *p, options.resolution);
-        addTiming(timings, "remeasure", t0);
+        addStageTiming(timings, "remeasure", t0);
     }
     else
         for (size_t i = 0; i < lows.size(); ++i)

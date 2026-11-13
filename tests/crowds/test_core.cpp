@@ -52,6 +52,15 @@ public:
     std::string device() const override { return "test"; }
 };
 
+/** Largest joint turn between two poses, degrees. */
+double turnBetween(const Pose& a, const Pose& b)
+{
+    double turn = 0.0;
+    for (size_t j = 0; j < a.size(); ++j)
+        turn = std::max(turn, double(glm::degrees(2.0f * std::acos(std::min(1.0f, std::abs(glm::dot(a[j].q, b[j].q)))))));
+    return turn;
+}
+
 Setup wanderers(int count, float spacing, uint32_t seed = 3)
 {
     Setup s;
@@ -295,4 +304,24 @@ TEST_CASE("crowd: detail keeps far agents on cycles and the budget caps generati
     Pose p;
     CHECK(none.pose(st, 3, p));
     CHECK(p.size() == SomaSkeleton::shipped().size());
+}
+
+TEST_CASE("crowd: gait cycles loop seamlessly, one per gait, a frame per tick")
+{
+    Setup s;
+    s.groups.push_back(Group{.name = "a", .behaviour = Behaviour::Stand});
+    s.agents.push_back(AgentSpec{.start = {0.0f, 0.0f}});
+    Runtime rt(s, GaitLibrary::shipped(), nullptr);
+    REQUIRE(rt.cycles().size() == GaitLibrary::shipped().gaits.size());
+    for (const Cycle& c : rt.cycles())
+    {
+        INFO(c.style << " " << c.period);
+        REQUIRE(c.frames.size() > 8);
+        CHECK(c.period == doctest::Approx(double(c.frames.size()) / 30.0));
+        double turn = 0.0;
+        for (size_t f = 1; f < c.frames.size(); ++f)
+            turn = std::max(turn, turnBetween(c.frames[f - 1], c.frames[f]));
+        CHECK(turnBetween(c.frames.back(), c.frames.front()) <= turn * 1.25 + 0.5);
+        CHECK(std::abs(c.frames.back()[0].p.y - c.frames.front()[0].p.y) < 0.02f);
+    }
 }

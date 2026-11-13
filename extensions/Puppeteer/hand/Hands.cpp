@@ -875,6 +875,24 @@ double thicknessOf(Graph& g, const Hand& h, const Finger& f, const Collider& own
     return std::max(0.1, 0.16 * length);
 }
 
+/** Poses a jointed finger opens toward to get out of what it starts in: lifted back, out to either side, and both. */
+std::vector<std::vector<Angles>> waysOut(const Finger& f, const std::vector<Angles>& from)
+{
+    const std::vector<Limit> lim = jointLimits(f.role, from.size());
+    std::vector<Angles> lifted = from;
+    for (size_t k = 0; k < from.size(); ++k)
+        lifted[k].bend = lim[k].bend.lo;
+    std::vector<std::vector<Angles>> out{lifted};
+    for (const double splay : {lim[0].splay.lo, lim[0].splay.hi})
+        for (const std::vector<Angles>* v : std::initializer_list<const std::vector<Angles>*>{&from, &lifted})
+        {
+            std::vector<Angles> s = *v;
+            s[0].splay = splay;
+            out.push_back(s);
+        }
+    return out;
+}
+
 json gripCmd(const Args& a)
 {
     Graph& g = Graph::current();
@@ -955,7 +973,7 @@ json gripCmd(const Args& a)
                                 return f.hose ? 0 : int(std::min(k, n - 1));
                     return -1;
                 };
-                bool startedInside = false;
+                bool startedInside = false, stayed = false;
                 std::vector<Angles> got = from;
                 {
                     UndoStack& u = UndoStack::get();
@@ -965,27 +983,33 @@ json gripCmd(const Args& a)
                     startedInside = contact(from) >= 0;
                     if (!startedInside)
                         got = wrap(from, to, contact);
+                    else if (const std::optional<std::vector<Angles>> opened = f.hose ? std::nullopt : openOut(from, waysOut(f, from), contact))
+                        got = wrap(*opened, to, contact);
+                    else
+                        stayed = true;
                     before.restore(g);
                     u.setEnabled(was);
                 }
-                const FingerPose result = startedInside ? base : expand(got);
-                if (!startedInside)
+                const FingerPose result = stayed ? base : expand(got);
+                if (!stayed)
                     writeFinger(g, f, result, &written);
                 Pose one;
                 one.fingers[int(f.role)] = result;
-                fingers[roleName(f.role)] = {{"touching", !startedInside && got != to},
+                fingers[roleName(f.role)] = {{"touching", !stayed && got != to},
                                              {"startedInside", startedInside},
+                                             {"stayed", stayed},
                                              {"curl", measureFingerCurl(one, f.role)},
                                              {"thickness", radius},
                                              {"thicknessFrom", a.has("thickness") ? "flag" : fromMesh ? "mesh" : "estimate"}};
             }
-            std::string inside;
+            std::string stuck;
             for (const auto& [role, r] : fingers.items())
-                if (r.value("startedInside", false))
-                    inside += (inside.empty() ? "" : ", ") + role;
-            if (!inside.empty())
-                log::write(LogLevel::Warning, "puppeteerHandGrip: " + inside + " on " + g.node(hn)->path() +
-                                                  " started inside the target and stayed as posed; open the hand or move the target and grip again");
+                if (r.value("stayed", false))
+                    stuck += (stuck.empty() ? "" : ", ") + role;
+            if (!stuck.empty())
+                log::write(LogLevel::Warning, "puppeteerHandGrip: " + stuck + " on " + g.node(hn)->path() +
+                                                  " can't open clear of the target within their joint limits (the knuckle sits against it), so "
+                                                  "they stay as posed. Move the target off the knuckles and grip again");
             out.push_back({{"hand", g.node(hn)->path()}, {"fingers", fingers}});
         }
     }

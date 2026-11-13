@@ -95,7 +95,8 @@ TEST_CASE("puppeteer: modes, gizmo and selection handlers come and go with the e
     CHECK_FALSE(animate->hotkeys["viewport"]["Space"].contains("hold"));
     CHECK(ui::gizmos::find("puppeteer.spinner"));
     CHECK(ui::selectionHandlers::find("puppeteer.animate"));
-    CHECK(ui::layouts::contributed().find("Animate"));
+    CHECK(ui::layouts::contributed().find("Puppeteer"));
+    CHECK(ui::layouts::contributed().find("Puppeteer Rig"));
     CHECK(ui::actions::find("mode.puppeteerAnimate"));
     CHECK(ui::actions::find("puppeteer.spinner.inheritRotate"));
 

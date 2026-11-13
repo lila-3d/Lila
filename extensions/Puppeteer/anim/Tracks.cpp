@@ -10,6 +10,7 @@
 
 #include <glm/gtc/quaternion.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 #include <set>
@@ -19,10 +20,11 @@ using namespace lila::scene;
 
 namespace puppeteer::anim
 {
+using T = ArgType;
+
 namespace
 {
 namespace sa = lila::scene::anim;
-using T = ArgType;
 
 enum TracksAttr
 {
@@ -375,29 +377,83 @@ MergeResult mergeTrack(Graph& g, NodeId track)
     deleteTrack(g, track);
     {
         RouteScope base(kNoNode);
-        for (size_t k = 0; k < times.size(); ++k)
-        {
-            g.setTime(times[k], false);
-            g.evaluate();
+        auto keyAt = [&](double t, const std::vector<glm::dvec3>& pose) {
             for (size_t m = 0; m < members.size(); ++m)
                 for (int c = 0; c < 3; ++c)
-                    sa::setKey(g, {members[m].node, members[m].attr, c}, times[k], atKeys[k][m][c]);
-        }
-        res.keys = int(times.size());
-        const auto after = sample(frames);
+                    sa::setKey(g, {members[m].node, members[m].attr, c}, t, pose[m][c]);
+        };
+        for (size_t k = 0; k < times.size(); ++k)
+            keyAt(times[k], atKeys[k]);
+
         const RotateOrder order = rotateOrderOf(g, control);
-        for (size_t f = 0; f < frames.size(); ++f)
-            for (size_t m = 0; m < members.size(); ++m)
+        std::vector<double> rotateError(frames.size(), 0.0), translateError(frames.size(), 0.0);
+        std::vector<char> dirty(frames.size(), 1);
+        std::vector<double> keyed = times;
+        auto exceeds = [&](size_t f) { return rotateError[f] > kMergeRotateTolerance || translateError[f] > kMergeTranslateTolerance; };
+        auto score = [&](size_t f) { return rotateError[f] / kMergeRotateTolerance + translateError[f] / kMergeTranslateTolerance; };
+        for (;;)
+        {
+            for (size_t f = 0; f < frames.size(); ++f)
             {
-                if (members[m].attr == Transform::kRotate)
+                if (!dirty[f])
+                    continue;
+                dirty[f] = 0;
+                g.setTime(frames[f], false);
+                g.evaluate();
+                rotateError[f] = translateError[f] = 0.0;
+                for (size_t m = 0; m < members.size(); ++m)
                 {
-                    const glm::dquat a = sa::eulerToQuat(before[f][m], order), b = sa::eulerToQuat(after[f][m], order);
-                    const double dot = std::min(1.0, std::abs(glm::dot(a, b)));
-                    res.rotateError = std::max(res.rotateError, glm::degrees(2.0 * std::acos(dot)));
+                    const glm::dvec3 now = vec(g, members[m]);
+                    if (members[m].attr == Transform::kRotate)
+                    {
+                        const glm::dquat a = sa::eulerToQuat(before[f][m], order), b = sa::eulerToQuat(now, order);
+                        const double dot = std::min(1.0, std::abs(glm::dot(a, b)));
+                        rotateError[f] = std::max(rotateError[f], glm::degrees(2.0 * std::acos(dot)));
+                    }
+                    else
+                        translateError[f] = std::max(translateError[f], glm::length(before[f][m] - now));
                 }
-                else
-                    res.translateError = std::max(res.translateError, glm::length(before[f][m] - after[f][m]));
             }
+            // The worst frame of each span between keys that leaves the sum gets a key at the summed pose.
+            std::map<size_t, size_t> worst;
+            for (size_t f = 0; f < frames.size(); ++f)
+            {
+                if (!exceeds(f))
+                    continue;
+                const auto span = size_t(std::upper_bound(keyed.begin(), keyed.end(), frames[f]) - keyed.begin());
+                auto [it, added] = worst.try_emplace(span, f);
+                if (!added && score(f) > score(it->second))
+                    it->second = f;
+            }
+            std::vector<double> adding;
+            for (const auto& [span, f] : worst)
+                if (std::ranges::none_of(keyed, [&](double k) { return sameTime(k, frames[f]); }))
+                {
+                    keyAt(frames[f], before[f]);
+                    adding.push_back(frames[f]);
+                }
+            if (adding.empty())
+                break;
+            res.addedKeys += int(adding.size());
+            keyed.insert(keyed.end(), adding.begin(), adding.end());
+            std::sort(keyed.begin(), keyed.end());
+            // A new key moves its neighbours' tangents, so the spans two keys either side need measuring again.
+            for (double t : adding)
+            {
+                const auto i = std::lower_bound(keyed.begin(), keyed.end(), t) - keyed.begin();
+                const double lo = i >= 2 ? keyed[size_t(i - 2)] : -1e300;
+                const double hi = size_t(i + 2) < keyed.size() ? keyed[size_t(i + 2)] : 1e300;
+                for (size_t f = 0; f < frames.size(); ++f)
+                    if (frames[f] >= lo && frames[f] <= hi)
+                        dirty[f] = 1;
+            }
+        }
+        res.keys = int(keyed.size());
+        for (size_t f = 0; f < frames.size(); ++f)
+        {
+            res.rotateError = std::max(res.rotateError, rotateError[f]);
+            res.translateError = std::max(res.translateError, translateError[f]);
+        }
     }
     g.setTime(saved, false);
     g.evaluate();
@@ -675,8 +731,9 @@ void registerTracks(ext::Context& ctx)
     ctx.registerCommand({
         .name = "mergeControlTrack",
         .doc = "Merge control tracks into the character keys: each control is keyed at its own keys and its track's "
-               "keys with the summed pose, and the track goes. Returns per track the keys and the largest difference "
-               "from the layered result between keys (degrees, units).",
+               "keys with the summed pose, plus keys wherever the curve would leave the sum between them, and the track "
+               "goes. Returns per track the keys, the keys added between, and the largest difference left from the "
+               "layered result on any frame (degrees, units).",
         .positionalDoc = "tracks or controls (default the selection)",
         .run = [](const Args& a) -> json {
             Graph& g = graph();
@@ -684,11 +741,15 @@ void registerTracks(ext::Context& ctx)
             for (NodeId t : trackArgs(g, a, "mergeControlTrack"))
             {
                 const MergeResult r = mergeTrack(g, t);
-                if (r.rotateError > 0.05 || r.translateError > 0.01)
+                if (r.rotateError > kMergeRotateTolerance || r.translateError > kMergeTranslateTolerance)
                     log::write(LogLevel::Warning, "mergeControlTrack: " + r.control + " differs from its layered motion by up to " +
                                                       std::to_string(r.rotateError) + " degrees and " + std::to_string(r.translateError) +
-                                                      " units between keys; add character keys where it matters");
-                out.push_back({{"control", r.control}, {"keys", r.keys}, {"rotateError", r.rotateError}, {"translateError", r.translateError}});
+                                                      " units with every frame keyed");
+                out.push_back({{"control", r.control},
+                               {"keys", r.keys},
+                               {"addedKeys", r.addedKeys},
+                               {"rotateError", r.rotateError},
+                               {"translateError", r.translateError}});
             }
             return out;
         },

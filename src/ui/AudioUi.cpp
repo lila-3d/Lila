@@ -275,7 +275,7 @@ void playbackStarted(double sceneTime, int dir, double speed)
     media::AudioEngine& e = media::AudioEngine::get();
     if (!e.ensureDevice())
         return;
-    media::prefetch(v, sceneTime);
+    media::prefetch(v, sceneTime, dir < 0 ? -1 : 1);
     e.setVoices(std::move(v));
     soundPlaying().speed = dir * speed;
     e.play(sceneTime, soundPlaying().speed);
@@ -297,8 +297,10 @@ double audioClock()
 
 void playbackJumped(double sceneTime)
 {
-    if (soundPlaying().speed != 0.0)
-        media::AudioEngine::get().play(sceneTime, soundPlaying().speed);
+    if (soundPlaying().speed == 0.0)
+        return;
+    media::prefetch(media::voices(Graph::current(), false), sceneTime, soundPlaying().speed < 0.0 ? -1 : 1);
+    media::AudioEngine::get().play(sceneTime, soundPlaying().speed);
 }
 
 void playbackAdvanced(double t0, double t1)

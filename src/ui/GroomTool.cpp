@@ -1112,7 +1112,7 @@ void registerLockHandles()
 }
 
 /** "widthScale" as "Width Scale". */
-QString displayName(const std::string& id)
+QString groomLabel(const std::string& id)
 {
     QString out;
     for (size_t i = 0; i < id.size(); ++i)
@@ -1166,7 +1166,7 @@ QWidget* styleFields(const std::string& groomPath, const std::string& node, groo
         }
         field->setToolTip(QString::fromStdString(p.doc));
         field->setEnabled(enabled);
-        form->addRow(displayName(p.name), field);
+        form->addRow(groomLabel(p.name), field);
     }
     return w;
 }
@@ -1228,7 +1228,7 @@ QWidget* lookFields(NodeId groom, const std::string& groomPath, const std::strin
         }
         field->setToolTip(QString::fromStdString(p.value("doc", std::string())));
         field->setEnabled(enabled);
-        form->addRow(displayName(name), field);
+        form->addRow(groomLabel(name), field);
     }
     return w;
 }
@@ -1326,7 +1326,7 @@ QWidget* stackPanel(NodeId id)
         const std::string node = style.node;
         auto* row = new QHBoxLayout;
         row->setSpacing(2);
-        auto* on = new QCheckBox(displayName(groom::styleName(style.kind)));
+        auto* on = new QCheckBox(groomLabel(groom::styleName(style.kind)));
         on->setChecked(style.enabled);
         on->setToolTip(QString::fromStdString(node) + ": on or off.");
         QObject::connect(on, &QCheckBox::toggled, on, [path, node](bool) { runUi("groomStack", {{"args", {path}}, {"edit", "toggle"}, {"node", node}}); });

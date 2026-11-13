@@ -352,55 +352,24 @@ Runtime::Runtime(Setup setup, const GaitLibrary& gaits, Generator* gen, std::str
     if (mSetup.groups.empty())
         mSetup.groups.push_back(Group{.name = "crowd", .behaviour = Behaviour::Stand});
 
-    // Gait cycles from the library's windows: each window's four poses in place, gaps between windows blended.
+    // Gait cycles as measured from the gait's foot strikes: in place already, the root's sideways sway kept, its surge dropped.
+    std::string uncycled;
     for (const Gait& g : gaits.gaits)
     {
-        Cycle c{.style = g.style, .speed = g.speed, .period = g.period};
-        const int n = std::max(8, int(std::lround(g.period * kRate)));
-        struct Keyed
+        if (g.cycle.empty())
         {
-            double phase;
-            Pose pose;
-        };
-        std::vector<Keyed> keys;
-        for (const GaitWindow& w : g.windows)
-            for (int k = 0; k < kPosesPerToken; ++k)
-            {
-                Pose p = w.poses[size_t(k)];
-                // In place: drop the forward travel within the window, keep sway and bob.
-                const glm::vec3 r0 = w.poses[0][0].p;
-                p[0].p.x -= r0.x;
-                p[0].p.z = 0.0f;
-                keys.push_back({std::fmod(w.phase + double(k) / (kRate * std::max(g.period, 0.1)), 1.0), std::move(p)});
-            }
-        if (keys.empty())
+            uncycled += (uncycled.empty() ? "" : ", ") + g.name;
             continue;
-        std::sort(keys.begin(), keys.end(), [](const Keyed& a, const Keyed& b) { return a.phase < b.phase; });
-        for (int f = 0; f < n; ++f)
-        {
-            const double ph = double(f) / double(n);
-            size_t hi = 0;
-            while (hi < keys.size() && keys[hi].phase < ph)
-                ++hi;
-            const Keyed& b = keys[hi % keys.size()];
-            const Keyed& a = keys[(hi + keys.size() - 1) % keys.size()];
-            double span = b.phase - a.phase;
-            if (span <= 0.0)
-                span += 1.0;
-            double off = ph - a.phase;
-            if (off < 0.0)
-                off += 1.0;
-            const float w = span > 1e-9 ? float(std::clamp(off / span, 0.0, 1.0)) : 0.0f;
-            Pose p = a.pose;
-            for (size_t j = 0; j < p.size(); ++j)
-            {
-                p[j].q = glm::normalize(glm::slerp(a.pose[j].q, b.pose[j].q, w));
-                p[j].p = glm::mix(a.pose[j].p, b.pose[j].p, w);
-            }
-            c.frames.push_back(std::move(p));
         }
+        // Played a frame per 30 Hz tick, so the period is the frame count's and the speed keeps the stride.
+        const double period = double(g.cycle.size()) / kRate;
+        Cycle c{.style = g.style, .speed = g.speed * g.period / period, .period = period, .frames = g.cycle};
+        for (Pose& p : c.frames)
+            p[0].p.z = 0.0f;
         mCycles.push_back(std::move(c));
     }
+    if (!uncycled.empty())
+        mStats.note += (mStats.note.empty() ? "" : "; ") + ("no gait cycle in the library for " + uncycled + ": far agents use the other gaits' cycles");
 }
 
 Runtime::~Runtime() = default;

@@ -3,6 +3,8 @@
 #include "motion/Character.h"
 #include "motion/Generate.h"
 
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
 
 using namespace lila::motion;
@@ -141,6 +143,69 @@ TEST_CASE("motion: the shipped gaits and spots load")
         CHECK(!sp.targets.empty());
         CHECK(sp.provenance.find("ACCAD") != std::string::npos);
     }
+}
+
+namespace
+{
+/** Largest joint turn (degrees) and root move (m) between two poses. */
+std::pair<double, double> step(const Pose& a, const Pose& b)
+{
+    double turn = 0.0;
+    for (size_t j = 0; j < a.size(); ++j)
+        turn = std::max(turn, double(glm::degrees(2.0f * std::acos(std::min(1.0f, std::abs(glm::dot(a[j].q, b[j].q)))))));
+    return {turn, double(glm::length(a[0].p - b[0].p))};
+}
+} // namespace
+
+TEST_CASE("motion: a cycle's length comes from one foot's strikes, past a missed one")
+{
+    CHECK(cycleFrames({.left = {10.0, 42.5, 74.5, 141.0}, .right = {26.0, 58.5}}) == doctest::Approx(97.0 / 3.0));
+    // One strike per foot measures no cycle.
+    CHECK(cycleFrames({.left = {10.0}, .right = {26.0}}) == 0.0);
+}
+
+TEST_CASE("motion: the shipped gaits carry seamless cycles measured from their foot strikes")
+{
+    const GaitLibrary& lib = GaitLibrary::shipped();
+    int whole = 0;
+    for (const Gait& g : lib.gaits)
+    {
+        INFO(g.name << " " << g.period << " s");
+        REQUIRE(!g.cycle.empty());
+        CHECK(int(g.cycle.size()) == int(std::lround(g.period * kSampleRate)));
+        CHECK(g.period > 0.5);
+        CHECK(g.period < 1.6);
+        whole += std::abs(g.period * kSampleRate - std::round(g.period * kSampleRate)) < 1e-6 ? 1 : 0;
+
+        // The step from the last pose back to the first is no bigger than the cycle's own steps.
+        double turn = 0.0, move = 0.0;
+        for (size_t f = 1; f < g.cycle.size(); ++f)
+        {
+            const auto [t, m] = step(g.cycle[f - 1], g.cycle[f]);
+            turn = std::max(turn, t);
+            move = std::max(move, m);
+        }
+        const auto [wrapTurn, wrapMove] = step(g.cycle.back(), g.cycle.front());
+        CHECK(wrapTurn <= turn * 1.25 + 0.5);
+        CHECK(wrapMove <= move * 1.25 + 0.005);
+        // In place: the root ends near where it starts.
+        CHECK(glm::length(glm::vec2(g.cycle.back()[0].p.x, g.cycle.back()[0].p.z)) < 0.1f);
+
+        // Played three times over, each foot comes down once a cycle: the loop steps, it doesn't slide.
+        std::vector<Pose> tiled;
+        for (int k = 0; k < 3; ++k)
+            tiled.insert(tiled.end(), g.cycle.begin(), g.cycle.end());
+        const FootStrikes s = footStrikes(tiled);
+        const double n = double(g.cycle.size());
+        CHECK(cycleFrames(s) == doctest::Approx(n).epsilon(0.03));
+        for (const std::vector<double>* foot : {&s.left, &s.right})
+        {
+            CHECK(foot->size() >= 2);
+            CHECK(foot->size() <= 3);
+        }
+    }
+    // Measured to the sub-frame, not rounded to whole frames.
+    CHECK(whole <= 1);
 }
 
 TEST_CASE("motion: a journey walks a path, performs a spot and stops")

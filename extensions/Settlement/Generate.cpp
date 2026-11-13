@@ -1767,9 +1767,10 @@ Layout build(const Site& site, const Ground& g, const Options& in, const WalkSur
         if (contains(l.outline.pts, site.attractors[k]))
         {
             const Vec2 to = freePoint(l, site.attractors[k], 0.5 * p.widthArterial);
-            std::vector<Vec2> path = route(l, g, p, l.center, to);
-            if (!path.empty())
-                l.graph.addPolyline(path, StreetClass::Arterial);
+            // The router may detour round an exclusion over ground outside the outline: only the inside is laid.
+            const std::vector<Vec2> path = route(l, g, p, l.center, to);
+            for (const std::vector<Vec2>& run : clipPolyline(path, l.outline, l.center, 0.0, 0.0, l.exclusions))
+                l.graph.addPolyline(run, StreetClass::Arterial);
         }
 
     prepareGenerators(l, g, o);
