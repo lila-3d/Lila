@@ -363,6 +363,16 @@ bool Server::hasTool(const std::string& name) const
     return m->tools.contains(name);
 }
 
+std::vector<Resource> Server::resources(std::string_view prefix) const
+{
+    std::scoped_lock lock(m->toolsMutex);
+    std::vector<Resource> out;
+    for (const auto& [uri, r] : m->resources)
+        if (uri.starts_with(prefix))
+            out.push_back(r);
+    return out;
+}
+
 void Server::addResource(Resource resource)
 {
     std::scoped_lock lock(m->toolsMutex);
