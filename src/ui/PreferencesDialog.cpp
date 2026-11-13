@@ -816,6 +816,8 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         }
         toggleField(viewport, "Temporal (smooths shading shimmer)", vd::kTaa, true);
         numberField(viewport, "Still frames averaged", vd::kAccumulate, 16.0, 1.0, 256.0, 1.0, 0);
+        sectionHeader(viewport, "Camera");
+        numberField(viewport, "Smoothing (0 off)", vd::kCameraSmoothing, 0.0, 0.0, 1.0, 0.05, 2);
         sectionHeader(viewport, "Frame Rate");
         intChoiceField(viewport, "Max frame rate", vd::kFrameCap,
                        {{"Display refresh", render::kFrameCapRefresh}, {"30", 30}, {"60", 60}, {"75", 75}, {"90", 90}, {"120", 120}, {"144", 144},

@@ -279,6 +279,20 @@ private:
     };
     std::optional<CameraEdit> mCameraEdit;
     QTimer* mWheelCommit = nullptr; // a run of wheel clicks on a camera node commits once it stops
+    /**
+     * Camera smoothing: the camera the view draws, easing toward mCamera at the display's refresh. mCamera stays what
+     * navigation, picking and tools use; only the picture lags.
+     */
+    Camera mShownCamera;
+    bool mShownValid = false;
+    QTimer* mEaseTimer = nullptr;
+    qint64 mEaseLastMs = 0;
+    /** mCamera, or the eased camera while smoothing is on. */
+    const Camera& shownCamera();
+    /** Starts easing when the drawn camera is behind mCamera. */
+    void startCameraEase();
+    /** One display frame of easing; stops once the drawn camera has caught up. */
+    void easeCamera();
     double mLockedWarnMs = 0.0;
     scene::isolation::Set mIsolation;
     void drawHud(OverlayPainter& p);

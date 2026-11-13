@@ -7,6 +7,13 @@
 #include "scene/Turntable.h"
 #include "scene/ViewState.h"
 #include "ui/CameraBookmarks.h"
+#include "ui/DroneCamera.h"
+#include "ui/ViewportDisplay.h"
+
+#include <QDateTime>
+#include <QGuiApplication>
+#include <QScreen>
+#include <QTimer>
 
 namespace lila::ui
 {
@@ -326,8 +333,93 @@ void ViewportWidget::leaveEvent(QEvent* e)
     QWidget::leaveEvent(e);
 }
 
+namespace
+{
+double cameraSmoothing() { return std::clamp(PrefStore::get().value<double>("general", viewportDisplay::kCameraSmoothing, 0.0), 0.0, 1.0); }
+
+/** The shortest turn from a to b, degrees. */
+double angleToward(double a, double b) { return std::remainder(b - a, 360.0); }
+} // namespace
+
+const Camera& ViewportWidget::shownCamera()
+{
+    // Off, flying (the drone eases itself), or a change no easing can bridge: the camera as it is.
+    if (cameraSmoothing() <= 0.0 || !mShownValid || drone::active(this) || mShownCamera.ortho != mCamera.ortho ||
+        mShownCamera.free != mCamera.free || mShownCamera.zUp != mCamera.zUp)
+        return mCamera;
+    return mShownCamera;
+}
+
+void ViewportWidget::startCameraEase()
+{
+    if (!mShownValid || mShownCamera.ortho != mCamera.ortho || mShownCamera.free != mCamera.free || mShownCamera.zUp != mCamera.zUp)
+    {
+        mShownCamera = mCamera;
+        mShownValid = true;
+        return;
+    }
+    const Camera& s = mShownCamera;
+    if (s.target == mCamera.target && s.distance == mCamera.distance && s.yaw == mCamera.yaw && s.pitch == mCamera.pitch &&
+        s.focalLength == mCamera.focalLength && s.orthoWidth == mCamera.orthoWidth)
+    {
+        mShownCamera = mCamera;
+        return;
+    }
+    if (!mEaseTimer)
+    {
+        mEaseTimer = new QTimer(this);
+        mEaseTimer->setTimerType(Qt::PreciseTimer);
+        connect(mEaseTimer, &QTimer::timeout, this, [this] { easeCamera(); });
+    }
+    if (mEaseTimer->isActive())
+        return;
+    const QScreen* screen = window() && window()->screen() ? window()->screen() : QGuiApplication::primaryScreen();
+    mEaseTimer->setInterval(std::max(2, int(1000.0 / std::max(screen ? screen->refreshRate() : 60.0, 30.0))));
+    mEaseLastMs = QDateTime::currentMSecsSinceEpoch();
+    mEaseTimer->start();
+}
+
+void ViewportWidget::easeCamera()
+{
+    const double smoothing = cameraSmoothing();
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const double dt = std::clamp(double(now - mEaseLastMs) / 1000.0, 0.0, 0.1);
+    mEaseLastMs = now;
+    Camera& s = mShownCamera;
+    const Camera& c = mCamera;
+    if (smoothing <= 0.0 || drone::active(this))
+    {
+        s = c;
+        mEaseTimer->stop();
+        return;
+    }
+    // Exponential approach: smoothing 1 closes 63% of the gap in 0.12 s.
+    const double k = 1.0 - std::exp(-dt / (smoothing * 0.12));
+    const Camera from = s;
+    s = c;
+    s.target = from.target + (c.target - from.target) * k;
+    s.distance = std::exp(std::log(std::max(from.distance, 1e-6)) + (std::log(std::max(c.distance, 1e-6)) - std::log(std::max(from.distance, 1e-6))) * k);
+    s.orthoWidth = std::exp(std::log(std::max(from.orthoWidth, 1e-6)) + (std::log(std::max(c.orthoWidth, 1e-6)) - std::log(std::max(from.orthoWidth, 1e-6))) * k);
+    s.yaw = from.yaw + angleToward(from.yaw, c.yaw) * k;
+    s.pitch = from.pitch + (c.pitch - from.pitch) * k;
+    s.focalLength = from.focalLength + (c.focalLength - from.focalLength) * k;
+    const bool settled = glm::length(s.target - c.target) < 1e-4 * std::max(c.distance, 1.0) && std::abs(std::log(s.distance / c.distance)) < 1e-4 &&
+                         std::abs(angleToward(s.yaw, c.yaw)) < 0.01 && std::abs(s.pitch - c.pitch) < 0.01 && std::abs(s.focalLength - c.focalLength) < 1e-3 &&
+                         std::abs(std::log(s.orthoWidth / c.orthoWidth)) < 1e-4;
+    if (settled)
+    {
+        s = c;
+        mEaseTimer->stop();
+    }
+    submit();
+}
+
 void ViewportWidget::requestFrame()
 {
+    if (cameraSmoothing() > 0.0)
+        startCameraEase();
+    else
+        mShownValid = false;
     if (mFrameQueued)
         return;
     mFrameQueued = true;
@@ -387,7 +479,7 @@ render::FrameState ViewportWidget::renderFrame(const RenderView& view)
 render::FrameState ViewportWidget::buildFrame(const RenderView* rv)
 {
     LILA_ZONE();
-    const Camera& camera = rv ? rv->camera : mCamera;
+    const Camera& camera = rv ? rv->camera : shownCamera();
     const double viewAspect = rv ? double(rv->width) / double(std::max(rv->height, 1)) : aspect();
     scene::Graph& g = scene::Graph::current();
     if (!rv && cameraBookmarks::activeView() == this)
