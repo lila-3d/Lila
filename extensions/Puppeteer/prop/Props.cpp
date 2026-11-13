@@ -38,7 +38,7 @@ namespace sp = lila::scene::spaces;
 
 namespace
 {
-const std::vector<std::string>& classIds()
+const std::vector<std::string>& presetIds()
 {
     static const std::vector<std::string> ids = [] {
         std::vector<std::string> v;
@@ -46,6 +46,29 @@ const std::vector<std::string>& classIds()
             v.push_back(p.id);
         return v;
     }();
+    return ids;
+}
+template <class E, class F> std::vector<std::string> idsOf(int count, F id)
+{
+    std::vector<std::string> v;
+    for (int i = 0; i < count; ++i)
+        v.push_back(id(E(i)));
+    return v;
+}
+const std::vector<std::string>& shapeIds()
+{
+    static const std::vector<std::string> ids = idsOf<Shape>(int(Shape::Count), [](Shape x) { return std::string(shapeId(x)); });
+    return ids;
+}
+const std::vector<std::string>& aimIds()
+{
+    static const std::vector<std::string> ids = idsOf<AimStyle>(4, [](AimStyle x) { return std::string(aimStyleId(x)); });
+    return ids;
+}
+const std::vector<std::string>& holsterIds()
+{
+    static const std::vector<std::string> ids =
+        idsOf<HolsterSpot>(int(HolsterSpot::Count), [](HolsterSpot x) { return std::string(holsterSpot(x).id); });
     return ids;
 }
 const std::vector<std::string>& roleIds()
@@ -126,13 +149,34 @@ std::optional<Prop> load(Graph& g, NodeId propNode)
     Prop p;
     p.node = propNode;
     p.root = g.parent(propNode);
-    p.cls = Class(std::clamp<int64_t>(intOf(g, propNode, "propClass"), 0, int64_t(Class::Count) - 1));
     p.rightHanded = intOf(g, propNode, "hand") == 0;
-    p.twoHanded = boolOf(g, propNode, "twoHanded");
+    Settings& s = p.settings;
+    s.twoHanded = boolOf(g, propNode, "twoHanded");
+    s.mainPose = strOf(g, propNode, "mainPose");
+    s.offPose = strOf(g, propNode, "offPose");
+    s.trigger = boolOf(g, propNode, "trigger");
+    s.aim = AimStyle(std::clamp<int64_t>(intOf(g, propNode, "aimStyle"), 0, 3));
+    s.drop = numOf(g, propNode, "aimDrop");
+    s.reach = numOf(g, propNode, "aimReach");
+    s.holster = HolsterSpot(std::clamp<int64_t>(intOf(g, propNode, "holsterSpot"), 0, int64_t(HolsterSpot::Count) - 1));
+    s.shape = Shape(std::clamp<int64_t>(intOf(g, propNode, "fitShape"), 0, int64_t(Shape::Count) - 1));
     for (NodeId c : g.children(propNode))
         if (Node* cn = g.node(c); cn && cn->type().isA(kPointType))
             p.points.push_back(c);
     return p;
+}
+
+void writeSettings(Graph& g, NodeId propNode, const Settings& s)
+{
+    setPlug(g, propNode, "twoHanded", s.twoHanded);
+    setPlug(g, propNode, "mainPose", s.mainPose);
+    setPlug(g, propNode, "offPose", s.offPose);
+    setPlug(g, propNode, "trigger", s.trigger);
+    setPlug(g, propNode, "aimStyle", int64_t(s.aim));
+    setPlug(g, propNode, "aimDrop", s.drop);
+    setPlug(g, propNode, "aimReach", s.reach);
+    setPlug(g, propNode, "holsterSpot", int64_t(s.holster));
+    setPlug(g, propNode, "fitShape", int64_t(s.shape));
 }
 
 std::vector<NodeId> props(Graph& g)
@@ -248,7 +292,8 @@ NodeId propGrapple(Graph& g, NodeId character, bool make)
 
 json propJson(Graph& g, const Prop& p)
 {
-    const Preset& pr = preset(p.cls);
+    const Settings& st = p.settings;
+    const Preset* pr = matchingPreset(st);
     json points = json::array();
     for (NodeId pt : p.points)
     {
@@ -270,10 +315,17 @@ json propJson(Graph& g, const Prop& p)
     const NodeId holder = holderNow(g, p);
     return {{"prop", g.path(p.node)},
             {"root", g.path(p.root)},
-            {"class", pr.id},
-            {"label", pr.label},
+            {"preset", pr ? json(pr->id) : json(nullptr)},
             {"hand", p.rightHanded ? "right" : "left"},
-            {"twoHanded", p.twoHanded},
+            {"twoHanded", st.twoHanded},
+            {"mainPose", st.mainPose},
+            {"offPose", st.offPose},
+            {"trigger", st.trigger},
+            {"aimStyle", aimStyleId(st.aim)},
+            {"aimDrop", st.drop},
+            {"aimReach", st.reach},
+            {"holsterSpot", holsterSpot(st.holster).id},
+            {"shape", shapeId(st.shape)},
             {"holster", strOf(g, p.node, "holster")},
             {"points", points},
             {"holds", holds},
@@ -284,18 +336,55 @@ json propJson(Graph& g, const Prop& p)
 
 namespace
 {
-std::vector<glm::dvec3> meshPointsIn(Graph& g, const Prop& p)
+/**
+ * The prop's mesh points in its root's space; with sampled, its faces too, about a centimetre apart, so a low-poly box
+ * reads by its shape and not by where its few corners happen to be.
+ */
+std::vector<glm::dvec3> meshPointsIn(Graph& g, const Prop& p, bool sampled = false)
 {
     std::vector<glm::dvec3> out;
     const glm::dmat4 toRoot = glm::inverse(worldOf(g, p.root));
+    struct Tri
+    {
+        glm::dvec3 a, b, c;
+    };
+    std::vector<Tri> tris;
+    double area = 0.0;
     for (NodeId m : propMeshes(g, p))
     {
         const MeshPtr mesh = std::get<MeshPtr>(g.value({m, g.node(m)->type().attrIndex("outMesh"), -1}));
         if (!mesh)
             continue;
         const glm::dmat4 xf = toRoot * worldOf(g, m);
+        auto at = [&](geo::Index i) { return glm::dvec3(xf * glm::dvec4(mesh->positions()[i], 1.0)); };
         for (const glm::dvec3& q : mesh->positions())
             out.push_back(glm::dvec3(xf * glm::dvec4(q, 1.0)));
+        for (geo::Index f = 0; f < mesh->numFaces(); ++f)
+        {
+            const std::vector<geo::Index> fp = mesh->facePoints(f);
+            for (size_t i = 1; i + 1 < fp.size(); ++i)
+            {
+                tris.push_back({at(fp[0]), at(fp[i]), at(fp[i + 1])});
+                area += 0.5 * glm::length(glm::cross(tris.back().b - tris.back().a, tris.back().c - tris.back().a));
+            }
+        }
+    }
+    if (!sampled)
+        return out;
+    // A centimetre apart, coarser on a big prop so the points stay under about 200k.
+    const double step = std::max(1.0, std::sqrt(area / 200000.0));
+    for (const Tri& t : tris)
+    {
+        const double edge = std::max({glm::length(t.b - t.a), glm::length(t.c - t.b), glm::length(t.a - t.c)});
+        const int n = std::min(400, int(std::ceil(edge / step)));
+        if (n < 2)
+            continue;
+        for (int i = 0; i <= n; ++i)
+            for (int j = 0; i + j <= n; ++j)
+            {
+                const double u = double(i) / n, v = double(j) / n;
+                out.push_back(t.a + (t.b - t.a) * u + (t.c - t.a) * v);
+            }
     }
     return out;
 }
@@ -303,8 +392,8 @@ std::vector<glm::dvec3> meshPointsIn(Graph& g, const Prop& p)
 /** A point's node name: after its prop, so points of several props read apart in the outliner and never take a mesh's name. */
 std::string pointName(Graph& g, const Prop& p, const std::string& name) { return g.node(p.root)->name() + "_" + name + "_point"; }
 
-/** Makes or moves a point under the prop node to frame (prop root space). */
-NodeId writePoint(Graph& g, const Prop& p, const PointDef& d, NodeId existing = kNoNode)
+/** Makes or moves a point under the prop node to frame (prop root space); fitted when Fit Points made it. */
+NodeId writePoint(Graph& g, const Prop& p, const PointDef& d, NodeId existing = kNoNode, bool fitted = true)
 {
     NodeId id = existing;
     if (!id)
@@ -314,6 +403,7 @@ NodeId writePoint(Graph& g, const Prop& p, const PointDef& d, NodeId existing = 
     }
     setPlug(g, id, "role", int64_t(d.role));
     setPlug(g, id, "radius", d.radius);
+    setPlug(g, id, "fitted", fitted);
     g.evaluate();
     // The prop node rides the root with no offset, so the point's world is the root's times its frame.
     const glm::dmat4 world = rigidOf(worldOf(g, p.root)) * d.frame;
@@ -324,26 +414,42 @@ NodeId writePoint(Graph& g, const Prop& p, const PointDef& d, NodeId existing = 
     return id;
 }
 
-json fitProp(Graph& g, Prop& p)
+/** Fits the prop's points, told what its settings say unless hints are given, and returns the fit. */
+Fit fitProp(Graph& g, Prop& p, std::optional<FitHints> given = std::nullopt)
 {
     g.evaluate();
     const glm::dvec3 upLocal = glm::normalize(glm::transpose(glm::dmat3(rigidOf(worldOf(g, p.root)))) * up());
-    const Fit fit = fitPoints(p.cls, meshPointsIn(g, p), upLocal);
-    // Refitting replaces the points the fit makes and keeps any the user added under other names.
+    FitHints hints = given ? *given : FitHints{p.settings.shape, p.settings.twoHanded};
+    // The shape is read from the whole surface; the points are placed from the mesh's own vertices.
+    if (hints.shape == Shape::Auto)
+        hints.shape = classify(meshPointsIn(g, p, true), upLocal);
+    const Fit fit = fitPoints(meshPointsIn(g, p), upLocal, hints);
+    // Refitting replaces the points an earlier fit made and keeps those added or moved by hand.
     std::map<std::string, NodeId> byName;
     for (NodeId pt : p.points)
         byName[g.node(pt)->name()] = pt;
+    std::set<NodeId> kept;
     for (const PointDef& d : fit.points)
     {
-        const std::string name = pointName(g, p, d.name);
-        const auto it = byName.find(name);
-        writePoint(g, p, d, it == byName.end() ? kNoNode : it->second);
+        const auto it = byName.find(pointName(g, p, d.name));
+        if (it != byName.end() && !boolOf(g, it->second, "fitted"))
+        {
+            kept.insert(it->second);
+            continue;
+        }
+        kept.insert(writePoint(g, p, d, it == byName.end() ? kNoNode : it->second));
     }
+    for (NodeId pt : p.points)
+        if (!kept.count(pt) && boolOf(g, pt, "fitted"))
+            g.deleteNode(pt);
+    g.evaluate();
     p = *load(g, p.node);
     if (fit.from != "mesh")
         log::write(LogLevel::Warning, "puppeteerPropFit: " + g.path(p.root) + ": " + fit.from);
-    return {{"from", fit.from}, {"length", fit.length}, {"points", fit.points.size()}};
+    return fit;
 }
+
+json fitJson(const Fit& fit) { return {{"from", fit.from}, {"length", fit.length}, {"points", fit.points.size()}, {"shape", shapeId(fit.shape)}}; }
 
 /** The prop named by a command's objects, else the selection, else the scene's only prop. */
 Prop propArg(Graph& g, const Args& a, const char* cmd)
@@ -771,25 +877,25 @@ json solveGrapple(Graph& g, NodeId grapple, const Args& a)
     return ops::execute("bakeGrapple", call);
 }
 
-const char* classFlagDoc()
+const char* presetFlagDoc()
 {
     static const std::string doc = [] {
-        std::string s = "The kind of prop:";
+        std::string s = "A preset that fills the prop's settings (hands, hand poses, aim, holster spot, how its shape is read):";
         for (const Preset& p : presets())
             s += std::string(" ") + p.id;
-        return s + ".";
+        return s + ". Default: none; a new prop takes its settings from its shape.";
     }();
     return doc.c_str();
 }
 
-Class classArg(const Args& a, const char* cmd, Class fallback)
+const Preset* presetArg(const Args& a, const char* cmd)
 {
-    if (!a.has("kind"))
-        return fallback;
-    const std::string id = a.get<std::string>("kind");
-    if (const std::optional<Class> c = classFromId(id))
-        return *c;
-    throw CommandError(std::format("{}: no class '{}'; one of {}", cmd, id, [] {
+    if (!a.has("preset"))
+        return nullptr;
+    const std::string id = a.get<std::string>("preset");
+    if (const Preset* p = presetFor(id))
+        return p;
+    throw CommandError(std::format("{}: no preset '{}'; one of {}", cmd, id, [] {
         std::string s;
         for (const Preset& p : presets())
             s += (s.empty() ? "" : ", ") + std::string(p.id);
@@ -841,7 +947,7 @@ NodeId holsterFor(Graph& g, const Prop& p, NodeId character, const char* cmd)
 {
     if (Node* h = named(g, strOf(g, p.node, "holster")); h && characterFor(g, h->id()) == character)
         return h->id();
-    const HolsterDefault& hd = preset(p.cls).holster;
+    const HolsterDefault& hd = holsterSpot(p.settings.holster);
     const NodeId joint = jointByNames(g, character, hd.joints);
     if (!joint)
         throw CommandError(std::format("{}: {} has no joint for a {} holster (looked for {})", cmd, g.node(character)->name(), hd.label, hd.joints.front()));
@@ -926,12 +1032,12 @@ json holdCmd(const Args& a)
     const char* cmd = "puppeteerPropHold";
     Prop p = propArg(g, a, cmd);
     const NodeId character = characterArg(g, a, p, cmd);
-    const Preset& pr = preset(p.cls);
+    const Settings& st = p.settings;
     const std::string handName = a.get<std::string>("hand", "main");
     if (handName != "main" && handName != "right" && handName != "left")
         throw CommandError(std::string(cmd) + ": hand is main, right or left");
     const bool right = handName == "main" ? p.rightHanded : handName == "right";
-    const int hands = int(a.get<int64_t>("hands", p.twoHanded ? 2 : 1));
+    const int hands = int(a.get<int64_t>("hands", st.twoHanded ? 2 : 1));
     if (hands != 1 && hands != 2)
         throw CommandError(std::string(cmd) + ": hands is 1 or 2");
     const HandRef main = needHand(g, character, right, cmd);
@@ -965,7 +1071,7 @@ json holdCmd(const Args& a)
     so.key = true;
     sp::switchSpace(g, p.root, space, so);
     const double settle = t + blend;
-    settleInto(g, p, mainPt, main.h.joint, gripOf(g, main.h, p, mainPt, pr.triggerFinger), t, blend);
+    settleInto(g, p, mainPt, main.h.joint, gripOf(g, main.h, p, mainPt, st.trigger), t, blend);
 
     // Contacts: the off hand on its grip, riding the main hand; every other contact of this prop lets go.
     NodeId offContact = kNoNode;
@@ -994,9 +1100,9 @@ json holdCmd(const Args& a)
         after.insert(off->h.joint);
     if (a.get<bool>("fingers", true))
     {
-        poseFingers(g, main.h, t, settle, pr.mainPose, true, pr.triggerFinger, &p);
+        poseFingers(g, main.h, t, settle, st.mainPose, true, st.trigger, &p);
         if (off)
-            poseFingers(g, off->h, t, settle, pr.offPose, false, false, nullptr);
+            poseFingers(g, off->h, t, settle, st.offPose, false, false, nullptr);
         for (NodeId j : before)
             if (!after.count(j))
                 if (const NodeId hn = hand::handFor(g, j))
@@ -1015,7 +1121,7 @@ json holdCmd(const Args& a)
     if (off && a.get<bool>("fingers", true) && a.get<bool>("solve", true))
     {
         at(g, settle);
-        wrapFingers(g, off->h, p, pr.offPose, false);
+        wrapFingers(g, off->h, p, st.offPose, false);
     }
     return out;
 }
@@ -1092,10 +1198,10 @@ json holsterCmd(const Args& a)
 
 // puppeteerPropAim ----------------------------------------------------------------------------------------------------
 
-AimStyle styleFor(const Preset& pr, const std::string& s, const char* cmd)
+AimStyle styleFor(AimStyle own, const std::string& s, const char* cmd)
 {
     if (s.empty() || s == "auto")
-        return pr.aim;
+        return own;
     for (AimStyle st : {AimStyle::Turn, AimStyle::Shoulder, AimStyle::Extend, AimStyle::Guard})
         if (s == aimStyleId(st))
             return st;
@@ -1108,7 +1214,7 @@ json aimCmd(const Args& a)
     const char* cmd = "puppeteerPropAim";
     Prop p = propArg(g, a, cmd);
     const NodeId character = characterArg(g, a, p, cmd);
-    const Preset& pr = preset(p.cls);
+    const Settings& st = p.settings;
     const KeepTime keep(g);
     const double t = a.has("time") ? a.get<double>("time") : g.time();
     const double blend = blendArg(a);
@@ -1139,7 +1245,7 @@ json aimCmd(const Args& a)
     const NodeId axis = p.point(g, Role::Muzzle) ? p.point(g, Role::Muzzle) : p.point(g, Role::Tip);
     if (!axis)
         throw CommandError(std::string(cmd) + ": " + g.node(p.root)->name() + " has no muzzle or tip point to aim");
-    const AimStyle style = styleFor(pr, a.get<std::string>("style", "auto"), cmd);
+    const AimStyle style = styleFor(st.aim, a.get<std::string>("style", "auto"), cmd);
     const NodeId hn = hand::handFor(g, holder);
     const std::optional<hand::Hand> h = hn ? hand::load(g, hn) : std::nullopt;
     NodeId anchor = kNoNode;
@@ -1172,13 +1278,13 @@ json aimCmd(const Args& a)
     setPlug(g, aim, "pivot", pivot ? g.path(pivot) : std::string());
     setPlug(g, aim, "anchor", anchor ? g.path(anchor) : std::string());
     setPlug(g, aim, "style", int64_t(anchor ? style : AimStyle::Turn));
-    setPlug(g, aim, "drop", style == AimStyle::Guard ? pr.drop : 0.0);
+    setPlug(g, aim, "drop", style == AimStyle::Guard ? st.drop : 0.0);
     if (anchor && (style == AimStyle::Extend || style == AimStyle::Guard))
     {
         double arm = 0.0;
         for (NodeId j = holder; j && j != anchor; j = g.parent(j))
             arm += glm::length(glm::dvec3(worldOf(g, j)[3]) - glm::dvec3(worldOf(g, g.parent(j))[3]));
-        setPlug(g, aim, "reach", pr.reach * arm);
+        setPlug(g, aim, "reach", st.reach * arm);
     }
     const double w = std::clamp(a.get<double>("weight", 1.0), 0.0, 1.0);
     rampWeight(g, aim, t, blend, w);
@@ -1350,17 +1456,31 @@ void registerTypes(ext::Context& ctx)
     NodeType prop{.name = kPropType,
                   .base = transform,
                   .dag = true,
-                  .doc = "Marks its parent as a prop or weapon: its class, which hand holds it, whether two do, and its grip, "
-                         "muzzle, tip and stock points (puppeteerPropPoint children). Made by puppeteerPropSetup.",
+                  .doc = "Marks its parent as a prop: any object a character holds (a weapon, a bottle, a chair leg). Its settings say "
+                         "which hand holds it, whether two do, the hand poses, how it aims and where it is put away; its points "
+                         "(puppeteerPropPoint children) say where hands take it and what aims. Made by puppeteerPropSetup.",
                   .icon = "sword",
                   .create = transform->create};
+    const uint32_t io = AttrInput | AttrStorable;
     prop.ownAttrs = {
-        {.name = "propClass", .type = PlugType::Enum, .defaultValue = int64_t(0), .flags = AttrInput | AttrStorable, .enumNames = classIds(),
-         .doc = "What kind of prop: sets the default grips, hand poses, two-hand hold, holster and aim."},
-        {.name = "hand", .type = PlugType::Enum, .defaultValue = int64_t(0), .flags = AttrInput | AttrStorable, .enumNames = {"right", "left"},
+        {.name = "hand", .type = PlugType::Enum, .defaultValue = int64_t(0), .flags = io, .enumNames = {"right", "left"},
          .doc = "The hand that holds it by default."},
-        {.name = "twoHanded", .type = PlugType::Bool, .defaultValue = false, .flags = AttrInput | AttrStorable, .doc = "Held in both hands by default."},
+        {.name = "twoHanded", .type = PlugType::Bool, .defaultValue = false, .flags = io, .doc = "Held in both hands by default."},
+        {.name = "mainPose", .type = PlugType::String, .defaultValue = std::string("grip"), .flags = io,
+         .doc = "The main hand's pose (a Hands panel pose) before its fingers wrap the prop."},
+        {.name = "offPose", .type = PlugType::String, .defaultValue = std::string("grip"), .flags = io, .doc = "The other hand's pose."},
+        {.name = "trigger", .type = PlugType::Bool, .defaultValue = false, .flags = io,
+         .doc = "The main hand's index finger stays posed instead of wrapping (on a trigger)."},
+        {.name = "aimStyle", .type = PlugType::Enum, .defaultValue = int64_t(0), .flags = io, .enumNames = aimIds(),
+         .doc = "How it aims: turn where it is, shoulder (the stock to the shoulder), extend (held out), guard (held out, dropped)."},
+        number("aimDrop", 0.0, "Guard aims: cm the grip sits below the line to the target."),
+        number("aimReach", 0.9, "Extend and guard aims: the share of the arm's length the grip is held out."),
+        {.name = "holsterSpot", .type = PlugType::Enum, .defaultValue = int64_t(HolsterSpot::Belt), .flags = io, .enumNames = holsterIds(),
+         .doc = "Where puppeteerPropHolster puts it away the first time (then the holster point it made)."},
+        {.name = "fitShape", .type = PlugType::Enum, .defaultValue = int64_t(0), .flags = io, .enumNames = shapeIds(),
+         .doc = "How Fit Points reads its shape: auto reads it from the mesh."},
         text("holster", "The point on the character it is put away at (made by puppeteerPropHolster)."),
+        text("events", "Its handoffs (holds, throws, plants, passes), as JSON, for the Props panel's track.", AttrHidden),
     };
     NodeType point{.name = kPointType,
                    .base = transform,
@@ -1370,9 +1490,11 @@ void registerTypes(ext::Context& ctx)
                    .icon = "point",
                    .create = transform->create};
     point.ownAttrs = {
-        {.name = "role", .type = PlugType::Enum, .defaultValue = int64_t(0), .flags = AttrInput | AttrStorable, .enumNames = roleIds(),
+        {.name = "role", .type = PlugType::Enum, .defaultValue = int64_t(0), .flags = io, .enumNames = roleIds(),
          .doc = "main, off and alt are grips; muzzle and tip are aimed; stock goes to the shoulder; holster holds a put-away prop."},
         number("radius", 1.6, "Grips: the handle's radius, cm, which sets how far the palm sits from it."),
+        {.name = "fitted", .type = PlugType::Bool, .defaultValue = false, .flags = io | AttrHidden,
+         .doc = "Made by Fit Points, which replaces it when it fits again; points added by hand are kept."},
     };
     for (NodeType* t : {&prop, &point})
     {
@@ -1382,10 +1504,73 @@ void registerTypes(ext::Context& ctx)
     }
 }
 
+/** Puts a point's world frame where the flags say: position, its +X (aim) and +Z (palm), each kept where not given. */
+void placePoint(Graph& g, NodeId point, const Args& a)
+{
+    g.evaluate();
+    const glm::dmat4 now = rigidOf(worldOf(g, point));
+    const glm::dvec3 x = a.has("aim") ? jsonVec(a.flags.at("aim")) : glm::dvec3(now[0]);
+    const glm::dvec3 z = a.has("palm") ? jsonVec(a.flags.at("palm")) : glm::dvec3(now[2]);
+    if (glm::length(x) < 1e-9 || glm::length(z) < 1e-9)
+        throw CommandError("puppeteerPropPoint: aim and palm need a length");
+    const glm::dmat4 frame = frameXZ(a.has("position") ? jsonVec(a.flags.at("position")) : glm::dvec3(now[3]), x, z);
+    if (a.has("aim") || a.has("palm"))
+    {
+        setWorldRotation(g, point, glm::dmat3(frame));
+        g.evaluate();
+    }
+    if (a.has("position"))
+    {
+        setWorldPosition(g, point, glm::dvec3(frame[3]));
+        g.evaluate();
+    }
+}
+
 json pointCmd(const Args& a)
 {
     Graph& g = Graph::current();
     const char* cmd = "puppeteerPropPoint";
+    // A point named: edit or remove it. A prop: add one.
+    NodeId edit = kNoNode;
+    for (const std::string& s : objectArgs(a))
+        if (Node& n = nodeNamed(g, s, cmd); n.type().isA(kPointType))
+            edit = n.id();
+    if (!edit && objectArgs(a).empty())
+        for (NodeId s : g.selection())
+            if (Node* n = g.node(s); n && n->type().isA(kPointType) && (a.has("remove") || !a.has("role")))
+                edit = s;
+    if (edit && roleOf(*g.node(edit)) == Role::Holster && !propFor(g, edit))
+        throw CommandError(std::string(cmd) + ": " + g.path(edit) + " is a holster; move it in the viewport, or give puppeteerPropHolster another");
+    if (edit)
+    {
+        const std::string path = g.path(edit);
+        if (a.get<bool>("remove", false))
+        {
+            g.deleteNode(edit);
+            g.evaluate();
+            return {{"removed", path}};
+        }
+        if (a.has("role"))
+        {
+            const std::optional<Role> role = roleFromId(a.get<std::string>("role"));
+            if (!role || *role == Role::Holster)
+                throw CommandError(std::string(cmd) + ": role is main, off, alt, muzzle, tip or stock");
+            setPlug(g, edit, "role", int64_t(*role));
+        }
+        if (a.has("radius"))
+            setPlug(g, edit, "radius", std::max(0.0, a.get<double>("radius")));
+        // Moved or turned by hand: Fit Points leaves it be.
+        if (a.has("position") || a.has("aim") || a.has("palm"))
+            setPlug(g, edit, "fitted", false);
+        placePoint(g, edit, a);
+        if (a.has("name"))
+            if (const NodeId pn = propFor(g, edit))
+                g.rename(edit, pointName(g, *load(g, pn), a.get<std::string>("name")));
+        return {{"point", g.path(edit)}, {"role", roleId(roleOf(*g.node(edit)))}, {"radius", numOf(g, edit, "radius")},
+                {"position", vecJson(glm::dvec3(worldOf(g, edit)[3]))}};
+    }
+    if (a.get<bool>("remove", false))
+        throw CommandError(std::string(cmd) + ": give the point to remove");
     Prop p = propArg(g, a, cmd);
     const std::string roleName = a.get<std::string>("role", "alt");
     const std::optional<Role> role = roleFromId(roleName);
@@ -1395,13 +1580,14 @@ json pointCmd(const Args& a)
     PointDef d;
     d.role = *role;
     d.name = a.get<std::string>("name", roleName);
-    d.radius = a.get<double>("radius", 1.6);
-    const NodeId like = p.point(g, *role == Role::Alt ? Role::Main : *role);
+    for (int n = 2; named(g, pointName(g, p, d.name)); ++n)
+        d.name = a.get<std::string>("name", roleName) + std::to_string(n);
+    const NodeId like = p.point(g, isGrip(*role) ? Role::Main : *role);
+    d.radius = a.get<double>("radius", like ? numOf(g, like, "radius") : 1.6);
     d.frame = like ? pointLocal(g, p, like) : glm::dmat4(1.0);
-    if (a.has("position"))
-        d.frame[3] = glm::dvec4(glm::dvec3(glm::inverse(rigidOf(worldOf(g, p.root))) * glm::dvec4(jsonVec(a.flags.at("position")), 1.0)), 1.0);
-    const NodeId id = writePoint(g, p, d);
-    return {{"point", g.path(id)}, {"role", roleId(*role)}};
+    const NodeId id = writePoint(g, p, d, kNoNode, false);
+    placePoint(g, id, a);
+    return {{"point", g.path(id)}, {"role", roleId(*role)}, {"radius", numOf(g, id, "radius")}, {"position", vecJson(glm::dvec3(worldOf(g, id)[3]))}};
 }
 
 void registerCommands(ext::Context& ctx)
@@ -1409,21 +1595,25 @@ void registerCommands(ext::Context& ctx)
     using T = ArgType;
     ctx.registerCommand({
         .name = "puppeteerPropSetup",
-        .doc = "Marks a mesh or group as a prop or weapon of a class and fits its points to the mesh: grips (main, off, "
-               "alternates), the muzzle or tip that aims, and the stock. Points are transforms under the prop; move and turn them "
-               "in the viewport. Already a prop: changes its class or hand and fits again. Returns the prop.",
+        .doc = "Makes a mesh or group a prop (any object a character holds) and fits its points to its shape: grips (main, off, "
+               "alternates), the tip or muzzle that aims, the stock, whatever the shape has. Its settings (hands, hand poses, aim, "
+               "holster spot) come from what the shape reads as, or from a preset. Points are transforms under the prop: move and "
+               "turn them in the viewport, add or remove them with puppeteerPropPoint. Already a prop: a preset fills its settings "
+               "and fits again. Returns the prop.",
         .positionalDoc = "mesh or group (default the selection)",
         .flags = {
-            {"kind", "k", T::String, nullptr, classFlagDoc(), classIds()},
+            {"preset", "pr", T::String, nullptr, presetFlagDoc(), presetIds()},
             {"hand", "hd", T::String, nullptr, "right or left: the hand that holds it by default.", {"right", "left"}},
-            {"twoHanded", "th", T::Bool, nullptr, "Held in both hands by default. Default by class."},
+            {"twoHanded", "th", T::Bool, nullptr, "Held in both hands by default. Default: by preset or shape."},
             {"fit", "ft", T::Bool, true, "Fit the points to the mesh."},
         },
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
+            const char* cmd = "puppeteerPropSetup";
+            const Preset* preset = presetArg(a, cmd);
             std::vector<NodeId> roots;
             for (const std::string& s : objectArgs(a))
-                roots.push_back(nodeNamed(g, s, "puppeteerPropSetup").id());
+                roots.push_back(nodeNamed(g, s, cmd).id());
             if (roots.empty())
                 for (NodeId s : g.selection())
                     if (!propFor(g, s) || std::find(roots.begin(), roots.end(), s) == roots.end())
@@ -1434,8 +1624,6 @@ void registerCommands(ext::Context& ctx)
             for (NodeId r : roots)
             {
                 NodeId pn = propFor(g, r);
-                if (pn && g.parent(pn) != r && g.node(r)->type().isA(kPointType))
-                    r = g.parent(pn);
                 if (pn && g.parent(pn) != r)
                     r = g.parent(pn);
                 if (characterFor(g, r) && !pn)
@@ -1445,53 +1633,89 @@ void registerCommands(ext::Context& ctx)
                 const bool made = !pn;
                 if (made)
                     pn = g.createNode(*types::find(kPropType), g.node(r)->name() + "_prop", r)->id();
-                const Class cls = classArg(a, "puppeteerPropSetup", made ? Class::Generic : load(g, pn)->cls);
-                const Preset& pr = preset(cls);
-                const bool classChanged = made || a.has("kind");
-                setPlug(g, pn, "propClass", int64_t(cls));
                 if (a.has("hand"))
                     setPlug(g, pn, "hand", int64_t(a.get<std::string>("hand") == "left" ? 1 : 0));
-                if (a.has("twoHanded"))
-                    setPlug(g, pn, "twoHanded", a.get<bool>("twoHanded"));
-                else if (classChanged)
-                    setPlug(g, pn, "twoHanded", pr.twoHanded);
                 Prop p = *load(g, pn);
-                json fitted = nullptr;
-                if (a.get<bool>("fit", true) && (classChanged || p.points.empty()))
-                    fitted = fitProp(g, p);
+                std::optional<Fit> fitted;
+                if (preset)
+                {
+                    Settings s = preset->settings;
+                    if (a.has("twoHanded"))
+                        s.twoHanded = a.get<bool>("twoHanded");
+                    writeSettings(g, pn, s);
+                    p = *load(g, pn);
+                    if (a.get<bool>("fit", true))
+                        fitted = fitProp(g, p);
+                }
+                else if (made || p.points.empty())
+                {
+                    // Read from the shape: the fit says what it is, and the settings follow from that.
+                    std::optional<bool> two;
+                    if (a.has("twoHanded"))
+                        two = a.get<bool>("twoHanded");
+                    if (a.get<bool>("fit", true))
+                    {
+                        fitted = fitProp(g, p, FitHints{Shape::Auto, two});
+                        Settings s = fitted->suggested;
+                        if (two)
+                            s.twoHanded = *two;
+                        writeSettings(g, pn, s);
+                    }
+                    else if (two)
+                        setPlug(g, pn, "twoHanded", *two);
+                }
+                else if (a.has("twoHanded"))
+                    setPlug(g, pn, "twoHanded", a.get<bool>("twoHanded"));
+                p = *load(g, pn);
                 json j = propJson(g, p);
-                j["fit"] = fitted;
+                j["fit"] = fitted ? fitJson(*fitted) : json(nullptr);
                 out.push_back(j);
             }
             g.evaluate();
             return out.size() == 1 ? out.front() : out;
         },
-        .examples = {"puppeteerPropSetup(\"rifle\", kind=\"rifle\")", "puppeteerPropSetup(\"sword\", kind=\"sword2h\")"},
+        .examples = {"puppeteerPropSetup(\"bottle\")", "puppeteerPropSetup(\"rifle\", preset=\"rifle\")", "puppeteerPropSetup(\"sword\", preset=\"sword2h\")"},
     });
 
     ctx.registerCommand({
         .name = "puppeteerPropFit",
-        .doc = "Fits a prop's points to its mesh again by its class (points the fit doesn't make are kept). Returns how they were found.",
+        .doc = "Fits a prop's points to its shape again, read as its fitShape setting says (points added or moved by hand are "
+               "kept). Returns how they were found and the shape they were placed for.",
         .positionalDoc = "prop (default the selection)",
+        .flags = {{"shape", "sh", T::String, nullptr, "Read the shape as this instead (and keep it as the prop's setting).", shapeIds()}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             Prop p = propArg(g, a, "puppeteerPropFit");
-            json out = fitProp(g, p);
-            out["prop"] = propJson(g, p);
+            if (a.has("shape"))
+            {
+                const std::optional<Shape> sh = shapeFromId(a.get<std::string>("shape"));
+                if (!sh)
+                    throw CommandError("puppeteerPropFit: shape is one of auto, blade, haft, pole, firearm, tube, plate, bow, other");
+                setPlug(g, p.node, "fitShape", int64_t(*sh));
+                p = *load(g, p.node);
+            }
+            json out = fitJson(fitProp(g, p));
+            out["prop"] = propJson(g, *load(g, p.node));
             return out;
         },
     });
 
     ctx.registerCommand({
         .name = "puppeteerPropPoint",
-        .doc = "Adds a point to a prop: another grip (alt), or a muzzle, tip or stock. It starts on the point of that role, or "
-               "the main grip, or at position. Returns the point.",
-        .positionalDoc = "prop (default the selection)",
-        .flags = {{"role", "r", T::String, "alt", "main, off, alt, muzzle, tip or stock.", {"main", "off", "alt", "muzzle", "tip", "stock"}},
+        .doc = "Adds, moves or removes a prop's point. Given a prop: adds a point (another grip, a muzzle, tip or stock), starting "
+               "on the point of that role or the main grip, at position if given. Given a point: moves it to position, turns its "
+               "+X to aim and its +Z (a grip's palm side) to palm, changes its role, radius or name; remove=True deletes it. "
+               "Returns the point.",
+        .positionalDoc = "prop, or one of its points (default the selection)",
+        .flags = {{"role", "r", T::String, nullptr, "main, off, alt, muzzle, tip or stock. Adding: default alt.", {"main", "off", "alt", "muzzle", "tip", "stock"}},
                   {"name", "n", T::String, nullptr, "Name (after the prop's). Default: the role."},
                   {"position", "p", T::Vec3, nullptr, "World point to put it at."},
-                  {"radius", "rd", T::Float, 1.6, "Grips: the handle's radius, cm.", {}, {}, 0.0}},
+                  {"aim", "am", T::Vec3, nullptr, "World direction of its +X: along a grip's handle toward the thumb, or what a tip aims."},
+                  {"palm", "pm", T::Vec3, nullptr, "World direction of its +Z: the way a hand's palm faces on a grip."},
+                  {"radius", "rd", T::Float, nullptr, "Grips: the handle's radius, cm.", {}, {}, 0.0},
+                  {"remove", "rm", T::Bool, false, "Delete the point."}},
         .run = pointCmd,
+        .examples = {"puppeteerPropPoint(\"guitar\", role=\"off\", position=(10, 120, 30))", "puppeteerPropPoint(\"guitar_off_point\", remove=True)"},
     });
 
     ctx.registerCommand({
@@ -1591,14 +1815,19 @@ void registerCommands(ext::Context& ctx)
     });
 
     ctx.registerCommand({
-        .name = "puppeteerPropClasses",
-        .doc = "The prop classes and what each sets: id, label, two-handed, hand poses, aim style and holster spot.",
+        .name = "puppeteerPropPresets",
+        .doc = "The prop presets and the settings each fills: id, label, two-handed, hand poses, trigger, aim style, drop, reach, "
+               "holster spot and how the shape is read.",
         .undoable = false,
         .run = [](const Args&) -> json {
             json out = json::array();
             for (const Preset& p : presets())
-                out.push_back({{"id", p.id}, {"label", p.label}, {"icon", p.icon}, {"twoHanded", p.twoHanded}, {"mainPose", p.mainPose},
-                               {"offPose", p.offPose}, {"aim", aimStyleId(p.aim)}, {"holster", p.holster.label}});
+            {
+                const Settings& s = p.settings;
+                out.push_back({{"id", p.id},           {"label", p.label},     {"icon", p.icon},        {"twoHanded", s.twoHanded},
+                               {"mainPose", s.mainPose}, {"offPose", s.offPose}, {"trigger", s.trigger}, {"aimStyle", aimStyleId(s.aim)},
+                               {"aimDrop", s.drop},    {"aimReach", s.reach},  {"holsterSpot", holsterSpot(s.holster).id}, {"shape", shapeId(s.shape)}});
+            }
             return out;
         },
     });

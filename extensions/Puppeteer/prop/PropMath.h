@@ -1,6 +1,7 @@
 #pragma once
 
-// Props and weapons, the maths: classes and their presets, fitting grip points to a mesh, and where a hand's grip sits.
+// Props and weapons, the maths: per-prop settings and the presets that fill them, reading a prop's shape, fitting
+// grip points to it, and where a hand's grip sits.
 // Pure: no scene, so tests and any thread can use it.
 
 #include <glm/glm.hpp>
@@ -15,23 +16,6 @@
 
 namespace puppeteer::prop
 {
-enum class Class : int
-{
-    Generic,
-    Sword1h,
-    Sword2h,
-    Dagger,
-    Axe,
-    Spear,
-    Shield,
-    Bow,
-    Pistol,
-    Rifle,
-    Shotgun,
-    Launcher,
-    Count,
-};
-
 /** What a point on a prop is for. Grip points (main, off, alt) are where hands go. */
 enum class Role : int
 {
@@ -45,20 +29,22 @@ enum class Role : int
     Count,
 };
 
-/** How a class's shape is read when fitting points. */
-enum class Shape
+/** How a prop's shape is read when fitting points; Auto reads it from the points themselves. */
+enum class Shape : int
 {
+    Auto,
     Blade,   // long, handle at one end below a guard
-    Haft,    // long, a heavy head at one end (axes, hammers)
-    Pole,    // long and even (spears, staffs)
+    Haft,    // long, a wider head or body at one end (axes, hammers, bottles, guitars)
+    Pole,    // long and even (spears, staffs, chair legs)
     Firearm, // a barrel with a grip below it
     Tube,    // a launcher: a tube with grips below
-    Plate,   // a shield
-    Bow,
-    Any,
+    Plate,   // flat and broad (shields, trays, boards)
+    Bow,     // a bent limb, held in the middle
+    Other,   // anything else: the narrower end is the handle
+    Count,
 };
 
-enum class AimStyle
+enum class AimStyle : int
 {
     Turn,
     Shoulder,
@@ -66,7 +52,19 @@ enum class AimStyle
     Guard,
 };
 
-/** Where a class's prop is put away on a character: a joint by name (first found) and the grip's frame there. */
+/** Where a prop is put away on a character when it has no holster point yet. */
+enum class HolsterSpot : int
+{
+    Back,
+    HipLeft,
+    HipRight,
+    ThighRight,
+    ThighLeft,
+    Belt,
+    Count,
+};
+
+/** A holster spot: a joint by name (first found) and the grip's frame there. */
 struct HolsterDefault
 {
     std::vector<std::string> joints;
@@ -74,69 +72,97 @@ struct HolsterDefault
     glm::dvec3 offset{0.0};
     /** The grip's +X (handle toward the thumb) and +Z (palm side) in the character's frame. */
     glm::dvec3 x{0.0, 1.0, 0.0}, z{0.0, 0.0, 1.0};
-    const char* label = "Hip";
+    const char* id = "belt";
+    const char* label = "Belt";
 };
 
-struct Preset
+inline const HolsterDefault& holsterSpot(HolsterSpot s)
 {
-    Class cls = Class::Generic;
-    const char* id = "generic";
-    const char* label = "Generic";
-    const char* icon = "box";
-    Shape shape = Shape::Any;
+    static const std::array<HolsterDefault, size_t(HolsterSpot::Count)> all = {{
+        {{"spine_05", "spine_04", "spine_03", "spine_02", "chest", "spine"}, {0.0, 4.0, -16.0}, glm::normalize(glm::dvec3(-0.55, -0.83, 0.0)), {0.0, 0.0, -1.0}, "back", "Back"},
+        {{"pelvis", "hips", "hip"}, {14.0, -2.0, 2.0}, glm::normalize(glm::dvec3(0.25, -0.95, 0.3)), {1.0, 0.0, 0.0}, "hipLeft", "Left hip"},
+        {{"pelvis", "hips", "hip"}, {-14.0, -2.0, 2.0}, glm::normalize(glm::dvec3(-0.25, -0.95, 0.3)), {-1.0, 0.0, 0.0}, "hipRight", "Right hip"},
+        {{"thigh_r", "rightupleg", "upleg_r", "pelvis", "hips"}, {-9.0, -10.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}, "thighRight", "Right thigh"},
+        {{"thigh_l", "leftupleg", "upleg_l", "pelvis", "hips"}, {9.0, -10.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}, "thighLeft", "Left thigh"},
+        {{"pelvis", "hips", "hip"}, {0.0, 0.0, -14.0}, {1.0, 0.0, 0.0}, {0.0, 0.0, -1.0}, "belt", "Belt"},
+    }};
+    return all[size_t(std::clamp(int(s), 0, int(HolsterSpot::Count) - 1))];
+}
+
+/** How a prop is held, aimed and put away: per prop, filled by a preset or by what its fit found. */
+struct Settings
+{
     bool twoHanded = false;
     /** Hand poses (Hands panel names) for the main and off hand. */
-    const char* mainPose = "grip";
-    const char* offPose = "grip";
-    /** Fingers the main hand's grip leaves posed rather than wrapping (the trigger finger). */
-    bool triggerFinger = false;
+    std::string mainPose = "grip", offPose = "grip";
+    /** The main hand's index finger stays posed rather than wrapping (on the trigger). */
+    bool trigger = false;
     AimStyle aim = AimStyle::Turn;
     /** Guard: cm below the line to the target. Extend and Guard: share of the arm the grip is held out. */
     double drop = 0.0, reach = 0.9;
-    HolsterDefault holster;
+    HolsterSpot holster = HolsterSpot::Belt;
+    /** How Fit Points reads the shape. */
+    Shape shape = Shape::Auto;
+    bool operator==(const Settings&) const = default;
 };
 
-inline const std::array<Preset, size_t(Class::Count)>& presets()
+/** A one-click set of settings for a kind of prop. */
+struct Preset
 {
-    static const HolsterDefault kBack{{"spine_05", "spine_04", "spine_03", "spine_02", "chest", "spine"}, {0.0, 4.0, -16.0}, glm::normalize(glm::dvec3(-0.55, -0.83, 0.0)), {0.0, 0.0, -1.0}, "Back"};
-    static const HolsterDefault kHipLeft{{"pelvis", "hips", "hip"}, {14.0, -2.0, 2.0}, glm::normalize(glm::dvec3(0.25, -0.95, 0.3)), {1.0, 0.0, 0.0}, "Left hip"};
-    static const HolsterDefault kThighRight{{"thigh_r", "rightupleg", "upleg_r", "pelvis", "hips"}, {-9.0, -10.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}, "Right thigh"};
-    static const HolsterDefault kBelt{{"pelvis", "hips", "hip"}, {0.0, 0.0, -14.0}, {1.0, 0.0, 0.0}, {0.0, 0.0, -1.0}, "Belt"};
-    static const std::array<Preset, size_t(Class::Count)> all = {{
-        {Class::Generic, "generic", "Generic", "box", Shape::Any, false, "grip", "grip", false, AimStyle::Turn, 0.0, 0.9, kBelt},
-        {Class::Sword1h, "sword1h", "Sword", "sword", Shape::Blade, false, "grip", "grip", false, AimStyle::Guard, 12.0, 0.6, kHipLeft},
-        {Class::Sword2h, "sword2h", "Greatsword", "swords", Shape::Blade, true, "grip", "grip", false, AimStyle::Guard, 18.0, 0.55, kBack},
-        {Class::Dagger, "dagger", "Dagger", "cut", Shape::Blade, false, "grip", "grip", false, AimStyle::Guard, 8.0, 0.6, kThighRight},
-        {Class::Axe, "axe", "Axe / Hammer", "axe", Shape::Haft, false, "grip", "grip", false, AimStyle::Guard, 10.0, 0.6, kHipLeft},
-        {Class::Spear, "spear", "Spear / Staff", "wand", Shape::Pole, true, "grip", "grip", false, AimStyle::Guard, 6.0, 0.6, kBack},
-        {Class::Shield, "shield", "Shield", "shield", Shape::Plate, false, "grip", "grip", false, AimStyle::Guard, 0.0, 0.45, kBack},
-        {Class::Bow, "bow", "Bow", "bow", Shape::Bow, true, "grip", "hook", false, AimStyle::Extend, 0.0, 0.95, kBack},
-        {Class::Pistol, "pistol", "Pistol", "target", Shape::Firearm, false, "trigger", "grip", true, AimStyle::Extend, 0.0, 0.9, kThighRight},
-        {Class::Rifle, "rifle", "Rifle", "crosshair", Shape::Firearm, true, "trigger", "grip", true, AimStyle::Shoulder, 0.0, 0.9, kBack},
-        {Class::Shotgun, "shotgun", "Shotgun", "crosshair", Shape::Firearm, true, "trigger", "grip", true, AimStyle::Shoulder, 0.0, 0.9, kBack},
-        {Class::Launcher, "launcher", "Launcher", "rocket", Shape::Tube, true, "trigger", "grip", true, AimStyle::Shoulder, 0.0, 0.9, kBack},
-    }};
+    const char* id;
+    const char* label;
+    const char* icon;
+    Settings settings;
+};
+
+inline const std::vector<Preset>& presets()
+{
+    using A = AimStyle;
+    using H = HolsterSpot;
+    using S = Shape;
+    static const std::vector<Preset> all = {
+        {"sword1h", "Sword", "sword", {false, "grip", "grip", false, A::Guard, 12.0, 0.6, H::HipLeft, S::Blade}},
+        {"sword2h", "Greatsword", "swords", {true, "grip", "grip", false, A::Guard, 18.0, 0.55, H::Back, S::Blade}},
+        {"dagger", "Dagger", "cut", {false, "grip", "grip", false, A::Guard, 8.0, 0.6, H::ThighRight, S::Blade}},
+        {"axe", "Axe / Hammer", "axe", {false, "grip", "grip", false, A::Guard, 10.0, 0.6, H::HipLeft, S::Haft}},
+        {"spear", "Spear / Staff", "wand", {true, "grip", "grip", false, A::Guard, 6.0, 0.6, H::Back, S::Pole}},
+        {"shield", "Shield", "shield", {false, "grip", "grip", false, A::Guard, 0.0, 0.45, H::Back, S::Plate}},
+        {"bow", "Bow", "bow", {true, "grip", "hook", false, A::Extend, 0.0, 0.95, H::Back, S::Bow}},
+        {"pistol", "Pistol", "target", {false, "trigger", "grip", true, A::Extend, 0.0, 0.9, H::ThighRight, S::Firearm}},
+        {"rifle", "Rifle", "crosshair", {true, "trigger", "grip", true, A::Shoulder, 0.0, 0.9, H::Back, S::Firearm}},
+        {"shotgun", "Shotgun", "crosshair", {true, "trigger", "grip", true, A::Shoulder, 0.0, 0.9, H::Back, S::Firearm}},
+        {"launcher", "Launcher", "rocket", {true, "trigger", "grip", true, A::Shoulder, 0.0, 0.9, H::Back, S::Tube}},
+        {"generic", "Generic", "box", {false, "grip", "grip", false, A::Turn, 0.0, 0.9, H::Belt, S::Auto}},
+    };
     return all;
 }
 
-inline const Preset& preset(Class c) { return presets()[size_t(std::clamp(int(c), 0, int(Class::Count) - 1))]; }
+/** A preset by id or by a common name people and other tools use; null when none. */
+inline const Preset* presetFor(const std::string& id)
+{
+    static const std::pair<const char*, const char*> kAlias[] = {
+        {"sword", "sword1h"},  {"longsword", "sword2h"}, {"greatsword", "sword2h"}, {"knife", "dagger"},  {"hammer", "axe"},
+        {"mace", "axe"},       {"staff", "spear"},       {"polearm", "spear"},      {"gun", "pistol"},    {"handgun", "pistol"},
+        {"smg", "rifle"},      {"carbine", "rifle"},     {"bazooka", "launcher"},   {"rpg", "launcher"}, {"rocket", "launcher"},
+        {"crossbow", "rifle"},
+    };
+    std::string want = id;
+    for (const auto& [name, to] : kAlias)
+        if (id == name)
+            want = to;
+    for (const Preset& p : presets())
+        if (want == p.id)
+            return &p;
+    return nullptr;
+}
 
-inline std::optional<Class> classFromId(const std::string& id)
+/** The preset whose settings the prop's match exactly, else null. */
+inline const Preset* matchingPreset(const Settings& s)
 {
     for (const Preset& p : presets())
-        if (id == p.id)
-            return p.cls;
-    // Common names other tools and people use.
-    static const std::pair<const char*, Class> kAlias[] = {
-        {"sword", Class::Sword1h},  {"longsword", Class::Sword2h}, {"greatsword", Class::Sword2h}, {"knife", Class::Dagger},
-        {"hammer", Class::Axe},     {"mace", Class::Axe},          {"staff", Class::Spear},        {"polearm", Class::Spear},
-        {"gun", Class::Pistol},     {"handgun", Class::Pistol},    {"smg", Class::Rifle},          {"carbine", Class::Rifle},
-        {"bazooka", Class::Launcher}, {"rpg", Class::Launcher},    {"rocket", Class::Launcher},    {"crossbow", Class::Rifle},
-    };
-    for (const auto& [name, c] : kAlias)
-        if (id == name)
-            return c;
-    return std::nullopt;
+        if (p.settings == s)
+            return &p;
+    return nullptr;
 }
 
 inline const char* roleId(Role r)
@@ -156,7 +182,35 @@ inline bool isGrip(Role r) { return r == Role::Main || r == Role::Off || r == Ro
 inline const char* aimStyleId(AimStyle s)
 {
     static const char* kIds[] = {"turn", "shoulder", "extend", "guard"};
-    return kIds[int(s)];
+    return kIds[std::clamp(int(s), 0, 3)];
+}
+inline std::optional<AimStyle> aimStyleFromId(const std::string& s)
+{
+    for (int i = 0; i < 4; ++i)
+        if (s == aimStyleId(AimStyle(i)))
+            return AimStyle(i);
+    return std::nullopt;
+}
+
+inline const char* shapeId(Shape s)
+{
+    static const char* kIds[] = {"auto", "blade", "haft", "pole", "firearm", "tube", "plate", "bow", "other"};
+    return kIds[std::clamp(int(s), 0, int(Shape::Count) - 1)];
+}
+inline std::optional<Shape> shapeFromId(const std::string& s)
+{
+    for (int i = 0; i < int(Shape::Count); ++i)
+        if (s == shapeId(Shape(i)))
+            return Shape(i);
+    return std::nullopt;
+}
+
+inline std::optional<HolsterSpot> holsterSpotFromId(const std::string& s)
+{
+    for (int i = 0; i < int(HolsterSpot::Count); ++i)
+        if (s == holsterSpot(HolsterSpot(i)).id)
+            return HolsterSpot(i);
+    return std::nullopt;
 }
 
 // Frames -----------------------------------------------------------------------------------------------------------
@@ -266,6 +320,18 @@ struct Fit
     /** The long axis and its length, for reports. */
     glm::dvec3 axis{1.0, 0.0, 0.0};
     double length = 0.0;
+    /** The shape the points were placed for: the one asked for, or the one read from the points. */
+    Shape shape = Shape::Other;
+    /** How a prop of this shape and size is held, aimed and put away; its shape setting left at Auto. */
+    Settings suggested;
+};
+
+/** What a fit may be told rather than read from the points. */
+struct FitHints
+{
+    Shape shape = Shape::Auto;
+    /** Whether a second grip is an off hand's (else an alternate) where the shape could go either way. */
+    std::optional<bool> twoHanded;
 };
 
 namespace detail
@@ -408,18 +474,261 @@ inline glm::dvec3 centreAt(const Slices& s, double f)
 }
 } // namespace detail
 
+namespace detail
+{
+/** The points' mean and principal axes, longest first, and their extents along those axes. */
+struct Frame
+{
+    glm::dvec3 centre{0.0};
+    std::array<glm::dvec3, 3> axes{};
+    glm::dvec3 extent{0.0};
+};
+
+inline Frame frameOf(const std::vector<glm::dvec3>& pts)
+{
+    Frame f;
+    for (const glm::dvec3& p : pts)
+        f.centre += p;
+    f.centre /= double(std::max<size_t>(pts.size(), 1));
+    glm::dmat3 cov(0.0);
+    for (const glm::dvec3& p : pts)
+    {
+        const glm::dvec3 d = p - f.centre;
+        cov += glm::outerProduct(d, d);
+    }
+    cov /= double(std::max<size_t>(pts.size(), 1));
+    f.axes = principalAxes(cov);
+    for (int k = 0; k < 3; ++k)
+    {
+        double lo = 1e300, hi = -1e300;
+        for (const glm::dvec3& p : pts)
+        {
+            const double v = glm::dot(p - f.centre, f.axes[size_t(k)]);
+            lo = std::min(lo, v);
+            hi = std::max(hi, v);
+        }
+        f.extent[k] = hi - lo;
+    }
+    return f;
+}
+
 /**
- * Grip points for a prop of a class, fitted to its mesh points (in the prop root's space): the long axis by principal
- * components, which end is the handle by the cross-section along it (a guard, a head, a grip below a barrel), and the
- * grips, muzzle or tip, and stock where the class puts them. up is the world's up in the prop root's space, which
- * breaks ties for shapes that don't tell (a plain tube). Always gives points; `from` says how they were placed.
+ * Whether the points read as a firearm along `along` with its grip hanging toward `down`: a body along the top that runs
+ * the whole length, and below it something narrower hanging clear of both ends (a grip, a magazine). An axe or a hammer
+ * hangs its head at one end, which this leaves out.
  */
-inline Fit fitPoints(Class cls, const std::vector<glm::dvec3>& pts, const glm::dvec3& upIn = {0.0, 1.0, 0.0})
+inline bool hangsLikeFirearm(const std::vector<glm::dvec3>& pts, const glm::dvec3& c, const glm::dvec3& along, const glm::dvec3& down)
+{
+    double lo = 1e300, hi = -1e300, top = -1e300, bot = 1e300;
+    for (const glm::dvec3& p : pts)
+    {
+        const double t = glm::dot(p - c, along), v = -glm::dot(p - c, down);
+        lo = std::min(lo, t);
+        hi = std::max(hi, t);
+        top = std::max(top, v);
+        bot = std::min(bot, v);
+    }
+    const double length = hi - lo, height = top - bot;
+    if (length < 1e-6 || height < 1e-6 || length < height)
+        return false;
+    const int n = 20;
+    std::vector<char> lower(size_t(n), 0);
+    double upperLo = 1e300, upperHi = -1e300;
+    for (const glm::dvec3& p : pts)
+    {
+        const double t = glm::dot(p - c, along), v = -glm::dot(p - c, down);
+        if (v > top - 0.3 * height)
+        {
+            upperLo = std::min(upperLo, t);
+            upperHi = std::max(upperHi, t);
+        }
+        if (v < bot + 0.45 * height)
+            lower[size_t(std::clamp(int((t - lo) / length * n), 0, n - 1))] = 1;
+    }
+    // A sparse mesh leaves single empty slices inside a part.
+    for (int i = 1; i + 1 < n; ++i)
+        if (!lower[size_t(i)] && lower[size_t(i - 1)] && lower[size_t(i + 1)])
+            lower[size_t(i)] = 2;
+    int lowerCount = 0;
+    // Some run of hanging slices stands clear of both ends (a grip, a magazine), not only a head at one end.
+    bool clearOfEnds = false;
+    for (int i = 0; i < n; ++i)
+    {
+        lowerCount += lower[size_t(i)] != 0;
+        if (lower[size_t(i)] && (i == 0 || !lower[size_t(i - 1)]))
+        {
+            int j = i;
+            while (j + 1 < n && lower[size_t(j + 1)])
+                ++j;
+            clearOfEnds |= i > 0 && j < n - 1;
+        }
+    }
+    return upperHi - upperLo >= 0.85 * length && lowerCount <= n * 55 / 100 && clearOfEnds;
+}
+} // namespace detail
+
+/**
+ * Reads a prop's shape from its points (in its own space; up is the world's up there): flat and broad is a plate, a body
+ * with a grip hanging below it a firearm, a long bent limb a bow, a narrow handle under a sudden wide guard a blade, one
+ * end much wider than the other a haft, long and even a pole, anything else other.
+ */
+inline Shape classify(const std::vector<glm::dvec3>& pts, const glm::dvec3& up = {0.0, 1.0, 0.0})
 {
     using namespace detail;
-    const Preset& pr = preset(cls);
+    (void)up;
+    if (pts.size() < 4)
+        return Shape::Other;
+    const Frame f = frameOf(pts);
+    if (f.extent[0] < 1e-6)
+        return Shape::Other;
+    // Firearms first: a pistol is compact and as thin as a plate. Props are usually modelled square to their own axes,
+    // which a grip and stock pull the principal axes off, so both sets are tried.
+    std::vector<glm::dvec3> axes(f.axes.begin(), f.axes.end());
+    for (int k = 0; k < 3; ++k)
+    {
+        glm::dvec3 a(0.0);
+        a[k] = 1.0;
+        axes.push_back(a);
+    }
+    auto extentAlong = [&](const glm::dvec3& a) {
+        double lo = 1e300, hi = -1e300;
+        for (const glm::dvec3& p : pts)
+        {
+            lo = std::min(lo, glm::dot(p, a));
+            hi = std::max(hi, glm::dot(p, a));
+        }
+        return hi - lo;
+    };
+    // The barrel runs along the prop's length, the grip hangs across it: the axes of one set, the first about the longest.
+    for (size_t set = 0; set < 2; ++set)
+        for (size_t i = set * 3; i < set * 3 + 3; ++i)
+        {
+            if (extentAlong(axes[i]) < 0.75 * f.extent[0])
+                continue;
+            for (size_t j = set * 3; j < set * 3 + 3; ++j)
+                if (j != i)
+                    for (double sign : {1.0, -1.0})
+                        if (hangsLikeFirearm(pts, f.centre, axes[i], axes[j] * sign))
+                            return Shape::Firearm;
+        }
+    if (f.extent[2] < 0.25 * f.extent[1] && f.extent[1] > 0.45 * f.extent[0])
+        return Shape::Plate;
+    if (f.extent[0] < 1.6 * f.extent[1])
+        return Shape::Other;
+    const Slices s = slice(pts, f.centre, f.axes[0]);
+    const int n = int(s.radius.size());
+    // A bow's middle stands off the line between its tips.
+    {
+        glm::dvec3 tipA(0.0), tipB(0.0);
+        int ca = 0, cb = 0;
+        for (int i = 0; i < n / 8; ++i)
+        {
+            if (s.count[size_t(i)])
+            {
+                tipA += s.mean[size_t(i)] * double(s.count[size_t(i)]);
+                ca += s.count[size_t(i)];
+            }
+            if (s.count[size_t(n - 1 - i)])
+            {
+                tipB += s.mean[size_t(n - 1 - i)] * double(s.count[size_t(n - 1 - i)]);
+                cb += s.count[size_t(n - 1 - i)];
+            }
+        }
+        if (ca && cb)
+        {
+            tipA /= double(ca);
+            tipB /= double(cb);
+            glm::dvec3 off = centreAt(s, 0.5) - 0.5 * (tipA + tipB);
+            off -= f.axes[0] * glm::dot(off, f.axes[0]);
+            // Bent well past the limb's own thickness, the thinnest extent.
+            if (glm::length(off) > 0.08 * f.extent[0] && glm::length(off) > 2.5 * f.extent[2])
+                return Shape::Bow;
+        }
+    }
+    // A guard: one narrow band of slices far wider than the handle below it and the blade above, short of the middle.
+    {
+        const int g = int(std::max_element(s.radius.begin(), s.radius.end()) - s.radius.begin());
+        const int fromEnd = std::min(g, n - 1 - g);
+        const bool handleLow = g < n / 2;
+        const double handle = handleLow ? medianRadius(s, 0, std::max(0, g - 2)) : medianRadius(s, std::min(n - 1, g + 2), n - 1);
+        const double blade = handleLow ? medianRadius(s, std::min(n - 1, g + 3), n - 1) : medianRadius(s, 0, std::max(0, g - 3));
+        const double r = s.radius[size_t(g)];
+        const bool narrow = (g - 3 < 0 || s.radius[size_t(g - 3)] < 0.75 * r) && (g + 3 >= n || s.radius[size_t(g + 3)] < 0.75 * r);
+        if (fromEnd >= 1 && fromEnd < n * 45 / 100 && narrow && r > 1.8 * handle && r > 1.4 * blade)
+            return Shape::Blade;
+    }
+    const double a = medianRadius(s, 0, n / 3), b = medianRadius(s, n - 1 - n / 3, n - 1);
+    if (std::max(a, b) > 1.6 * std::max(std::min(a, b), 1e-6))
+        return Shape::Haft;
+    if (f.extent[0] >= 60.0)
+        return Shape::Pole;
+    return Shape::Other;
+}
+
+/** How a prop of a shape and size is held, aimed and put away, when nothing says otherwise. */
+inline Settings suggestedSettings(Shape shape, double length, bool twoHanded, bool handgun)
+{
+    Settings s;
+    s.twoHanded = twoHanded;
+    switch (shape)
+    {
+    case Shape::Blade:
+        s.aim = AimStyle::Guard;
+        s.drop = twoHanded ? 18.0 : 12.0;
+        s.reach = twoHanded ? 0.55 : 0.6;
+        s.holster = twoHanded ? HolsterSpot::Back : length < 40.0 ? HolsterSpot::ThighRight : HolsterSpot::HipLeft;
+        break;
+    case Shape::Haft:
+        s.aim = AimStyle::Guard;
+        s.drop = 10.0;
+        s.reach = 0.6;
+        s.holster = length > 70.0 ? HolsterSpot::Back : HolsterSpot::HipLeft;
+        break;
+    case Shape::Pole:
+        s.aim = AimStyle::Guard;
+        s.drop = 6.0;
+        s.reach = 0.6;
+        s.holster = HolsterSpot::Back;
+        break;
+    case Shape::Firearm:
+    case Shape::Tube:
+        s.trigger = true;
+        s.mainPose = "trigger";
+        s.aim = handgun ? AimStyle::Extend : AimStyle::Shoulder;
+        s.holster = handgun ? HolsterSpot::ThighRight : HolsterSpot::Back;
+        break;
+    case Shape::Plate:
+        s.aim = AimStyle::Guard;
+        s.reach = 0.45;
+        s.holster = HolsterSpot::Back;
+        break;
+    case Shape::Bow:
+        s.aim = AimStyle::Extend;
+        s.reach = 0.95;
+        s.offPose = "hook";
+        s.holster = HolsterSpot::Back;
+        break;
+    default:
+        s.holster = length > 70.0 ? HolsterSpot::Back : HolsterSpot::Belt;
+        break;
+    }
+    return s;
+}
+
+/**
+ * Grip points for a prop fitted to its mesh points (in the prop root's space), from its shape alone unless hints say
+ * what it is: the long axis by principal components, which end is the handle by the cross-section along it (a guard, a
+ * head, a grip below a barrel), and the grips, muzzle or tip, and stock where that shape has them. up is the world's up
+ * in the prop root's space, which breaks ties for shapes that don't tell (a plain tube). Always gives points; `from`
+ * says how they were placed.
+ */
+inline Fit fitPoints(const std::vector<glm::dvec3>& pts, const glm::dvec3& upIn = {0.0, 1.0, 0.0}, const FitHints& hints = {})
+{
+    using namespace detail;
     const glm::dvec3 up = glm::length(upIn) > 1e-9 ? glm::normalize(upIn) : glm::dvec3(0, 1, 0);
+    const Shape shape = hints.shape != Shape::Auto ? hints.shape : classify(pts, up);
     Fit fit;
+    fit.shape = shape;
     auto add = [&](Role r, const std::string& name, const glm::dmat4& frame, double radius = 1.6) {
         fit.points.push_back({r, name, frame, radius});
     };
@@ -427,29 +736,23 @@ inline Fit fitPoints(Class cls, const std::vector<glm::dvec3>& pts, const glm::d
     {
         // Nothing to measure: points at the origin, main along +X, for the user to place.
         fit.from = "no mesh under the prop: points start at its origin";
+        const bool two = hints.twoHanded.value_or(false);
         add(Role::Main, "main", frameXZ(glm::dvec3(0.0), {0, 1, 0}, {0, 0, 1}));
-        if (pr.twoHanded)
+        if (two)
             add(Role::Off, "off", frameXZ(glm::dvec3(0.0, -10.0, 0.0), {0, 1, 0}, {0, 0, 1}));
-        add(pr.shape == Shape::Firearm || pr.shape == Shape::Tube || pr.shape == Shape::Bow ? Role::Muzzle : Role::Tip, "aim",
+        add(shape == Shape::Firearm || shape == Shape::Tube || shape == Shape::Bow ? Role::Muzzle : Role::Tip, "aim",
             frameXZ(glm::dvec3(0.0, 0.0, 20.0), {0, 0, 1}, up));
+        fit.suggested = suggestedSettings(shape, 0.0, two, true);
         return fit;
     }
     fit.from = "mesh";
-    glm::dvec3 c(0.0);
-    for (const glm::dvec3& p : pts)
-        c += p;
-    c /= double(pts.size());
-    glm::dmat3 cov(0.0);
-    for (const glm::dvec3& p : pts)
-    {
-        const glm::dvec3 d = p - c;
-        cov += glm::outerProduct(d, d);
-    }
-    cov /= double(pts.size());
-    std::array<glm::dvec3, 3> e = principalAxes(cov);
+    const Frame pf = frameOf(pts);
+    const glm::dvec3 c = pf.centre;
+    std::array<glm::dvec3, 3> e = pf.axes;
+    bool two = false, handgun = false;
     // A firearm's grip and stock pull principal axes off the barrel; props are usually modelled square to their own
     // axes, so those win when the longest of them is about as long as the principal one.
-    if (pr.shape == Shape::Firearm || pr.shape == Shape::Tube)
+    if (shape == Shape::Firearm || shape == Shape::Tube)
     {
         glm::dvec3 lo(1e300), hi(-1e300);
         for (const glm::dvec3& p : pts)
@@ -493,7 +796,7 @@ inline Fit fitPoints(Class cls, const std::vector<glm::dvec3>& pts, const glm::d
         fit.axis = e[0];
     };
 
-    switch (pr.shape)
+    switch (shape)
     {
     case Shape::Blade:
     {
@@ -518,10 +821,12 @@ inline Fit fitPoints(Class cls, const std::vector<glm::dvec3>& pts, const glm::d
         const double fromGuard = std::min(4.5, 0.3 * handleLen);
         const glm::dvec3 main = centreAt(s, (guardT - fromGuard - s.lo) / len);
         add(Role::Main, "main", frameXZ(main, e[0], flat), r);
-        if (pr.twoHanded || handleLen > 15.0)
+        // Room for two hands, or a pommel to hold by.
+        two = hints.twoHanded.value_or(handleLen >= 17.0);
+        if (two || handleLen > 15.0)
         {
             const double offT = std::max(guardT - fromGuard - 9.0, s.lo + 0.25 * handleLen);
-            add(pr.twoHanded ? Role::Off : Role::Alt, pr.twoHanded ? "off" : "pommel", frameXZ(centreAt(s, (offT - s.lo) / len), e[0], flat), r);
+            add(two ? Role::Off : Role::Alt, two ? "off" : "pommel", frameXZ(centreAt(s, (offT - s.lo) / len), e[0], flat), r);
         }
         add(Role::Tip, "tip", frameXZ(centreAt(s, 1.0) + e[0] * (s.hi - glm::dot(centreAt(s, 1.0) - c, e[0])), e[0], edge));
 
@@ -532,9 +837,14 @@ inline Fit fitPoints(Class cls, const std::vector<glm::dvec3>& pts, const glm::d
         // The head is the widest slice and sits at the business end; the grip is near the other.
         const int head = int(std::max_element(s.radius.begin(), s.radius.end()) - s.radius.begin());
         orient(head < n / 2);
-        const double r = medianRadius(s, 0, n / 3);
-        add(Role::Main, "main", frameXZ(centreAt(s, 0.1), e[0], e[2]), r);
-        add(pr.twoHanded ? Role::Off : Role::Alt, pr.twoHanded ? "off" : "choke", frameXZ(centreAt(s, 0.4), e[0], e[2]), r);
+        // Each grip's radius where it is: a bottle's neck and its body differ.
+        auto radiusAt = [&](double f) {
+            const int i = s.sliceOf(s.lo + (s.hi - s.lo) * f);
+            return medianRadius(s, i - 1, i + 1);
+        };
+        two = hints.twoHanded.value_or(len > 70.0);
+        add(Role::Main, "main", frameXZ(centreAt(s, 0.1), e[0], e[2]), radiusAt(0.1));
+        add(two ? Role::Off : Role::Alt, two ? "off" : "choke", frameXZ(centreAt(s, 0.4), e[0], e[2]), radiusAt(0.4));
         add(Role::Tip, "head", frameXZ(centreAt(s, 1.0), e[0], e[1]));
         break;
     }
@@ -548,6 +858,7 @@ inline Fit fitPoints(Class cls, const std::vector<glm::dvec3>& pts, const glm::d
         add(Role::Off, "off", frameXZ(centreAt(s, 0.58), e[0], e[2]), r);
         add(Role::Alt, "middle", frameXZ(centreAt(s, 0.5), e[0], e[2]), r);
         add(Role::Tip, "tip", frameXZ(s.along(1.0), e[0], e[1]));
+        two = hints.twoHanded.value_or(true);
         break;
     }
     case Shape::Firearm:
@@ -568,14 +879,14 @@ inline Fit fitPoints(Class cls, const std::vector<glm::dvec3>& pts, const glm::d
                     mean += v;
                 }
                 // A tube with nothing hanging off it: down is the world's down.
-                const double score = reach + (pr.shape == Shape::Tube ? 0.5 * std::max(0.0, glm::dot(d, -up)) * reach : 0.0);
+                const double score = reach + (shape == Shape::Tube ? 0.5 * std::max(0.0, glm::dot(d, -up)) * reach : 0.0);
                 if (score > best)
                 {
                     best = score;
                     down = d;
                 }
             }
-        if (glm::dot(down, -up) < -0.5 && pr.shape == Shape::Tube)
+        if (glm::dot(down, -up) < -0.5 && shape == Shape::Tube)
             down = -down;
         const glm::dvec3 upAxis = -down;
         double topV = -1e300, botV = 1e300;
@@ -603,7 +914,7 @@ inline Fit fitPoints(Class cls, const std::vector<glm::dvec3>& pts, const glm::d
             glm::dvec3 p = s.along(f);
             return p + upAxis * (barrelV - glm::dot(p - c, upAxis));
         };
-        if (pr.shape == Shape::Tube)
+        if (shape == Shape::Tube)
         {
             const double rad = 0.5 * height;
             const glm::dvec3 axisLine = s.along(0.0) + upAxis * (topV - rad - glm::dot(s.along(0.0) - c, upAxis));
@@ -612,6 +923,7 @@ inline Fit fitPoints(Class cls, const std::vector<glm::dvec3>& pts, const glm::d
             add(Role::Off, "off", frameXZ(onTube(0.62) - upAxis * (rad + 4.0), upAxis, fwd), 1.6);
             add(Role::Stock, "shoulder", frameXZ(onTube(0.4) - upAxis * rad, fwd, upAxis));
             add(Role::Muzzle, "muzzle", frameXZ(onTube(1.0), fwd, upAxis));
+            two = hints.twoHanded.value_or(true);
             break;
         }
         // The main grip: the rear-most part of the grip region, its handle running up toward the barrel.
@@ -619,7 +931,9 @@ inline Fit fitPoints(Class cls, const std::vector<glm::dvec3>& pts, const glm::d
         double rear = 1e300;
         for (const glm::dvec3& p : low)
             rear = std::min(rear, glm::dot(p - c, fwd));
-        const bool pistol = cls == Class::Pistol;
+        const bool pistol = len < 35.0;
+        handgun = pistol;
+        two = hints.twoHanded.value_or(!pistol);
         for (const glm::dvec3& p : low)
         {
             const double t = glm::dot(p - c, fwd);
@@ -652,7 +966,7 @@ inline Fit fitPoints(Class cls, const std::vector<glm::dvec3>& pts, const glm::d
         else
         {
             // The off hand under the handguard, palm up, thumb along the barrel.
-            const double offF = cls == Class::Shotgun ? 0.66 : 0.6;
+            const double offF = 0.6;
             const glm::dvec3 under = onBarrel(offF) - upAxis * (0.08 * height + 2.0);
             add(Role::Off, "off", frameXZ(under, fwd, upAxis), std::clamp(0.12 * height, 1.5, 3.0));
             add(Role::Alt, "magwell", frameXZ(onBarrel(0.45) - upAxis * (0.25 * height), upAxis, fwd), 2.0);
@@ -708,19 +1022,27 @@ inline Fit fitPoints(Class cls, const std::vector<glm::dvec3>& pts, const glm::d
         const double stringOff = std::max(0.0, glm::dot(mid - tips, aim)) + 1.0;
         add(Role::Off, "string", frameXZ(mid - aim * stringOff + vertical * 2.0, vertical, -aim), 0.5);
         add(Role::Muzzle, "rest", frameXZ(mid + vertical * (r + 2.0), aim, vertical));
+        two = hints.twoHanded.value_or(true);
         break;
     }
-    case Shape::Any:
+    case Shape::Auto:
+    case Shape::Count:
+    case Shape::Other:
     {
         // The narrower end is the handle.
         const double a = medianRadius(s, 0, n / 5), b = medianRadius(s, n - 1 - n / 5, n - 1);
         orient(a > b);
         const double r = medianRadius(s, 0, n / 4);
         add(Role::Main, "main", frameXZ(centreAt(s, 0.12), e[0], e[2]), r);
+        two = hints.twoHanded.value_or(len > 70.0);
+        // Long enough for a second hand: one further along, for two hands or to change grip.
+        if (len > 40.0)
+            add(two ? Role::Off : Role::Alt, two ? "off" : "grip", frameXZ(centreAt(s, 0.45), e[0], e[2]), r);
         add(Role::Tip, "tip", frameXZ(s.along(1.0), e[0], e[1]));
         break;
     }
     }
+    fit.suggested = suggestedSettings(shape, len, two, handgun);
     return fit;
 }
 } // namespace puppeteer::prop

@@ -18,11 +18,13 @@ namespace proptest
 /** Points over a box's surface: corners, edge and face samples, as a mesh's points. */
 void box(std::vector<glm::dvec3>& out, glm::dvec3 centre, glm::dvec3 size)
 {
-    for (int i = 0; i <= 4; ++i)
-        for (int j = 0; j <= 4; ++j)
-            for (int k = 0; k <= 4; ++k)
-                if (i == 0 || i == 4 || j == 0 || j == 4 || k == 0 || k == 4)
-                    out.push_back(centre + size * (glm::dvec3(i, j, k) / 4.0 - 0.5));
+    // About a centimetre apart, as a prop's surface is sampled.
+    const glm::ivec3 n = glm::max(glm::ivec3(glm::ceil(size)), glm::ivec3(4));
+    for (int i = 0; i <= n.x; ++i)
+        for (int j = 0; j <= n.y; ++j)
+            for (int k = 0; k <= n.z; ++k)
+                if (i == 0 || i == n.x || j == 0 || j == n.y || k == 0 || k == n.z)
+                    out.push_back(centre + size * (glm::dvec3(i, j, k) / glm::dvec3(n) - 0.5));
 }
 
 /** A sword along +Y: pommel at 0, handle to 20, guard at 21, blade to 100. */
@@ -151,7 +153,7 @@ TEST_CASE("props: a sword's handle, guard and tip are found from its mesh")
         if (flip)
             for (glm::dvec3& p : pts)
                 p = glm::dvec3(p.x, 100.0 - p.y, p.z);
-        const Fit f = fitPoints(Class::Sword2h, pts);
+        const Fit f = fitPoints(pts, {0, 1, 0}, {Shape::Blade, true});
         CHECK(f.from == "mesh");
         const PointDef *main = find(f, Role::Main), *off = find(f, Role::Off), *tip = find(f, Role::Tip);
         REQUIRE(main);
@@ -169,14 +171,14 @@ TEST_CASE("props: a sword's handle, guard and tip are found from its mesh")
         CHECK(main->radius == Approx(1.3 * std::sqrt(2.0)).epsilon(0.05));
     }
     // One-handed: the pommel is an alternate grip, not an off hand.
-    const Fit one = fitPoints(Class::Sword1h, swordPoints());
+    const Fit one = fitPoints(swordPoints(), {0, 1, 0}, {Shape::Blade, false});
     CHECK(find(one, Role::Off) == nullptr);
     CHECK(find(one, Role::Alt) != nullptr);
 }
 
 TEST_CASE("props: a pistol's grip hangs below the slide and its muzzle points forward")
 {
-    const Fit f = fitPoints(Class::Pistol, pistolPoints());
+    const Fit f = fitPoints(pistolPoints(), {0, 1, 0}, {Shape::Firearm});
     const PointDef *main = find(f, Role::Main), *muzzle = find(f, Role::Muzzle);
     REQUIRE(main);
     REQUIRE(muzzle);
@@ -191,7 +193,7 @@ TEST_CASE("props: a pistol's grip hangs below the slide and its muzzle points fo
 
 TEST_CASE("props: a rifle has its stock behind, the off grip ahead of the main and the muzzle in front")
 {
-    const Fit f = fitPoints(Class::Rifle, riflePoints());
+    const Fit f = fitPoints(riflePoints(), {0, 1, 0}, {Shape::Firearm});
     const PointDef *main = find(f, Role::Main), *off = find(f, Role::Off), *stock = find(f, Role::Stock), *muzzle = find(f, Role::Muzzle);
     REQUIRE(main);
     REQUIRE(off);
@@ -209,7 +211,7 @@ TEST_CASE("props: a rifle has its stock behind, the off grip ahead of the main a
 
 TEST_CASE("props: no mesh still gives points, and says so")
 {
-    const Fit f = fitPoints(Class::Rifle, {});
+    const Fit f = fitPoints({}, {0, 1, 0}, {Shape::Firearm, true});
     CHECK(f.from != "mesh");
     CHECK(find(f, Role::Main) != nullptr);
     CHECK(find(f, Role::Off) != nullptr);
@@ -237,14 +239,96 @@ TEST_CASE("props: a grip frame sits the same in mirrored hands")
     CHECK(glm::determinant(glm::dmat3(gl)) == Approx(1.0));
 }
 
-TEST_CASE("props: classes resolve by id and by common names")
+TEST_CASE("props: presets resolve by id and by common names")
 {
-    CHECK(classFromId("rifle") == Class::Rifle);
-    CHECK(classFromId("bazooka") == Class::Launcher);
-    CHECK(classFromId("greatsword") == Class::Sword2h);
-    CHECK(!classFromId("toaster"));
+    REQUIRE(presetFor("rifle"));
+    CHECK(std::string(presetFor("rifle")->id) == "rifle");
+    CHECK(std::string(presetFor("bazooka")->id) == "launcher");
+    CHECK(std::string(presetFor("greatsword")->id) == "sword2h");
+    CHECK(!presetFor("toaster"));
     for (const Preset& p : presets())
-        CHECK(classFromId(p.id) == p.cls);
+    {
+        CHECK(presetFor(p.id) == &p);
+        REQUIRE(matchingPreset(p.settings));
+        CHECK(matchingPreset(p.settings)->settings == p.settings);
+    }
+}
+
+/** A cylinder-ish column of boxes along +Y: radius r from y0 to y1, as a mesh's points. */
+void column(std::vector<glm::dvec3>& out, double y0, double y1, double r)
+{
+    box(out, {0, 0.5 * (y0 + y1), 0}, {2 * r, y1 - y0, 2 * r});
+}
+
+TEST_CASE("props: the shape is read from the points alone")
+{
+    CHECK(classify(swordPoints()) == Shape::Blade);
+    CHECK(classify(pistolPoints()) == Shape::Firearm);
+    CHECK(classify(riflePoints()) == Shape::Firearm);
+    // A bottle: a narrow neck on a wide body.
+    std::vector<glm::dvec3> bottle;
+    column(bottle, 0, 22, 4.0);
+    column(bottle, 22, 32, 1.3);
+    CHECK(classify(bottle) == Shape::Haft);
+    // An axe: its head hangs off one side at one end, which is not a firearm's grip.
+    std::vector<glm::dvec3> axe;
+    column(axe, 0, 70, 1.6);
+    box(axe, {6, 64, 0}, {14, 12, 2});
+    CHECK(classify(axe) == Shape::Haft);
+    // A staff, a short chair leg, a shield, a box.
+    std::vector<glm::dvec3> staff, leg, shield, crate;
+    column(staff, 0, 160, 1.8);
+    column(leg, 0, 45, 1.8);
+    box(shield, {0, 0, 0}, {60, 80, 4});
+    box(crate, {0, 0, 0}, {20, 18, 16});
+    CHECK(classify(staff) == Shape::Pole);
+    CHECK(classify(leg) == Shape::Other);
+    CHECK(classify(shield) == Shape::Plate);
+    CHECK(classify(crate) == Shape::Other);
+    // A bow: a long limb bent away from its tips.
+    std::vector<glm::dvec3> bow;
+    for (int i = 0; i <= 20; ++i)
+    {
+        const double y = -60.0 + 6.0 * i, z = 18.0 * (1.0 - (y / 60.0) * (y / 60.0));
+        box(bow, {0, y, z}, {2.5, 6.5, 2.5});
+    }
+    CHECK(classify(bow) == Shape::Bow);
+}
+
+TEST_CASE("props: an unknown shape still gets grips, a tip and settings that follow from it")
+{
+    // A bottle held by its neck, a second grip on its body with its own radius.
+    std::vector<glm::dvec3> bottle;
+    column(bottle, 0, 22, 4.0);
+    column(bottle, 22, 32, 1.3);
+    const Fit f = fitPoints(bottle);
+    CHECK(f.shape == Shape::Haft);
+    const PointDef *main = find(f, Role::Main), *alt = find(f, Role::Alt), *tip = find(f, Role::Tip);
+    REQUIRE(main);
+    REQUIRE(alt);
+    REQUIRE(tip);
+    CHECK(origin(*main).y > 22.0);
+    CHECK(main->radius < 2.5);
+    CHECK(alt->radius > 4.0);
+    CHECK(origin(*tip).y < 1.0);
+    CHECK_FALSE(f.suggested.twoHanded);
+    // A long gun read from its shape: two hands, shouldered, trigger finger.
+    const Fit r = fitPoints(riflePoints());
+    CHECK(r.shape == Shape::Firearm);
+    CHECK(r.suggested.twoHanded);
+    CHECK(r.suggested.aim == AimStyle::Shoulder);
+    CHECK(r.suggested.trigger);
+    CHECK(find(r, Role::Stock) != nullptr);
+    // A pistol: one hand, held out.
+    const Fit pf = fitPoints(pistolPoints());
+    CHECK_FALSE(pf.suggested.twoHanded);
+    CHECK(pf.suggested.aim == AimStyle::Extend);
+    // A staff: two hands, guard.
+    std::vector<glm::dvec3> staff;
+    column(staff, 0, 160, 1.8);
+    const Fit sf = fitPoints(staff);
+    CHECK(sf.suggested.twoHanded);
+    CHECK(find(sf, Role::Off) != nullptr);
 }
 
 // On Manny ------------------------------------------------------------------------------------------------------------
@@ -253,7 +337,7 @@ TEST_CASE("props: a greatsword held in both hands, the arms sharing the reach")
 {
     manny();
     sword();
-    const json p = run("puppeteerPropSetup", {{"args", {"sword"}}, {"kind", "sword2h"}});
+    const json p = run("puppeteerPropSetup", {{"args", {"sword"}}, {"preset", "sword2h"}});
     CHECK(p.at("twoHanded") == true);
     const std::string mainPt = pointNamed(p, "main"), offPt = pointNamed(p, "off");
     const std::string handR = jointPath("hand_r"), handL = jointPath("hand_l");
@@ -288,7 +372,7 @@ TEST_CASE("props: handing a pistol from the right hand to the left never pops")
 {
     manny();
     pistol();
-    run("puppeteerPropSetup", {{"args", {"pistol"}}, {"kind", "pistol"}});
+    run("puppeteerPropSetup", {{"args", {"pistol"}}, {"preset", "pistol"}});
     run("puppeteerPropHold", {{"args", {"pistol"}}, {"time", 0.0}, {"blend", 0.0}, {"solve", false}});
     // The right hand lifts toward the left between frames 0 and 4, then the pistol changes hands at frame 4.
     const std::string handR = jointPath("hand_r"), handL = jointPath("hand_l");
@@ -329,7 +413,7 @@ TEST_CASE("props: a rifle aimed at a target, shouldered, the body following")
 {
     manny();
     rifle();
-    run("puppeteerPropSetup", {{"args", {"rifle"}}, {"kind", "rifle"}});
+    run("puppeteerPropSetup", {{"args", {"rifle"}}, {"preset", "rifle"}});
     run("puppeteerPropHold", {{"args", {"rifle"}}, {"time", 0.0}, {"blend", 0.0}, {"solve", false}});
     run("spaceLocator", {{"name", "enemy"}});
     run("setAttr", {{"args", {"enemy.translate", 150.0, 140.0, 600.0}}});
@@ -361,7 +445,7 @@ TEST_CASE("props: Unreal export attaches to hand_r by default and keys ik bones 
 {
     manny();
     rifle();
-    run("puppeteerPropSetup", {{"args", {"rifle"}}, {"kind", "rifle"}});
+    run("puppeteerPropSetup", {{"args", {"rifle"}}, {"preset", "rifle"}});
     run("puppeteerPropHold", {{"args", {"rifle"}}, {"time", 0.0}, {"blend", 0.0}, {"solve", false}});
     const std::string handR = jointPath("hand_r"), handL = jointPath("hand_l"), gun = jointPath("ik_hand_gun");
     const json u = run("puppeteerPropUnreal", {{"args", {"rifle"}}});
@@ -395,7 +479,7 @@ TEST_CASE("props: the Unreal socket holds the settled grip, not the frame the ho
 {
     manny();
     rifle();
-    run("puppeteerPropSetup", {{"args", {"rifle"}}, {"kind", "rifle"}});
+    run("puppeteerPropSetup", {{"args", {"rifle"}}, {"preset", "rifle"}});
     run("puppeteerPropHold", {{"args", {"rifle"}}, {"time", 0.0}, {"blend", 6.0 / 30.0}, {"solve", false}});
     const json u = run("puppeteerPropUnreal", {{"args", {"rifle"}}});
     const scene::Node& r = *graph().find("rifle");
@@ -409,7 +493,7 @@ TEST_CASE("props: a greatsword held in guard toward a target")
 {
     manny();
     sword();
-    const json p = run("puppeteerPropSetup", {{"args", {"sword"}}, {"kind", "sword2h"}});
+    const json p = run("puppeteerPropSetup", {{"args", {"sword"}}, {"preset", "sword2h"}});
     run("puppeteerPropHold", {{"args", {"sword"}}, {"time", 0.0}, {"blend", 0.0}, {"solve", false}});
     run("spaceLocator", {{"name", "foe"}});
     run("setAttr", {{"args", {"foe.translate", 0.0, 150.0, 300.0}}});
@@ -428,7 +512,7 @@ TEST_CASE("props: guard aim after a solved hold over a second")
     manny();
     run("playbackOptions", {{"minTime", 0.0}, {"maxTime", 1.0}, {"fps", 30.0}});
     sword();
-    const json p = run("puppeteerPropSetup", {{"args", {"sword"}}, {"kind", "sword2h"}});
+    const json p = run("puppeteerPropSetup", {{"args", {"sword"}}, {"preset", "sword2h"}});
     run("puppeteerPropHold", {{"args", {"sword"}}, {"time", 0.0}, {"blend", 0.0}});
     run("spaceLocator", {{"name", "foe"}});
     run("setAttr", {{"args", {"foe.translate", 0.0, 150.0, 300.0}}});
@@ -447,7 +531,7 @@ TEST_CASE("props: the off hand holds its grip all through a guard aim's blend")
     manny();
     run("playbackOptions", {{"minTime", 0.0}, {"maxTime", 1.0}, {"fps", 30.0}});
     sword();
-    run("puppeteerPropSetup", {{"args", {"sword"}}, {"kind", "sword2h"}});
+    run("puppeteerPropSetup", {{"args", {"sword"}}, {"preset", "sword2h"}});
     const json h = run("puppeteerPropHold", {{"args", {"sword"}}, {"time", 0.0}, {"blend", 0.0}});
     run("spaceLocator", {{"name", "foe"}});
     run("setAttr", {{"args", {"foe.translate", 0.0, 150.0, 300.0}}});
@@ -501,7 +585,7 @@ TEST_CASE("props: every finger of every holding hand closes onto the handle")
         for (scene::NodeId d : graph().descendants(id(prop)))
             if (graph().node(d)->type().attrIndex("outMesh") >= 0)
                 meshes.push_back(graph().path(d));
-        run("puppeteerPropSetup", {{"args", {prop}}, {"kind", c.kind}});
+        run("puppeteerPropSetup", {{"args", {prop}}, {"preset", c.kind}});
         const json h = run("puppeteerPropHold", {{"args", {prop}}, {"time", 0.0}, {"blend", 0.0}});
         at(2.0 / 30.0);
         for (const char* side : {"main", "off"})
@@ -521,4 +605,58 @@ TEST_CASE("props: every finger of every holding hand closes onto the handle")
             }
         }
     }
+}
+
+TEST_CASE("props: any object becomes a prop, its settings read from its shape")
+{
+    manny();
+    rifle();
+    const json r = run("puppeteerPropSetup", {{"args", {"rifle"}}});
+    CHECK(r.at("fit").at("shape") == "firearm");
+    CHECK(r.at("preset").is_null());
+    CHECK(r.at("twoHanded") == true);
+    CHECK(r.at("aimStyle") == "shoulder");
+    CHECK(r.at("trigger") == true);
+    CHECK(r.at("shape") == "auto");
+    // A preset fills the settings; the prop then matches it.
+    const json p = run("puppeteerPropSetup", {{"args", {"rifle"}}, {"preset", "launcher"}});
+    CHECK(p.at("preset") == "launcher");
+    CHECK(p.at("holsterSpot") == "back");
+    // Any setting is the prop's own: changing one leaves the preset behind.
+    run("setAttr", {{"args", {"rifle_prop.holsterSpot", 3}}});
+    CHECK(run("puppeteerPropInfo", {{"args", {"rifle"}}}).at("preset").is_null());
+    CHECK(run("puppeteerPropInfo", {{"args", {"rifle"}}}).at("holsterSpot") == "thighRight");
+}
+
+TEST_CASE("props: points are added, moved, turned and removed, and a refit keeps the ones moved by hand")
+{
+    manny();
+    std::vector<std::string> parts{cube("guitar_neck", {0, 100, 300}, {5, 60, 3}), cube("guitar_body", {0, 55, 300}, {34, 40, 9})};
+    group("guitar", parts);
+    const json p = run("puppeteerPropSetup", {{"args", {"guitar"}}});
+    const size_t fitted = p.at("points").size();
+    REQUIRE(fitted >= 2);
+    const json added = run("puppeteerPropPoint", {{"args", {"guitar"}}, {"role", "off"}, {"name", "strum"}, {"position", v3(0, 60, 306)}});
+    const std::string strum = added.at("point");
+    CHECK(glm::length(pos(strum) - glm::dvec3(0, 60, 306)) < 1e-6);
+    // Moved and turned by command.
+    run("puppeteerPropPoint", {{"args", {strum}}, {"position", v3(2, 62, 306)}, {"aim", v3(1, 0, 0)}, {"palm", v3(0, 0, -1)}, {"radius", 3.0}});
+    CHECK(glm::length(pos(strum) - glm::dvec3(2, 62, 306)) < 1e-6);
+    const glm::dmat4 m = world(strum);
+    CHECK(glm::dot(glm::normalize(glm::dvec3(m[0])), glm::dvec3(1, 0, 0)) > 0.9999);
+    CHECK(glm::dot(glm::normalize(glm::dvec3(m[2])), glm::dvec3(0, 0, -1)) > 0.9999);
+    // A fitted point moved by hand stays where it was put through a refit; the added one stays too.
+    const std::string mainPt = pointNamed(p, "main");
+    run("puppeteerPropPoint", {{"args", {mainPt}}, {"position", v3(0, 120, 300)}});
+    run("puppeteerPropFit", {{"args", {"guitar"}}});
+    CHECK(glm::length(pos(mainPt) - glm::dvec3(0, 120, 300)) < 1e-6);
+    CHECK(graph().find(strum) != nullptr);
+    CHECK(run("puppeteerPropInfo", {{"args", {"guitar"}}}).at("points").size() == fitted + 1);
+    // The added grip holds a hand like any other.
+    const json h = run("puppeteerPropHold", {{"args", {"guitar"}}, {"point", "strum"}, {"time", 0.0}, {"blend", 0.0}, {"solve", false}});
+    CHECK(h.at("mainPoint") == strum);
+    run("puppeteerPropPoint", {{"args", {strum}}, {"remove", true}});
+    CHECK(graph().find(strum) == nullptr);
+    run("undo");
+    CHECK(graph().find(strum) != nullptr);
 }

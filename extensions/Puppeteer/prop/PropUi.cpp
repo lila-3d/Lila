@@ -1,5 +1,5 @@
-// Props and weapons, the UI: the Props panel (class, hands, hold, aim, the holds over time, solve, Unreal), grip point
-// handles drawn in the viewport, and the prop actions and menus. Every edit is a puppeteerProp* command.
+// Props, the UI: the Props panel (presets, settings, points, holds and handoffs, aim, the track over time, solve,
+// Unreal), point handles drawn in the viewport, and the prop actions and menus. Every edit is a command.
 
 #include "prop/Props.h"
 
@@ -21,6 +21,7 @@
 #include <lila/ViewportTool.h>
 
 #include <QCheckBox>
+#include <QComboBox>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -53,20 +54,19 @@ const std::vector<std::string>& keywords()
     return kw;
 }
 
-struct Settings
+/** The panel's own values, kept between sessions. */
+struct PanelPrefs
 {
     double blendFrames = 6.0;
-    int aimStyle = 0; // 0 auto, then AimStyle + 1
     double aimWeight = 1.0;
 };
 
-Settings& settings()
+PanelPrefs& settings()
 {
-    static Settings s = [] {
+    static PanelPrefs s = [] {
         const PrefStore& p = PrefStore::get();
-        Settings c;
+        PanelPrefs c;
         c.blendFrames = std::max(0.0, p.value<double>(kPrefs, "/props/blendFrames", 6.0));
-        c.aimStyle = std::clamp(p.value<int>(kPrefs, "/props/aimStyle", 0), 0, 4);
         c.aimWeight = std::clamp(p.value<double>(kPrefs, "/props/aimWeight", 1.0), 0.0, 1.0);
         return c;
     }();
@@ -76,9 +76,8 @@ Settings& settings()
 void saveSettings()
 {
     PrefStore& p = PrefStore::get();
-    const Settings& s = settings();
+    const PanelPrefs& s = settings();
     p.set(kPrefs, "/props/blendFrames", s.blendFrames);
-    p.set(kPrefs, "/props/aimStyle", s.aimStyle);
     p.set(kPrefs, "/props/aimWeight", s.aimWeight);
 }
 
@@ -118,7 +117,7 @@ void holdAction(const std::string& hand)
     Graph& g = Graph::current();
     const std::optional<Prop> p = current(g);
     if (!p)
-        return void(log::write(LogLevel::Warning, "Props: select a prop (or make one from a mesh with a class)"));
+        return void(log::write(LogLevel::Warning, "Props: select a prop (Make Prop makes one from a mesh)"));
     json call = propCall(g, *p);
     call["hand"] = hand;
     runCommand("puppeteerPropHold", call);
@@ -190,8 +189,6 @@ void aimAction()
     }
     json call = propCall(g, *p);
     call["target"] = target;
-    if (settings().aimStyle > 0)
-        call["style"] = aimStyleId(AimStyle(settings().aimStyle - 1));
     call["weight"] = settings().aimWeight;
     runCommand("puppeteerPropAim", call);
     if (Node* t = named(g, target))
@@ -209,10 +206,9 @@ void aimOffAction()
     runCommand("puppeteerPropAim", call);
 }
 
-/** Makes the selection a prop of the class, or changes the selected prop's class. */
-void classAction(Class c)
+/** The selection's meshes and groups as prop roots, characters left out. */
+json propRootsOfSelection(Graph& g)
 {
-    Graph& g = Graph::current();
     json args = json::array();
     for (NodeId id : g.selection())
     {
@@ -225,11 +221,31 @@ void classAction(Class c)
         if (std::find(args.begin(), args.end(), path) == args.end())
             args.push_back(path);
     }
-    if (args.empty())
-        return void(log::write(LogLevel::Warning, "Props: select a mesh or group to make a prop"));
-    runCommand("puppeteerPropSetup", {{"args", args}, {"kind", preset(c).id}});
+    return args;
 }
 
+/** Makes the selection props, their settings from their shapes, or with a preset's. */
+void setupAction(const Preset* preset)
+{
+    Graph& g = Graph::current();
+    const json args = propRootsOfSelection(g);
+    if (args.empty())
+        return void(log::write(LogLevel::Warning, "Props: select a mesh or group to make a prop"));
+    json call = {{"args", args}};
+    if (preset)
+        call["preset"] = preset->id;
+    runCommand("puppeteerPropSetup", call);
+}
+
+/** The selected points of the current prop. */
+std::vector<NodeId> selectedPoints(Graph& g)
+{
+    std::vector<NodeId> out;
+    for (NodeId id : g.selection())
+        if (Node* n = g.node(id); n && n->type().isA(kPointType) && propFor(g, id))
+            out.push_back(id);
+    return out;
+}
 bool hasProp() { return currentProp(Graph::current()) != kNoNode; }
 
 /** Whether the character holding the prop (or the selected one) has every bone Unreal's hand IK bones need. */
@@ -282,6 +298,62 @@ QString holdLabel(const Hold& h)
 
 // Panel -------------------------------------------------------------------------------------------------------------
 
+/** One row of the Props panel's track. */
+struct TrackRow
+{
+    double time = 0.0;
+    QString label, tip;
+    /** What a click selects besides going to the frame (a throw's arc); empty for nothing. */
+    QString select;
+};
+
+QString roleLabel(Role r)
+{
+    static const char* kLabels[] = {"Main grip", "Off grip", "Grip", "Muzzle", "Tip", "Stock", "Holster"};
+    return kLabels[std::clamp(int(r), 0, int(Role::Count) - 1)];
+}
+
+/** The prop's holds in time order, the scene's own place before the first left out. */
+std::vector<TrackRow> trackRows(Graph& g, const Prop& p)
+{
+    std::vector<TrackRow> out;
+    const std::vector<Hold> holds = holdsOf(g, p);
+    bool held = false;
+    for (const Hold& h : holds)
+    {
+        if (h.kind == "parent" && &h == &holds.front() && holds.size() > 1)
+            continue;
+        held |= h.kind != "parent";
+        out.push_back({h.time, holdLabel(h), QString::fromStdString(h.space), {}});
+    }
+    if (!held)
+        out.clear();
+    return out;
+}
+
+/** Sets one attr of the current prop node, as a command so it undoes. */
+void setPropAttr(const char* attr, const json& value)
+{
+    Graph& g = Graph::current();
+    if (const std::optional<Prop> p = current(g))
+        runCommand("setAttr", {{"args", {g.path(p->node) + "." + attr, value}}});
+}
+
+/** The hand poses a prop can start from: the built-in ones and the saved ones. */
+std::vector<std::pair<QString, QString>> handPoses()
+{
+    std::vector<std::pair<QString, QString>> out;
+    try
+    {
+        for (const json& p : lila::ops::execute("puppeteerHandPoses", json::object()))
+            out.push_back({QString::fromStdString(p.value("name", std::string())), QString::fromStdString(p.value("label", p.value("name", std::string())))});
+    }
+    catch (const std::exception&)
+    {
+    }
+    return out;
+}
+
 class PropsPanel final : public QWidget
 {
 public:
@@ -291,60 +363,139 @@ public:
         v->setContentsMargins(12, 8, 12, 8);
         v->setSpacing(4);
 
+        auto* head = new QHBoxLayout;
+        head->setSpacing(8);
         mTitle = new QLabel(this);
         QFont f = mTitle->font();
         f.setBold(true);
         mTitle->setFont(f);
-        v->addWidget(mTitle);
-        mEmpty = new QLabel("No prop selected. Select a mesh and pick a class.", this);
+        head->addWidget(mTitle);
+        mPreset = new QLabel(this);
+        mPreset->setForegroundRole(QPalette::PlaceholderText);
+        mPreset->setToolTip("The preset the prop's settings match, or Custom");
+        head->addWidget(mPreset, 1);
+        v->addLayout(head);
+        mEmpty = new QLabel("No prop selected. Select a mesh, then Make Prop or a preset.", this);
         mEmpty->setWordWrap(true);
         mEmpty->setForegroundRole(QPalette::PlaceholderText);
         v->addWidget(mEmpty);
 
-        // Class: one tile per class, the current one checked.
-        auto* classBox = new QWidget(this);
-        std::vector<QWidget*> tiles;
-        for (const Preset& p : presets())
-        {
-            QToolButton* t = controls::tile(std::string("puppeteer.prop.class.") + p.id, p.icon, classBox, p.label);
-            tiles.push_back(t);
-            mTiles.push_back(t);
-        }
-        auto* cv = new QVBoxLayout(classBox);
-        cv->setContentsMargins(0, 0, 0, 0);
-        cv->setSpacing(4);
-        cv->addWidget(controls::grid(tiles, 4, classBox));
-        auto* form = new QGridLayout;
-        form->setHorizontalSpacing(8);
-        form->setVerticalSpacing(4);
-        auto label = [&](QGridLayout* grid, const char* text, int row, QWidget* owner) {
+        auto label = [](QGridLayout* grid, const char* text, int row, QWidget* owner) {
             auto* l = new QLabel(text, owner);
             l->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
             grid->addWidget(l, row, 0);
+            return l;
         };
-        mHand = new controls::Segmented(classBox);
+
+        // Presets: one tile each, lit when the prop's settings match it.
+        auto* presetBox = new QWidget(this);
+        std::vector<QWidget*> tiles;
+        for (const Preset& p : presets())
+        {
+            QToolButton* t = controls::tile(std::string("puppeteer.prop.preset.") + p.id, p.icon, presetBox, p.label);
+            tiles.push_back(t);
+            mTiles.push_back(t);
+        }
+        auto* pv = new QVBoxLayout(presetBox);
+        pv->setContentsMargins(0, 0, 0, 0);
+        pv->addWidget(controls::grid(tiles, 4, presetBox));
+        v->addWidget(controls::section("Presets", presetBox, this, kSections));
+
+        // Settings: how the prop is held, aimed and put away.
+        auto* setBox = new QWidget(this);
+        auto* form = new QGridLayout(setBox);
+        form->setContentsMargins(0, 0, 0, 0);
+        form->setHorizontalSpacing(8);
+        form->setVerticalSpacing(4);
+        form->setColumnStretch(1, 1);
+        int row = 0;
+        mHand = new controls::Segmented(setBox);
         mHand->add("Right", {}, "Hand: the prop's main hand, which Hold uses", 0);
         mHand->add("Left", {}, "Hand: the prop's main hand, which Hold uses", 1);
-        connect(mHand, &controls::Segmented::picked, this, [](int id) {
-            Graph& g = Graph::current();
-            if (const std::optional<Prop> p = current(g))
-                runCommand("setAttr", {{"args", {g.path(p->node) + ".hand", id}}});
+        connect(mHand, &controls::Segmented::picked, this, [](int id) { setPropAttr("hand", id); });
+        label(form, "Hand", row, setBox);
+        form->addWidget(mHand, row++, 1);
+        mHands = new controls::Segmented(setBox);
+        mHands->add("One", {}, "Hands: Hold puts it in the main hand only", 1);
+        mHands->add("Both", {}, "Hands: Hold puts the other hand on the off grip too, both arms sharing the reach", 2);
+        connect(mHands, &controls::Segmented::picked, this, [](int id) { setPropAttr("twoHanded", id == 2); });
+        label(form, "Hands", row, setBox);
+        form->addWidget(mHands, row++, 1);
+        mAim = new controls::Segmented(setBox);
+        mAim->add("Turn", {}, "Aim: turned where it is", int(AimStyle::Turn));
+        mAim->add("Shoulder", {}, "Aim: the stock to the shoulder, then turned onto the target", int(AimStyle::Shoulder));
+        mAim->add("Extend", {}, "Aim: held out toward the target", int(AimStyle::Extend));
+        mAim->add("Guard", {}, "Aim: held out, below the line to the target", int(AimStyle::Guard));
+        connect(mAim, &controls::Segmented::picked, this, [](int id) { setPropAttr("aimStyle", id); });
+        label(form, "Aim", row, setBox);
+        form->addWidget(mAim, row++, 1);
+        mReach = controls::valueField(0.0, 1.0, 2, "", setBox);
+        mReach->setToolTip("Reach: the share of the arm's length an extend or guard aim holds the grip out");
+        connect(mReach, &QDoubleSpinBox::editingFinished, this, [this] { setPropAttr("aimReach", mReach->value()); });
+        mReachLabel = label(form, "Reach", row, setBox);
+        form->addWidget(mReach, row++, 1);
+        mDrop = controls::valueField(0.0, 100.0, 1, "cm", setBox);
+        mDrop->setToolTip("Drop: how far below the line to the target a guard holds the grip");
+        connect(mDrop, &QDoubleSpinBox::editingFinished, this, [this] { setPropAttr("aimDrop", mDrop->value()); });
+        mDropLabel = label(form, "Drop", row, setBox);
+        form->addWidget(mDrop, row++, 1);
+        mHolster = new QComboBox(setBox);
+        for (int i = 0; i < int(HolsterSpot::Count); ++i)
+            mHolster->addItem(holsterSpot(HolsterSpot(i)).label, i);
+        mHolster->setToolTip("Holster: where Holster puts it away the first time; then move the holster point it made");
+        connect(mHolster, &QComboBox::activated, this, [this](int i) { setPropAttr("holsterSpot", mHolster->itemData(i).toInt()); });
+        label(form, "Holster", row, setBox);
+        form->addWidget(mHolster, row++, 1);
+        for (QComboBox** box : {&mMainPose, &mOffPose})
+        {
+            *box = new QComboBox(setBox);
+            for (const auto& [name, text] : handPoses())
+                (*box)->addItem(text, name);
+        }
+        mMainPose->setToolTip("Grip pose: the main hand's pose before its fingers wrap the prop");
+        mOffPose->setToolTip("Other pose: the other hand's pose");
+        connect(mMainPose, &QComboBox::activated, this, [this](int i) { setPropAttr("mainPose", mMainPose->itemData(i).toString().toStdString()); });
+        connect(mOffPose, &QComboBox::activated, this, [this](int i) { setPropAttr("offPose", mOffPose->itemData(i).toString().toStdString()); });
+        label(form, "Grip pose", row, setBox);
+        form->addWidget(mMainPose, row++, 1);
+        label(form, "Other pose", row, setBox);
+        form->addWidget(mOffPose, row++, 1);
+        mTrigger = new QCheckBox("Trigger finger", setBox);
+        mTrigger->setToolTip("Trigger finger: the main hand's index finger stays posed instead of wrapping");
+        connect(mTrigger, &QCheckBox::clicked, this, [](bool on) { setPropAttr("trigger", on); });
+        form->addWidget(mTrigger, row++, 1);
+        v->addWidget(controls::section("Settings", setBox, this, kSections));
+
+        // Points: where hands take it and what aims; a row selects its point to move in the viewport.
+        auto* ptBox = new QWidget(this);
+        auto* ptv = new QVBoxLayout(ptBox);
+        ptv->setContentsMargins(0, 0, 0, 0);
+        ptv->setSpacing(4);
+        mPoints = new QTreeWidget(ptBox);
+        mPoints->setColumnCount(2);
+        mPoints->setHeaderHidden(true);
+        mPoints->setRootIsDecorated(false);
+        mPoints->setSelectionMode(QAbstractItemView::ExtendedSelection);
+        mPoints->header()->setStretchLastSection(true);
+        mPoints->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+        mPoints->setMinimumHeight(70);
+        mPoints->setToolTip("The prop's points. Select one to move or turn it in the viewport");
+        connect(mPoints, &QTreeWidget::itemSelectionChanged, this, [this] {
+            json args = json::array();
+            for (QTreeWidgetItem* it : mPoints->selectedItems())
+                args.push_back(it->data(0, Qt::UserRole).toString().toStdString());
+            if (!args.empty())
+                runCommand("select", {{"args", args}});
         });
-        label(form, "Hand", 0, classBox);
-        form->addWidget(mHand, 0, 1);
-        mHands = new controls::Segmented(classBox);
-        mHands->add("One", {}, "Hold: in the main hand only", 1);
-        mHands->add("Both", {}, "Hold: the other hand on the off grip too, both arms sharing the reach", 2);
-        connect(mHands, &controls::Segmented::picked, this, [](int id) {
-            Graph& g = Graph::current();
-            if (const std::optional<Prop> p = current(g))
-                runCommand("setAttr", {{"args", {g.path(p->node) + ".twoHanded", id == 2}}});
-        });
-        label(form, "Hands", 1, classBox);
-        form->addWidget(mHands, 1, 1);
-        form->setColumnStretch(1, 1);
-        cv->addLayout(form);
-        v->addWidget(controls::section("Prop", classBox, this, kSections));
+        ptv->addWidget(mPoints);
+        auto* ptRow = new QHBoxLayout;
+        ptRow->setSpacing(4);
+        ptRow->addWidget(controls::push("puppeteer.prop.fit", ptBox));
+        ptRow->addStretch();
+        ptRow->addWidget(controls::push("puppeteer.prop.addGrip", ptBox, "Add"));
+        ptRow->addWidget(controls::push("puppeteer.prop.removePoint", ptBox, "Remove"));
+        ptv->addLayout(ptRow);
+        v->addWidget(controls::section("Points", ptBox, this, kSections));
 
         // Hold: the daily actions, then the blend they share.
         auto* holdBox = new QWidget(this);
@@ -368,7 +519,7 @@ public:
         hv->addLayout(blendRow);
         v->addWidget(controls::section("Hold", holdBox, this, kSections));
 
-        // Aim.
+        // Aim: the prop's own style (Settings); here only on, off and how fully.
         auto* aimBox = new QWidget(this);
         auto* av = new QVBoxLayout(aimBox);
         av->setContentsMargins(0, 0, 0, 0);
@@ -377,19 +528,6 @@ public:
                                      2, aimBox));
         auto* aimForm = new QGridLayout;
         aimForm->setHorizontalSpacing(8);
-        aimForm->setVerticalSpacing(4);
-        mStyle = new controls::Segmented(aimBox);
-        mStyle->add("Auto", {}, "Style: the class's (shoulder for long guns and launchers, extend for pistols and bows, guard for blades)", 0);
-        mStyle->add("Shoulder", {}, "Style: the stock to the shoulder, then turned onto the target", 2);
-        mStyle->add("Extend", {}, "Style: held out at arm's length toward the target", 3);
-        mStyle->add("Guard", {}, "Style: held out, below the line to the target", 4);
-        mStyle->add("Turn", {}, "Style: turned where it is", 1);
-        connect(mStyle, &controls::Segmented::picked, this, [](int id) {
-            settings().aimStyle = id;
-            saveSettings();
-        });
-        label(aimForm, "Style", 0, aimBox);
-        aimForm->addWidget(mStyle, 0, 1);
         mWeight = new controls::SliderField(aimBox);
         mWeight->setRange(0.0, 1.0);
         mWeight->setDecimals(2);
@@ -399,13 +537,13 @@ public:
             settings().aimWeight = w;
             saveSettings();
         });
-        label(aimForm, "Weight", 1, aimBox);
-        aimForm->addWidget(mWeight, 1, 1);
+        label(aimForm, "Weight", 0, aimBox);
+        aimForm->addWidget(mWeight, 0, 1);
         aimForm->setColumnStretch(1, 1);
         av->addLayout(aimForm);
         v->addWidget(controls::section("Aim", aimBox, this, kSections));
 
-        // The holds over time; a row jumps to its frame.
+        // The track: who or what has the prop from which frame; a row jumps to its frame.
         auto* listBox = new QWidget(this);
         auto* lv = new QVBoxLayout(listBox);
         lv->setContentsMargins(0, 0, 0, 0);
@@ -417,16 +555,18 @@ public:
         mHolds->header()->setStretchLastSection(true);
         mHolds->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
         mHolds->setMinimumHeight(70);
-        mHolds->setToolTip("Who holds the prop from which frame. Click a row to go to its frame.");
+        mHolds->setToolTip("Who or what has the prop from which frame. Click a row to go to its frame");
         connect(mHolds, &QTreeWidget::itemClicked, this, [](QTreeWidgetItem* it) {
             runCommand("currentTime", {{"args", {it->data(0, Qt::UserRole).toDouble()}}});
+            if (const QString sel = it->data(1, Qt::UserRole).toString(); !sel.isEmpty())
+                runCommand("select", {{"args", {sel.toStdString()}}});
         });
         lv->addWidget(mHolds);
         mHoldsEmpty = new QLabel("Not held yet. Hold puts it in a hand at the current frame.", listBox);
         mHoldsEmpty->setWordWrap(true);
         mHoldsEmpty->setForegroundRole(QPalette::PlaceholderText);
         lv->addWidget(mHoldsEmpty);
-        v->addWidget(controls::section("Holds", listBox, this, kSections));
+        v->addWidget(controls::section("Track", listBox, this, kSections));
 
         // Solve, with the rarer actions in overflow.
         auto* solveBox = new QWidget(this);
@@ -438,7 +578,7 @@ public:
         mStatus->setForegroundRole(QPalette::PlaceholderText);
         mStatus->setToolTip("Gap: the largest distance left between a hand and its grip, or an aim and its target, at this frame");
         sv->addWidget(mStatus, 1);
-        sv->addWidget(controls::overflow({"puppeteer.prop.fit", "puppeteer.prop.addGrip", "puppeteer.prop.unreal"}, solveBox));
+        sv->addWidget(controls::overflow({"puppeteer.prop.unreal"}, solveBox));
         v->addWidget(controls::section("Solve", solveBox, this, kSections));
 
         // Unreal: the socket the prop attaches by, and the optional hand IK bones.
@@ -482,6 +622,7 @@ public:
         v->addWidget(mUnreal);
         v->addStretch();
 
+        mPropOnly = {setBox, ptBox};
         for (events::Event e : {events::Event::UndoStackChanged, events::Event::SelectionChanged, events::Event::TimeChanged, events::Event::SceneOpened,
                                 events::Event::SceneNew})
             mSubs.push_back(events::subscribe(e, [p = QPointer<PropsPanel>(this)](const events::EventData&) {
@@ -500,50 +641,96 @@ public:
     void sync()
     {
         Graph& g = Graph::current();
-        const Settings& s = settings();
+        const PanelPrefs& s = settings();
         {
             const QSignalBlocker b1(mBlend), b2(mWeight);
             mBlend->setValue(s.blendFrames);
             mWeight->setValue(s.aimWeight);
         }
-        mStyle->setCurrent(s.aimStyle);
         const std::optional<Prop> p = current(g);
         mTitle->setVisible(bool(p));
+        mPreset->setVisible(bool(p));
         mEmpty->setVisible(!p);
-        for (QToolButton* t : mTiles)
-            t->setChecked(false);
+        for (QWidget* w : mPropOnly)
+            w->setEnabled(bool(p));
         mHolds->clear();
+        {
+            const QSignalBlocker b(mPoints);
+            mPoints->clear();
+        }
         if (!p)
         {
             mHand->clearCurrent();
             mHands->clearCurrent();
+            mAim->clearCurrent();
             mHoldsEmpty->setVisible(true);
             mHolds->setVisible(false);
             mStatus->clear();
             mUnreal->setVisible(false);
             return;
         }
+        const Settings& st = p->settings;
         mTitle->setText(QString::fromStdString(g.node(p->root)->name()));
-        mTiles[size_t(p->cls)]->setChecked(true);
+        const Preset* match = matchingPreset(st);
+        mPreset->setText(match ? match->label : "Custom");
         mHand->setCurrent(p->rightHanded ? 0 : 1);
-        mHands->setCurrent(p->twoHanded ? 2 : 1);
-
-        const std::vector<Hold> holds = holdsOf(g, *p);
-        const double fps = std::max(anim::playback().fps, 1e-6);
-        bool held = false;
-        for (const Hold& h : holds)
+        mHands->setCurrent(st.twoHanded ? 2 : 1);
+        mAim->setCurrent(int(st.aim));
         {
-            // Where it sat before its first hold is the scene's, not a hold.
-            if (h.kind == "parent" && &h == &holds.front() && holds.size() > 1)
-                continue;
-            held |= h.kind == "hand" || h.kind == "holster";
-            auto* it = new QTreeWidgetItem(mHolds, {QString::number(h.time * fps, 'f', 0), holdLabel(h)});
-            it->setTextAlignment(0, Qt::AlignRight | Qt::AlignVCenter);
-            it->setData(0, Qt::UserRole, h.time);
-            it->setToolTip(1, QString::fromStdString(h.space));
+            const QSignalBlocker b1(mReach), b2(mDrop);
+            mReach->setValue(st.reach);
+            mDrop->setValue(st.drop);
         }
-        mHolds->setVisible(held);
-        mHoldsEmpty->setVisible(!held);
+        // Reach and drop only mean something for the aims that use them.
+        const bool reaches = st.aim == AimStyle::Extend || st.aim == AimStyle::Guard;
+        for (QWidget* w : {static_cast<QWidget*>(mReach), static_cast<QWidget*>(mReachLabel)})
+            w->setVisible(reaches);
+        for (QWidget* w : {static_cast<QWidget*>(mDrop), static_cast<QWidget*>(mDropLabel)})
+            w->setVisible(st.aim == AimStyle::Guard);
+        mHolster->setCurrentIndex(mHolster->findData(int(st.holster)));
+        for (const auto& [box, pose] : {std::pair{mMainPose, st.mainPose}, std::pair{mOffPose, st.offPose}})
+        {
+            int i = box->findData(QString::fromStdString(pose));
+            if (i < 0)
+            {
+                box->addItem(QString::fromStdString(pose), QString::fromStdString(pose));
+                i = box->count() - 1;
+            }
+            box->setCurrentIndex(i);
+        }
+        mTrigger->setChecked(st.trigger);
+
+        {
+            const QSignalBlocker b(mPoints);
+            const std::vector<NodeId> sel = g.selection();
+            for (NodeId pt : p->points)
+            {
+                const Node& n = *g.node(pt);
+                std::string name = n.name();
+                const std::string prefix = g.node(p->root)->name() + "_";
+                if (name.starts_with(prefix))
+                    name = name.substr(prefix.size());
+                if (name.ends_with("_point"))
+                    name.resize(name.size() - 6);
+                auto* it = new QTreeWidgetItem(mPoints, {QString::fromStdString(name), roleLabel(roleOf(n))});
+                it->setData(0, Qt::UserRole, QString::fromStdString(g.path(pt)));
+                it->setForeground(1, palette().color(QPalette::PlaceholderText));
+                it->setSelected(std::find(sel.begin(), sel.end(), pt) != sel.end());
+            }
+        }
+
+        const std::vector<TrackRow> rows = trackRows(g, *p);
+        const double fps = std::max(anim::playback().fps, 1e-6);
+        for (const TrackRow& r : rows)
+        {
+            auto* it = new QTreeWidgetItem(mHolds, {QString::number(r.time * fps, 'f', 0), r.label});
+            it->setTextAlignment(0, Qt::AlignRight | Qt::AlignVCenter);
+            it->setData(0, Qt::UserRole, r.time);
+            it->setData(1, Qt::UserRole, r.select);
+            it->setToolTip(1, r.tip);
+        }
+        mHolds->setVisible(!rows.empty());
+        mHoldsEmpty->setVisible(rows.empty());
 
         const NodeId ch = propCharacter(g, *p);
         QString status;
@@ -567,12 +754,16 @@ public:
     }
 
 private:
-    QLabel *mTitle = nullptr, *mEmpty = nullptr, *mHoldsEmpty = nullptr, *mStatus = nullptr;
+    QLabel *mTitle = nullptr, *mPreset = nullptr, *mEmpty = nullptr, *mHoldsEmpty = nullptr, *mStatus = nullptr, *mReachLabel = nullptr,
+           *mDropLabel = nullptr;
     std::vector<QToolButton*> mTiles;
-    controls::Segmented *mHand = nullptr, *mHands = nullptr, *mStyle = nullptr;
-    QDoubleSpinBox* mBlend = nullptr;
+    std::vector<QWidget*> mPropOnly;
+    controls::Segmented *mHand = nullptr, *mHands = nullptr, *mAim = nullptr;
+    QDoubleSpinBox *mBlend = nullptr, *mReach = nullptr, *mDrop = nullptr;
     controls::SliderField* mWeight = nullptr;
-    QTreeWidget* mHolds = nullptr;
+    QComboBox *mHolster = nullptr, *mMainPose = nullptr, *mOffPose = nullptr;
+    QCheckBox* mTrigger = nullptr;
+    QTreeWidget *mHolds = nullptr, *mPoints = nullptr;
     QLineEdit *mBone = nullptr, *mSocket = nullptr;
     QCheckBox* mIkBones = nullptr;
     QWidget* mUnreal = nullptr;
@@ -693,30 +884,38 @@ void registerPropUi(lila::ext::Context& ctx)
     drawOverrides::add(ctx, {.id = "puppeteer.propPoint", .nodeType = kPointType, .draw = drawPoint, .pick = pickPoint});
 
     for (const Preset& p : presets())
-        actions::add(ctx, {.id = std::string("puppeteer.prop.class.") + p.id,
+        actions::add(ctx, {.id = std::string("puppeteer.prop.preset.") + p.id,
                            .label = p.label,
                            .category = kCat,
-                           .run = [c = p.cls] { classAction(c); },
-                           .doc = std::string("Make the selection a ") + p.label + " prop (or change the selected prop to one), its grips, aim and "
-                                  "holster fitted to its mesh.",
+                           .run = [pp = &p] { setupAction(pp); },
+                           .doc = std::string("Fill the selected prop's settings from the ") + p.label + " preset and fit its points again (a "
+                                  "selected mesh becomes a prop first).",
                            .checked =
-                               [c = p.cls] {
+                               [pp = &p] {
                                    const std::optional<Prop> cur = current(Graph::current());
-                                   return cur && cur->cls == c;
+                                   return cur && matchingPreset(cur->settings) == pp;
                                },
                            .icon = p.icon,
-                           .keywords = {"prop", "weapon", p.id, hand::lowerOf(p.label)}});
+                           .keywords = {"prop", "weapon", "preset", p.id, hand::lowerOf(p.label)}});
 
-    addAction(ctx, "puppeteer.prop.make", "Make Prop", [] { classAction(Class::Generic); },
-              "Make the selected mesh or group a prop, with grip points fitted to it; pick its class in the Props panel.", "sword",
-              {"make prop", "mark as prop", "weapon setup"}, [] { return actions::hasSelection(); });
+    addAction(ctx, "puppeteer.prop.make", "Make Prop", [] { setupAction(nullptr); },
+              "Make the selected mesh or group a prop: its grips, tip and other points fitted to its shape, its settings read from it.", "sword",
+              {"make prop", "mark as prop", "weapon setup", "object", "attach"}, [] { return actions::hasSelection(); });
+    addAction(ctx, "puppeteer.prop.removePoint", "Remove Point",
+              [] {
+                  Graph& g = Graph::current();
+                  for (NodeId pt : selectedPoints(g))
+                      runCommand("puppeteerPropPoint", {{"args", {g.path(pt)}}, {"remove", true}});
+              },
+              "Remove the selected points from their prop.", "trash", {"delete point", "grip point"},
+              [] { return !selectedPoints(Graph::current()).empty(); });
     addAction(ctx, "puppeteer.prop.hold", "Hold", [] { holdAction("main"); },
               "Put the prop in the character's main hand from the current frame (both hands when it is set to), settling over the panel's Blend.",
               "hand-grab", {"pick up", "grab", "draw", "unholster"});
     addAction(ctx, "puppeteer.prop.handOff", "Other Hand", handOffAction,
               "Hand the prop to the character's other hand from the current frame, without a pop.", "arrows-exchange", {"handoff", "hand off", "swap hands", "switch hands"});
     addAction(ctx, "puppeteer.prop.holster", "Holster", [] { simpleAction("puppeteerPropHolster"); },
-              "Put the prop away on the character (back, hip or thigh by class) from the current frame; Hold draws it again.", "backpack",
+              "Put the prop away on the character (at its holster spot) from the current frame; Hold draws it again.", "backpack",
               {"sheathe", "put away", "stow", "back", "hip"});
     addAction(ctx, "puppeteer.prop.drop", "Drop", [] { simpleAction("puppeteerPropDrop"); },
               "Let go of the prop at the current frame: it stays in the world where it is and the hands open.", "hand-stop",
@@ -740,7 +939,7 @@ void registerPropUi(lila::ext::Context& ctx)
                   if (const std::optional<Prop> p = current(g))
                       runCommand("puppeteerPropFit", {{"args", {g.path(p->root)}}});
               },
-              "Fit the prop's grip, aim and stock points to its mesh again by its class.", "focus-centered", {"refit", "auto fit", "grip points"});
+              "Fit the prop's points to its shape again; points added or moved by hand stay.", "focus-centered", {"refit", "auto fit", "grip points"});
     addAction(ctx, "puppeteer.prop.addGrip", "Add Grip",
               [] {
                   Graph& g = Graph::current();
@@ -776,14 +975,14 @@ void registerPropUi(lila::ext::Context& ctx)
     {
         for (const char* a : {"window.puppeteerProps", "puppeteer.prop.make", "", "puppeteer.prop.hold", "puppeteer.prop.handOff", "puppeteer.prop.holster",
                               "puppeteer.prop.drop", "", "puppeteer.prop.aim", "puppeteer.prop.aimOff", "", "puppeteer.prop.solve", "puppeteer.prop.fit",
-                              "puppeteer.prop.addGrip", "puppeteer.prop.unreal"})
+                              "puppeteer.prop.addGrip", "puppeteer.prop.removePoint", "puppeteer.prop.unreal"})
             if (*a)
                 menus::addItem(ctx, {.id = "puppeteer.props." + m + "." + a, .menu = m, .action = a});
             else
                 menus::addItem(ctx, {.id = "puppeteer.props.sep" + std::to_string(sep++), .menu = m, .kind = menus::Kind::Separator});
-        menus::addItem(ctx, {.id = "puppeteer.props." + m + ".classes", .menu = m, .kind = menus::Kind::Submenu, .label = "Class"});
+        menus::addItem(ctx, {.id = "puppeteer.props." + m + ".presets", .menu = m, .kind = menus::Kind::Submenu, .label = "Preset"});
         for (const Preset& p : presets())
-            menus::addItem(ctx, {.id = "puppeteer.props." + m + ".class." + p.id, .menu = m + "/Class", .action = std::string("puppeteer.prop.class.") + p.id});
+            menus::addItem(ctx, {.id = "puppeteer.props." + m + ".preset." + p.id, .menu = m + "/Preset", .action = std::string("puppeteer.prop.preset.") + p.id});
     }
 
     const events::SubscriptionId sub =

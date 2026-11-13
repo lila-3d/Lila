@@ -23,10 +23,9 @@ struct Prop
     NodeId node = lila::scene::kNoNode;
     /** The transform that moves when the prop is held: the prop node's parent. */
     NodeId root = lila::scene::kNoNode;
-    Class cls = Class::Generic;
     /** The hand that holds it by default: true right. */
     bool rightHanded = true;
-    bool twoHanded = false;
+    Settings settings;
     std::vector<NodeId> points;
     NodeId point(Graph& g, Role r) const;
 };
@@ -35,6 +34,8 @@ struct Prop
 NodeId propFor(Graph& g, NodeId node);
 std::optional<Prop> load(Graph& g, NodeId propNode);
 std::vector<NodeId> props(Graph& g);
+/** Writes a prop node's settings, undoably. */
+void writeSettings(Graph& g, NodeId propNode, const Settings& s);
 
 Role roleOf(const Node& point);
 /** A point's frame in its prop root's space. */
