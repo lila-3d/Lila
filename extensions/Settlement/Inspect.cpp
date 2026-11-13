@@ -377,10 +377,10 @@ json explain(const Layout& l, const Ground& ground, const json& siting, const st
     std::vector<std::string> reasons;
     json out = {{"id", id}};
     auto slopeAt = [&](Vec2 q) { return ground.grade(q) * 100.0; };
-    auto number = [&](std::string_view s) -> int64_t {
+    auto number = [&](std::string_view s) -> uint64_t {
         try
         {
-            return std::stoll(std::string(s));
+            return std::stoull(std::string(s));
         }
         catch (...)
         {
@@ -420,13 +420,18 @@ json explain(const Layout& l, const Ground& ground, const json& siting, const st
     }
     else if (id.starts_with("lot:") || id.starts_with("landmark:"))
     {
-        const int lotId = int(number(id.substr(id.find(':') + 1)));
+        const uint64_t wanted = number(id.substr(id.find(':') + 1));
         const Lot* lot = nullptr;
+        // The stable lotId first; a small number that matches no key is the lot's index.
         for (const Lot& x : l.lots)
-            if (x.id == lotId)
+            if (x.key == wanted)
+                lot = &x;
+        for (const Lot& x : l.lots)
+            if (!lot && uint64_t(x.id) == wanted)
                 lot = &x;
         if (!lot)
-            throw std::runtime_error("no lot " + std::to_string(lotId));
+            throw std::runtime_error("no lot " + std::to_string(wanted) + " (settlementLots lists them: lotId or lot)");
+        const int lotId = lot->id;
         out["kind"] = id.starts_with("lot:") ? "lot" : "landmark";
         out["use"] = useName(lot->use);
         out["area"] = lot->area;
@@ -461,13 +466,17 @@ json explain(const Layout& l, const Ground& ground, const json& siting, const st
     }
     else if (id.starts_with("block:"))
     {
-        const int blockId = int(number(id.substr(6)));
+        const uint64_t wanted = number(id.substr(6));
         const Block* block = nullptr;
         for (const Block& b : l.blocks)
-            if (b.id == blockId)
+            if (b.key == wanted)
+                block = &b;
+        for (const Block& b : l.blocks)
+            if (!block && uint64_t(b.id) == wanted)
                 block = &b;
         if (!block)
-            throw std::runtime_error("no block " + std::to_string(blockId));
+            throw std::runtime_error("no block " + std::to_string(wanted) + " (settlementBlocks lists them: blockId or block)");
+        const int blockId = block->id;
         out["kind"] = "block";
         out["use"] = useName(block->use);
         out["area"] = block->area;
@@ -481,7 +490,7 @@ json explain(const Layout& l, const Ground& ground, const json& siting, const st
     }
     else
     {
-        const uint64_t street = uint64_t(number(id.starts_with("street:") ? id.substr(7) : id));
+        const uint64_t street = number(id.starts_with("street:") ? id.substr(7) : id);
         std::vector<int> edges;
         for (size_t e = 0; e < l.graph.edges.size(); ++e)
             if (l.graph.isStreet(int(e)) && l.graph.edges[e].street == street)

@@ -10,7 +10,7 @@ A settlement is a mesh with a geometry-nodes modifier around a Settlement node: 
 - Another layout on the same site: `setAttr(mod + '.seed', 4)`. Smaller or younger: `.growth`. Taller: `.overrides` `{"maxFloors": 6}` or `.heightScale`.
 - Walls, eras, districts, street patterns: flags on `settlementCreate`. See "Style".
 - Change one street, lot or landmark: find its id, then edit by it. See "Edit by id".
-- Why is this here: `settlementExplain(mesh, id='centre' | '<street id>' | 'lot:<id>' | 'block:<id>' | 'landmark:<id>')`.
+- Why is this here: `settlementExplain(mesh, id='centre' | '<street id>' | 'lot:<lotId>' | 'block:<blockId>' | 'landmark:<lotId>')`.
 - Ship it: `settlementSendToUnreal(mesh)` (`dryRun=True` works without Unreal), or `settlementExport(mesh, path=)`. See "Out".
 
 ## Flat ground

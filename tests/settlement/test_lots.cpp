@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <set>
 
@@ -535,6 +536,23 @@ TEST_CASE("settlement lots: commands list, override by id with undo, choose rout
     else
         CHECK_THROWS_WITH_AS(run("settlementBuildings", {{"args", {mesh}}, {"route", "masonry"}}), doctest::Contains("masonryBuilding"), std::exception);
     CHECK_THROWS_WITH_AS(run("settlementFoundations", {{"args", {mesh}}}), doctest::Contains("flat ground"), std::exception);
+}
+
+TEST_CASE("settlement lots: explain takes the stable lotId")
+{
+    lotsLoadPackage();
+    run("newScene");
+    const json made = run("settlementCreate", {{"profile", "medievalTown"}, {"size", 40000.0}, {"seed", 3}});
+    const std::string mesh = made["mesh"].get<std::string>();
+    const json lot = run("settlementLots", {{"args", {mesh}}, {"use", "residential"}, {"limit", 1}})["lots"][0];
+    const uint64_t lotId = lot["lotId"].get<uint64_t>();
+    REQUIRE(lotId > uint64_t(std::numeric_limits<int32_t>::max()));
+    const json byKey = run("settlementExplain", {{"args", {mesh}}, {"id", "lot:" + std::to_string(lotId)}});
+    const json byIndex = run("settlementExplain", {{"args", {mesh}}, {"id", "lot:" + std::to_string(lot["lot"].get<int>())}});
+    CHECK(byKey["use"] == "residential");
+    CHECK(byKey["reasons"] == byIndex["reasons"]);
+    const json block = run("settlementBlocks", {{"args", {mesh}}})["blocks"][0];
+    CHECK(run("settlementExplain", {{"args", {mesh}}, {"id", "block:" + std::to_string(block["blockId"].get<uint64_t>())}})["kind"] == "block");
 }
 
 TEST_CASE("settlement lots: foundations measured on a Terrain with terrainRegionStats")
