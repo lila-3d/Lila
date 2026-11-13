@@ -389,6 +389,20 @@ TEST_CASE("props: Unreal export attaches to hand_r by default and keys ik bones 
     CHECK_THROWS(run("puppeteerPropUnreal", {{"args", {"rifle"}}, {"ikBones", true}, {"gunBone", "weapon_ik"}}));
 }
 
+TEST_CASE("props: the Unreal socket holds the settled grip, not the frame the hold eases in from")
+{
+    manny();
+    rifle();
+    run("puppeteerPropSetup", {{"args", {"rifle"}}, {"kind", "rifle"}});
+    run("puppeteerPropHold", {{"args", {"rifle"}}, {"time", 0.0}, {"blend", 6.0 / 30.0}, {"solve", false}});
+    const json u = run("puppeteerPropUnreal", {{"args", {"rifle"}}});
+    const scene::Node& r = *graph().find("rifle");
+    at(10.0 / 30.0);
+    const glm::dmat4 settled = glm::inverse(world(jointPath("hand_r"))) * world("rifle");
+    CHECK(near(scene::pins::socketOffsetOf(r), settled, 1e-6));
+    CHECK(u.at("strayCm").get<double>() > 1.0);
+}
+
 TEST_CASE("props: a greatsword held in guard toward a target")
 {
     manny();

@@ -1093,22 +1093,27 @@ json unrealCmd(const Args& a)
     const anim::Playback& pb = anim::playback();
     const double start = a.has("start") ? a.get<double>("start") : pb.minTime, end = a.has("end") ? a.get<double>("end") : pb.maxTime;
     const long long frames = std::max<long long>(0, std::llround((end - start) * fps()));
-    // The socket's offset: the prop against the bone at the first frame of the range it holds it; how far it strays is reported.
+    // The socket's offset: the prop against the bone where the grip has settled, the last frame of the first run of frames
+    // it is held; how far it strays from that over the held frames (the ease into the grip included) is reported.
+    std::vector<glm::dmat4> held;
     std::optional<glm::dmat4> offset;
-    double strayCm = 0.0, strayDeg = 0.0;
-    int heldFrames = 0;
+    bool runOver = false;
     for (long long f = 0; f <= frames; ++f)
     {
         at(g, start + double(f) / fps());
         if (holderNow(g, p) != bone)
-            continue;
-        ++heldFrames;
-        const glm::dmat4 rel = glm::inverse(rigidOf(worldOf(g, bone))) * rigidOf(worldOf(g, p.root));
-        if (!offset)
         {
-            offset = rel;
+            runOver = runOver || !held.empty();
             continue;
         }
+        held.push_back(glm::inverse(rigidOf(worldOf(g, bone))) * rigidOf(worldOf(g, p.root)));
+        if (!runOver)
+            offset = held.back();
+    }
+    const int heldFrames = int(held.size());
+    double strayCm = 0.0, strayDeg = 0.0;
+    for (const glm::dmat4& rel : held)
+    {
         strayCm = std::max(strayCm, glm::length(glm::dvec3(rel[3]) - glm::dvec3((*offset)[3])));
         const glm::dquat q0 = glm::quat_cast(glm::dmat3(*offset)), q1 = glm::quat_cast(glm::dmat3(rel));
         strayDeg = std::max(strayDeg, glm::degrees(2.0 * std::acos(std::clamp(std::abs(glm::dot(q0, q1)), 0.0, 1.0))));
