@@ -1789,13 +1789,15 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "uvOrient",
-        .doc = "Rotate the selected islands upright: by bounding box, principal axis, longest edge or edge grid.",
-        .flags = {uvSetFlag(), {"mode", "", T::String, "bbox", "bbox, principal, edge or grid (polygon edges along U and V).", {"bbox", "principal", "edge", "grid"}}},
+        .doc = "Rotate the selected islands upright: by bounding box, principal axis, longest edge, edge grid or surface flow.",
+        .flags = {uvSetFlag(), {"mode", "", T::String, "bbox", "bbox, principal, edge, grid (polygon edges along U and V), flow (the surface's curvature and creases along U and V) or auto (grid, else flow, else bbox).", {"bbox", "principal", "edge", "grid", "flow", "auto"}}},
         .run = [](const Args& a) -> json {
             std::string mode = a.get<std::string>("mode", "bbox");
             OrientMode om = mode == "principal" ? OrientMode::Principal
                             : mode == "edge"    ? OrientMode::LongestEdge
                             : mode == "grid"    ? OrientMode::Grid
+                            : mode == "flow"    ? OrientMode::Flow
+                            : mode == "auto"    ? OrientMode::Upright
                                                 : OrientMode::BoundingBox;
             std::string set = uvSetArg(a);
             return editUv("UV Orient", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
