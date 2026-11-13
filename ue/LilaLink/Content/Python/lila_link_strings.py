@@ -88,10 +88,88 @@ def _add_switch(hierarchy, hc, control, name, on):
     return _channel(hierarchy, hc, control, name, settings, unreal.RigHierarchy.make_control_value_from_bool(bool(on)))
 
 
-def _lock_sequence(p, rig, mesh, lock_channels, locks, errors):
-    """The chains' lock keys on the rig's Lock channels, in a Level Sequence binding a skeletal mesh actor to the rig."""
+SOURCE_UNIT = "/Script/LilaLinkRig.RigUnit_LilaStringsSource"
+TAG_PREFIX = "LilaStrings_"
+
+
+def _actors():
+    return unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+
+
+def _character_actor(rig, mesh, character):
+    """The level's actor wearing the mesh this rig poses (made at the origin when missing), tagged with the character."""
+    label = rig.get_name()
+    actor = next((a for a in _actors().get_all_level_actors() if isinstance(a, unreal.SkeletalMeshActor) and a.get_actor_label() == label), None)
+    if actor is None:
+        actor = _actors().spawn_actor_from_class(unreal.SkeletalMeshActor, unreal.Vector(0.0, 0.0, 0.0))
+        actor.set_actor_label(label)
+    actor.skeletal_mesh_component.set_skeletal_mesh_asset(mesh)
+    tag = unreal.Name(TAG_PREFIX + character)
+    if tag not in actor.tags:
+        actor.tags = list(actor.tags) + [tag]
+    return actor
+
+
+def _prop_actor(member):
+    """The level actor Lila sent for a prop: labelled with the prop's name."""
+    name = member["name"]
+    return next((a for a in _actors().get_all_level_actors() if a.get_actor_label() == name), None)
+
+
+def _bind(hierarchy, controller, rule_web, actor, warnings):
+    """
+    Binds what a glue or attach set's lead moves, one way: a prop following a bone of this character is attached to it;
+    a prop or another character's bone that leads drives its control here through a Source node. Returns the nodes.
+    """
+    nodes = []
+    for rel in rule_web.get("glue", []):
+        members = rel["members"]
+        lead = members[rel.get("lead", len(members) - 1 if rel.get("attach") else 0)]
+        if isinstance(lead, str):
+            for m in members:
+                if isinstance(m, dict) and "prop" in m:
+                    prop = _prop_actor(m)
+                    if prop is None:
+                        warnings.append("no actor labelled " + m["name"] + " to attach to " + lead + "; send the prop first")
+                        continue
+                    prop.attach_to_component(actor.skeletal_mesh_component, lead, unreal.AttachmentRule.KEEP_WORLD,
+                                             unreal.AttachmentRule.KEEP_WORLD, unreal.AttachmentRule.KEEP_WORLD, False)
+            continue
+        key = unreal.RigElementKey(unreal.RigElementType.CONTROL, lead["control"])
+        control_world = hierarchy.get_global_transform(key, True).multiply(actor.get_actor_transform())
+        if "prop" in lead:
+            source = _prop_actor(lead)
+            if source is None:
+                warnings.append("no actor labelled " + lead["name"] + " to lead the glue; send the prop first")
+                continue
+            tag, bone = TAG_PREFIX + "prop_" + lead["name"], ""
+            if unreal.Name(tag) not in source.tags:
+                source.tags = list(source.tags) + [unreal.Name(tag)]
+            offset = control_world.make_relative(source.get_actor_transform())
+        else:
+            tag, bone = TAG_PREFIX + lead["character"], lead["bone"]
+            other = next((a for a in _actors().get_all_level_actors() if unreal.Name(tag) in a.tags), None)
+            socket = other.skeletal_mesh_component.get_socket_transform(bone) if other else None
+            offset = control_world.make_relative(socket) if socket else unreal.Transform()
+            if other is None:
+                warnings.append("build " + lead["character"] + "'s Strings rig too, so " + lead["control"] + " follows its " + bone)
+        node = controller.add_unit_node_from_struct_path(SOURCE_UNIT, "Execute", unreal.Vector2D(400.0, -200.0 - 200.0 * len(nodes)),
+                                                         PREFIX + "Source_" + lead["control"], False)
+        name = node.get_name()
+        controller.set_pin_default_value(name + ".Control", lead["control"], False, False)
+        controller.set_pin_default_value(name + ".SourceTag", tag, False, False)
+        controller.set_pin_default_value(name + ".Bone", bone, False, False)
+        t, r = offset.translation, offset.rotation
+        controller.set_pin_default_value(name + ".Offset", "(Rotation=(X={},Y={},Z={},W={}),Translation=(X={},Y={},Z={}),Scale3D=(X=1,Y=1,Z=1))".format(
+            r.x, r.y, r.z, r.w, t.x, t.y, t.z), False, False)
+        nodes.append(name)
+    return nodes
+
+
+def _lock_sequence(p, rig, mesh, lock_channels, locks, errors, actor=None):
+    """The chains' lock keys on the rig's Lock channels, in a Level Sequence binding the character's actor to the rig."""
     keyed = [l for l in locks if l.get("keys") and l["bone"] in lock_channels]
-    if not keyed:
+    if not keyed and actor is None:
         return None
     rig_path = rig.get_path_name().split(".")[0]
     path = p.get("sequence") or rig_path.rsplit("/", 1)[0] + "/LS_" + rig_path.rsplit("/", 1)[1]
@@ -105,13 +183,7 @@ def _lock_sequence(p, rig, mesh, lock_channels, locks, errors):
     fps = float(p.get("fps") or 30.0)
     seq.set_display_rate(unreal.FrameRate(int(round(fps)), 1))
     world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
-    actors = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
-    label = mesh.get_name() + " Strings"
-    actor = next((a for a in actors.get_all_level_actors() if isinstance(a, unreal.SkeletalMeshActor) and a.get_actor_label() == label), None)
-    if actor is None:
-        actor = actors.spawn_actor_from_class(unreal.SkeletalMeshActor, unreal.Vector(0.0, 0.0, 0.0))
-        actor.set_actor_label(label)
-    actor.skeletal_mesh_component.set_skeletal_mesh_asset(mesh)
+    label = actor.get_actor_label()
     binding = next((b for b in seq.get_possessables() if b.get_display_name() == label), None) or seq.add_possessable(actor)
     track = unreal.ControlRigSequencerLibrary.find_or_create_control_rig_track(world, seq, rig.generated_class(), binding)
     control_rig = None
@@ -131,8 +203,9 @@ def _lock_sequence(p, rig, mesh, lock_channels, locks, errors):
             errors.append("couldn't key " + channel + " in " + path)
         frames += [k[0] for k in keys]
         written[lock["bone"]] = keys
-    seq.set_playback_start(min(frames))
-    seq.set_playback_end(max(frames) + 1)
+    if frames:
+        seq.set_playback_start(min(frames))
+        seq.set_playback_end(max(frames) + 1)
     unreal.EditorAssetLibrary.save_loaded_asset(seq)
     return {"sequence": path, "keys": written, "channels": lock_channels, "rig": rig_path}
 
@@ -186,7 +259,8 @@ def build(p):
     isolate = bool(p.get("isolate", False))
     rule_web = dict(p["ruleWeb"])
     pins = set(rule_web.get("pins", []))
-    locks = {l["bone"]: bool(l.get("locked")) for l in rule_web.get("locks", [])}
+    locks_list = rule_web.get("locks", [])
+    locks = {l["bone"]: bool(l.get("locked")) for l in locks_list}
     controls = {}
     lock_channels = {}
     for bone in p.get("controls", []):
@@ -223,6 +297,13 @@ def build(p):
     web = json.dumps(rule_web)
     prev = begin
     made = []
+    externals_bound = any(isinstance(m, dict) for rel in glue for m in rel["members"])
+    actor = _character_actor(rig, mesh, rule_web.get("character", "")) if externals_bound or any(l.get("keys") for l in locks_list) else None
+    if actor is not None:
+        for name in _bind(hierarchy, controller, rule_web, actor, warnings):
+            controller.add_link(prev, name + ".ExecutePin", False)
+            prev = name + ".ExecutePin"
+            made.append(name)
     for i, (bone, control) in enumerate([(b, controls[b]) for b in p.get("controls", []) if b in controls] +
                                         [("", c) for c in externals.values()]):
         node = controller.add_unit_node_from_struct_path(UNIT, "Execute", unreal.Vector2D(400.0 + 360.0 * i, 200.0), PREFIX + (bone or control), False)
@@ -243,7 +324,7 @@ def build(p):
 
     unreal.BlueprintEditorLibrary.compile_blueprint(rig)
     unreal.EditorAssetLibrary.save_loaded_asset(rig)
-    sequence = _lock_sequence(p, rig, mesh, lock_channels, rule_web.get("locks", []), errors)
+    sequence = _lock_sequence(p, rig, mesh, lock_channels, locks_list, errors, actor)
     return {"rig": rig.get_path_name().split(".")[0], "created": created, "nodes": made, "mode": mode, "isolate": isolate,
             "pins": sorted(pins & set(controls)), "locks": sorted(b for b in locks if b in controls),
             "glue": [g.get("channel") for g in glue], "lockSequence": sequence, "errors": errors, "warnings": warnings}

@@ -3,6 +3,10 @@
 #include "LilaStringsSolver.h"
 
 #include "ControlRig.h"
+#include "ControlRigObjectBinding.h"
+#include "Components/PoseableMeshComponent.h"
+#include "Components/SkinnedMeshComponent.h"
+#include "EngineUtils.h"
 #include "Dom/JsonObject.h"
 #include "Engine/SkeletalMesh.h"
 #include "Misc/ScopeLock.h"
@@ -1044,6 +1048,57 @@ bool Run(URigHierarchy* H, EMode Mode, const FAsk& Ask, float& OutError, const T
 }
 } // namespace
 
+FRigUnit_LilaStringsSource_Execute()
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(RigUnit_LilaStringsSource::Execute);
+
+	bFound = false;
+	URigHierarchy* H = ExecuteContext.Hierarchy;
+	const USceneComponent* Owner = ExecuteContext.GetOwningComponent();
+	UWorld* World = Owner ? Owner->GetWorld() : nullptr;
+	const FRigElementKey Key(Control, ERigElementType::Control);
+	if (!H || !World || SourceTag.IsNone() || !H->Contains(Key))
+	{
+		return;
+	}
+	// Found once per world and tag.
+	static TMap<TPair<TWeakObjectPtr<UWorld>, FName>, TWeakObjectPtr<AActor>> Found;
+	TWeakObjectPtr<AActor>& Cached = Found.FindOrAdd({World, SourceTag});
+	if (!Cached.IsValid())
+	{
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (It->ActorHasTag(SourceTag))
+			{
+				Cached = *It;
+				break;
+			}
+		}
+	}
+	const AActor* Source = Cached.Get();
+	if (!Source)
+	{
+		return;
+	}
+	FTransform SourceWorld = Source->GetActorTransform();
+	if (!Bone.IsNone())
+	{
+		TInlineComponentArray<USkinnedMeshComponent*> Meshes(Source);
+		const USkinnedMeshComponent* Mesh = nullptr;
+		for (const USkinnedMeshComponent* M : Meshes)
+		{
+			Mesh = M->DoesSocketExist(Bone) ? M : Mesh;
+		}
+		if (!Mesh)
+		{
+			return;
+		}
+		SourceWorld = Mesh->GetSocketTransform(Bone, RTS_World);
+	}
+	H->SetGlobalTransform(Key, (Offset * SourceWorld).GetRelativeTransform(Owner->GetComponentTransform()), false, false);
+	bFound = true;
+}
+
 FRigUnit_LilaStrings_Execute()
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(RigUnit_LilaStrings::Execute);
@@ -1271,6 +1326,76 @@ bool ULilaStringsLibrary::SetModeEnum(URigHierarchy* Hierarchy, const FRigElemen
 TMap<FName, FTransform> ULilaStringsLibrary::DragRig(UClass* RigClass, const FName Control, const FTransform& Target, const FVector TurnVector)
 {
 	return DragRigSwitched(RigClass, Control, Target, TurnVector, {});
+}
+
+bool ULilaStringsLibrary::PoseMesh(UPoseableMeshComponent* Mesh, const TMap<FName, FTransform>& ComponentSpace)
+{
+	const USkinnedAsset* Asset = Mesh ? Mesh->GetSkinnedAsset() : nullptr;
+	if (!Asset)
+	{
+		return false;
+	}
+	const FReferenceSkeleton& Ref = Asset->GetRefSkeleton();
+	for (int32 I = 0; I < Ref.GetNum(); ++I)
+	{
+		if (const FTransform* T = ComponentSpace.Find(Ref.GetBoneName(I)))
+		{
+			Mesh->SetBoneTransformByName(Ref.GetBoneName(I), *T, EBoneSpaces::ComponentSpace);
+		}
+	}
+	Mesh->RefreshBoneTransforms();
+	return true;
+}
+
+TMap<FName, FTransform> ULilaStringsLibrary::DragRigOn(UClass* RigClass, USceneComponent* Owner, const FName Control, const FTransform& Target,
+													  const FVector TurnVector)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaStringsLibrary::DragRigOn);
+
+	TMap<FName, FTransform> Out;
+	if (!RigClass || !RigClass->IsChildOf(UControlRig::StaticClass()) || !Owner)
+	{
+		return Out;
+	}
+	UControlRig* Rig = NewObject<UControlRig>(GetTransientPackage(), RigClass);
+	Rig->SetObjectBinding(MakeShared<FControlRigObjectBinding>());
+	Rig->GetObjectBinding()->BindToObject(Owner);
+	// As the animation graph does for a rig on a mesh: what the rig's nodes find as the component they run on.
+	Rig->GetDataSourceRegistry()->RegisterDataSource(UControlRig::OwnerComponent, Owner);
+	Rig->Initialize(true);
+	Rig->Execute(FRigUnit_BeginExecution::EventName);
+	URigHierarchy* H = Rig->GetHierarchy();
+	const FRigElementKey Key(Control, ERigElementType::Control);
+	if (H && !Control.IsNone() && H->Contains(Key))
+	{
+		FTransform Goal = Target;
+		if (const double Angle = TurnVector.Size(); Angle > 0.0)
+		{
+			Goal.SetRotation(FQuat(TurnVector / Angle, Angle) * H->GetGlobalTransform(Key).GetRotation());
+		}
+		H->SetGlobalTransform(Key, Goal, false, true);
+	}
+	// Each evaluation starts from the input pose, as a frame of animation does: the bones back at rest.
+	if (H)
+	{
+		H->ResetPoseToInitial(ERigElementType::Bone);
+	}
+	Rig->Execute(FRigUnit_BeginExecution::EventName);
+	if (H)
+	{
+		H->ForEach<FRigBoneElement>([&](FRigBoneElement* E) {
+			Out.Add(E->GetFName(), H->GetGlobalTransform(E->GetKey()));
+			return true;
+		});
+		H->ForEach<FRigControlElement>([&](FRigControlElement* E) {
+			if (E->GetFName().ToString().StartsWith(TEXT("LS_x_")))
+			{
+				Out.Add(E->GetFName(), H->GetGlobalTransform(E->GetKey()));
+			}
+			return true;
+		});
+	}
+	return Out;
 }
 
 TMap<FName, FTransform> ULilaStringsLibrary::DragRigSwitched(UClass* RigClass, const FName Control, const FTransform& Target, const FVector TurnVector,

@@ -5,6 +5,7 @@
 
 class URigHierarchy;
 class UMovieSceneSection;
+class UPoseableMeshComponent;
 class USkeletalMesh;
 
 #include "RigUnit_LilaStrings.generated.h"
@@ -107,6 +108,37 @@ struct LILALINKRIG_API FRigUnit_LilaStrings : public FRigUnit_LilaStringsBase
 	/** Above 1 lets limb bones lengthen, up to this multiple, when turning alone can't meet the holds. */
 	UPROPERTY(meta = (Input, ClampMin = "1.0"))
 	float MaxStretch = 1.0f;
+};
+
+/**
+ * Puts a control where an actor in the world is, or a bone of its skinned mesh: how a prop's actor or another character
+ * leads what a rule web glues or attaches to them. The control lands at Offset in the source's frame, in the space of the
+ * component the rig runs on; nothing happens while the rig runs on no component or no actor has SourceTag.
+ */
+USTRUCT(meta = (DisplayName = "Lila Strings Source", Category = "Lila|Strings", NodeColor = "0.42 0.2 0.62", Keywords = "Strings,Glue,Attach,Prop,Follow,Lila"))
+struct LILALINKRIG_API FRigUnit_LilaStringsSource : public FRigUnitMutable
+{
+	GENERATED_BODY()
+
+	RIGVM_METHOD()
+	virtual void Execute() override;
+
+	UPROPERTY(meta = (Input))
+	FName Control;
+
+	/** The tag on the actor that leads. */
+	UPROPERTY(meta = (Input))
+	FName SourceTag;
+
+	/** A bone (or socket) of the actor's skinned mesh; none follows the actor itself. */
+	UPROPERTY(meta = (Input))
+	FName Bone;
+
+	UPROPERTY(meta = (Input))
+	FTransform Offset = FTransform::Identity;
+
+	UPROPERTY(meta = (Output))
+	bool bFound = false;
 };
 
 /** Plain FK, as Lila's Forward All: the bone turns to the target's rotation and its children follow. */
@@ -225,6 +257,14 @@ public:
 	 * DragRig with bool channels set first: each key is "Control/Channel" (LS_hand_l/Pin), its value the channel's. The result
 	 * also has the glued props' and other characters' controls (LS_x_...).
 	 */
+	/** Poses a poseable mesh to bones' component-space transforms (as DragRig returns them), parents first, and refreshes it. */
+	UFUNCTION(BlueprintCallable, Category = "Lila|Strings")
+	static bool PoseMesh(UPoseableMeshComponent* Mesh, const TMap<FName, FTransform>& ComponentSpace);
+
+	/** DragRig with the rig running on Owner (a component in a world), so its Source nodes find their actors; no Control just evaluates. */
+	UFUNCTION(BlueprintCallable, Category = "Lila|Strings")
+	static TMap<FName, FTransform> DragRigOn(UClass* RigClass, USceneComponent* Owner, FName Control, const FTransform& Target, FVector TurnVector);
+
 	UFUNCTION(BlueprintCallable, Category = "Lila|Strings")
 	static TMap<FName, FTransform> DragRigSwitched(UClass* RigClass, FName Control, const FTransform& Target, FVector TurnVector,
 												   const TMap<FString, bool>& Switches);
