@@ -6,9 +6,13 @@ import unreal
 
 from lila_link_expressions import _begin_pin, _ensure_rig
 
-UNIT = "/Script/LilaLinkRig.RigUnit_LilaStringsFullBody"
+UNIT = "/Script/LilaLinkRig.RigUnit_LilaStrings"
 PREFIX = "LilaStrings_"
 CONTROL_PREFIX = "LS_"
+# Lila's mode names in ELilaStringsMode's order: a control's Mode channel holds the index.
+MODES = ["default", "free", "forward", "forwardAll", "backward", "backwardAll", "bidirectional", "all", "ik", "fullBody"]
+MODE_CHANNEL = "Mode"
+ISOLATE_CHANNEL = "Isolate Rotation"
 
 
 def _add_control(hierarchy, hc, bone):
@@ -28,6 +32,34 @@ def _add_control(hierarchy, hc, bone):
     value = unreal.RigHierarchy.make_control_value_from_euler_transform(unreal.EulerTransform(rest.translation, rest.rotation.rotator(), rest.scale3d))
     hc.add_control(name, unreal.RigElementKey(), settings, value, False, False)
     return name
+
+
+def _channel(hierarchy, hc, control, name, settings, value):
+    """The control's animation channel called name, added when missing, set to value (initial and current)."""
+    parent = unreal.RigElementKey(unreal.RigElementType.CONTROL, control)
+    key = None
+    for child in hierarchy.get_children(parent):
+        if child.type == unreal.RigElementType.CONTROL:
+            settings_of = hierarchy.get_control_settings(child)
+            if settings_of.animation_type == unreal.RigControlAnimationType.ANIMATION_CHANNEL and str(settings_of.display_name) == name:
+                key = child
+    if key is None:
+        settings.display_name = name
+        key = hc.add_animation_channel(name, parent, settings, False, False)
+    for kind in (unreal.RigControlValueType.INITIAL, unreal.RigControlValueType.CURRENT):
+        hierarchy.set_control_value(key, value, kind)
+    return key
+
+
+def _add_channels(hierarchy, hc, control, mode, isolate):
+    """A Mode channel (Lila's modes as a dropdown) and an Isolate Rotation channel on the control, which its unit reads."""
+    settings = unreal.RigControlSettings()
+    settings.control_type = unreal.RigControlType.INTEGER
+    channel = _channel(hierarchy, hc, control, MODE_CHANNEL, settings, unreal.RigHierarchy.make_control_value_from_int(MODES.index(mode)))
+    unreal.LilaStringsLibrary.set_mode_enum(hierarchy, channel)
+    settings = unreal.RigControlSettings()
+    settings.control_type = unreal.RigControlType.BOOL
+    _channel(hierarchy, hc, control, ISOLATE_CHANNEL, settings, unreal.RigHierarchy.make_control_value_from_bool(isolate))
 
 
 def build(p):
@@ -59,6 +91,10 @@ def build(p):
         controller.break_link(begin, path, False)
 
     web = json.dumps(p["ruleWeb"])
+    mode = p.get("mode", "fullBody")
+    if mode not in MODES:
+        return {"errors": errors + ["no Strings mode " + mode + " (" + ", ".join(MODES) + ")"]}
+    isolate = bool(p.get("isolate", False))
     prev = begin
     made = []
     for i, bone in enumerate(p.get("controls", [])):
@@ -66,6 +102,8 @@ def build(p):
         if control is None:
             warnings.append("no bone named " + bone + " on " + mesh.get_name())
             continue
+        unreal.LilaStringsLibrary.place_control_at_bone(hierarchy, control, bone)
+        _add_channels(hierarchy, hc, control, mode, isolate)
         node = controller.add_unit_node_from_struct_path(UNIT, "Execute", unreal.Vector2D(400.0 + 360.0 * i, 200.0), PREFIX + bone, False)
         if node is None:
             errors.append("couldn't add a Lila Strings unit (is the LilaLinkRig module loaded?)")
@@ -74,6 +112,8 @@ def build(p):
         controller.set_pin_default_value(name + ".RuleWeb", web, False, False)
         controller.set_pin_default_value(name + ".Bone", bone, False, False)
         controller.set_pin_default_value(name + ".Control", control, False, False)
+        controller.set_pin_default_value(name + ".Mode", "IK" if mode == "ik" else mode[0].upper() + mode[1:], False, False)
+        controller.set_pin_default_value(name + ".bIsolateRotation", "True" if isolate else "False", False, False)
         controller.add_link(prev, name + ".ExecutePin", False)
         prev = name + ".ExecutePin"
         made.append(name)
@@ -82,7 +122,8 @@ def build(p):
 
     unreal.BlueprintEditorLibrary.compile_blueprint(rig)
     unreal.EditorAssetLibrary.save_loaded_asset(rig)
-    return {"rig": rig.get_path_name().split(".")[0], "created": created, "nodes": made, "errors": errors, "warnings": warnings}
+    return {"rig": rig.get_path_name().split(".")[0], "created": created, "nodes": made, "mode": mode, "isolate": isolate,
+            "errors": errors, "warnings": warnings}
 
 
 def build_and_print(text):

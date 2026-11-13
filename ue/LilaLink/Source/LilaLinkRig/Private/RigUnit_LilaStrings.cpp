@@ -32,9 +32,54 @@ struct FRuleWeb
 	TArray<FLimit> Limits;
 	TArray<FName> Contacts;
 	TArray<TArray<FName>> Chains;
+	TArray<FName> Isolate;
+	TArray<TPair<FName, EMode>> Modes;
 	double LengthScale = 0.0;
 	FString Error;
 };
+
+/** Lila's mode names (strings::modeName) to the solver's modes. */
+TOptional<EMode> ModeNamed(const FString& Name)
+{
+	static const TPair<const TCHAR*, EMode> Names[] = {
+		{TEXT("default"), EMode::Default},
+		{TEXT("free"), EMode::Free},
+		{TEXT("forward"), EMode::Forward},
+		{TEXT("forwardAll"), EMode::ForwardAll},
+		{TEXT("backward"), EMode::Backward},
+		{TEXT("backwardAll"), EMode::BackwardAll},
+		{TEXT("bidirectional"), EMode::Bidirectional},
+		{TEXT("all"), EMode::All},
+		{TEXT("ik"), EMode::Ik},
+		{TEXT("fullBody"), EMode::FullBody},
+	};
+	for (const TPair<const TCHAR*, EMode>& N : Names)
+	{
+		if (Name.Equals(N.Key, ESearchCase::IgnoreCase))
+		{
+			return N.Value;
+		}
+	}
+	return {};
+}
+
+EMode ModeOf(const ELilaStringsMode Mode)
+{
+	switch (Mode)
+	{
+	case ELilaStringsMode::Default: return EMode::Default;
+	case ELilaStringsMode::Free: return EMode::Free;
+	case ELilaStringsMode::Forward: return EMode::Forward;
+	case ELilaStringsMode::ForwardAll: return EMode::ForwardAll;
+	case ELilaStringsMode::Backward: return EMode::Backward;
+	case ELilaStringsMode::BackwardAll: return EMode::BackwardAll;
+	case ELilaStringsMode::Bidirectional: return EMode::Bidirectional;
+	case ELilaStringsMode::All: return EMode::All;
+	case ELilaStringsMode::IK: return EMode::Ik;
+	case ELilaStringsMode::FullBody: return EMode::FullBody;
+	}
+	return EMode::FullBody;
+}
 
 TArray<FName> ReadNames(const TArray<TSharedPtr<FJsonValue>>& Values)
 {
@@ -122,6 +167,21 @@ TSharedPtr<FRuleWeb> Parse(const FString& Text)
 			Web->Chains.Add(ReadNames(C->AsArray()));
 		}
 	}
+	if (Root->TryGetArrayField(TEXT("isolate"), Values))
+	{
+		Web->Isolate = ReadNames(*Values);
+	}
+	const TSharedPtr<FJsonObject>* ModesOf = nullptr;
+	if (Root->TryGetObjectField(TEXT("modes"), ModesOf))
+	{
+		for (const TPair<FString, TSharedPtr<FJsonValue>>& M : (*ModesOf)->Values)
+		{
+			if (const TOptional<EMode> Mode = ModeNamed(M.Value->AsString()))
+			{
+				Web->Modes.Emplace(FName(*M.Key), *Mode);
+			}
+		}
+	}
 	Root->TryGetNumberField(TEXT("lengthScale"), Web->LengthScale);
 	return Web;
 }
@@ -195,10 +255,16 @@ bool ProblemOf(URigHierarchy* H, const FRuleWeb& W, FProblem& Out, FRules& Rules
 			Rules.Chains.Add(MoveTemp(Chain));
 		}
 	}
+	for (const TPair<FName, EMode>& M : W.Modes)
+	{
+		if (const int32* I = Index.Find(M.Key))
+		{
+			Rules.Defaults.Emplace(*I, M.Value);
+		}
+	}
 	return true;
 }
 
-/** Writes the pose into the hierarchy, parents first, as each bone's local transform. */
 /** Sets a bone's local transform even when it moved less than the hierarchy's 1e-4 change test, as a limb held at a limit can. */
 void SetLocalForced(URigHierarchy* H, const FRigElementKey& Key, const FTransform& Local)
 {
@@ -208,6 +274,7 @@ void SetLocalForced(URigHierarchy* H, const FRigElementKey& Key, const FTransfor
 	}
 }
 
+/** Writes the pose into the hierarchy, parents first, as each bone's local transform. */
 void ApplyPose(URigHierarchy* H, const FRuleWeb& W, const FProblem& P, const FPose& S)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaStrings::ApplyPose);
@@ -260,10 +327,53 @@ struct FAsk
 	float Alpha = 1.0f;
 	bool bRotate = true;
 	int32 ChainLength = 0;
+	bool bIsolate = false;
+	double MaxStretch = 1.0;
+	/** What a bone the mode can't move (above the hips in Backward or IK) poses in instead. */
+	EMode Fallback = EMode::Forward;
 };
 
+/** The control's animation channel named Name, when it has one. */
+const FRigControlElement* ChannelOf(const URigHierarchy* H, const FRigElementKey& Control, const FName Name)
+{
+	const FRigControlElement* Element = H->Find<FRigControlElement>(Control);
+	if (!Element)
+	{
+		return nullptr;
+	}
+	for (const FRigBaseElement* Child : H->GetChildren(Element))
+	{
+		if (const FRigControlElement* Channel = Cast<FRigControlElement>(Child); Channel && Channel->IsAnimationChannel() && Channel->GetDisplayName().IsEqual(Name))
+		{
+			return Channel;
+		}
+	}
+	return nullptr;
+}
+
+/** Mode and Isolate Rotation from the control's channels where it has them, else as the unit's pins give them. */
+void ModeFromChannels(const URigHierarchy* H, const FRigElementKey& Control, EMode& Mode, bool& bIsolate)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaStrings::ModeFromChannels);
+
+	if (const FRigControlElement* M = ChannelOf(H, Control, TEXT("Mode")))
+	{
+		const int32 Index = H->GetControlValue(M->GetKey()).Get<int32>();
+		const UEnum* Enum = StaticEnum<ELilaStringsMode>();
+		// NumEnums counts the generated _MAX entry.
+		if (Index >= 0 && Index < Enum->NumEnums() - 1)
+		{
+			Mode = ModeOf(ELilaStringsMode(Enum->GetValueByIndex(Index)));
+		}
+	}
+	if (const FRigControlElement* I = ChannelOf(H, Control, TEXT("Isolate Rotation")))
+	{
+		bIsolate = H->GetControlValue(I->GetKey()).Get<bool>();
+	}
+}
+
 /** Poses Ask.Bone in Mode as Lila's stringsPose does, from the hierarchy's pose. False (with a warning) when it can't. */
-bool Run(URigHierarchy* H, const EMode Mode, const FAsk& Ask, float& OutError, const TFunctionRef<void(const FString&)> Warn)
+bool Run(URigHierarchy* H, EMode Mode, const FAsk& Ask, float& OutError, const TFunctionRef<void(const FString&)> Warn)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaStrings::Run);
 
@@ -294,6 +404,11 @@ bool Run(URigHierarchy* H, const EMode Mode, const FAsk& Ask, float& OutError, c
 	}
 	const FRigElementKey ControlKey(Ask.Control, ERigElementType::Control);
 	const bool bControl = !Ask.Control.IsNone() && H->Contains(ControlKey);
+	bool bIsolate = Ask.bIsolate;
+	if (bControl)
+	{
+		ModeFromChannels(H, ControlKey, Mode, bIsolate);
+	}
 	const FTransform Goal = bControl ? H->GetGlobalTransform(ControlKey) : Ask.Target;
 	// A control left where it started asks for nothing: posing toward it would undo what the dragged controls' units did.
 	if (bControl && FRigComputedTransform::Equals(Goal, H->GetGlobalTransform(ControlKey, true), 1e-9f))
@@ -308,14 +423,29 @@ bool Run(URigHierarchy* H, const EMode Mode, const FAsk& Ask, float& OutError, c
 	R.Grabbed = Grabbed;
 	R.Hips = W.Bones.IndexOfByKey(W.Hips);
 	R.ChainLength = Ask.ChainLength;
+	R.MaxStretch = FMath::Max(1.0, Ask.MaxStretch);
 	R.Rules = &Rules;
-	if (const FVector Move = Goal.GetLocation() - Now.GetLocation(); !Move.IsNearlyZero(1e-6))
+	if (bIsolate)
+	{
+		for (const FName& Name : W.Isolate)
+		{
+			if (const int32 B = W.Bones.IndexOfByKey(Name); B != INDEX_NONE)
+			{
+				R.Isolate.Add(B);
+			}
+		}
+	}
+	// Control values are stored in single precision: a control dragged only one way sits a few 1e-6 cm and 1e-7 rad off its
+	// bone the other way, which must not read as a move or turn (a turn pins the rotation; a move in Forward replaces the turn).
+	const double MoveTolerance = bControl ? 1e-4 : 1e-6;
+	const double TurnTolerance = bControl ? 1e-6 : 1e-9;
+	if (const FVector Move = Goal.GetLocation() - Now.GetLocation(); !Move.IsNearlyZero(MoveTolerance))
 	{
 		R.Move = Move;
 	}
-	// Forward and Backward always take the target's rotation; IK and Full Body when asked to.
+	// IK and Full Body take the target's rotation when asked to; the other modes always do.
 	const FQuat Turn = (Goal.GetRotation() * Now.GetRotation().Inverse()).GetNormalized();
-	if ((Ask.bRotate || Mode == EMode::Forward || Mode == EMode::Backward) && !Turn.Equals(FQuat::Identity, 1e-9))
+	if ((Ask.bRotate || (Mode != EMode::Ik && Mode != EMode::FullBody)) && !Turn.Equals(FQuat::Identity, TurnTolerance))
 	{
 		R.Turn = Turn;
 	}
@@ -334,15 +464,15 @@ bool Run(URigHierarchy* H, const EMode Mode, const FAsk& Ask, float& OutError, c
 	// Full Body turning with nothing held is a plain turn: no solve has anything to keep.
 	if (Mode == EMode::FullBody && !R.Move && R.Holds.IsEmpty())
 	{
-		R.Mode = EMode::Forward;
+		R.Mode = EMode::ForwardAll;
 	}
 	FPoseBlend Blend;
 	Blend.Capture(H, W);
 	FResult Res = SolveRequest(P, R);
 	if (!Res.bHandled)
 	{
-		// A bone above the hips has no body to swing or limb to bend: it turns and moves the plain way.
-		R.Mode = EMode::Forward;
+		// A bone above the hips has no body to swing or limb to bend.
+		R.Mode = Ask.Fallback;
 		Res = SolveRequest(P, R);
 	}
 	ApplyPose(H, W, P, Res.Pose);
@@ -352,40 +482,96 @@ bool Run(URigHierarchy* H, const EMode Mode, const FAsk& Ask, float& OutError, c
 }
 } // namespace
 
+FRigUnit_LilaStrings_Execute()
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(RigUnit_LilaStrings::Execute);
+
+	FAsk Ask{RuleWeb, Bone, Control, Target, bHoldContacts, Alpha, bRotate, ChainLength};
+	Ask.bIsolate = bIsolateRotation;
+	Ask.MaxStretch = MaxStretch;
+	Run(ExecuteContext.Hierarchy, ModeOf(Mode), Ask, Error, [&](const FString& Message) { UE_CONTROLRIG_RIGUNIT_REPORT_WARNING(TEXT("%s"), *Message); });
+}
+
+namespace
+{
+/** The deprecated units pose as they always did: plain FK where their mode can't move the bone, no isolation, no stretch. */
+FAsk LegacyAsk(FAsk Ask)
+{
+	Ask.Fallback = EMode::ForwardAll;
+	return Ask;
+}
+
+FRigUnit_LilaStrings Upgraded(const FRigUnit_LilaStringsBase& U, const ELilaStringsMode Mode, const bool bRotate, const int32 ChainLength)
+{
+	FRigUnit_LilaStrings New;
+	New.RuleWeb = U.RuleWeb;
+	New.Bone = U.Bone;
+	New.Control = U.Control;
+	New.Target = U.Target;
+	New.bHoldContacts = U.bHoldContacts;
+	New.Alpha = U.Alpha;
+	New.Mode = Mode;
+	New.bRotate = bRotate;
+	New.ChainLength = ChainLength;
+	return New;
+}
+} // namespace
+
 FRigUnit_LilaStringsForward_Execute()
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(RigUnit_LilaStringsForward::Execute);
 
-	Run(ExecuteContext.Hierarchy, EMode::Forward, {RuleWeb, Bone, Control, Target, bHoldContacts, Alpha, true, 0}, Error,
+	Run(ExecuteContext.Hierarchy, EMode::ForwardAll, LegacyAsk({RuleWeb, Bone, Control, Target, bHoldContacts, Alpha, true, 0}), Error,
 		[&](const FString& Message) { UE_CONTROLRIG_RIGUNIT_REPORT_WARNING(TEXT("%s"), *Message); });
+}
+
+FRigVMStructUpgradeInfo FRigUnit_LilaStringsForward::GetUpgradeInfo() const
+{
+	return FRigVMStructUpgradeInfo(*this, Upgraded(*this, ELilaStringsMode::ForwardAll, true, 0));
 }
 
 FRigUnit_LilaStringsBackward_Execute()
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(RigUnit_LilaStringsBackward::Execute);
 
-	Run(ExecuteContext.Hierarchy, EMode::Backward, {RuleWeb, Bone, Control, Target, bHoldContacts, Alpha, true, 0}, Error,
+	Run(ExecuteContext.Hierarchy, EMode::Backward, LegacyAsk({RuleWeb, Bone, Control, Target, bHoldContacts, Alpha, true, 0}), Error,
 		[&](const FString& Message) { UE_CONTROLRIG_RIGUNIT_REPORT_WARNING(TEXT("%s"), *Message); });
+}
+
+FRigVMStructUpgradeInfo FRigUnit_LilaStringsBackward::GetUpgradeInfo() const
+{
+	return FRigVMStructUpgradeInfo(*this, Upgraded(*this, ELilaStringsMode::Backward, true, 0));
 }
 
 FRigUnit_LilaStringsIK_Execute()
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(RigUnit_LilaStringsIK::Execute);
 
-	Run(ExecuteContext.Hierarchy, EMode::Ik, {RuleWeb, Bone, Control, Target, bHoldContacts, Alpha, bRotate, ChainLength}, Error,
+	Run(ExecuteContext.Hierarchy, EMode::Ik, LegacyAsk({RuleWeb, Bone, Control, Target, bHoldContacts, Alpha, bRotate, ChainLength}), Error,
 		[&](const FString& Message) { UE_CONTROLRIG_RIGUNIT_REPORT_WARNING(TEXT("%s"), *Message); });
+}
+
+FRigVMStructUpgradeInfo FRigUnit_LilaStringsIK::GetUpgradeInfo() const
+{
+	return FRigVMStructUpgradeInfo(*this, Upgraded(*this, ELilaStringsMode::IK, bRotate, ChainLength));
 }
 
 FRigUnit_LilaStringsFullBody_Execute()
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(RigUnit_LilaStringsFullBody::Execute);
 
-	Run(ExecuteContext.Hierarchy, EMode::FullBody, {RuleWeb, Bone, Control, Target, bHoldContacts, Alpha, bRotate, 0}, Error,
+	Run(ExecuteContext.Hierarchy, EMode::FullBody, LegacyAsk({RuleWeb, Bone, Control, Target, bHoldContacts, Alpha, bRotate, 0}), Error,
 		[&](const FString& Message) { UE_CONTROLRIG_RIGUNIT_REPORT_WARNING(TEXT("%s"), *Message); });
 }
 
+FRigVMStructUpgradeInfo FRigUnit_LilaStringsFullBody::GetUpgradeInfo() const
+{
+	return FRigVMStructUpgradeInfo(*this, Upgraded(*this, ELilaStringsMode::FullBody, bRotate, 0));
+}
+
 TMap<FName, FTransform> ULilaStringsLibrary::SolveOnMesh(USkeletalMesh* Mesh, const FString& RuleWeb, const FString& Mode, const FName Bone, const FTransform& Target,
-														 const bool bRotate, const bool bHoldContacts, const int32 ChainLength, const FVector TurnVector, float& Error)
+														 const bool bRotate, const bool bHoldContacts, const int32 ChainLength, const FVector TurnVector, float& Error,
+														 const bool bIsolateRotation)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaStringsLibrary::SolveOnMesh);
 
@@ -395,11 +581,10 @@ TMap<FName, FTransform> ULilaStringsLibrary::SolveOnMesh(USkeletalMesh* Mesh, co
 	{
 		return Out;
 	}
-	const TMap<FString, EMode> Modes = {{TEXT("forward"), EMode::Forward}, {TEXT("backward"), EMode::Backward}, {TEXT("ik"), EMode::Ik}, {TEXT("fullBody"), EMode::FullBody}};
-	const EMode* Found = Modes.Find(Mode);
+	const TOptional<EMode> Found = ModeNamed(Mode);
 	if (!Found)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Lila Strings: no mode %s (forward, backward, ik, fullBody)"), *Mode);
+		UE_LOG(LogTemp, Warning, TEXT("Lila Strings: no mode %s (default, free, forward, forwardAll, backward, backwardAll, bidirectional, all, ik, fullBody)"), *Mode);
 		return Out;
 	}
 	URigHierarchy* H = NewObject<URigHierarchy>(GetTransientPackage());
@@ -409,7 +594,9 @@ TMap<FName, FTransform> ULilaStringsLibrary::SolveOnMesh(USkeletalMesh* Mesh, co
 	{
 		Goal.SetRotation(FQuat(TurnVector / Angle, Angle) * H->GetGlobalTransform(FRigElementKey(Bone, ERigElementType::Bone)).GetRotation());
 	}
-	if (Run(H, *Found, {RuleWeb, Bone, NAME_None, Goal, bHoldContacts, 1.0f, bRotate, ChainLength}, Error,
+	FAsk Ask{RuleWeb, Bone, NAME_None, Goal, bHoldContacts, 1.0f, bRotate, ChainLength};
+	Ask.bIsolate = bIsolateRotation;
+	if (Run(H, *Found, Ask, Error,
 			[](const FString& Message) { UE_LOG(LogTemp, Warning, TEXT("Lila Strings: %s"), *Message); }))
 	{
 		H->ForEach<FRigBoneElement>([&](FRigBoneElement* E) {
@@ -418,6 +605,33 @@ TMap<FName, FTransform> ULilaStringsLibrary::SolveOnMesh(USkeletalMesh* Mesh, co
 		});
 	}
 	return Out;
+}
+
+bool ULilaStringsLibrary::PlaceControlAtBone(URigHierarchy* Hierarchy, const FName Control, const FName Bone)
+{
+	const FRigElementKey ControlKey(Control, ERigElementType::Control);
+	if (!Hierarchy || !Hierarchy->Contains(ControlKey) || !Hierarchy->Contains(BoneKey(Bone)))
+	{
+		return false;
+	}
+	const FTransform Rest = Hierarchy->GetGlobalTransform(BoneKey(Bone), true);
+	Hierarchy->SetGlobalTransform(ControlKey, Rest, true, false);
+	Hierarchy->SetGlobalTransform(ControlKey, Rest, false, false);
+	return true;
+}
+
+bool ULilaStringsLibrary::SetModeEnum(URigHierarchy* Hierarchy, const FRigElementKey Channel)
+{
+	const FRigControlElement* Control = Hierarchy ? Hierarchy->Find<FRigControlElement>(Channel) : nullptr;
+	if (!Control)
+	{
+		return false;
+	}
+	FRigControlSettings Settings = Control->Settings;
+	Settings.ControlType = ERigControlType::Integer;
+	Settings.ControlEnum = StaticEnum<ELilaStringsMode>();
+	Hierarchy->SetControlSettings(Channel, Settings, false, true);
+	return true;
 }
 
 TMap<FName, FTransform> ULilaStringsLibrary::DragRig(UClass* RigClass, const FName Control, const FTransform& Target, const FVector TurnVector)

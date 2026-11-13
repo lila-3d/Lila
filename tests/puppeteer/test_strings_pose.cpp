@@ -1326,6 +1326,32 @@ TEST_CASE("stringsRuleWeb and unrealStringsRig: the rule web by bone name, writt
     CHECK_THROWS(run("unrealStringsRig", {{"args", {"hero"}}, {"dryRun", true}}));
 }
 
+TEST_CASE("unrealStringsRig: the rule web carries isolate and modes, and the controls start in the mode and Isolate Rotation given")
+{
+    loadPuppeteer();
+    stringsBiped();
+    run("stringsRules", {{"args", {"hero"}}, {"contacts", {"foot_l", "foot_r"}}, {"isolate", {"head", "hand_l"}}, {"defaultMode", {"neck", "backward"}}});
+    const json web = run("stringsRuleWeb", {{"args", {"hero"}}});
+    CHECK(web["isolate"] == json({"head", "hand_l"}));
+    CHECK(web["modes"] == json({{"neck", "backward"}}));
+
+    // Unset, the controls start in the current Strings mode with the Isolate Rotation setting.
+    const json plain = run("unrealStringsRig", {{"args", {"hero"}}, {"skeletalMesh", "/Game/Hero/SK_Hero"}, {"dryRun", true}});
+    CHECK(plain["payload"]["mode"].is_string());
+    CHECK(lila::scene::strings::modeFromName(plain["payload"]["mode"].get<std::string>()).has_value());
+    CHECK(plain["payload"]["isolate"].is_boolean());
+
+    for (const lila::scene::strings::Mode m : lila::scene::strings::kModes)
+    {
+        const std::string name = lila::scene::strings::modeName(m);
+        const json sent = run("unrealStringsRig", {{"args", {"hero"}}, {"skeletalMesh", "/Game/Hero/SK_Hero"}, {"mode", name}, {"isolate", true}, {"dryRun", true}});
+        CHECK(sent["payload"]["mode"] == name);
+        CHECK(sent["payload"]["isolate"] == true);
+        CHECK(sent["payload"]["ruleWeb"] == web);
+    }
+    CHECK_THROWS(run("unrealStringsRig", {{"args", {"hero"}}, {"skeletalMesh", "/Game/Hero/SK_Hero"}, {"mode", "sideways"}, {"dryRun", true}}));
+}
+
 namespace
 {
 /** Hips walking forward 2 cm a frame from frame 0 to 40, keyed every 10, the legs keyed with them. */
