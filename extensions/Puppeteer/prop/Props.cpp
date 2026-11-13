@@ -2517,23 +2517,88 @@ json unrealCmd(const Args& a)
         at(g, g.time());
         offset = glm::inverse(rigidOf(worldOf(g, bone))) * rigidOf(worldOf(g, p.root));
     }
-    for (const auto& [name, type, value] : {std::tuple{pins::kSocketAttr, PlugType::String, PlugValue(socket)},
-                                            std::tuple{pins::kSocketBoneAttr, PlugType::String, PlugValue(bareBone)},
-                                            std::tuple{pins::kSocketOffsetAttr, PlugType::Matrix, PlugValue(*offset)}})
+    auto setSocket = [&](const std::string& sock, const std::string& sockBone, const glm::dmat4& off) {
+        for (const auto& [name, type, value] : {std::tuple{pins::kSocketAttr, PlugType::String, PlugValue(sock)},
+                                                std::tuple{pins::kSocketBoneAttr, PlugType::String, PlugValue(sockBone)},
+                                                std::tuple{pins::kSocketOffsetAttr, PlugType::Matrix, PlugValue(off)}})
+        {
+            if (g.node(p.root)->type().attrIndex(name) < 0)
+                g.addAttr(p.root, {.name = name, .type = type, .defaultValue = type == PlugType::Matrix ? PlugValue(glm::dmat4(1.0)) : PlugValue(std::string()),
+                                   .flags = AttrInput | AttrStorable,
+                                   .doc = "Unreal: how the prop attaches to its character's skeletal mesh (puppeteerPropUnreal)."});
+            g.setValue({p.root, g.node(p.root)->type().attrIndex(name), -1}, value);
+        }
+    };
+    const std::string mode = a.get<std::string>("mode", "auto");
+    if (mode != "auto" && mode != "socket" && mode != "baked")
+        throw CommandError(std::string(cmd) + ": mode is auto, socket or baked");
+    // Out of the hand for some of the range (thrown, planted, put down, passed): a socket can't carry that, so its
+    // motion goes onto a bone of its own under the skeleton's root, keyed every frame, which it attaches to with no offset.
+    const bool baked = mode == "baked" || (mode == "auto" && heldFrames < frames + 1 && !a.has("bone"));
+    json out = {{"prop", g.path(p.root)}, {"mode", baked ? "baked" : "socket"}, {"heldFrames", heldFrames}, {"frames", frames + 1}};
+    if (baked)
     {
-        if (g.node(p.root)->type().attrIndex(name) < 0)
-            g.addAttr(p.root, {.name = name, .type = type, .defaultValue = type == PlugType::Matrix ? PlugValue(glm::dmat4(1.0)) : PlugValue(std::string()),
-                               .flags = AttrInput | AttrStorable,
-                               .doc = "Unreal: how the prop attaches to its character's skeletal mesh (puppeteerPropUnreal)."});
-        g.setValue({p.root, g.node(p.root)->type().attrIndex(name), -1}, value);
+        const NodeId carrier = characterRoot(g, character);
+        std::string boneName = a.get<std::string>("socket", "");
+        if (boneName.empty())
+        {
+            boneName = g.node(p.root)->name();
+            if (const size_t c = boneName.rfind(':'); c != std::string::npos)
+                boneName = boneName.substr(c + 1);
+            boneName += "_motion";
+        }
+        NodeId joint = kNoNode;
+        for (NodeId c : g.children(carrier))
+            if (g.node(c)->name() == boneName && rig::isJoint(*g.node(c)))
+                joint = c;
+        if (!joint)
+        {
+            joint = g.createNode(*types::find("joint"), boneName, carrier)->id();
+            g.evaluate();
+        }
+        g.setValue({joint, Transform::kRotationInterpolation, -1}, int64_t(RotationInterpolation::Euler));
+        std::vector<double> times;
+        std::vector<glm::dvec3> tr, ro;
+        for (long long f = 0; f <= frames; ++f)
+        {
+            const double time = start + double(f) / fps();
+            at(g, time);
+            const glm::dmat4 local = glm::inverse(rigidOf(worldOf(g, carrier))) * rigidOf(worldOf(g, p.root));
+            const glm::dvec3 near = ro.empty() ? glm::dvec3(0.0) : ro.back();
+            times.push_back(time);
+            tr.push_back(glm::dvec3(local[3]));
+            ro.push_back(eulerNear(math::rotationOf(local), RotateOrder::XYZ, near));
+        }
+        for (const auto& [attr, values] : {std::pair{Transform::kTranslate, &tr}, std::pair{Transform::kRotate, &ro}})
+            for (int c = 0; c < 3; ++c)
+            {
+                anim::Curve curve;
+                for (size_t i = 0; i < times.size(); ++i)
+                    curve.keys.push_back({.time = times[i], .value = (*values)[i][c], .in = anim::Tangent::Linear, .out = anim::Tangent::Linear});
+                const NodeId cn = anim::setKey(g, {joint, attr, c}, curve.keys.front().time, curve.keys.front().value);
+                anim::setCurve(g, cn, curve);
+            }
+        setSocket(boneName, "", glm::dmat4(1.0));
+        out["socket"] = boneName;
+        out["bone"] = boneName;
+        out["joint"] = g.path(joint);
     }
-    json out = {{"prop", g.path(p.root)}, {"socket", socket}, {"bone", bareBone}, {"heldFrames", heldFrames},
-                {"strayCm", strayCm}, {"strayDeg", strayDeg}};
-    if (heldFrames == 0)
-        log::write(LogLevel::Warning, std::format("{}: {} is never held by {} in the range; the socket uses the pose now", cmd, g.path(p.root), bareBone));
-    else if (strayCm > 0.5 || strayDeg > 1.0)
-        log::write(LogLevel::Warning, std::format("{}: {} moves against {} while held (up to {:.1f} cm, {:.1f} deg); a socket holds one offset",
-                                                  cmd, g.path(p.root), bareBone, strayCm, strayDeg));
+    else
+    {
+        setSocket(socket, bareBone, *offset);
+        out["socket"] = socket;
+        out["bone"] = bareBone;
+        out["strayCm"] = strayCm;
+        out["strayDeg"] = strayDeg;
+        if (heldFrames == 0)
+            log::write(LogLevel::Warning, std::format("{}: {} is never held by {} in the range; the socket uses the pose now", cmd, g.path(p.root), bareBone));
+        else if (strayCm > 0.5 || strayDeg > 1.0)
+            log::write(LogLevel::Warning, std::format("{}: {} moves against {} while held (up to {:.1f} cm, {:.1f} deg); a socket holds one offset",
+                                                      cmd, g.path(p.root), bareBone, strayCm, strayDeg));
+        if (heldFrames < frames + 1)
+            log::write(LogLevel::Warning, std::format("{}: {} is out of {} for {} of {} frames; a socket keeps it in the hand (mode=baked carries the rest)", cmd,
+                                                      g.path(p.root), bareBone, frames + 1 - heldFrames, frames + 1));
+    }
 
     // Optional ik bones (UE5's ik_hand_gun, ik_hand_r, ik_hand_l): keyed to follow the hands every frame of the range.
     if (a.get<bool>("ikBones", false))
@@ -3136,7 +3201,10 @@ void registerCommands(ext::Context& ctx)
                "it, hand_r) through a socket with the offset it is held at, which the Unreal link makes on the mesh when it sends "
                "the prop; the character's own bones carry the animation. With ikBones, also keys the skeleton's hand IK bones "
                "(by default UE5's ik_hand_gun, ik_hand_r, ik_hand_l) to follow the hands every frame, for projects whose "
-               "locomotion reads them. Returns the socket, bone, and how far the prop strays against the bone while held.",
+               "locomotion reads them. A prop that leaves the hand in the range (thrown, planted, put down, passed) is baked "
+               "instead: its motion keyed every frame onto a bone of its own under the skeleton's root (<prop>_motion), which "
+               "it attaches to with no offset, so the character's animation carries it. Returns the mode, socket and bone, and "
+               "for a socket how far the prop strays against the bone while held.",
         .positionalDoc = "prop (default the selection)",
         .flags = {kCharacterFlag,
                   {"bone", "bn", T::String, nullptr, "The bone it attaches to. Default: the hand holding it now, else hand_r (hand_l left-handed)."},
@@ -3145,6 +3213,9 @@ void registerCommands(ext::Context& ctx)
                   {"gunBone", "", T::String, "ik_hand_gun", "ikBones: the bone that follows the holding hand."},
                   {"rightBone", "", T::String, "ik_hand_r", "ikBones: the bone that follows the right hand."},
                   {"leftBone", "", T::String, "ik_hand_l", "ikBones: the bone that follows the left hand."},
+                  {"mode", "md", T::String, "auto", "socket: on the holding bone at the held offset. baked: its motion on a bone of its own "
+                                                    "under the skeleton's root, every frame. auto: socket while it never leaves the hand, else baked.",
+                   {"auto", "socket", "baked"}},
                   {"start", "st", T::Float, nullptr, "Seconds; default the playback start."},
                   {"end", "et", T::Float, nullptr, "Seconds; default the playback end."}},
         .run = unrealCmd,

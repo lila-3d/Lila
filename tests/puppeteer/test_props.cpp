@@ -954,3 +954,32 @@ TEST_CASE("props: passed to another character, both hands share it and the recei
     at(1.5);
     CHECK(run("puppeteerPropInfo", {{"args", {"sword"}}}).at("holder") == receiver);
 }
+
+TEST_CASE("props: a prop that leaves the hand goes to Unreal as baked motion on a bone of its own")
+{
+    manny();
+    ball();
+    holding("ball");
+    run("puppeteerPropThrow", {{"args", {"ball"}}, {"time", 0.3}, {"speed", 300.0}, {"angle", 40.0}, {"solve", false}});
+    const json u = run("puppeteerPropUnreal", {{"args", {"ball"}}});
+    CHECK(u.at("mode") == "baked");
+    CHECK(u.at("bone") == "ball_motion");
+    const scene::Node& r = *graph().find("ball");
+    CHECK(scene::pins::socketOf(r) == "ball_motion");
+    CHECK(scene::pins::socketBoneOf(r).empty());
+    const std::string joint = u.at("joint");
+    double worst = 0.0;
+    for (int f = 0; f <= 60; f += 3)
+    {
+        at(f / 30.0);
+        worst = std::max(worst, glm::length(pos(joint) - pos("ball")));
+        const glm::dmat3 a(world(joint)), b(world("ball"));
+        CHECK(glm::length(a[0] - glm::normalize(b[0])) + glm::length(a[1] - glm::normalize(b[1])) < 1e-4);
+    }
+    MESSAGE("baked bone off the prop: " << worst << " cm");
+    CHECK(worst < 1e-4);
+    // Held all through: still a socket on the hand.
+    run("undo");
+    run("undo");
+    CHECK(run("puppeteerPropUnreal", {{"args", {"ball"}}}).at("mode") == "socket");
+}
