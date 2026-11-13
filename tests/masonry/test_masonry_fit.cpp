@@ -1,5 +1,6 @@
-// Masonry fit: intact walls stand on their beds, floors fit inside their walls, rubble spreads instead of stacking,
-// loose stones keep clear of their neighbours, and masonryCheck says where problems are.
+// Masonry fit: intact walls stand on their beds, floors fit inside their walls (or their own outline) and carry
+// collision, rubble spreads instead of stacking, loose stones keep clear of their neighbours, and masonryCheck says
+// where problems are.
 
 #include "TestUtil.h"
 #include "Masonry.h"
@@ -236,4 +237,56 @@ TEST_CASE("masonry fit commands: a wall's region name, bounds, and where masonry
     CHECK(c["overlapPairs"].size() > 0);
     CHECK(c["issues"].dump().find("east + north") != std::string::npos);
     CHECK(c["stacked"].get<int64_t>() == 0);
+}
+
+namespace
+{
+double meshVolume(const geo::Mesh& m)
+{
+    double v = 0.0;
+    for (geo::Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f))
+        {
+            const std::vector<geo::Index> p = m.facePoints(f);
+            for (size_t k = 1; k + 1 < p.size(); ++k)
+                v += glm::dot(m.position(p[0]), glm::cross(m.position(p[k]), m.position(p[k + 1]))) / 6.0;
+        }
+    return v;
+}
+
+const json kRect = pts({{0, 0, 0}, {1600, 0, 0}, {1600, 0, 800}, {0, 0, 800}});
+const json kEll = pts({{0, 0, 0}, {1200, 0, 0}, {1200, 0, 400}, {500, 0, 400}, {500, 0, 900}, {0, 0, 900}});
+} // namespace
+
+TEST_CASE("masonry fit: a floor on its own carries collision, an L-shaped one in convex pieces")
+{
+    for (const auto& [outline, area] : {std::pair{kRect, 1600.0 * 800.0}, std::pair{kEll, 1200.0 * 400.0 + 500.0 * 500.0}})
+    {
+        CAPTURE(outline.dump());
+        const Built b = building({{"floors", {{{"name", "paving"}, {"points", outline}, {"y", 0}, {"thickness", 10}}}}});
+        REQUIRE(!b.coreHulls.empty());
+        double volume = 0.0;
+        for (const geo::Mesh& h : b.coreHulls)
+        {
+            CHECK(meshVolume(h) > 0.0);
+            volume += meshVolume(h);
+        }
+        CHECK(volume == doctest::Approx(area * 10.0).epsilon(0.001));
+
+        RuinParams r;
+        r.left = 0.5;
+        const Built ruined = building({{"floors", {{{"name", "paving"}, {"points", outline}, {"y", 300}, {"thickness", 30}}}}}, r);
+        int inPlace = 0;
+        for (const Stone& s : ruined.stones)
+            inPlace += s.role == Role::Slab && !s.loose ? 1 : 0;
+        CHECK(int(ruined.coreHulls.size()) >= inPlace);
+    }
+    loadMasonry();
+    run("newScene");
+    const json f = run("masonryBuilding", {{"spec", {{"floors", {{{"name", "paving"}, {"points", kRect}, {"y", 0}, {"thickness", 10}, {"surface", "flags"}}}}}}, {"name", "Floor"}});
+    const json c = run("masonryCheck", {{"args", {f["mesh"]}}});
+    CHECK(c["ok"].get<bool>());
+    CHECK(c["collisionHulls"].get<int64_t>() > 0);
+    run("ruin", {{"args", {f["mesh"]}}, {"left", 0.5}});
+    CHECK(run("masonryCheck", {{"args", {f["mesh"]}}})["ok"].get<bool>());
 }

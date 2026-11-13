@@ -355,6 +355,71 @@ geo::Mesh slabMesh(const std::vector<glm::dvec3>& outline, double y0, double y1)
     return m;
 }
 
+double turnXz(const glm::dvec3& a, const glm::dvec3& b, const glm::dvec3& c) { return (b.x - a.x) * (c.z - a.z) - (b.z - a.z) * (c.x - a.x); }
+
+/** A polygon seen from above cut into convex pieces: itself when convex, else triangles by ear clipping. */
+std::vector<std::vector<glm::dvec3>> convexPieces(std::vector<glm::dvec3> poly)
+{
+    double area = 0.0;
+    for (size_t i = 0; i < poly.size(); ++i)
+        area += turnXz(glm::dvec3(0.0), poly[i], poly[(i + 1) % poly.size()]);
+    if (area < 0.0)
+        std::reverse(poly.begin(), poly.end());
+    bool convex = true;
+    for (size_t i = 0; i < poly.size() && convex; ++i)
+        convex = turnXz(poly[i], poly[(i + 1) % poly.size()], poly[(i + 2) % poly.size()]) >= -1e-9;
+    if (convex || poly.size() < 4)
+        return {poly};
+    std::vector<std::vector<glm::dvec3>> out;
+    while (poly.size() > 3)
+    {
+        const size_t n = poly.size();
+        size_t ear = n;
+        for (size_t i = 0; i < n && ear == n; ++i)
+        {
+            const glm::dvec3 &a = poly[(i + n - 1) % n], &b = poly[i], &c = poly[(i + 1) % n];
+            if (turnXz(a, b, c) <= 1e-9)
+                continue;
+            bool empty = true;
+            for (size_t k = 0; k < n && empty; ++k)
+            {
+                const glm::dvec3& q = poly[k];
+                if (k == i || k == (i + 1) % n || k == (i + n - 1) % n)
+                    continue;
+                empty = !(turnXz(a, b, q) > 0.0 && turnXz(b, c, q) > 0.0 && turnXz(c, a, q) > 0.0);
+            }
+            if (empty)
+                ear = i;
+        }
+        if (ear == n)
+            ear = 0;
+        out.push_back({poly[(ear + n - 1) % n], poly[ear], poly[(ear + 1) % n]});
+        poly.erase(poly.begin() + std::ptrdiff_t(ear));
+    }
+    out.push_back(poly);
+    return out;
+}
+
+/** Convex prisms covering a slab piece lying in place, one per convex part of each of its top faces: its collision. */
+std::vector<geo::Mesh> slabHulls(const Stone& s, const geo::Mesh& piece)
+{
+    std::vector<geo::Mesh> out;
+    const geo::Bounds bb = piece.bounds();
+    for (geo::Index f = 0; f < piece.faceCapacity(); ++f)
+    {
+        if (!piece.faceValid(f) || piece.faceNormal(f).y < 0.5)
+            continue;
+        std::vector<glm::dvec3> poly;
+        for (geo::Index q : piece.facePoints(f))
+            poly.push_back(s.center + piece.position(q));
+        if (poly.size() < 3)
+            continue;
+        for (const std::vector<glm::dvec3>& part : convexPieces(std::move(poly)))
+            out.push_back(slabMesh(part, s.center.y + bb.min.y, s.center.y + bb.max.y));
+    }
+    return out;
+}
+
 bool inside(const std::vector<glm::dvec3>& poly, double x, double z)
 {
     bool in = false;
@@ -1040,6 +1105,9 @@ Built realizePlan(const Plan& plan, const RuinParams& ruin, const AgeParams& age
         }
         b.stones.insert(b.stones.end(), l.stones.begin(), l.stones.end());
     }
+    // Without walls there are no courses: the nominal course height scales the check's tolerances instead.
+    if (b.pitch <= 0.0)
+        b.pitch = plan.pitch;
     {
         // Paving is laid out to its outline, so cut it back where it runs into the walls.
         std::vector<Stone> paving;
@@ -1165,6 +1233,10 @@ Built realizePlan(const Plan& plan, const RuinParams& ruin, const AgeParams& age
         b.core.append(cell);
         b.coreHulls.push_back(cell);
     }
+    for (const Stone& s : b.stones)
+        if (s.role == Role::Slab && !s.loose && s.mesh >= 0 && size_t(s.mesh) < b.pieces.size())
+            for (geo::Mesh& h : slabHulls(s, b.pieces[size_t(s.mesh)]))
+                b.coreHulls.push_back(std::move(h));
     if (b.core.numFaces() > 0)
         lila::scene::materials::assign(b.core, kMortarSlot, {});
     // Full thickness cells for the low poly shells, following what stands.
