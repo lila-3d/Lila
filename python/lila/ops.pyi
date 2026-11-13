@@ -7386,12 +7386,12 @@ def putOnTurntable(*objects: Any) -> Any:
     """
 
 def quadRemesh(*objects: Any, preset: str | None = None, method: str | None = None, targetFaces: int | None = None, countTolerance: float | None = None, timeout: float | None = None, targetEdgeLength: float | None = None, adaptivity: float | None = None, useHardEdges: bool | None = None, sharpAngle: float | None = None, symmetry: str | None = None, guides: Sequence[Any] | None = None, guidePoints: Sequence[Any] | None = None, featureGuides: Sequence[Any] | None = None, featureGuidePoints: Sequence[Any] | None = None, densityHandles: Sequence[Any] | None = None, pureQuads: bool | None = None, jointDensity: float | None = None, jointDensityReach: float | None = None, jointPoleAvoidance: float | None = None, edgesAround: int | None = None, resolveGaps: bool | None = None, poles: Sequence[Any] | None = None, relaxIterations: int | None = None, transferUvs: bool | None = None, transferNormals: bool | None = None, keepSource: bool | None = None, hideSource: bool | None = None, name: str | None = None) -> Any:
-    """Auto quad remesh: a new all-quad mesh whose edge flow follows curvature, hard edges and guide curves, at about the target face count, optionally with UVs and normals transferred from the source. Open borders, sharp creases, crease corners and cone tips are kept. With method=field, where the shape is too thin or tight for the requested size (a strip narrower than the edge length) it retries finer, so the face count can come out higher. The kept source is hidden. Runs off the UI thread with a cancellable progress bar, and gives up after timeout= seconds with an error saying how far it got, changing nothing. Returns {name, metrics, layout, attempts: [{layout, faces, defects, irregular}] for every layout tried, notes: where the result departs from what was asked}, and with poles= where each pole landed: {point, position, valence, valenceMatched}, or null where none came out near it.
+    """Auto quad remesh: a new all-quad mesh whose edge flow follows curvature, hard edges and guide curves, at about the target face count, optionally with UVs and normals transferred from the source. Open borders, sharp creases, crease corners and cone tips are kept. Where the layout folds at a part too thin or tight for the requested size (a strip narrower than the edge length) it retries finer, so the face count can come out higher. The kept source is hidden. Runs off the UI thread with a cancellable progress bar, and gives up after timeout= seconds with an error saying how far it got, changing nothing. Returns {name, metrics, layout, attempts: [{layout, faces, defects, irregular}] for every layout tried, notes: where the result departs from what was asked}, and with poles= where each pole landed: {point, position, valence, valenceMatched}, or null where none came out near it.
 
     Args:
         objects: source.
         preset: Starting settings for what the mesh is for: gameCharacter, midPoly, hero, stylized, hardSurface, prop, or the name of a preset saved from the option box. Flags set to other than their default win. Default 'none'.
-        method: patches: loops run unbroken between a few poles; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), patches otherwise. One of 'patches', 'grid'. Default 'patches'.
+        method: flow: quads follow the shape, loops run unbroken between a few poles; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), flow otherwise. One of 'flow', 'grid'. Default 'flow'.
         targetFaces: Approximate face count. Default 3000.
         countTolerance: Retry at a corrected size until the face count is within this fraction of targetFaces; 0 takes the first try. Default 0.1.
         timeout: Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits until done or aborted. Default 0.0.
@@ -8061,7 +8061,7 @@ def retopoPoles(*objects: Any, preset: str | None = None, method: str | None = N
     Args:
         objects: source.
         preset: Starting settings for what the mesh is for: gameCharacter, midPoly, hero, stylized, hardSurface, prop, or the name of a preset saved from the option box. Flags set to other than their default win. Default 'none'.
-        method: patches: loops run unbroken between a few poles; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), patches otherwise. One of 'patches', 'grid'. Default 'patches'.
+        method: flow: quads follow the shape, loops run unbroken between a few poles; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), flow otherwise. One of 'flow', 'grid'. Default 'flow'.
         targetFaces: Approximate face count. Default 3000.
         countTolerance: Retry at a corrected size until the face count is within this fraction of targetFaces; 0 takes the first try. Default 0.1.
         timeout: Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits until done or aborted. Default 0.0.
@@ -11299,7 +11299,7 @@ def uvAlignToEdge(uvSet: str | None = None, axis: str | None = None) -> Any:
         axis: u, v, or nearest. One of 'nearest', 'u', 'v'. Default 'nearest'.
     """
 
-def uvAuto(uvSet: str | None = None, iterations: int | None = None, finalMesh: bool | None = None, hardAngle: float | None = None, useHardEdges: bool | None = None, keepSeams: bool | None = None, maxDistortion: float | None = None, visibility: bool | None = None, merge: bool | None = None, method: str | None = None, distortionBound: float | None = None, seamWeight: float | None = None, useViews: bool | None = None, views: Sequence[Any] | None = None, resolution: int | None = None, padding: float | None = None, margin: float | None = None, paddingMips: int | None = None, rotateStep: int | None = None, angles: Sequence[Any] | None = None, freeRotation: bool | None = None, flip: bool | None = None, orient: bool | None = None, scaleMode: str | None = None, normalize: bool | None = None, stack: bool | None = None, stackMirrored: bool | None = None, stackTolerance: float | None = None, tilesU: int | None = None, tilesV: int | None = None, region: Sequence[Any] | None = None, texelsPerUnit: float | None = None, effort: int | None = None, timeLimit: float | None = None, workingResolution: int | None = None, *, fm: bool | None = None) -> Any:
+def uvAuto(uvSet: str | None = None, iterations: int | None = None, finalMesh: bool | None = None, hardAngle: float | None = None, useHardEdges: bool | None = None, keepSeams: bool | None = None, maxDistortion: float | None = None, visibility: bool | None = None, merge: bool | None = None, darts: bool | None = None, method: str | None = None, distortionBound: float | None = None, seamWeight: float | None = None, useViews: bool | None = None, views: Sequence[Any] | None = None, resolution: int | None = None, padding: float | None = None, margin: float | None = None, paddingMips: int | None = None, rotateStep: int | None = None, angles: Sequence[Any] | None = None, freeRotation: bool | None = None, flip: bool | None = None, orient: bool | None = None, scaleMode: str | None = None, normalize: bool | None = None, stack: bool | None = None, stackMirrored: bool | None = None, stackTolerance: float | None = None, tilesU: int | None = None, tilesV: int | None = None, region: Sequence[Any] | None = None, texelsPerUnit: float | None = None, effort: int | None = None, timeLimit: float | None = None, workingResolution: int | None = None, *, fm: bool | None = None) -> Any:
     """Automatic uvs: seams, low-stretch unwrap and pack, in one step.
 
     Args:
@@ -11312,6 +11312,7 @@ def uvAuto(uvSet: str | None = None, iterations: int | None = None, finalMesh: b
         maxDistortion: Split islands that stretch more than this when flattened. Default 0.08.
         visibility: Hide cuts where they are least visible. Default True.
         merge: Merge islands back while they still flatten well. Default True.
+        darts: Before splitting an island that stretches, try short cuts in from where it caps over (fingertips, a nose). Default False.
         method: split (hard edges, open to disks, split where stretched) or optcuts (Auto Seams 2: seams and distortion optimised together). One of 'split', 'optcuts'. Default 'split'.
         distortionBound: optcuts: stretch (symmetric Dirichlet excess, all islands) to get under. Default 0.05.
         seamWeight: optcuts: price of seam length against stretch; higher keeps seams shorter. Default 0.5.
@@ -11340,7 +11341,7 @@ def uvAuto(uvSet: str | None = None, iterations: int | None = None, finalMesh: b
         workingResolution: Search raster cells across a tile; 0 uses the resolution up to 4096. Default 0.
     """
 
-def uvAutoSeams(hardAngle: float | None = None, useHardEdges: bool | None = None, keepSeams: bool | None = None, maxDistortion: float | None = None, visibility: bool | None = None, merge: bool | None = None, method: str | None = None, distortionBound: float | None = None, seamWeight: float | None = None, useViews: bool | None = None, views: Sequence[Any] | None = None) -> Any:
+def uvAutoSeams(hardAngle: float | None = None, useHardEdges: bool | None = None, keepSeams: bool | None = None, maxDistortion: float | None = None, visibility: bool | None = None, merge: bool | None = None, darts: bool | None = None, method: str | None = None, distortionBound: float | None = None, seamWeight: float | None = None, useViews: bool | None = None, views: Sequence[Any] | None = None) -> Any:
     """Place seams for game assets on the selected faces: hard edges, then cuts that open each island along hidden, creased paths and split it where it would stretch.
 
     Args:
@@ -11350,6 +11351,7 @@ def uvAutoSeams(hardAngle: float | None = None, useHardEdges: bool | None = None
         maxDistortion: Split islands that stretch more than this when flattened. Default 0.08.
         visibility: Hide cuts where they are least visible. Default True.
         merge: Merge islands back while they still flatten well. Default True.
+        darts: Before splitting an island that stretches, try short cuts in from where it caps over (fingertips, a nose). Default False.
         method: split (hard edges, open to disks, split where stretched) or optcuts (Auto Seams 2: seams and distortion optimised together). One of 'split', 'optcuts'. Default 'split'.
         distortionBound: optcuts: stretch (symmetric Dirichlet excess, all islands) to get under. Default 0.05.
         seamWeight: optcuts: price of seam length against stretch; higher keeps seams shorter. Default 0.5.
@@ -11357,13 +11359,14 @@ def uvAutoSeams(hardAngle: float | None = None, useHardEdges: bool | None = None
         views: Cameras, locators or planes seams hide from; every seam view in the scene when not given. A plane (any mesh) sees along its normal, like an orthographic camera.
     """
 
-def uvBff(uvSet: str | None = None, boundary: str | None = None, cones: int | None = None, exactLengths: bool | None = None, pack: bool | None = None, finalMesh: bool | None = None, *, fm: bool | None = None) -> Any:
+def uvBff(uvSet: str | None = None, boundary: str | None = None, cones: int | None = None, coneSource: str | None = None, exactLengths: bool | None = None, pack: bool | None = None, finalMesh: bool | None = None, *, fm: bool | None = None) -> Any:
     """Boundary First Flattening of the selected faces' islands: conformal, with the boundary chosen first. free keeps the boundary lengths (least area distortion), disk makes a circle, rectangle straight sides between four corners (the selected vertices, else the sharpest), polygon one straight side per selected corner. cones adds automatic cone points that cut the island open to cut area distortion. Islands keep their place unless pack=True or they had no uvs.
 
     Args:
         uvSet: UV set; the current one (uvSetCurrent) when not given.
         boundary: free, disk, rectangle or polygon. One of 'free', 'disk', 'rectangle', 'polygon'. Default 'free'.
         cones: Cone points placed automatically (free boundary only); each adds a short seam. Default 0.
+        coneSource: stretch: where flattening stretches most. flow: where the surface's flow turns (caps and saddles), most curved first; with cones 0, every one that bends enough. One of 'stretch', 'flow'. Default 'stretch'.
         exactLengths: free boundary: bend rather than stretch to close it, so its lengths are exact. Default False.
         pack: Pack the islands into 0-1 afterwards. Default False.
         finalMesh: Measure and solve on the mesh as exported, after modifiers that move its surface (bevel, subdivision); False works on the base mesh alone. Short form fm. Default True.
@@ -11389,6 +11392,17 @@ def uvDelete(uvSet: str | None = None) -> Any:
 
     Args:
         uvSet: UV set; the current one (uvSetCurrent) when not given.
+    """
+
+def uvFlowUnwrap(uvSet: str | None = None, straighten: bool | None = None, straightAngle: float | None = None, pack: bool | None = None, finalMesh: bool | None = None, *, fm: bool | None = None) -> Any:
+    """Unwrap the selected faces' islands so U and V follow the surface's flow (its curvature, creases and borders): panels come out as rectangles and bevels as straight strips, ready for trim sheets. Each island is cut open from the points its flow turns round; one that would fold or overlap itself that way is unwrapped for least stretch instead and counted in fellBack. Islands keep their place unless pack=True or they had no uvs.
+
+    Args:
+        uvSet: UV set; the current one (uvSetCurrent) when not given.
+        straighten: Lay border and crease edges that run nearly along U or V exactly along it. Default True.
+        straightAngle: How close to U or V an edge must run to be straightened, degrees. Default 12.0.
+        pack: Pack the islands into 0-1 afterwards. Default False.
+        finalMesh: Measure and solve on the mesh as exported, after modifiers that move its surface (bevel, subdivision); False works on the base mesh alone. Short form fm. Default True.
     """
 
 def uvHose(uvSet: str | None = None, maxAspect: float | None = None, maxLength: float | None = None, visibility: bool | None = None, keepSeams: bool | None = None, useViews: bool | None = None, views: Sequence[Any] | None = None, pack: bool | None = None, finalMesh: bool | None = None, resolution: int | None = None, padding: float | None = None, margin: float | None = None, paddingMips: int | None = None, rotateStep: int | None = None, angles: Sequence[Any] | None = None, freeRotation: bool | None = None, flip: bool | None = None, orient: bool | None = None, scaleMode: str | None = None, normalize: bool | None = None, stack: bool | None = None, stackMirrored: bool | None = None, stackTolerance: float | None = None, tilesU: int | None = None, tilesV: int | None = None, region: Sequence[Any] | None = None, texelsPerUnit: float | None = None, effort: int | None = None, timeLimit: float | None = None, workingResolution: int | None = None, *, fm: bool | None = None) -> Any:
@@ -11496,11 +11510,11 @@ def uvOptimize(uvSet: str | None = None, mode: str | None = None, mix: float | N
     """
 
 def uvOrient(uvSet: str | None = None, mode: str | None = None) -> Any:
-    """Rotate the selected islands upright: by bounding box, principal axis, longest edge or edge grid.
+    """Rotate the selected islands upright: by bounding box, principal axis, longest edge, edge grid or surface flow.
 
     Args:
         uvSet: UV set; the current one (uvSetCurrent) when not given.
-        mode: bbox, principal, edge or grid (polygon edges along U and V). One of 'bbox', 'principal', 'edge', 'grid'. Default 'bbox'.
+        mode: bbox, principal, edge, grid (polygon edges along U and V), flow (the surface's curvature and creases along U and V) or auto (grid, else flow, else bbox). One of 'bbox', 'principal', 'edge', 'grid', 'flow', 'auto'. Default 'bbox'.
     """
 
 def uvPack(uvSet: str | None = None, finalMesh: bool | None = None, resolution: int | None = None, padding: float | None = None, margin: float | None = None, paddingMips: int | None = None, rotateStep: int | None = None, angles: Sequence[Any] | None = None, freeRotation: bool | None = None, flip: bool | None = None, orient: bool | None = None, scaleMode: str | None = None, normalize: bool | None = None, stack: bool | None = None, stackMirrored: bool | None = None, stackTolerance: float | None = None, tilesU: int | None = None, tilesV: int | None = None, region: Sequence[Any] | None = None, texelsPerUnit: float | None = None, effort: int | None = None, timeLimit: float | None = None, workingResolution: int | None = None, layout: str | None = None, groupBy: str | None = None, groupAttr: str | None = None, keep: str | None = None, fixPinned: bool | None = None, perObject: bool | None = None, *, fm: bool | None = None) -> Any:

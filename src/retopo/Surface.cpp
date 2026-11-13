@@ -901,7 +901,7 @@ std::vector<uint8_t> Surface::saddleTips() const
     return out;
 }
 
-void FeatureLines::build(const Surface& s, double cellSize, bool boundaryOnly)
+void FeatureLines::build(const Surface& s, double cellSize, bool boundaryOnly, bool innerOnly)
 {
     LILA_ZONE();
 
@@ -909,11 +909,11 @@ void FeatureLines::build(const Surface& s, double cellSize, bool boundaryOnly)
     mCorners.clear();
     mCell = std::max(cellSize, 1e-9);
     for (size_t e = 0; e < s.edges.size(); ++e)
-        if (s.edgeFeature[e] && (!boundaryOnly || s.edgeBoundary[e]))
+        if (s.edgeFeature[e] && (!boundaryOnly || s.edgeBoundary[e]) && (!innerOnly || !s.edgeBoundary[e]))
             mSegs.push_back({s.pos[s.edges[e][0]], s.pos[s.edges[e][1]]});
     const std::vector<uint8_t> tip = s.saddleTips();
     for (Index v = 0; v < s.vertexCount(); ++v)
-        if (s.feature[v] == FeatureKind::Corner && !tip[v] && (!boundaryOnly || s.onBoundary[v]))
+        if (s.feature[v] == FeatureKind::Corner && !tip[v] && (!boundaryOnly || s.onBoundary[v]) && (!innerOnly || !s.onBoundary[v]))
             mCorners.push_back(s.pos[v]);
     mBuckets.assign(std::max<size_t>(64, mSegs.size() * 2), {});
     mCornerBuckets.assign(mBuckets.size(), {});
