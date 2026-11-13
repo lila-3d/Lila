@@ -633,10 +633,11 @@ void registerCommands()
         .run = import3dTiles,
         .examples = {"import3dTiles(\"D:/city/tileset.json\", maxError=2, centre=[45.8257, 11.5324], radius=500)"},
     });
-    io::translators::add({.id = "3dTiles",
-                          .label = "3D Tiles",
-                          .doc = "3D Tiles content (b3dm, i3dm, pnts, cmpt), placed on the Earth; import a whole tileset's tileset.json with import3dTiles.",
-                          .extensions = {".b3dm", ".i3dm", ".pnts", ".cmpt"},
-                          .import = {.command = "import3dTiles"}});
+    if (!io::translators::find("3dTiles"))
+        io::translators::add({.id = "3dTiles",
+                              .label = "3D Tiles",
+                              .doc = "3D Tiles content (b3dm, i3dm, pnts, cmpt), placed on the Earth; import a whole tileset's tileset.json with import3dTiles.",
+                              .extensions = {".b3dm", ".i3dm", ".pnts", ".cmpt"},
+                              .import = {.command = "import3dTiles"}});
 }
 } // namespace lila::tiles
