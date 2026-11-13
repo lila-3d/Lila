@@ -439,3 +439,36 @@ TEST_CASE("props: guard aim after a solved hold over a second")
     CHECK(glm::degrees(std::acos(std::clamp(glm::dot(glm::normalize(glm::dvec3(m[0])), to), -1.0, 1.0))) < 2.0);
     CHECK(std::abs(glm::length(pos(pointNamed(p, "off")) - pos(jointPath("hand_l"))) - glm::length(pos(pointNamed(p, "main")) - pos(jointPath("hand_r")))) < 1.0);
 }
+
+TEST_CASE("props: the off hand holds its grip all through a guard aim's blend")
+{
+    manny();
+    run("playbackOptions", {{"minTime", 0.0}, {"maxTime", 1.0}, {"fps", 30.0}});
+    sword();
+    run("puppeteerPropSetup", {{"args", {"sword"}}, {"kind", "sword2h"}});
+    const json h = run("puppeteerPropHold", {{"args", {"sword"}}, {"time", 0.0}, {"blend", 0.0}});
+    run("spaceLocator", {{"name", "foe"}});
+    run("setAttr", {{"args", {"foe.translate", 0.0, 150.0, 300.0}}});
+    run("puppeteerPropAim", {{"args", {"sword"}}, {"target", "foe"}, {"time", 8.0 / 30.0}, {"blend", 12.0 / 30.0}});
+    const scene::NodeId contact = id(h.at("contact").get<std::string>());
+    const std::string handR = jointPath("hand_r");
+    double worst = 0.0;
+    std::vector<double> steps;
+    glm::dvec3 last(0.0);
+    for (int f = 4; f <= 24; ++f)
+    {
+        at(f / 30.0);
+        const auto [hand, grip] = scene::grapple::contactPoints(graph(), contact);
+        worst = std::max(worst, glm::length(hand - grip));
+        if (f > 4)
+            steps.push_back(glm::length(pos(handR) - last));
+        last = pos(handR);
+    }
+    MESSAGE("off hand gap through the blend: " << worst << " cm");
+    CHECK(worst < 0.1);
+    // The aimed hand eases out of the shared pose: its first step is a small share of its largest, no pop.
+    const double largest = *std::max_element(steps.begin(), steps.end());
+    const auto first = std::find_if(steps.begin(), steps.end(), [](double s) { return s > 1e-6; });
+    REQUIRE(first != steps.end());
+    CHECK(*first < 0.3 * largest);
+}

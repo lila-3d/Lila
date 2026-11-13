@@ -1311,8 +1311,10 @@ public:
             }
             else
                 want = rigid(worldOf(*g.node(p.frame))) * glm::inverse(p.grip);
-            const glm::dvec3 at = glm::mix(glm::dvec3(now[3]), glm::dvec3(want[3]), w);
-            const glm::dquat q = glm::normalize(glm::slerp(rotationOf(now), rotationOf(want), w));
+            // An aim's pose goes in whole: the solve blends it from where the frame's other contacts put the bone.
+            const double blend = p.aim ? 1.0 : w;
+            const glm::dvec3 at = glm::mix(glm::dvec3(now[3]), glm::dvec3(want[3]), blend);
+            const glm::dquat q = glm::normalize(glm::slerp(rotationOf(now), rotationOf(want), blend));
             in.insert(in.end(), {at.x, at.y, at.z, q.w, q.x, q.y, q.z, w});
             if (p.aim && p.anchorBone >= 0)
             {
@@ -1434,14 +1436,28 @@ private:
             Aim aim;
             glm::dvec3 anchorLocal;
         };
+        /** An aim turning about its pivot where it is: its whole pose, the same every pass. */
+        struct Turned
+        {
+            size_t figure;
+            int bone;
+            double weight;
+            glm::dvec3 position;
+            glm::dquat rotation;
+        };
         std::vector<Pinned> pinned;
         std::vector<Anchored> anchored;
+        std::vector<Turned> turned;
+        // The contacts as they share the load with no aim on: what a partly weighted aim blends from.
+        const std::vector<Link> unaimed = links;
         for (const PinRig& p : mPins)
         {
             const double w = mEnabled ? in[at + 7] : 0.0;
             const bool isAnchored = p.aim && p.anchorBone >= 0;
             if (w > 1e-9)
             {
+                const glm::dvec3 pos(in[at], in[at + 1], in[at + 2]);
+                const glm::dquat rot = glm::normalize(glm::dquat(in[at + 3], in[at + 4], in[at + 5], in[at + 6]));
                 if (isAnchored)
                 {
                     const double* x = &in[at + kPinInputs];
@@ -1456,30 +1472,62 @@ private:
                     an.aim.up = math::axisBasis().up;
                     anchored.push_back(an);
                 }
+                else if (p.aim)
+                    turned.push_back({size_t(p.figure), p.bone, w, pos, rot});
                 else
                 {
-                    const glm::dvec3 pos(in[at], in[at + 1], in[at + 2]);
-                    figures[size_t(p.figure)].problem.effectors.push_back(
-                        {.bone = p.bone, .position = pos, .rotation = glm::normalize(glm::dquat(in[at + 3], in[at + 4], in[at + 5], in[at + 6]))});
+                    figures[size_t(p.figure)].problem.effectors.push_back({.bone = p.bone, .position = pos, .rotation = rot});
                     pinned.push_back({size_t(p.figure), size_t(p.bone), pos});
                 }
-                // A bone an aim pins carries what it holds where the aim says, so contacts riding it reach the rest of the way.
-                for (Link& k : links)
-                    if (k.target == p.figure && k.targetBone == p.bone)
-                        k.share *= 1.0 - w;
+                // An aimed bone is pinned at any weight, so what rides it is reached by the other side all the way.
+                if (p.aim)
+                    for (Link& k : links)
+                        if (k.target == p.figure && k.targetBone == p.bone)
+                            k.share = 0.0;
             }
             at += kPinInputs + (isAnchored ? kAimInputs : 0);
         }
         Result r;
-        const bool any = mEnabled && (!pinned.empty() || !anchored.empty() || std::ranges::any_of(links, [](const Link& l) { return l.weight > 1e-9; }));
+        const bool any = mEnabled && (!pinned.empty() || !anchored.empty() || !turned.empty() ||
+                                      std::ranges::any_of(links, [](const Link& l) { return l.weight > 1e-9; }));
         if (mEnabled && (any || mOptions.collide))
         {
             const std::vector<Figure> base = figures;
             const size_t fixedPins = pinned.size();
+            // Where each aimed bone is with the aims off, so a partial weight blends from the solved pose, contacts shared.
+            const bool partial = std::ranges::any_of(anchored, [](const Anchored& an) { return an.weight < 1.0 - 1e-9; }) ||
+                                 std::ranges::any_of(turned, [](const Turned& t) { return t.weight < 1.0 - 1e-9; });
+            std::vector<std::vector<glm::dmat4>> from;
+            if (partial)
+            {
+                const Result r0 = solve(base, unaimed, mOptions);
+                for (size_t i = 0; i < base.size(); ++i)
+                {
+                    const fbik::Problem& fp = base[i].problem;
+                    if (i < r0.poses.size())
+                        from.push_back(fbik::forward(fp, r0.poses[i].rotation, r0.poses[i].offset, r0.poses[i].stretch));
+                    else
+                    {
+                        std::vector<glm::dquat> rot;
+                        for (const fbik::Bone& bn : fp.bones)
+                            rot.push_back(bn.rotation);
+                        from.push_back(fbik::forward(fp, rot, std::vector<glm::dvec3>(rot.size(), glm::dvec3(0.0))));
+                    }
+                }
+            }
+            auto place = [&](size_t figure, int bone, double weight, const glm::dvec3& wantPos, const glm::dquat& wantRot, const glm::dmat4& animated) {
+                const glm::dmat4& b = partial ? from[figure][size_t(bone)] : animated;
+                const glm::dvec3 pos = glm::mix(glm::dvec3(b[3]), wantPos, weight);
+                const glm::dquat q = glm::normalize(glm::slerp(rotationOf(b), wantRot, weight));
+                figures[figure].problem.effectors.push_back({.bone = bone, .position = pos, .rotation = q});
+                pinned.push_back({figure, size_t(bone), pos});
+            };
             for (int pass = 0; pass < (anchored.empty() ? 1 : kAimPasses); ++pass)
             {
                 figures = base;
                 pinned.resize(fixedPins);
+                for (const Turned& t : turned)
+                    place(t.figure, t.bone, t.weight, t.position, t.rotation, glm::dmat4(1.0));
                 for (const Anchored& an : anchored)
                 {
                     const fbik::Problem& fp = figures[an.figure].problem;
@@ -1496,10 +1544,7 @@ private:
                     Aim a = an.aim;
                     a.anchor = pointOn(world[size_t(an.anchorBone)], an.anchorLocal);
                     const glm::dmat4 want = aimHolder(a);
-                    const glm::dvec3 pos = glm::mix(glm::dvec3(a.holder[3]), glm::dvec3(want[3]), an.weight);
-                    const glm::dquat q = glm::normalize(glm::slerp(rotationOf(a.holder), rotationOf(want), an.weight));
-                    figures[an.figure].problem.effectors.push_back({.bone = an.bone, .position = pos, .rotation = q});
-                    pinned.push_back({an.figure, size_t(an.bone), pos});
+                    place(an.figure, an.bone, an.weight, glm::dvec3(want[3]), rotationOf(want), a.holder);
                 }
                 r = solve(figures, links, mOptions);
             }
