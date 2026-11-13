@@ -433,19 +433,20 @@ inline Slices slice(const std::vector<glm::dvec3>& pts, const glm::dvec3& centre
             s.mean[size_t(i)] /= double(s.count[size_t(i)]);
         else
             s.mean[size_t(i)] = s.centre + axis * s.at(i);
-    // Empty slices (gaps in a sparse mesh) take their neighbours' radius.
+    // Empty slices (the long sides of a low-poly part have no vertices) take the narrower of the nearest slices either
+    // side: a handle runs at its own radius up to the guard, which has vertices of its own.
+    const std::vector<double> measured = s.radius;
     for (int i = 0; i < n; ++i)
         if (!s.count[size_t(i)])
         {
-            double r = 0.0;
-            for (int d = 1; d < n && r == 0.0; ++d)
-            {
-                if (i - d >= 0 && s.count[size_t(i - d)])
-                    r = s.radius[size_t(i - d)];
-                if (i + d < n && s.count[size_t(i + d)])
-                    r = std::max(r, s.radius[size_t(i + d)]);
-            }
-            s.radius[size_t(i)] = r;
+            double below = -1.0, above = -1.0;
+            for (int j = i - 1; j >= 0 && below < 0.0; --j)
+                if (s.count[size_t(j)])
+                    below = measured[size_t(j)];
+            for (int j = i + 1; j < n && above < 0.0; ++j)
+                if (s.count[size_t(j)])
+                    above = measured[size_t(j)];
+            s.radius[size_t(i)] = below < 0.0 ? std::max(above, 0.0) : above < 0.0 ? below : std::min(below, above);
         }
     return s;
 }
