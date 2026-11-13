@@ -483,6 +483,7 @@ AutoSeamOptions seamArgs(const Args& a, std::string* overridden = nullptr)
     o.keepSeams = a.get<bool>("keepSeams", false);
     o.visibility = a.get<bool>("visibility", true);
     o.merge = a.get<bool>("merge", true);
+    o.darts = a.get<bool>("darts", AutoSeamOptions{}.darts);
     o.useHardEdges = a.get<bool>("useHardEdges", false);
     std::string method = a.get<std::string>("method", "split");
     if (method != "split" && method != "optcuts")
@@ -524,6 +525,7 @@ std::vector<FlagDef> seamFlagDefs()
             {"maxDistortion", "", T::Float, 0.08, "Split islands that stretch more than this when flattened.", {}, {}, 0.0},
             {"visibility", "", T::Bool, true, "Hide cuts where they are least visible."},
             {"merge", "", T::Bool, true, "Merge islands back while they still flatten well."},
+            {"darts", "", T::Bool, AutoSeamOptions{}.darts, "Before splitting an island that stretches, try short cuts in from where it caps over (fingertips, a nose)."},
             {"method", "", T::String, "split",
              "split (hard edges, open to disks, split where stretched) or optcuts (Auto Seams 2: seams and distortion optimised together).",
              {"split", "optcuts"}},

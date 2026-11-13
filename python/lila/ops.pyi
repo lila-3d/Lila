@@ -11289,7 +11289,7 @@ def uvAlignToEdge(uvSet: str | None = None, axis: str | None = None) -> Any:
         axis: u, v, or nearest. One of 'nearest', 'u', 'v'. Default 'nearest'.
     """
 
-def uvAuto(uvSet: str | None = None, iterations: int | None = None, finalMesh: bool | None = None, hardAngle: float | None = None, useHardEdges: bool | None = None, keepSeams: bool | None = None, maxDistortion: float | None = None, visibility: bool | None = None, merge: bool | None = None, method: str | None = None, distortionBound: float | None = None, seamWeight: float | None = None, useViews: bool | None = None, views: Sequence[Any] | None = None, resolution: int | None = None, padding: float | None = None, margin: float | None = None, paddingMips: int | None = None, rotateStep: int | None = None, angles: Sequence[Any] | None = None, freeRotation: bool | None = None, flip: bool | None = None, orient: bool | None = None, scaleMode: str | None = None, normalize: bool | None = None, stack: bool | None = None, stackMirrored: bool | None = None, stackTolerance: float | None = None, tilesU: int | None = None, tilesV: int | None = None, region: Sequence[Any] | None = None, texelsPerUnit: float | None = None, effort: int | None = None, timeLimit: float | None = None, workingResolution: int | None = None, *, fm: bool | None = None) -> Any:
+def uvAuto(uvSet: str | None = None, iterations: int | None = None, finalMesh: bool | None = None, hardAngle: float | None = None, useHardEdges: bool | None = None, keepSeams: bool | None = None, maxDistortion: float | None = None, visibility: bool | None = None, merge: bool | None = None, darts: bool | None = None, method: str | None = None, distortionBound: float | None = None, seamWeight: float | None = None, useViews: bool | None = None, views: Sequence[Any] | None = None, resolution: int | None = None, padding: float | None = None, margin: float | None = None, paddingMips: int | None = None, rotateStep: int | None = None, angles: Sequence[Any] | None = None, freeRotation: bool | None = None, flip: bool | None = None, orient: bool | None = None, scaleMode: str | None = None, normalize: bool | None = None, stack: bool | None = None, stackMirrored: bool | None = None, stackTolerance: float | None = None, tilesU: int | None = None, tilesV: int | None = None, region: Sequence[Any] | None = None, texelsPerUnit: float | None = None, effort: int | None = None, timeLimit: float | None = None, workingResolution: int | None = None, *, fm: bool | None = None) -> Any:
     """Automatic uvs: seams, low-stretch unwrap and pack, in one step.
 
     Args:
@@ -11302,6 +11302,7 @@ def uvAuto(uvSet: str | None = None, iterations: int | None = None, finalMesh: b
         maxDistortion: Split islands that stretch more than this when flattened. Default 0.08.
         visibility: Hide cuts where they are least visible. Default True.
         merge: Merge islands back while they still flatten well. Default True.
+        darts: Before splitting an island that stretches, try short cuts in from where it caps over (fingertips, a nose). Default True.
         method: split (hard edges, open to disks, split where stretched) or optcuts (Auto Seams 2: seams and distortion optimised together). One of 'split', 'optcuts'. Default 'split'.
         distortionBound: optcuts: stretch (symmetric Dirichlet excess, all islands) to get under. Default 0.05.
         seamWeight: optcuts: price of seam length against stretch; higher keeps seams shorter. Default 0.5.
@@ -11330,7 +11331,7 @@ def uvAuto(uvSet: str | None = None, iterations: int | None = None, finalMesh: b
         workingResolution: Search raster cells across a tile; 0 uses the resolution up to 4096. Default 0.
     """
 
-def uvAutoSeams(hardAngle: float | None = None, useHardEdges: bool | None = None, keepSeams: bool | None = None, maxDistortion: float | None = None, visibility: bool | None = None, merge: bool | None = None, method: str | None = None, distortionBound: float | None = None, seamWeight: float | None = None, useViews: bool | None = None, views: Sequence[Any] | None = None) -> Any:
+def uvAutoSeams(hardAngle: float | None = None, useHardEdges: bool | None = None, keepSeams: bool | None = None, maxDistortion: float | None = None, visibility: bool | None = None, merge: bool | None = None, darts: bool | None = None, method: str | None = None, distortionBound: float | None = None, seamWeight: float | None = None, useViews: bool | None = None, views: Sequence[Any] | None = None) -> Any:
     """Place seams for game assets on the selected faces: hard edges, then cuts that open each island along hidden, creased paths and split it where it would stretch.
 
     Args:
@@ -11340,6 +11341,7 @@ def uvAutoSeams(hardAngle: float | None = None, useHardEdges: bool | None = None
         maxDistortion: Split islands that stretch more than this when flattened. Default 0.08.
         visibility: Hide cuts where they are least visible. Default True.
         merge: Merge islands back while they still flatten well. Default True.
+        darts: Before splitting an island that stretches, try short cuts in from where it caps over (fingertips, a nose). Default True.
         method: split (hard edges, open to disks, split where stretched) or optcuts (Auto Seams 2: seams and distortion optimised together). One of 'split', 'optcuts'. Default 'split'.
         distortionBound: optcuts: stretch (symmetric Dirichlet excess, all islands) to get under. Default 0.05.
         seamWeight: optcuts: price of seam length against stretch; higher keeps seams shorter. Default 0.5.
@@ -11347,13 +11349,14 @@ def uvAutoSeams(hardAngle: float | None = None, useHardEdges: bool | None = None
         views: Cameras, locators or planes seams hide from; every seam view in the scene when not given. A plane (any mesh) sees along its normal, like an orthographic camera.
     """
 
-def uvBff(uvSet: str | None = None, boundary: str | None = None, cones: int | None = None, exactLengths: bool | None = None, pack: bool | None = None, finalMesh: bool | None = None, *, fm: bool | None = None) -> Any:
+def uvBff(uvSet: str | None = None, boundary: str | None = None, cones: int | None = None, coneSource: str | None = None, exactLengths: bool | None = None, pack: bool | None = None, finalMesh: bool | None = None, *, fm: bool | None = None) -> Any:
     """Boundary First Flattening of the selected faces' islands: conformal, with the boundary chosen first. free keeps the boundary lengths (least area distortion), disk makes a circle, rectangle straight sides between four corners (the selected vertices, else the sharpest), polygon one straight side per selected corner. cones adds automatic cone points that cut the island open to cut area distortion. Islands keep their place unless pack=True or they had no uvs.
 
     Args:
         uvSet: UV set; the current one (uvSetCurrent) when not given.
         boundary: free, disk, rectangle or polygon. One of 'free', 'disk', 'rectangle', 'polygon'. Default 'free'.
         cones: Cone points placed automatically (free boundary only); each adds a short seam. Default 0.
+        coneSource: stretch: where flattening stretches most. flow: where the surface's flow turns (caps and saddles), most curved first; with cones 0, every one that bends enough. One of 'stretch', 'flow'. Default 'stretch'.
         exactLengths: free boundary: bend rather than stretch to close it, so its lengths are exact. Default False.
         pack: Pack the islands into 0-1 afterwards. Default False.
         finalMesh: Measure and solve on the mesh as exported, after modifiers that move its surface (bevel, subdivision); False works on the base mesh alone. Short form fm. Default True.
