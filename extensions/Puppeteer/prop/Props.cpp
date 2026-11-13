@@ -19,6 +19,7 @@
 #include <lila/Simulation.h>
 #include <lila/Spaces.h>
 
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/norm.hpp>
 
 #include <algorithm>
@@ -422,15 +423,147 @@ HandShape shapeOf(Graph& g, const hand::Hand& h)
     for (const hand::Finger& f : h.fingers)
         if (f.role != hand::Role::Thumb && !f.joints.empty())
         {
-            k += glm::dvec3(toHand * worldOf(g, f.joints.front())[3]);
+            const glm::dvec3 knuckle(toHand * worldOf(g, f.joints.front())[3]);
+            k += knuckle;
             ++n;
+            double length = 0.0;
+            for (size_t j = 1; j < f.joints.size(); ++j)
+                length += glm::length(glm::dvec3(worldOf(g, f.joints[j])[3]) - glm::dvec3(worldOf(g, f.joints[j - 1])[3]));
+            if (f.tip)
+                length += glm::length(glm::dvec3(worldOf(g, f.tip)[3]) - glm::dvec3(worldOf(g, f.joints.back())[3]));
+            // The grip's own estimate of a finger's thickness when it has no skin to measure.
+            s.fingers.push_back({knuckle, std::max(0.1, 0.16 * length)});
         }
     if (n)
         s.knuckles = k / double(n);
     return s;
 }
 
-glm::dmat4 gripOf(Graph& g, const hand::Hand& h, NodeId point) { return gripFrame(shapeOf(g, h), numOf(g, point, "radius")); }
+/** The prop's meshes as one surface in the point's rigid frame. */
+std::vector<std::unique_ptr<geo::MeshBvh>> surfaceIn(Graph& g, const Prop& p, NodeId point)
+{
+    std::vector<std::unique_ptr<geo::MeshBvh>> out;
+    const glm::dmat4 toPoint = glm::inverse(rigidOf(worldOf(g, point)));
+    for (NodeId id : propMeshes(g, p))
+    {
+        const MeshPtr m = std::get<MeshPtr>(g.value({id, g.node(id)->type().attrIndex("outMesh"), -1}));
+        if (!m || m->numFaces() == 0)
+            continue;
+        geo::Mesh local = *m;
+        const glm::dmat4 xf = toPoint * worldOf(g, id);
+        for (glm::dvec3& q : local.positions())
+            q = glm::dvec3(xf * glm::dvec4(q, 1.0));
+        out.push_back(std::make_unique<geo::MeshBvh>(local));
+    }
+    return out;
+}
+
+/** Distance from q to the nearest surface, up to within. */
+double gapTo(const std::vector<std::unique_ptr<geo::MeshBvh>>& surface, const glm::dvec3& q, double within = 100.0)
+{
+    double best = within;
+    for (const auto& bvh : surface)
+    {
+        geo::BvhClosest c;
+        if (bvh->closestPoint(q, c, within))
+            best = std::min(best, c.distance);
+    }
+    return best;
+}
+
+/**
+ * The hand's grip frame on a point (the point's frame in the hand joint's space), fitted to the prop's own surface: the
+ * hand slides along the handle until the fingers that wrap lie on it, then sits as close as the knuckles allow, each
+ * clearing the surface toward it by its finger's thickness, so every finger can close onto it. trigger leaves the index
+ * out of the fingers that must lie on the handle.
+ */
+glm::dmat4 gripOf(Graph& g, const hand::Hand& h, const Prop& p, NodeId point, bool trigger = false)
+{
+    const HandShape shape = shapeOf(g, h);
+    const double radius = numOf(g, point, "radius");
+    glm::dmat4 frame = gripFrame(shape, radius);
+    const auto surface = surfaceIn(g, p, point);
+    if (surface.empty())
+        return frame;
+    struct Clear
+    {
+        glm::dvec3 at;
+        double thickness;
+        bool wraps;
+    };
+    std::vector<Clear> clears;
+    double mean = 0.0;
+    for (size_t i = 0, k = 0; i < h.fingers.size(); ++i)
+        if (h.fingers[i].role != hand::Role::Thumb && !h.fingers[i].joints.empty() && k < shape.fingers.size())
+        {
+            const HandShape::Finger& f = shape.fingers[k++];
+            clears.push_back({f.knuckle, f.thickness, !(trigger && h.fingers[i].role == hand::Role::Index)});
+            mean += f.thickness;
+        }
+    if (clears.empty())
+        return frame;
+    mean /= double(clears.size());
+    // The heel of the palm halfway to the knuckles keeps the handle out of the palm too.
+    clears.push_back({0.5 * shape.knuckles, 1.2 * mean, false});
+    for (int round = 0; round < 4; ++round)
+    {
+        // Along the handle: the wrapping fingers' span inside the handle's ends (where the axis is within the radius of it).
+        double lo = 1e300, hi = -1e300;
+        for (const Clear& c : clears)
+            if (c.wraps)
+            {
+                const double x = glm::dvec3(glm::inverse(frame) * glm::dvec4(c.at, 1.0)).x;
+                lo = std::min(lo, x - c.thickness);
+                hi = std::max(hi, x + c.thickness);
+            }
+        auto present = [&](double x) { return gapTo(surface, {x, 0.0, 0.0}, radius + 1.0) <= radius; };
+        double slide = 0.0;
+        if (lo < hi && present(0.0))
+        {
+            const double step = 0.25;
+            double up = 0.0, down = 0.0;
+            while (up < 40.0 && present(up + step))
+                up += step;
+            while (down < 40.0 && present(-down - step))
+                down += step;
+            if (hi - lo >= up + down)
+                slide = 0.5 * (up - down) - 0.5 * (lo + hi);
+            else if (hi > up)
+                slide = up - hi;
+            else if (lo < -down)
+                slide = -down - lo;
+        }
+        frame = frame * glm::translate(glm::dmat4(1.0), glm::dvec3(-slide, 0.0, 0.0));
+        // Off the palm: as close as the tightest knuckle allows, each clearing the surface by a thickness and a quarter.
+        double shift = -1e300;
+        for (const Clear& c : clears)
+        {
+            const glm::dvec3 q(glm::inverse(frame) * glm::dvec4(c.at, 1.0));
+            const double need = 1.25 * c.thickness;
+            // Moving the handle off the palm by s takes the knuckle to q - s Z in the point's frame.
+            auto gap = [&](double s) { return gapTo(surface, q - glm::dvec3(0.0, 0.0, s), need + 20.0); };
+            // Coming in from well off the palm, the first place the knuckle would get too close.
+            double b = q.z + 20.0;
+            if (gap(b) < need)
+                continue;
+            double a = b;
+            while (a > q.z - 30.0 && gap(a) >= need)
+                a -= 0.25;
+            if (gap(a) >= need)
+                continue;
+            b = a + 0.25;
+            for (int i = 0; i < 20; ++i)
+            {
+                const double m = 0.5 * (a + b);
+                (gap(m) < need ? a : b) = m;
+            }
+            shift = std::max(shift, b);
+        }
+        if (shift > -1e299)
+            frame = frame * glm::translate(glm::dmat4(1.0), glm::dvec3(0.0, 0.0, shift));
+    }
+    return frame;
+}
 
 /** The grip point a hold uses: by name (or role id), else the role's first point. */
 NodeId gripPoint(Graph& g, const Prop& p, const std::string& name, Role fallback, const char* cmd)
@@ -567,7 +700,7 @@ NodeId contactFor(Graph& g, NodeId grapple, const Prop& p, const hand::Hand& sou
     setPlug(g, id, "target", t);
     setPlug(g, id, "frame", f);
     setPlug(g, id, "orient", true);
-    setPlug(g, id, "gripOffset", gripOf(g, source, point));
+    setPlug(g, id, "gripOffset", gripOf(g, source, p, point));
     // Off until keyed on.
     setPlug(g, id, "weight", 0.0);
     anim::setKey(g, plugOf(*n, "weight"), anim::playback().minTime, 0.0);
@@ -832,7 +965,7 @@ json holdCmd(const Args& a)
     so.key = true;
     sp::switchSpace(g, p.root, space, so);
     const double settle = t + blend;
-    settleInto(g, p, mainPt, main.h.joint, gripOf(g, main.h, mainPt), t, blend);
+    settleInto(g, p, mainPt, main.h.joint, gripOf(g, main.h, p, mainPt, pr.triggerFinger), t, blend);
 
     // Contacts: the off hand on its grip, riding the main hand; every other contact of this prop lets go.
     NodeId offContact = kNoNode;

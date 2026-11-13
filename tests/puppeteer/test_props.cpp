@@ -7,6 +7,8 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <functional>
+
 using namespace puppeteer::prop;
 using namespace puptest;
 using Approx = doctest::Approx;
@@ -471,4 +473,52 @@ TEST_CASE("props: the off hand holds its grip all through a guard aim's blend")
     const auto first = std::find_if(steps.begin(), steps.end(), [](double s) { return s > 1e-6; });
     REQUIRE(first != steps.end());
     CHECK(*first < 0.3 * largest);
+}
+
+TEST_CASE("props: every finger of every holding hand closes onto the handle")
+{
+    struct Case
+    {
+        const char* kind;
+        std::function<std::string()> make;
+    };
+    const Case cases[] = {
+        {"sword2h", [] { return sword(); }},
+        {"sword1h",
+         [] {
+             return group("sword", {cube("short_handle", {200, 6, 0}, {2.6, 12, 2.6}), cube("short_guard", {200, 13, 0}, {14, 2, 3}),
+                                    cube("short_blade", {200, 49, 0}, {4.5, 70, 0.8})});
+         }},
+        {"pistol", [] { return pistol(); }},
+        {"rifle", [] { return rifle(); }},
+    };
+    for (const Case& c : cases)
+    {
+        CAPTURE(c.kind);
+        manny();
+        const std::string prop = c.make();
+        json meshes = json::array();
+        for (scene::NodeId d : graph().descendants(id(prop)))
+            if (graph().node(d)->type().attrIndex("outMesh") >= 0)
+                meshes.push_back(graph().path(d));
+        run("puppeteerPropSetup", {{"args", {prop}}, {"kind", c.kind}});
+        const json h = run("puppeteerPropHold", {{"args", {prop}}, {"time", 0.0}, {"blend", 0.0}});
+        at(2.0 / 30.0);
+        for (const char* side : {"main", "off"})
+        {
+            if (!h.contains(side))
+                continue;
+            const std::string hand = graph().node(id(h.at(side).get<std::string>()))->name() + "_hand";
+            CAPTURE(side);
+            run("puppeteerHandPose", {{"args", {hand}}, {"pose", "flat"}, {"key", false}});
+            const json r = run("puppeteerHandGrip", {{"args", {hand}}, {"target", meshes}, {"key", false}}).at(0).at("fingers");
+            CHECK(r.size() == 5);
+            for (const auto& [finger, f] : r.items())
+            {
+                CAPTURE(finger);
+                CHECK_FALSE(f.at("stayed").get<bool>());
+                CHECK(f.at("touching").get<bool>());
+            }
+        }
+    }
 }
