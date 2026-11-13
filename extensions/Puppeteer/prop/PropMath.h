@@ -192,19 +192,42 @@ struct HandShape
     glm::dvec3 palm{0.0, -1.0, 0.0};     // the way the fingers curl
     /** The non-thumb fingers' first joints, averaged. */
     glm::dvec3 knuckles{9.0, 0.0, 0.0};
+    /** Each non-thumb finger's first joint and its thickness (cm), where the hand rig has them. */
+    struct Finger
+    {
+        glm::dvec3 knuckle{0.0};
+        double thickness = 1.0;
+    };
+    std::vector<Finger> fingers;
 };
 
 /**
  * Where a hand holds a handle of the radius given, in the hand joint's space: the handle's centre across the palm under
- * the first finger bones, X toward the thumb, Z the way the palm faces. The same grip frame sits the same way in either
- * hand, mirrored: one prop point fits a right and a left hand.
+ * the first finger bones, X toward the thumb, Z the way the palm faces, then moved off the palm until every finger's
+ * knuckle clears it by the finger's thickness (an arched hand's pinky knuckle sits lower than the index's), so each
+ * finger can close onto it. The same grip frame sits the same way in either hand, mirrored: one prop point fits a right
+ * and a left hand.
  */
 inline glm::dmat4 gripFrame(const HandShape& h, double radius)
 {
     const double k = std::max(glm::length(h.knuckles), 1e-3);
     const glm::dvec3 f = glm::normalize(h.forward), p = glm::normalize(h.palm);
-    const glm::dvec3 origin = f * (0.85 * k) + p * (0.25 * k + std::max(radius, 0.0));
-    return frameXZ(origin, h.thumbSide, p);
+    glm::dmat4 m = frameXZ(f * (0.85 * k) + p * (0.25 * k + std::max(radius, 0.0)), h.thumbSide, p);
+    const glm::dvec3 x(m[0]), z(m[2]);
+    double shift = 0.0;
+    for (const HandShape::Finger& fg : h.fingers)
+    {
+        // Clear by a thickness and a quarter: the grip's first contact test samples a quarter of the way along the bone.
+        const double need = std::max(radius, 0.0) + 1.25 * fg.thickness;
+        const glm::dvec3 d = fg.knuckle - glm::dvec3(m[3]);
+        const glm::dvec3 across = d - x * glm::dot(d, x);
+        const double along = glm::dot(across, z);
+        const double side = glm::length(across - z * along);
+        if (side < need)
+            shift = std::max(shift, along + std::sqrt(need * need - side * side));
+    }
+    m[3] += glm::dvec4(z * shift, 0.0);
+    return m;
 }
 
 /** The world matrix that puts a prop's point (local: the point's frame in the prop root's space) on a world frame. */

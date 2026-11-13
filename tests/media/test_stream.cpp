@@ -20,6 +20,7 @@ extern "C"
 #include <cstring>
 #include <fstream>
 #include <random>
+#include <thread>
 #include <stdexcept>
 #include <vector>
 
@@ -282,6 +283,94 @@ TEST_CASE("audio stream: resampled seeks land on the right sample")
     const int64_t found = index * o.blockFrames + loudest(*b, 0, int64_t(b->size() / 2));
     CHECK(std::abs(found - click) <= 1);
     CHECK(s->seeks() >= 1);
+}
+
+TEST_CASE("audio stream: playing backwards and scrubbing back are never silent")
+{
+    const auto path = writeTone("tone_reverse.wav", 48000, 12.0);
+    std::string err;
+    media::AudioBufferPtr whole = media::decodeAudio(path, 48000, &err);
+    REQUIRE_MESSAGE(whole, err);
+    media::AudioStream::Options o;
+    o.blockFrames = 4096;
+    o.readAheadSeconds = 0.5;
+    o.readBehindSeconds = 0.3;
+    const int ahead = 6, behind = 4;
+    auto blockAt = [&](double seconds) { return int64_t(seconds * 48000.0) / o.blockFrames; };
+    auto waitReady = [](media::AudioStream& s, int64_t index) {
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (!s.ready(index))
+        {
+            if (std::chrono::steady_clock::now() > until)
+                return false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        return true;
+    };
+
+    SUBCASE("played backwards")
+    {
+        std::shared_ptr<media::AudioStream> s = media::AudioStream::open(path, o, &err);
+        REQUIRE_MESSAGE(s, err);
+        s->prefetch(10.0, -1);
+        CHECK(s->direction() == -1);
+        const int64_t at = blockAt(10.0);
+        for (int k = 0; k <= ahead; ++k)
+            CHECK(waitReady(*s, at - k));
+        for (int k = 1; k <= behind; ++k)
+            CHECK(waitReady(*s, at + k));
+        CHECK_FALSE(s->ready(at + behind + 2));
+
+        // Backwards through the mixer at four times real time, as the device would pull it: every chunk sounds.
+        media::Voice a;
+        a.buffer = whole;
+        a.to = 12.0;
+        media::Voice b = a;
+        b.buffer = nullptr;
+        b.stream = s;
+        const int chunk = 1024;
+        std::vector<float> wa(chunk * 2), wb(chunk * 2);
+        int chunks = 0, wrong = 0;
+        for (double t = 10.0; t > 4.0; t -= double(chunk) / 48000.0, ++chunks)
+        {
+            media::mix({a}, t, -1.0, 48000, wa.data(), chunk);
+            media::mix({b}, t, -1.0, 48000, wb.data(), chunk);
+            double worst = 0.0;
+            for (size_t i = 0; i < wa.size(); ++i)
+                worst = std::max(worst, double(std::abs(wa[i] - wb[i])));
+            wrong += worst > 1e-5 ? 1 : 0;
+            std::this_thread::sleep_for(std::chrono::microseconds(int64_t(1e6 * chunk / 48000.0 / 4.0)));
+        }
+        CHECK(chunks > 250);
+        CHECK(wrong == 0);
+    }
+
+    SUBCASE("scrubbed back from where play started")
+    {
+        std::shared_ptr<media::AudioStream> s = media::AudioStream::open(path, o, &err);
+        REQUIRE_MESSAGE(s, err);
+        s->prefetch(8.0, 1);
+        const int64_t at = blockAt(8.0);
+        for (int k = 0; k <= ahead; ++k)
+            CHECK(waitReady(*s, at + k));
+        // Behind the playhead too, so the first step back has its block before it asks.
+        for (int k = 1; k <= behind; ++k)
+            CHECK(waitReady(*s, at - k));
+
+        int steps = 0, missing = 0;
+        for (double t = 8.0 - 1.0 / 24.0; t > 5.0; t -= 1.0 / 24.0, ++steps)
+        {
+            missing += s->ready(blockAt(t)) ? 0 : 1;
+            s->prefetch(t);
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        CHECK(steps >= 70);
+        CHECK(missing == 0);
+        CHECK(s->direction() == -1);
+        // Turning round forwards again follows the scrub.
+        s->prefetch(5.5);
+        CHECK(s->direction() == 1);
+    }
 }
 
 TEST_CASE("mix: a streamed voice sounds like the same voice decoded whole, and trims cut both ends")

@@ -84,7 +84,32 @@ struct Gait
     double speed = 1.3;
     double period = 1.0;
     std::vector<GaitWindow> windows;
+    /**
+     * One whole cycle at 30 Hz from a foot strike (the first foot leaving the ground, for a clip of one step per foot), in
+     * place facing +Z (root travel removed, sway kept), looping
+     * seamlessly: the pose after the last is the first. round(period * 30) poses; empty in a library built without one.
+     */
+    std::vector<Pose> cycle;
 };
+
+/** Frames (fractional, at 30 Hz) where each foot comes down, and leaves the ground, in a run of SOMA poses, from its height. */
+struct FootStrikes
+{
+    std::vector<double> left, right;
+    std::vector<double> leftLifts, rightLifts;
+};
+LILA_SCENE_API FootStrikes footStrikes(const std::vector<Pose>& frames);
+/**
+ * A gait's cycle length in frames from its strikes: the mean of one foot's strike-to-strike gaps that agree with their
+ * median (both feet pooled); 0 when no foot strikes twice.
+ */
+LILA_SCENE_API double cycleFrames(const FootStrikes& strikes);
+/**
+ * One seamless cycle from frames: [start, start + length) (fractional frames) resampled to round(length) poses, facing
+ * +Z with the first pose's root over the origin, the root's travel over the cycle taken out, and whatever the pose at
+ * start + length still differs from the first spread across the cycle so the last pose leads back into the first.
+ */
+LILA_SCENE_API std::vector<Pose> loopCycle(const std::vector<Pose>& frames, double start, double length);
 
 /** Target poses for locomotion: gaits by style and speed, and the pose to stop in. */
 struct LILA_SCENE_API GaitLibrary

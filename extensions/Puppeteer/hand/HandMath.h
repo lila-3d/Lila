@@ -10,6 +10,7 @@
 #include <cctype>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <map>
 #include <optional>
 #include <string>
@@ -1204,5 +1205,56 @@ inline std::vector<Angles> wrap(std::vector<Angles> from, const std::vector<Angl
         active = std::max(active + 1, size_t(hit) + 1);
     }
     return from;
+}
+
+/**
+ * A way out for a finger that starts in what it grips: each of `outs` (poses opened away from it) is tried on the way
+ * from `from`, and the first point clear of contact on the one needing the least turn wins. None when no way clears
+ * (the finger's base is in it).
+ */
+inline std::optional<std::vector<Angles>> openOut(const std::vector<Angles>& from, const std::vector<std::vector<Angles>>& outs,
+                                                  const std::function<int(const std::vector<Angles>&)>& contact, int steps = 24, int refine = 8)
+{
+    std::optional<std::vector<Angles>> best;
+    double bestTurn = std::numeric_limits<double>::max();
+    for (const std::vector<Angles>& out : outs)
+    {
+        if (out.size() != from.size())
+            continue;
+        auto at = [&](double u) {
+            std::vector<Angles> a(from.size());
+            for (size_t j = 0; j < from.size(); ++j)
+                a[j] = mix(from[j], out[j], u);
+            return a;
+        };
+        double lo = 0.0, hi = -1.0;
+        for (int s = 1; s <= steps && hi < 0.0; ++s)
+        {
+            const double u = double(s) / steps;
+            if (contact(at(u)) < 0)
+                hi = u;
+            else
+                lo = u;
+        }
+        if (hi < 0.0)
+            continue;
+        for (int r = 0; r < refine; ++r)
+        {
+            const double mid = 0.5 * (lo + hi);
+            (contact(at(mid)) < 0 ? hi : lo) = mid;
+        }
+        double turn = 0.0;
+        for (size_t j = 0; j < from.size(); ++j)
+        {
+            const Angles d = (out[j] - from[j]) * hi;
+            turn = std::max({turn, std::abs(d.bend), std::abs(d.splay), std::abs(d.twist)});
+        }
+        if (turn < bestTurn)
+        {
+            bestTurn = turn;
+            best = at(hi);
+        }
+    }
+    return best;
 }
 } // namespace puppeteer::hand

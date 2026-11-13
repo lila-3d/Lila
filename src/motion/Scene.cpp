@@ -334,45 +334,79 @@ GaitLibrary buildGaits(Graph& g, const json& spec, std::vector<std::string>& not
         Gait gait;
         gait.name = e.value("name", paths::toUtf8(file.stem()));
         gait.style = e.at("style").get<std::string>();
-        const glm::vec3 d = poses[b][0].p - poses[a][0].p;
-        gait.speed = std::max(0.05, double(glm::length(glm::vec2(d.x, d.z))) * kSampleRate / double(b - a));
-        gait.period = e.value("period", 0.0);
-        if (gait.period <= 0.0)
+        const FootStrikes strikes = footStrikes(poses);
+        double length = e.value("period", 0.0) * kSampleRate;
+        std::string how = length > 0.0 ? "cycle from the spec" : "cycle from " + std::to_string(strikes.left.size() + strikes.right.size()) + " foot strikes";
+        if (length <= 0.0)
+            length = cycleFrames(strikes);
+        double start = -1.0;
+        if (length <= 0.0 && !strikes.left.empty() && !strikes.right.empty())
         {
-            // The cycle: the lag at which the left foot's height repeats best.
-            const SomaSkeleton& s = SomaSkeleton::shipped();
-            const int foot = s.find("LeftFoot");
-            std::vector<float> h;
-            for (size_t f = a; f < b; ++f)
-                h.push_back(s.world(poses[f])[size_t(foot)].p.y);
-            double best = 1e30;
-            size_t lag = 30;
-            for (size_t L = 15; L < std::min<size_t>(h.size() / 2, 60); ++L)
+            // One step per foot (a side step): the cycle runs from the first foot leaving the ground to the other landing.
+            const bool leftFirst = strikes.left.front() < strikes.right.front();
+            const double land = leftFirst ? strikes.left.front() : strikes.right.front();
+            const double otherLand = leftFirst ? strikes.right.front() : strikes.left.front();
+            for (double t : leftFirst ? strikes.leftLifts : strikes.rightLifts)
+                if (t < land)
+                    start = t;
+            if (start >= 0.0)
             {
-                double err = 0.0;
-                for (size_t i = 0; i + L < h.size(); ++i)
-                    err += double((h[i] - h[i + L]) * (h[i] - h[i + L]));
-                err /= double(h.size() - L);
-                if (err < best)
-                    best = err, lag = L;
+                length = otherLand - start;
+                how = std::string("one step per foot: cycle from the ") + (leftFirst ? "left" : "right") + " foot leaving the ground to the " +
+                      (leftFirst ? "right" : "left") + " landing";
             }
-            gait.period = double(lag) / kSampleRate;
         }
-        const size_t cycleFrames = size_t(std::lround(gait.period * kSampleRate));
+        if (length <= 0.0)
+        {
+            notes.push_back(gait.name + ": skipped, no foot strikes found to measure its cycle from");
+            continue;
+        }
+        // Phase 0 is a left strike: the one nearest the middle of the steady part with a whole cycle after it in the clip.
+        for (const std::vector<double>* foot : {&strikes.left, &strikes.right})
+        {
+            if (start >= 0.0)
+                break;
+            const double mid = 0.5 * (double(a) + double(b) - length);
+            for (double t : *foot)
+                if (t + length <= double(n - 1) && (start < 0.0 || std::abs(t - mid) < std::abs(start - mid)))
+                    start = t;
+            if (start >= 0.0)
+            {
+                if (foot == &strikes.right)
+                    how += ", phase 0 at a right strike (no left one fits)";
+                break;
+            }
+        }
+        if (start < 0.0)
+        {
+            notes.push_back(gait.name + ": skipped, a whole cycle (" + std::to_string(length / kSampleRate).substr(0, 4) + " s) doesn't fit after any strike");
+            continue;
+        }
+        gait.period = length / kSampleRate;
+        auto rootAt = [&](double t) {
+            const size_t i0 = size_t(t), i1 = std::min(i0 + 1, n - 1);
+            return glm::mix(poses[i0][0].p, poses[i1][0].p, float(t - double(i0)));
+        };
+        const glm::vec3 d = rootAt(start + length) - rootAt(start);
+        gait.speed = std::max(0.05, double(glm::length(glm::vec2(d.x, d.z))) / gait.period);
         const float drop = e.value("crouch", 0.0f);
+        gait.cycle = loopCycle(poses, start, length);
+        if (drop > 0.0f)
+            for (Pose& p : gait.cycle)
+                p = crouched(p, drop);
         for (int k = 0; k < windowsPer; ++k)
         {
-            const size_t start = a + cycleFrames * size_t(k) / size_t(windowsPer);
-            if (start + kPosesPerToken > n)
+            const size_t from = size_t(std::lround(start + length * double(k) / double(windowsPer)));
+            if (from + kPosesPerToken > n)
                 break;
-            std::vector<Pose> win = normalised(std::vector<Pose>(poses.begin() + long(start), poses.begin() + long(start + kPosesPerToken)), 0);
+            std::vector<Pose> win = normalised(std::vector<Pose>(poses.begin() + long(from), poses.begin() + long(from + kPosesPerToken)), 0);
             GaitWindow w;
             w.phase = double(k) / double(windowsPer);
             for (size_t i = 0; i < size_t(kPosesPerToken); ++i)
                 w.poses[i] = drop > 0.0f ? crouched(win[i], drop) : win[i];
             gait.windows.push_back(std::move(w));
         }
-        notes.push_back(gait.name + ": " + std::to_string(gait.speed).substr(0, 4) + " m/s, cycle " + std::to_string(gait.period).substr(0, 4) + " s");
+        notes.push_back(gait.name + ": " + std::to_string(gait.speed).substr(0, 4) + " m/s, cycle " + std::to_string(gait.period).substr(0, 5) + " s, " + how);
         lib.gaits.push_back(std::move(gait));
     }
     if (spec.contains("idle"))
