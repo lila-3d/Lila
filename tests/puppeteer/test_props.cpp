@@ -747,3 +747,115 @@ TEST_CASE("props: planted on its tip, it leans as asked and stays when the hand 
     run("undo");
     CHECK(run("puppeteerPropInfo", {{"args", {"sword"}}}).at("holds").back().at("kind") == "hand");
 }
+
+TEST_CASE("props: a keyed throw flies a ballistic arc with its spin and lands on the ground")
+{
+    manny();
+    ball();
+    holding("ball");
+    const double t0 = 6.0 / 30.0;
+    at(t0);
+    const glm::dvec3 c0 = pos("ball_mesh");
+    const glm::dmat3 r0(world("ball_mesh"));
+    const json th = run("puppeteerPropThrow", {{"args", {"ball"}}, {"time", t0}, {"speed", 400.0}, {"angle", 45.0}, {"direction", v3(0, 0, 1)},
+                                               {"spin", 360.0}, {"spinAxis", v3(1, 0, 0)}, {"solve", false}});
+    CHECK(th.at("launchFrom") == "speed");
+    CHECK(th.at("landed") == true);
+    CHECK(th.at("surface") == "ground");
+    at(t0);
+    CHECK(glm::length(pos("ball_mesh") - c0) < 1e-6);
+    const glm::dvec3 v = glm::dvec3(0, std::sin(glm::radians(45.0)), std::cos(glm::radians(45.0))) * 400.0;
+    const double tau = 6.0 / 30.0;
+    at(t0 + tau);
+    const glm::dvec3 want = c0 + v * tau + 0.5 * glm::dvec3(0, -981.0, 0) * tau * tau;
+    MESSAGE("arc off the ballistic path: " << glm::length(pos("ball_mesh") - want) << " cm");
+    CHECK(glm::length(pos("ball_mesh") - want) < 1e-6);
+    // Turned 72 degrees about x after a fifth of a second at 360 a second.
+    const glm::dmat3 d = glm::dmat3(world("ball_mesh")) * glm::transpose(r0);
+    CHECK(glm::degrees(std::acos(std::clamp((d[0][0] + d[1][1] + d[2][2] - 1.0) / 2.0, -1.0, 1.0))) == Approx(72.0).epsilon(1e-6));
+    // Lying on the ground once it has landed, and still.
+    at(2.0);
+    MESSAGE("landed ball centre height " << pos("ball_mesh").y);
+    CHECK(pos("ball_mesh").y == Approx(4.05).epsilon(0.01));
+    at(1.9);
+    const glm::dvec3 a = pos("ball_mesh");
+    at(2.0);
+    CHECK(glm::length(pos("ball_mesh") - a) < 1e-6);
+    // The arc's path dragged through another point keys it again through there.
+    const std::string arc = th.at("arc");
+    run("puppeteerPropArc", {{"args", {arc}}, {"through", v3(0, 200, 150)}, {"at", t0 + 0.5}, {"solve", false}});
+    at(t0 + 0.5);
+    CHECK(glm::length(pos("ball_mesh") - glm::dvec3(0, 200, 150)) < 1e-6);
+    // A hand that doesn't move at the release: thrown forward at a default speed, which it says.
+    CHECK(run("puppeteerPropThrow", {{"args", {"ball"}}, {"time", t0}, {"solve", false}}).at("launchFrom") == "default");
+}
+
+TEST_CASE("props: a physics throw bounces and comes to rest on the ground, baked to keys")
+{
+    manny();
+    ball();
+    holding("ball");
+    const json th = run("puppeteerPropThrow",
+                        {{"args", {"ball"}}, {"time", 0.2}, {"speed", 300.0}, {"angle", 30.0}, {"direction", v3(0, 0, 1)}, {"physics", true}, {"solve", false}});
+    CHECK(th.at("how") == "physics");
+    CHECK(th.at("landed") == true);
+    CHECK(th.at("frames").get<int>() > 10);
+    at(th.at("end").get<double>());
+    const glm::dvec3 rest = pos("ball_mesh");
+    MESSAGE("ball at rest: " << rest.x << ", " << rest.y << ", " << rest.z << " after " << th.at("frames").get<int>() << " frames");
+    CHECK(rest.y == Approx(4.0).epsilon(0.1));
+    CHECK(rest.z > 20.0);
+    at(2.0);
+    CHECK(glm::length(pos("ball_mesh") - rest) < 0.05);
+}
+
+TEST_CASE("props: a catch times itself to where the arc meets the hand, which reaches to take it")
+{
+    manny();
+    ball();
+    holding("ball");
+    const double t0 = 6.0 / 30.0;
+    const json th = run("puppeteerPropThrow", {{"args", {"ball"}}, {"time", t0}, {"speed", 100.0}, {"angle", 80.0}, {"solve", false}});
+    // Through where the left hand is, 0.6 s after the release.
+    at(0.0);
+    const glm::dvec3 left = pos(jointPath("hand_l"));
+    run("puppeteerPropArc", {{"args", {th.at("arc")}}, {"through", v3(left.x, left.y, left.z)}, {"at", t0 + 0.6}, {"solve", false}});
+    const json c = run("puppeteerPropCatch", {{"args", {"ball"}}, {"hand", "either"}});
+    MESSAGE("caught at frame " << c.at("frame").get<double>() << ", " << c.at("gap").get<double>() << " cm from the hand");
+    CHECK(c.at("hand") == jointPath("hand_l"));
+    CHECK(c.at("reachable") == true);
+    CHECK(std::abs(c.at("time").get<double>() - (t0 + 0.6)) < 3.0 / 30.0);
+    const double tc = c.at("time").get<double>();
+    // In the hand from the catch on, and the hand met it there.
+    at(tc + 0.5);
+    CHECK(run("puppeteerPropInfo", {{"args", {"ball"}}}).at("holder") == jointPath("hand_l"));
+    const glm::dmat4 rel0 = glm::inverse(world(jointPath("hand_l"))) * world("ball");
+    at(tc + 0.8);
+    CHECK(near(glm::inverse(world(jointPath("hand_l"))) * world("ball"), rel0, 1e-6));
+    const scene::NodeId pin = contactOf(jointPath("hand_l"), pointNamed(run("puppeteerPropInfo", {{"args", {"ball"}}}), "main"));
+    REQUIRE(pin != scene::kNoNode);
+    at(tc);
+    const auto [hand, grip] = scene::grapple::contactPoints(graph(), pin);
+    MESSAGE("hand to grip at the catch: " << glm::length(hand - grip) << " cm");
+    CHECK(glm::length(hand - grip) < 1.0);
+    CHECK(run("puppeteerPropInfo", {{"args", {"ball"}}}).at("holds").back().at("side") == "left");
+}
+
+TEST_CASE("props: another character catches what one throws")
+{
+    manny();
+    bob(220.0);
+    ball();
+    holding("ball");
+    const double t0 = 6.0 / 30.0;
+    const json th =
+        run("puppeteerPropThrow", {{"args", {"ball"}}, {"time", t0}, {"speed", 300.0}, {"angle", 40.0}, {"character", "manny"}, {"solve", false}});
+    at(0.0);
+    const glm::dvec3 target = pos("bob_hand_r");
+    run("puppeteerPropArc", {{"args", {th.at("arc")}}, {"through", v3(target.x, target.y, target.z)}, {"at", t0 + 0.7}, {"solve", false}});
+    const json c = run("puppeteerPropCatch", {{"args", {"ball"}}, {"character", "bob"}});
+    MESSAGE("bob catches at frame " << c.at("frame").get<double>() << " with " << c.at("hand").get<std::string>());
+    CHECK(c.at("hand") == graph().path(id("bob_hand_r")));
+    at(c.at("time").get<double>() + 0.3);
+    CHECK(run("puppeteerPropInfo", {{"args", {"ball"}}}).at("holder") == graph().path(id("bob_hand_r")));
+}

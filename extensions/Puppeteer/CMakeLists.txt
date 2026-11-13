@@ -13,6 +13,8 @@ set(PUPPETEER_MOTION_SOURCES motion/PuppeteerMotion.h motion/MotionFill.cpp moti
 lila_add_extension(lila_puppeteer_extension ID Puppeteer MANIFEST extension.json UI
     SOURCES ${PUPPETEER_RIG_SOURCES} ${PUPPETEER_ANIM_SOURCES} ${PUPPETEER_MOTION_SOURCES})
 target_include_directories(lila_puppeteer_extension PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# Props thrown with physics run on the shared Jolt scene.
+target_link_libraries(lila_puppeteer_extension PRIVATE lila_physics)
 foreach(_host lila lilabatch)
     if(TARGET ${_host})
         add_dependencies(${_host} lila_puppeteer_extension)

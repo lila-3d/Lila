@@ -20,6 +20,8 @@
 #include <lila/Spaces.h>
 #include <lila/Interchange.h>
 
+#include "RigidScene.h"
+
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/norm.hpp>
 #include <glm/gtc/constants.hpp>
@@ -1765,6 +1767,503 @@ json plantCmd(const Args& a)
                   {{"surface", surfaceName(g, hit->node)}, {"at", vecJson(hit->point)}, {"lean", glm::degrees(lean)}, {"end", endName}, {"settled", t + blend}});
 }
 
+// puppeteerPropThrow / puppeteerPropArc ---------------------------------------------------------------------------------
+
+/** A throw's arc as stored on its node. */
+struct Arc
+{
+    NodeId node = kNoNode;
+    double start = 0.0, end = 0.0, until = 3.0, spin = 0.0, gravity = 981.0;
+    glm::dvec3 launch{0.0}, velocity{0.0}, spinAxis{1.0, 0.0, 0.0}, centre{0.0};
+    glm::dmat4 startWorld{1.0};
+    bool physics = false;
+};
+
+Arc readArc(Graph& g, NodeId node)
+{
+    Arc r;
+    r.node = node;
+    r.start = numOf(g, node, "start");
+    r.end = numOf(g, node, "end");
+    r.until = numOf(g, node, "until");
+    r.spin = numOf(g, node, "spin");
+    r.gravity = numOf(g, node, "gravity");
+    r.launch = vecOf(g, node, attrOf(*g.node(node), "launch"));
+    r.velocity = vecOf(g, node, attrOf(*g.node(node), "velocity"));
+    r.spinAxis = vecOf(g, node, attrOf(*g.node(node), "spinAxis"));
+    r.centre = vecOf(g, node, attrOf(*g.node(node), "centre"));
+    r.startWorld = std::get<glm::dmat4>(g.value(plugOf(*g.node(node), "startMatrix")));
+    r.physics = boolOf(g, node, "physics");
+    return r;
+}
+
+/** The root's world matrix on a keyed arc at tau seconds after the launch. */
+glm::dmat4 ballistic(const Arc& r, double tau)
+{
+    const glm::dvec3 gv = -up() * r.gravity;
+    const glm::dvec3 c = r.launch + r.velocity * tau + 0.5 * gv * tau * tau;
+    const glm::dvec3 axis = glm::length(r.spinAxis) > 1e-9 ? glm::normalize(r.spinAxis) : glm::dvec3(1, 0, 0);
+    const glm::dquat spin = glm::angleAxis(glm::radians(r.spin) * tau, axis);
+    return translation(c) * rotationMatrix(spin) * translation(-r.launch) * r.startWorld;
+}
+
+/** The launch velocity that puts the prop's centre at `through` tau seconds after the launch. */
+glm::dvec3 velocityThrough(const Arc& r, const glm::dvec3& through, double tau)
+{
+    const glm::dvec3 gv = -up() * r.gravity;
+    return (through - r.launch - 0.5 * gv * tau * tau) / std::max(tau, 1e-3);
+}
+
+/** The pose a landed prop settles into: its thinnest side down on the surface, its length kept turned as it was. */
+glm::dmat4 restingOn(const PropShape& sh, const glm::dmat4& world, const glm::dvec3& point, const glm::dvec3& normal)
+{
+    const glm::dvec3 thin = glm::dmat3(world) * sh.axes[2];
+    const glm::dquat q = turnOnto(glm::dot(thin, normal) >= 0.0 ? thin : -thin, normal);
+    const glm::dmat4 turned = rotationMatrix(q) * glm::dmat4(glm::dmat3(world));
+    const glm::dvec3 centre = point + normal * (0.5 * sh.extent()[2] + 0.05);
+    return translation(centre) * turned * translation(-sh.middle());
+}
+
+/** Samples the arc frame by frame, from the launch to a landing, the arc's end, its time limit or the playback end. */
+struct ArcSamples
+{
+    std::vector<std::pair<double, glm::dmat4>> poses;
+    std::optional<Surfaces::Hit> landed;
+    double landTime = 0.0;
+    std::string how;
+};
+
+ArcSamples sampleArc(Graph& g, const Prop& p, const Arc& r, double stopAt)
+{
+    ArcSamples out;
+    const double dt = 1.0 / fps();
+    const PropShape sh = shapeIn(g, p);
+    const Surfaces surfaces = surfacesFor(g);
+    const double last = std::min({r.start + r.until, stopAt, anim::playback().maxTime});
+    const long long frames = std::max<long long>(0, std::llround((last - r.start) * fps()));
+    const double settle = 0.2;
+    auto land = [&](double time, const glm::dmat4& contact, const Surfaces::Hit& h) {
+        out.landed = h;
+        out.landTime = time;
+        // Ease from the pose it met the surface in to lying on it, about its middle.
+        const glm::dmat4 rest = restingOn(sh, contact, h.point, glm::dot(h.normal, up()) < 0.0 ? -h.normal : h.normal);
+        const glm::dquat q0 = glm::quat_cast(glm::dmat3(contact)), q1 = glm::quat_cast(glm::dmat3(rest));
+        const glm::dvec3 c0 = pointOf(contact, sh.middle()), c1 = pointOf(rest, sh.middle());
+        const long long n = std::max<long long>(1, std::llround(settle * fps()));
+        for (long long f = 1; f <= n && time + f * dt <= last + 1e-9; ++f)
+        {
+            const double u = double(f) / double(n), e = u * u * (3.0 - 2.0 * u);
+            const glm::dmat4 m = translation(glm::mix(c0, c1, e)) * rotationMatrix(glm::slerp(q0, q1, e)) * translation(-sh.middle());
+            out.poses.push_back({time + f * dt, m});
+        }
+    };
+    if (!r.physics)
+    {
+        const std::array<glm::dvec3, 8> corners = sh.corners();
+        glm::dmat4 prev = r.startWorld;
+        for (long long f = 1; f <= frames; ++f)
+        {
+            const double time = r.start + double(f) * dt;
+            glm::dmat4 m = ballistic(r, time - r.start);
+            // Landing: the first corner whose path this frame meets a surface.
+            std::optional<Surfaces::Hit> best;
+            glm::dvec3 bestFrom(0.0), bestTo(0.0);
+            if (sh.measured)
+                for (const glm::dvec3& c : corners)
+                {
+                    const glm::dvec3 a0 = pointOf(prev, c), a1 = pointOf(m, c);
+                    if (std::optional<Surfaces::Hit> h = surfaces.cast(a0, a1 - a0, glm::length(a1 - a0)); h && (!best || h->t < best->t))
+                    {
+                        best = h;
+                        bestFrom = a0;
+                        bestTo = a1;
+                    }
+                }
+            if (best)
+            {
+                // Back along this frame's move until that corner touches.
+                const glm::dmat4 contact = translation(best->point - bestTo) * m;
+                out.poses.push_back({time, contact});
+                land(time, contact, *best);
+                out.how = "keyed";
+                return out;
+            }
+            out.poses.push_back({time, m});
+            prev = m;
+        }
+        out.how = "keyed";
+        return out;
+    }
+
+    // Jolt: the prop as a convex hull, the scene's meshes and the ground as still colliders.
+    using namespace lila::physics;
+    initJolt();
+    lila::physics::Settings set;
+    set.gravity = -up() * r.gravity;
+    set.ground = false;
+    RigidScene scene(set);
+    const glm::dquat r0 = glm::quat_cast(glm::dmat3(r.startWorld));
+    std::vector<glm::dvec3> hull;
+    {
+        const std::vector<glm::dvec3> pts = meshPointsIn(g, p);
+        const size_t stride = std::max<size_t>(1, pts.size() / 2000);
+        const glm::dmat3 back = glm::transpose(glm::dmat3(glm::mat3_cast(r0)));
+        for (size_t i = 0; i < pts.size(); i += stride)
+            hull.push_back(back * (pointOf(r.startWorld, pts[i]) - r.launch));
+    }
+    if (hull.size() < 4)
+        throw CommandError("puppeteerPropThrow: " + g.node(p.root)->name() + " has no mesh to simulate");
+    BodyDesc body;
+    body.shape.kind = lila::physics::Shape::Kind::Hull;
+    body.shape.points = std::make_shared<const std::vector<glm::dvec3>>(std::move(hull));
+    body.position = r.launch;
+    body.rotation = r0;
+    body.velocity = r.velocity;
+    body.angularVelocity = (glm::length(r.spinAxis) > 1e-9 ? glm::normalize(r.spinAxis) : glm::dvec3(1, 0, 0)) * glm::radians(r.spin);
+    body.bounce = 0.2;
+    body.friction = 0.6;
+    body.continuous = true;
+    body.user = 0;
+    scene.add(body);
+    for (const Surfaces::Item& it : surfaces.items)
+    {
+        auto soup = std::make_shared<std::vector<glm::dvec3>>();
+        for (geo::Index tri = 0; tri < it.bvh->triangleCount(); ++tri)
+        {
+            glm::dvec3 a, b, c;
+            it.bvh->trianglePoints(tri, a, b, c);
+            soup->insert(soup->end(), {a, b, c});
+        }
+        BodyDesc s;
+        s.shape.kind = lila::physics::Shape::Kind::Mesh;
+        s.shape.points = soup;
+        s.role = lila::physics::Role::Static;
+        s.user = int64_t(it.node);
+        scene.add(s);
+    }
+    {
+        BodyDesc gd;
+        gd.shape.kind = lila::physics::Shape::Kind::Box;
+        gd.shape.halfExtents = glm::dvec3(1e5, 50.0, 1e5);
+        gd.rotation = turnOnto({0, 1, 0}, up());
+        gd.position = -up() * 50.0;
+        gd.role = lila::physics::Role::Static;
+        gd.user = -2;
+        scene.add(gd);
+    }
+    const glm::dmat4 toBody = glm::inverse(translation(r.launch) * rotationMatrix(r0));
+    int quiet = 0;
+    for (long long f = 1; f <= frames; ++f)
+    {
+        for (int k = 0; k < 4; ++k)
+            scene.step(dt / 4.0);
+        const Pose pose = scene.pose(0);
+        out.poses.push_back({r.start + double(f) * dt, translation(pose.position) * rotationMatrix(pose.rotation) * toBody * r.startWorld});
+        if (!out.landed)
+            for (const Contact& c : scene.contacts())
+                if (c.a == 0 || c.b == 0)
+                {
+                    Surfaces::Hit h;
+                    h.point = c.point;
+                    h.normal = c.normal;
+                    const int other = c.a == 0 ? c.b : c.a;
+                    const int64_t user = other >= 0 && size_t(other) < scene.size() ? scene.desc(other).user : -2;
+                    h.node = user >= 0 ? NodeId(user) : kNoNode;
+                    out.landed = h;
+                    out.landTime = r.start + double(f) * dt;
+                    break;
+                }
+        // At rest: a few quiet frames end it.
+        quiet = scene.asleep(0) || (glm::length(scene.velocity(0)) < 1.0 && glm::length(scene.angularVelocity(0)) < 0.02) ? quiet + 1 : 0;
+        if (quiet >= 3)
+            break;
+    }
+    out.how = "physics";
+    return out;
+}
+
+/** The arc's samples written as the prop's keys from its launch, replacing what it did up to its next switch. */
+json keyArc(Graph& g, const Prop& p, NodeId arcNode)
+{
+    const Arc r = readArc(g, arcNode);
+    const double half = 0.5 / fps();
+    const double next = nextSwitchAfter(g, p.root, r.start);
+    const ArcSamples s = sampleArc(g, p, r, next - 1.0 / fps());
+    clearRootKeys(g, p.root, r.start + half, next - half);
+    std::optional<glm::dvec3> last = vecOf(g, p.root, Transform::kRotate);
+    json path = json::array();
+    const glm::dvec3 middle = r.centre;
+    path.push_back({r.start, r.launch.x, r.launch.y, r.launch.z});
+    for (const auto& [time, m] : s.poses)
+    {
+        keyRootFast(g, p.root, m, time, last);
+        const glm::dvec3 c = pointOf(m, middle);
+        path.push_back({time, c.x, c.y, c.z});
+    }
+    const double end = s.poses.empty() ? r.start : s.poses.back().first;
+    setPlug(g, arcNode, "end", end);
+    setPlug(g, arcNode, "landed", bool(s.landed));
+    setPlug(g, arcNode, "path", path.dump());
+    g.evaluate();
+    json out = {{"arc", g.path(arcNode)}, {"frames", s.poses.size()}, {"end", end}, {"landed", bool(s.landed)}, {"how", s.how}};
+    if (s.landed)
+    {
+        out["landTime"] = s.landTime;
+        out["surface"] = surfaceName(g, s.landed->node);
+    }
+    return out;
+}
+
+json throwCmd(const Args& a)
+{
+    Graph& g = Graph::current();
+    const char* cmd = "puppeteerPropThrow";
+    Prop p = propArg(g, a, cmd);
+    const KeepTime keep(g);
+    const double t = a.has("time") ? a.get<double>("time") : g.time();
+    const double dt = 1.0 / fps();
+    const NodeId character = characterIfAny(g, a, p, cmd);
+    const NodeId grapple = character ? propGrapple(g, character, true) : propGrapple(g, kNoNode, false);
+    const std::vector<Holding> holding = holdingAt(g, grapple, p, t);
+    const PropShape sh = shapeIn(g, p);
+    at(g, t);
+    const glm::dmat4 m0 = rigidOf(worldOf(g, p.root));
+    const glm::dvec3 c0 = pointOf(m0, sh.middle());
+    const glm::dmat3 cf = frameFor(g, character);
+
+    // Launch: given, else from how the hand moved it into the release, else a toss forward (said so).
+    glm::dvec3 v(0.0), w(0.0);
+    std::string from = "velocity";
+    if (t - dt >= anim::playback().minTime - 1e-9)
+    {
+        at(g, t - dt);
+        const glm::dmat4 mp = rigidOf(worldOf(g, p.root));
+        v = (c0 - pointOf(mp, sh.middle())) / dt;
+        const glm::dquat dq = glm::quat_cast(glm::dmat3(m0)) * glm::inverse(glm::quat_cast(glm::dmat3(mp)));
+        const double angle = 2.0 * std::acos(std::clamp(std::abs(dq.w), 0.0, 1.0));
+        if (angle > 1e-9)
+            w = glm::normalize(glm::dvec3(dq.x, dq.y, dq.z) * (dq.w < 0.0 ? -1.0 : 1.0)) * (angle / dt);
+        at(g, t);
+    }
+    if (a.has("velocity"))
+        v = jsonVec(a.flags.at("velocity"));
+    else if (a.has("speed") || a.has("angle") || a.has("direction"))
+    {
+        glm::dvec3 dir = a.has("direction") ? jsonVec(a.flags.at("direction")) : cf[2];
+        dir -= up() * glm::dot(dir, up());
+        dir = glm::length(dir) > 1e-9 ? glm::normalize(dir) : glm::dvec3(cf[2]);
+        const double elev = glm::radians(a.get<double>("angle", 35.0));
+        v = (dir * std::cos(elev) + up() * std::sin(elev)) * a.get<double>("speed", 500.0);
+        from = "speed";
+    }
+    else if (glm::length(v) < 100.0)
+    {
+        const double speed = 500.0, elev = glm::radians(35.0);
+        log::write(LogLevel::Warning, std::format("{}: {} barely moves at the release ({:.0f} cm/s); thrown forward at {:.0f} cm/s, 35 deg up (give speed, "
+                                                  "angle and direction, or animate the throw into the release)",
+                                                  cmd, g.node(p.root)->name(), glm::length(v), speed));
+        v = (cf[2] * std::cos(elev) + up() * std::sin(elev)) * speed;
+        from = "default";
+    }
+    else
+        from = "hand";
+    double spin = a.get<double>("spin", 0.0);
+    glm::dvec3 spinAxis = a.has("spinAxis") ? jsonVec(a.flags.at("spinAxis")) : glm::cross(v, up());
+    if (!a.has("spin") && from == "hand" && glm::length(w) > glm::radians(30.0))
+    {
+        spin = glm::degrees(glm::length(w));
+        if (!a.has("spinAxis"))
+            spinAxis = w;
+    }
+    if (glm::length(spinAxis) < 1e-9)
+        spinAxis = cf[0];
+
+    // The arc lives under the prop; a throw again at the same time replaces it.
+    NodeId arcNode = kNoNode;
+    for (NodeId c : g.children(p.node))
+        if (Node* n = g.node(c); n && n->type().isA(kArcType) && std::abs(numOf(g, c, "start") - t) < 0.5 * dt)
+            arcNode = c;
+    if (!arcNode)
+        arcNode = g.createNode(*types::find(kArcType), g.node(p.root)->name() + "_throw", p.node)->id();
+    setPlug(g, arcNode, "start", t);
+    setPlug(g, arcNode, "until", std::max(dt, a.get<double>("until", 3.0)));
+    setPlug(g, arcNode, "launch", c0);
+    setPlug(g, arcNode, "velocity", v);
+    setPlug(g, arcNode, "spin", spin);
+    setPlug(g, arcNode, "spinAxis", glm::normalize(spinAxis));
+    setPlug(g, arcNode, "gravity", std::max(0.0, a.get<double>("gravity", 981.0)));
+    setPlug(g, arcNode, "physics", a.get<bool>("physics", false));
+    setPlug(g, arcNode, "startMatrix", m0);
+    setPlug(g, arcNode, "centre", sh.middle());
+
+    switchFresh(g, p, worldSpace(g, p.root), t);
+    carryAndLetGo(g, grapple, p, holding, t, 0.0, std::max(0.0, a.get<double>("release", 0.15)), a.get<bool>("fingers", true));
+    json arc = keyArc(g, p, arcNode);
+    recordEvent(g, p, {{"time", t}, {"kind", "throw"}, {"arc", g.path(arcNode)}, {"physics", a.get<bool>("physics", false)}});
+    arc["velocity"] = vecJson(v);
+    arc["speed"] = glm::length(v);
+    arc["spin"] = spin;
+    arc["launchFrom"] = from;
+    return finish(g, p, grapple, a, arc);
+}
+
+json arcCmd(const Args& a)
+{
+    Graph& g = Graph::current();
+    const char* cmd = "puppeteerPropArc";
+    NodeId arcNode = kNoNode;
+    for (const std::string& s : objectArgs(a))
+        if (Node& n = nodeNamed(g, s, cmd); n.type().isA(kArcType))
+            arcNode = n.id();
+    if (!arcNode && objectArgs(a).empty())
+        for (NodeId s : g.selection())
+            if (Node* n = g.node(s); n && n->type().isA(kArcType))
+                arcNode = s;
+    if (!arcNode)
+        throw CommandError(std::string(cmd) + ": give a throw's arc (puppeteerPropThrow makes one), or select it");
+    Prop p = *load(g, propFor(g, arcNode));
+    const KeepTime keep(g);
+    Arc r = readArc(g, arcNode);
+    if (a.has("through"))
+    {
+        const double tau = a.has("at") ? a.get<double>("at") - r.start : std::max(r.end - r.start, 1.0 / fps());
+        if (tau <= 0.0)
+            throw CommandError(std::string(cmd) + ": at is the time on the arc the prop passes through, after its launch");
+        setPlug(g, arcNode, "velocity", velocityThrough(r, jsonVec(a.flags.at("through")), tau));
+    }
+    if (a.has("velocity"))
+        setPlug(g, arcNode, "velocity", jsonVec(a.flags.at("velocity")));
+    if (a.has("spin"))
+        setPlug(g, arcNode, "spin", a.get<double>("spin"));
+    if (a.has("spinAxis"))
+        setPlug(g, arcNode, "spinAxis", jsonVec(a.flags.at("spinAxis")));
+    if (a.has("physics"))
+        setPlug(g, arcNode, "physics", a.get<bool>("physics"));
+    if (a.has("until"))
+        setPlug(g, arcNode, "until", std::max(1.0 / fps(), a.get<double>("until")));
+    if (a.has("gravity"))
+        setPlug(g, arcNode, "gravity", std::max(0.0, a.get<double>("gravity")));
+    json out = keyArc(g, p, arcNode);
+    out["velocity"] = vecJson(vecOf(g, arcNode, attrOf(*g.node(arcNode), "velocity")));
+    // A catch after it was timed to the old arc: say so rather than leave a jump.
+    for (const json& e : eventsOf(g, p))
+        if (e.value("kind", std::string()) == "catch" && e.value("time", 0.0) > r.start)
+        {
+            log::write(LogLevel::Warning, std::format("{}: {} is caught at frame {:g}, timed to the arc before this edit; catch it again (puppeteerPropCatch)",
+                                                      cmd, g.node(p.root)->name(), e.value("time", 0.0) * fps()));
+            out["caughtAt"] = e.value("time", 0.0);
+            break;
+        }
+    const NodeId grapple = propGrapple(g, kNoNode, false);
+    return finish(g, p, grapple, a, out);
+}
+
+// puppeteerPropCatch ---------------------------------------------------------------------------------------------------
+
+json catchCmd(const Args& a)
+{
+    Graph& g = Graph::current();
+    const char* cmd = "puppeteerPropCatch";
+    Prop p = propArg(g, a, cmd);
+    const KeepTime keep(g);
+    const double now = a.has("time") ? a.get<double>("time") : g.time();
+    // The throw: the last one launched by now, else the first.
+    json thrown;
+    for (const json& e : eventsOf(g, p))
+        if (e.value("kind", std::string()) == "throw" && (thrown.is_null() || e.value("time", 0.0) <= now + 1e-9))
+            thrown = e;
+    Node* arcN = thrown.is_null() ? nullptr : named(g, thrown.value("arc", std::string()));
+    if (!arcN)
+        throw CommandError(std::string(cmd) + ": " + g.node(p.root)->name() + " isn't thrown (puppeteerPropThrow)");
+    const Arc r = readArc(g, arcN->id());
+    // The catcher: given, else whoever threw it.
+    NodeId catcher = kNoNode;
+    if (a.has("character"))
+        catcher = characterArg(g, a, p, cmd);
+    else
+    {
+        Args before = a;
+        before.flags["time"] = r.start;
+        catcher = characterArg(g, before, p, cmd);
+    }
+    const std::string side = a.get<std::string>("hand", "either");
+    std::vector<HandRef> hands;
+    for (const bool right : {true, false})
+        if (side == "either" || side == (right ? "right" : "left"))
+            if (std::optional<HandRef> h = handOf(g, catcher, right))
+                hands.push_back(*h);
+    if (hands.empty())
+        throw CommandError(std::format("{}: {} has no {} hand the hand rig could find", cmd, g.node(catcher)->name(), side == "either" ? "" : side));
+    const NodeId point = gripPoint(g, p, a.get<std::string>("point", ""), Role::Main, cmd);
+    if (!point)
+        throw CommandError(std::string(cmd) + ": " + g.node(p.root)->name() + " has no grip to catch it by");
+    const double reach = std::max(0.0, a.get<double>("reach", 0.3));
+
+    // When: the frame on the arc its grip comes nearest the hand, among those the arm can reach.
+    struct Best
+    {
+        double time = -1.0, gap = 1e300, short_ = 1e300;
+        size_t hand = 0;
+    } best, nearest;
+    const double dt = 1.0 / fps();
+    const long long frames = std::llround((r.end - r.start) * fps());
+    for (long long f = 2; f <= frames; ++f)
+    {
+        const double time = r.start + double(f) * dt;
+        at(g, time);
+        const glm::dvec3 grip(worldOf(g, point)[3]);
+        for (size_t i = 0; i < hands.size(); ++i)
+        {
+            const NodeId lower = g.parent(hands[i].h.joint), upper = lower ? g.parent(lower) : kNoNode;
+            if (!upper)
+                continue;
+            const glm::dvec3 hj(worldOf(g, hands[i].h.joint)[3]), lj(worldOf(g, lower)[3]), uj(worldOf(g, upper)[3]);
+            const double arm = glm::length(hj - lj) + glm::length(lj - uj);
+            const double gap = glm::length(grip - hj), shortBy = glm::length(grip - uj) - 0.95 * arm;
+            if (shortBy <= 0.0 && gap < best.gap)
+                best = {time, gap, shortBy, i};
+            if (shortBy < nearest.short_)
+                nearest = {time, gap, shortBy, i};
+        }
+    }
+    if (best.time < 0.0)
+    {
+        if (nearest.time < 0.0)
+            throw CommandError(std::string(cmd) + ": the arc is too short to catch");
+        best = nearest;
+        log::write(LogLevel::Warning, std::format("{}: the arc never comes within {}'s reach; caught at frame {:g}, {:.0f} cm short, the arm stretching as far as it goes",
+                                                  cmd, g.node(catcher)->name(), best.time * fps(), best.short_));
+    }
+    const HandRef& h = hands[best.hand];
+    // The arc stops where the hand takes it; the hold reaches for it there.
+    clearRootKeys(g, p.root, best.time + 0.5 * dt, r.end + 0.5 * dt);
+    setPlug(g, r.node, "end", best.time);
+    json call = {{"args", {g.path(p.root)}},
+                 {"character", g.path(catcher)},
+                 {"hand", h.right ? "right" : "left"},
+                 {"point", g.node(point)->name()},
+                 {"time", best.time},
+                 {"reach", std::min(reach, best.time - r.start - dt)},
+                 {"blend", std::max(0.0, a.get<double>("blend", 0.2))},
+                 {"hands", 1},
+                 {"fingers", a.get<bool>("fingers", true)},
+                 {"event", "catch"},
+                 {"solve", false}};
+    ops::execute("puppeteerPropHold", call);
+    json ev;
+    for (const json& e : eventsOf(g, p))
+        if (std::abs(e.value("time", 0.0) - best.time) < 0.5 * dt)
+            ev = e;
+    if (ev.is_object())
+    {
+        ev["arc"] = g.path(r.node);
+        recordEvent(g, p, ev);
+    }
+    return finish(g, p, propGrapple(g, catcher, true), a,
+                  {{"time", best.time}, {"frame", best.time * fps()}, {"hand", g.path(h.h.joint)}, {"gap", best.gap}, {"character", g.path(catcher)},
+                   {"reachable", best.short_ <= 0.0}});
+}
+
 // puppeteerPropUnreal -------------------------------------------------------------------------------------------------
 
 /** World matrices the gun, right and left ik bones follow each frame: the holding hand, then each hand. */
@@ -1967,7 +2466,30 @@ void registerTypes(ext::Context& ctx)
         {.name = "fitted", .type = PlugType::Bool, .defaultValue = false, .flags = io | AttrHidden,
          .doc = "Made by Fit Points, which replaces it when it fits again; points added by hand are kept."},
     };
-    for (NodeType* t : {&prop, &point})
+    NodeType arc{.name = kArcType,
+                 .base = transform,
+                 .dag = true,
+                 .doc = "A prop's throw: where and when it leaves the hand, how fast and spinning, and the path it was keyed along to "
+                        "its landing or catch. Made by puppeteerPropThrow, changed by puppeteerPropArc or by dragging its path.",
+                 .icon = "ball-bowling",
+                 .create = transform->create};
+    arc.ownAttrs = {
+        number("start", 0.0, "Seconds it leaves the hand."),
+        number("end", 0.0, "Seconds its keyed path ends (landed and settled, caught, or the time limit)."),
+        number("until", 3.0, "Seconds of flight at most."),
+        vector3("launch", glm::dvec3(0.0), "World point its middle leaves from, cm."),
+        vector3("velocity", glm::dvec3(0.0), "Launch velocity, cm/s, world."),
+        number("spin", 0.0, "Degrees a second it turns in flight."),
+        vector3("spinAxis", glm::dvec3(1.0, 0.0, 0.0), "World axis it spins about."),
+        number("gravity", 981.0, "cm/s2 pulling it down."),
+        {.name = "physics", .type = PlugType::Bool, .defaultValue = false, .flags = io,
+         .doc = "Simulated (Jolt: it bounces, tumbles and rolls to rest on the scene's meshes) instead of a keyed arc."},
+        {.name = "landed", .type = PlugType::Bool, .defaultValue = false, .flags = io | AttrHidden, .doc = "It met a surface before its end."},
+        matrix("startMatrix", "The prop root's world matrix at the launch.", AttrHidden),
+        vector3("centre", glm::dvec3(0.0), "The prop's middle in its root's space, which the path follows.", AttrHidden),
+        text("path", "The middle's path as keyed: [[seconds, x, y, z], ...], for drawing.", AttrHidden),
+    };
+    for (NodeType* t : {&prop, &point, &arc})
     {
         // Points live in their parent's space; the prop node rides its root with no offset.
         relocate::registerNeutral(t->name);
@@ -2234,6 +2756,66 @@ void registerCommands(ext::Context& ctx)
                   releaseFlag, fingersFlag, kSolveFlag},
         .run = plantCmd,
         .examples = {"puppeteerPropPlant(\"sword\", time=1.0, lean=10)", "puppeteerPropPlant(\"staff\", standOn=\"base\", lean=0)"},
+    });
+
+    ctx.registerCommand({
+        .name = "puppeteerPropThrow",
+        .doc = "Throws a held prop at time: it leaves the hands with the speed and spin the hand gave it (or speed, angle and "
+               "direction, or velocity, given) and flies a keyed ballistic arc until it meets a surface, where it settles lying "
+               "on it. physics=True simulates it with Jolt instead (bouncing, tumbling, coming to rest) and bakes that to keys. "
+               "The arc is a node under the prop: drag its path in the viewport or change it with puppeteerPropArc; "
+               "puppeteerPropCatch catches it. Returns the arc.",
+        .positionalDoc = "prop (default the selection)",
+        .flags = {kCharacterFlag,
+                  {"speed", "sp", T::Float, nullptr, "cm/s at the release. Default: the hand's, else 500.", {}, {}, 0.0},
+                  {"angle", "an", T::Float, nullptr, "Degrees above level it leaves at, with speed. Default 35.", {}, {}, -89.0, 89.0},
+                  {"direction", "dr", T::Vec3, nullptr, "World direction it is thrown, levelled, with speed. Default: the character's forward."},
+                  {"velocity", "v", T::Vec3, nullptr, "World launch velocity, cm/s, instead."},
+                  {"spin", "sn", T::Float, nullptr, "Degrees a second it turns. Default: the hand's when it turns it, else none."},
+                  {"spinAxis", "sx", T::Vec3, nullptr, "World axis it spins about. Default: across its flight (end over end)."},
+                  {"physics", "ph", T::Bool, false, "Simulate it (Jolt) instead of keying an arc."},
+                  {"gravity", "gr", T::Float, 981.0, "cm/s2.", {}, {}, 0.0},
+                  {"until", "ut", T::Float, 3.0, "Seconds of flight at most.", {}, {}, 0.0},
+                  kTimeFlag,
+                  {"release", "rl", T::Float, 0.15, "Seconds the fingers take to open.", {}, {}, 0.0},
+                  fingersFlag, kSolveFlag},
+        .run = throwCmd,
+        .examples = {"puppeteerPropThrow(\"ball\", time=0.5)", "puppeteerPropThrow(\"axe\", time=0.5, speed=900, spin=720, physics=True)"},
+    });
+
+    ctx.registerCommand({
+        .name = "puppeteerPropArc",
+        .doc = "Changes a throw's arc and keys it again: through a world point at a time on it (what dragging its path does), "
+               "or a new velocity, spin, axis, gravity or time limit, or physics on or off. Returns the arc.",
+        .positionalDoc = "the arc (default the selection)",
+        .flags = {{"through", "th", T::Vec3, nullptr, "World point its middle passes through, at at."},
+                  {"at", "a", T::Float, nullptr, "Seconds on the arc for through. Default: its end."},
+                  {"velocity", "v", T::Vec3, nullptr, "World launch velocity, cm/s."},
+                  {"spin", "sn", T::Float, nullptr, "Degrees a second."},
+                  {"spinAxis", "sx", T::Vec3, nullptr, "World spin axis."},
+                  {"physics", "ph", T::Bool, nullptr, "Simulate it instead of keying an arc."},
+                  {"gravity", "gr", T::Float, nullptr, "cm/s2.", {}, {}, 0.0},
+                  {"until", "ut", T::Float, nullptr, "Seconds of flight at most.", {}, {}, 0.0},
+                  kSolveFlag},
+        .run = arcCmd,
+        .examples = {"puppeteerPropArc(\"ball_throw\", through=(0, 220, 300), at=0.6)"},
+    });
+
+    ctx.registerCommand({
+        .name = "puppeteerPropCatch",
+        .doc = "Catches a thrown prop: finds the frame its grip comes nearest a hand (either, or the one given, of the thrower or "
+               "another character) within that arm's reach, ends the arc there, and the hand reaches for it over reach and takes "
+               "it. Out of reach, it is caught where it comes closest and says so. Returns when and by which hand.",
+        .positionalDoc = "prop (default the selection)",
+        .flags = {{"character", "ch", T::String, nullptr, "Who catches it. Default: whoever threw it."},
+                  {"hand", "hd", T::String, "either", "either, right or left.", {"either", "right", "left"}},
+                  {"point", "pt", T::String, nullptr, "The grip it is caught by. Default: main."},
+                  {"reach", "re", T::Float, 0.3, "Seconds the hand moves to meet it before the catch.", {}, {}, 0.0},
+                  {"time", "t", T::Float, nullptr, "Catches the throw launched by then. Default: now, else the first throw."},
+                  {"blend", "b", T::Float, 0.2, "Seconds it settles into the grip after.", {}, {}, 0.0},
+                  fingersFlag, kSolveFlag},
+        .run = catchCmd,
+        .examples = {"puppeteerPropCatch(\"ball\")", "puppeteerPropCatch(\"ball\", character=\"bob\", hand=\"left\")"},
     });
 
     ctx.registerCommand({
