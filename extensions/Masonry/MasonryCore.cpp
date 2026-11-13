@@ -368,6 +368,8 @@ std::vector<Interval> layCourse(const Pattern& pat, double t0, double t1, double
     std::vector<Interval> fromStart, fromEnd, out;
     if (t1 - t0 < minLen)
         return out;
+    // On a span shorter than the drift, the middle could fall outside it and an end stone would run past the far end.
+    mid = std::clamp(mid, t0, t1);
     double pos = t0;
     for (size_t k = 0; k < (size_t(1) << 20); ++k)
     {

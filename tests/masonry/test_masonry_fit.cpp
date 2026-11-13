@@ -325,3 +325,15 @@ TEST_CASE("masonry fit: paving on a floor without walls stays inside its outline
             CHECK(outside == 0);
         }
 }
+
+TEST_CASE("masonry fit: a buttress's short top courses stay within its own footprint")
+{
+    json nave = naveWall(true);
+    nave.erase("cornice");
+    nave.erase("openings");
+    const Built b = building({{"walls", {nave}}});
+    CHECK(standingOverlaps(b) == 0);
+    for (const Stone& s : b.stones)
+        if (s.t1 >= s.t0 && b.regions[size_t(s.region)].find("buttress") != std::string::npos)
+            CHECK(s.t0 >= -0.5);
+}
