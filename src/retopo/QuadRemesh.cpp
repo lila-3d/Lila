@@ -1706,6 +1706,9 @@ int uncovered(const geo::Mesh& m, const Work& w)
     return quads >= 2 ? quads : 0;
 }
 
+/** A face with less area than this (times the spacing squared) lying along a crease is a flap. */
+constexpr double kFlapArea = 0.08;
+
 /** Longest hole, in edges, the grid's holes are filled across; a longer one means the cover folded over a region. */
 constexpr size_t kMaxGridHole = 24;
 
@@ -1805,6 +1808,71 @@ void gridSoup(const Work& w, const std::vector<std::vector<AutoRemesher::Vector2
         points.clear();
         faces.clear();
     }
+}
+
+/**
+ * Frees the points of a face laid flat along a crease: when a row of points beside a crease was taken onto it, the face
+ * between that row and the crease's own edge lies on the line with no area. The points off its crease edge (the edge it
+ * shares with a face across the crease, else its longest) go back to their other neighbours' mean on the surface.
+ */
+void freeCreaseFlaps(geo::Mesh& m, std::vector<FeatureKind>& feature, const geo::MeshBvh& surface, double h)
+{
+    const auto nb = pointNeighbours(m);
+    std::unordered_set<Index> freed;
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+    {
+        if (!m.faceValid(f))
+            continue;
+        const std::vector<Index> pts = m.facePoints(f);
+        if (pts.size() < 4 || glm::length(m.faceAreaVector(f)) > kFlapArea * h * h)
+            continue;
+        if (std::any_of(pts.begin(), pts.end(), [&](Index p) { return feature[p] == FeatureKind::None; }))
+            continue;
+        // Its crease edge: the one shared with a face turned well away, else the longest.
+        const glm::dvec3 n = m.faceNormal(f);
+        Index keepA = kInvalid, keepB = kInvalid;
+        double best = -1.0;
+        for (Index c : m.faceCorners(f))
+        {
+            const Index e = m.cornerEdge(c);
+            const Index a = m.edgePoint(e, 0), b = m.edgePoint(e, 1);
+            double score = glm::distance(m.position(a), m.position(b));
+            const Index r = m.cornerRadial(c);
+            if (r != c)
+                if (const Index g = m.cornerFace(r); g != f && std::abs(glm::dot(m.faceNormal(g), n)) < 0.7)
+                    score += 1e6 * h;
+            if (score > best)
+            {
+                best = score;
+                keepA = a;
+                keepB = b;
+            }
+        }
+        for (Index p : pts)
+            if (p != keepA && p != keepB && feature[p] == FeatureKind::Line && !m.isBoundaryPoint(p))
+                freed.insert(p);
+    }
+    if (freed.empty())
+        return;
+    for (Index p : freed)
+        feature[p] = FeatureKind::None;
+    for (int round = 0; round < 4; ++round)
+        for (Index p : freed)
+        {
+            glm::dvec3 avg(0.0);
+            int count = 0;
+            for (Index o : nb[p])
+                if (!freed.contains(o) || round > 0)
+                {
+                    avg += m.position(o);
+                    ++count;
+                }
+            if (count == 0)
+                continue;
+            geo::BvhClosest c;
+            avg /= double(count);
+            m.setPosition(p, surface.closestPoint(avg, c) ? c.point : avg);
+        }
 }
 
 /**
@@ -2077,6 +2145,7 @@ QuadRemeshResult coverRemesh(Work& w, const QuadRemeshOptions& opts, Stopwatch& 
             }
     std::vector<FeatureKind> feature = pointFeatures(m, w.creases, w.border, 0.3 * h0);
     projectPoints(m, feature, *w.simpleBvh, w.creases, w.border, 0.3 * h0);
+    freeCreaseFlaps(m, feature, *w.simpleBvh, h0);
     relaxAlongFeatures(m, feature, *w.simpleBvh, w.creases, w.border, h0, opts.relaxIterations, axis);
     unfold(m, feature, src, bvh, *w.simpleBvh, axis, h0);
     clock.lap("refine");

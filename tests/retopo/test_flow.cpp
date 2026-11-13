@@ -6,6 +6,8 @@
 #include <doctest/doctest.h>
 
 #include <chrono>
+#include <filesystem>
+#include <string>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -30,7 +32,9 @@ void check(const char* name, const geo::Mesh& m, int faces, geo::Index maxIrregu
 {
     retopo::QuadRemeshResult r = remesh(m, faces);
     REQUIRE(r.ok());
-    MESSAGE(name, ": ", r.metrics.summary());
+    if (std::getenv("LILA_RETOPO_DUMP"))
+        geo::writeObjFile((std::filesystem::temp_directory_path() / (std::string("flow_") + name + ".obj")).string(), r.mesh);
+    MESSAGE(name << ": " << r.metrics.summary());
     CHECK(r.layout == "flow");
     CHECK(r.defects == 0);
     CHECK(r.metrics.triangles + r.metrics.ngons == 0);
