@@ -296,6 +296,42 @@ void smoothMiddle(geo::Mesh& m, int axis, double strength)
                 }
         front.swap(next);
     }
+    // Only where the rows meet the middle in a V: a groove the faces are fine enough to follow round (a philtrum under
+    // small faces) bends them a little at each point and is left alone. A point's row takes its middle point's share.
+    constexpr double kLevel = glm::radians(8.0), kSharp = glm::radians(25.0);
+    std::vector<double> share(m.pointCapacity(), 0.0);
+    {
+        std::vector<Index> order;
+        for (Index p = 0; p < m.pointCapacity(); ++p)
+        {
+            if (ring[p] != 0)
+                continue;
+            order.push_back(p);
+            glm::dvec3 out(0.0);
+            int outs = 0;
+            for (Index o : nb[p])
+                if (ring[o] == 1 && m.position(o)[axis] > 0.0)
+                {
+                    out += m.position(o) - m.position(p);
+                    ++outs;
+                }
+            if (outs == 0)
+                continue;
+            // The row leaves the middle at this angle to the plane's normal; level across is zero.
+            out /= double(outs);
+            const double across = std::abs(out[axis]), length = glm::length(out);
+            const double bend = length > 0.0 ? std::acos(std::clamp(across / length, 0.0, 1.0)) : 0.0;
+            share[p] = std::clamp((bend - kLevel) / (kSharp - kLevel), 0.0, 1.0);
+        }
+        for (size_t i = 0; i < order.size(); ++i)
+            for (Index o : nb[order[i]])
+                if (ring[o] == ring[order[i]] + 1)
+                {
+                    if (share[o] == 0.0)
+                        order.push_back(o);
+                    share[o] = std::max(share[o], share[order[i]]);
+                }
+    }
     std::vector<glm::dvec3> moved(m.pointCapacity());
     for (int pass = 0; pass < kPasses; ++pass)
     {
@@ -319,7 +355,7 @@ void smoothMiddle(geo::Mesh& m, int axis, double strength)
             if (across == 0)
                 continue;
             mean /= double(across);
-            const double weight = strength * (1.0 - double(ring[p]) / double(kRings + 1));
+            const double weight = strength * share[p] * (1.0 - double(ring[p]) / double(kRings + 1));
             glm::dvec3 move = weight * step * (mean - moved[p]);
             const glm::dvec3 n(normals[p]);
             // Straight out only: sliding along the surface as well would drag the faces off the shape they sit on.
@@ -1288,13 +1324,34 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
     w.iso.detectFeatures(-1.0, 75.0, 0.0);
     // The quads' own sizes, measured on the working triangles where curvature reads at about the quads' scale.
     w.isoSize = sizeField(w.iso, w, opts, faces, CurvatureSizing::Quads);
-    w.stockQuads = opts.targetEdgeLength > 0.0 ? w.iso.totalArea() / (w.h0 * w.h0) : faces;
     // Creased is a crease for every fifty quads' worth of surface or so: a sculpt's few stray sharp edges don't count.
     double creased = 0.0;
     for (size_t e = 0; e < w.iso.edges.size(); ++e)
         if (w.iso.edgeFeature[e] && !w.iso.edgeBoundary[e])
             creased += glm::distance(w.iso.pos[w.iso.edges[e][0]], w.iso.pos[w.iso.edges[e][1]]);
     w.stockSizes = creased * w.h0 < 0.02 * w.iso.totalArea() && !std::getenv("LILA_QR_OWN_SIZES");
+    if (w.symmetric && !std::getenv("LILA_QR_HALF"))
+    {
+        // Laid out whole like the stock path: the half joined to its mirror image, its cut an edge chain to hold.
+        std::vector<Index> mirrorOf;
+        Surface whole = mirrorSurface(w.iso, w.plane, mirrorOf);
+        const Index n = w.iso.vertexCount();
+        for (size_t e = 0; e < w.iso.edges.size(); ++e)
+        {
+            const Index a = w.iso.edges[e][0], b = w.iso.edges[e][1];
+            if (w.iso.edgeTriCount[e] == 1 && mirrorOf[a] == a && mirrorOf[b] == b)
+                whole.hard.insert(edgeKey(a, b));
+        }
+        w.isoSize.resize(whole.pos.size());
+        for (Index v = n; v < whole.vertexCount(); ++v)
+            w.isoSize[v] = w.isoSize[mirrorOf[v]];
+        w.iso = std::move(whole);
+        w.iso.buildTopology();
+        w.iso.buildGeometry();
+        w.iso.detectFeatures(-1.0, 75.0, 0.0);
+        w.wholeLayout = true;
+    }
+    w.stockQuads = opts.targetEdgeLength > 0.0 ? w.iso.totalArea() / (w.h0 * w.h0) : faces * (w.wholeLayout ? halves : 1.0);
     if (const char* dump = std::getenv("LILA_ISO_DUMP"))
         if (FILE* f = std::fopen(dump, "w"))
         {
@@ -1302,6 +1359,8 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
                 std::fprintf(f, "v %.9g %.9g %.9g\n", p.x, p.y, p.z);
             for (const auto& t : w.iso.tris)
                 std::fprintf(f, "f %d %d %d\n", int(t[0] + 1), int(t[1] + 1), int(t[2] + 1));
+            for (uint64_t key : w.iso.hard)
+                std::fprintf(f, "l %d %d\n", int(key >> 32) + 1, int(key & 0xffffffffu) + 1);
             std::fclose(f);
         }
     Budget::note(std::to_string(w.iso.tris.size()) + " working triangles for about " + std::to_string(int(faces)) + " faces");
@@ -1323,6 +1382,9 @@ struct CoverInput
     std::vector<double> sizeFactor, sizeLimit;
     /** Per triangle, whether it is on a cap. Empty without caps. */
     std::vector<uint8_t> onCap;
+    /** The field turned through corners too sharp for it to lie along both sides, and those sides' corners held. */
+    std::vector<std::pair<size_t, AutoRemesher::Vector3>> fieldOverrides;
+    std::unordered_set<size_t> forcedCorners;
 };
 
 /**
@@ -1374,7 +1436,7 @@ void stockSizes(const Work& w, const QuadRemeshOptions& opts, std::vector<double
                 fitGaps(iso, w.src, *w.bvh, fitted);
             // A little under the ask: the layout rounds the count round a part to a whole number, down as often as up.
             if (opts.edgesAround > 0)
-                fitThickness(iso, w.src, *w.bvh, curvature, opts.edgesAround, 0.85, fitted);
+                fitThickness(iso, w.src, *w.bvh, curvature, opts.edgesAround, 0.92, fitted);
             for (size_t v = 0; v < size.size(); ++v)
                 if (fitted[v] < 0.98 * from)
                     size[v] = std::min(size[v], fitted[v]);
@@ -1398,6 +1460,8 @@ void stockSizes(const Work& w, const QuadRemeshOptions& opts, std::vector<double
     }
 }
 
+void turnSharpCorners(const Surface& iso, CoverInput& in);
+
 AutoRemesher::Vector3 toAr(const glm::dvec3& p) { return AutoRemesher::Vector3(p.x, p.y, p.z); }
 glm::dvec3 fromAr(const AutoRemesher::Vector3& p) { return glm::dvec3(p.x(), p.y(), p.z()); }
 
@@ -1407,7 +1471,7 @@ std::vector<FieldSingularity> polesOnSurface(const Work& w, const std::vector<Po
     std::vector<FieldSingularity> out;
     for (const Pole& p : poles)
     {
-        if (p.valence == 4 || (w.symmetric && w.plane.distance(p.position) < 0.0))
+        if (p.valence == 4 || (w.symmetric && !w.wholeLayout && w.plane.distance(p.position) < 0.0))
             continue;
         Index best = kInvalid;
         double bestD = std::numeric_limits<double>::max();
@@ -1639,6 +1703,12 @@ CoverInput coverInput(const Work& w, const QuadRemeshOptions& opts, std::string&
     }
     else if (w.symmetric && !w.wholeLayout)
         in.guidance = symmetricFlow(w, in, error);
+    // Not with edge loop curves: where one crosses a crease or border at a slant, the two make a sharp sector that is
+    // no corner.
+    if (in.guidance.empty() && !w.stock && opts.featureGuides.empty() && !std::getenv("LILA_QR_NO_CORNERS"))
+        turnSharpCorners(iso, in);
+    if (std::getenv("LILA_STAGE_LOG"))
+        std::fprintf(stderr, "sharp corners: %zu triangles turned, %zu sides held\n", in.fieldOverrides.size(), in.forcedCorners.size());
     return in;
 }
 
@@ -1646,11 +1716,110 @@ CoverInput coverInput(const Work& w, const QuadRemeshOptions& opts, std::string&
  * The stock sizes as they come pinch rows of thin quads together at the end of a sharp crease (a nostril's): the size
  * jumps from triangle to triangle and the quads stretch up to 2.3 to 1 along it. Smoothed a little and held to 1.5 to 1,
  * the head and Mochi come out with fewer poles and folds at every size tried.
+ *
+ * Pole pairs cancel across twice the stock reach: fewer poles on the head at every size with the surface no further
+ * off. At four times it starts to fold and drift, and at eight it flattens the nose.
  */
 void tameSizes(AutoRemesher::Parameterizer& pz)
 {
+    pz.setMaximumSingularityPairDistance(12);
     pz.setScalingSmoothing(3);
     pz.setMaxAspectRatio(1.5);
+}
+
+/**
+ * Corners where two feature edges meet at under 45 degrees and no third joins them: turned at a prism's tip, where a
+ * third crease runs down the side, the star prism came out with half as many poles again. A quad corner there has one side along U and the other
+ * along V, but a field lying along both sides takes them for the same direction and the tip collapses. Across each
+ * such corner's fan of triangles the field is turned from along the first side to square to the second (the long way
+ * round, a quarter turn short of the corner's own angle), and the two sides are held to whichever direction that
+ * makes them nearer.
+ */
+void turnSharpCorners(const Surface& iso, CoverInput& in)
+{
+    constexpr double kSharpest = glm::radians(45.0);
+    const Index n = iso.vertexCount();
+    // Each vertex's triangles, and per triangle the vertex after and before it going round.
+    std::vector<std::vector<Index>> around(n);
+    for (Index t = 0; t < Index(iso.tris.size()); ++t)
+        for (Index v : iso.tris[t])
+            around[v].push_back(t);
+    auto featureBetween = [&](Index a, Index b) {
+        for (Index k = iso.adjStart[a]; k < iso.adjStart[a + 1]; ++k)
+            if (iso.adj[k] == b)
+                return iso.edgeFeature[iso.adjEdge[k]] != 0;
+        return false;
+    };
+    for (Index v = 0; v < n; ++v)
+    {
+        // The fan in order: each triangle (v, a, b) leads to the one whose first side is (v, b).
+        std::unordered_map<Index, Index> byFirst;
+        auto sides = [&](Index t, Index& a, Index& b) {
+            const auto& tri = iso.tris[t];
+            const int k = tri[0] == v ? 0 : tri[1] == v ? 1 : 2;
+            a = tri[(k + 1) % 3];
+            b = tri[(k + 2) % 3];
+            return k;
+        };
+        int features = 0;
+        for (Index t : around[v])
+        {
+            Index a, b;
+            sides(t, a, b);
+            byFirst[a] = t;
+        }
+        for (Index k = iso.adjStart[v]; k < iso.adjStart[v + 1]; ++k)
+            features += iso.edgeFeature[iso.adjEdge[k]] != 0;
+        if (features != 2)
+            continue;
+        for (Index start : around[v])
+        {
+            Index a, b;
+            sides(start, a, b);
+            if (!featureBetween(v, a))
+                continue;
+            // From this feature side round to the next.
+            std::vector<Index> fan;
+            double angle = 0.0;
+            Index t = start;
+            bool closed = false;
+            for (size_t guard = 0; guard < around[v].size(); ++guard)
+            {
+                sides(t, a, b);
+                fan.push_back(t);
+                angle += std::acos(std::clamp(glm::dot(glm::normalize(iso.pos[a] - iso.pos[v]), glm::normalize(iso.pos[b] - iso.pos[v])), -1.0, 1.0));
+                if (featureBetween(v, b))
+                {
+                    closed = true;
+                    break;
+                }
+                auto next = byFirst.find(b);
+                if (next == byFirst.end())
+                    break;
+                t = next->second;
+            }
+            if (!closed || angle >= kSharpest || angle <= 0.0)
+                continue;
+            double before = 0.0;
+            for (size_t i = 0; i < fan.size(); ++i)
+            {
+                const int k = sides(fan[i], a, b);
+                const glm::dvec3 first = glm::normalize(iso.pos[a] - iso.pos[v]);
+                const glm::dvec3 normal = iso.triNormal[fan[i]];
+                const double own = std::acos(std::clamp(glm::dot(first, glm::normalize(iso.pos[b] - iso.pos[v])), -1.0, 1.0));
+                // At the middle of this triangle, measured from its own first side.
+                const double middle = before + 0.5 * own;
+                const double turn = middle / angle * (angle - 1.5707963267948966) - before;
+                const glm::dvec3 dir = std::cos(turn) * first + std::sin(turn) * glm::cross(normal, first);
+                in.fieldOverrides.push_back({size_t(fan[i]), toAr(dir)});
+                if (i == 0)
+                    in.forcedCorners.insert(3 * size_t(fan[i]) + size_t(k));
+                if (i + 1 == fan.size())
+                    in.forcedCorners.insert(3 * size_t(fan[i]) + size_t((k + 2) % 3));
+                before += own;
+            }
+        }
+    }
 }
 
 void setUp(AutoRemesher::Parameterizer& pz, const CoverInput& in, const Work& w)
@@ -1697,6 +1866,11 @@ void setUp(AutoRemesher::Parameterizer& pz, const CoverInput& in, const Work& w)
             pz.setFaceSizeLimit(&in.sizeLimit);
     }
     pz.setFeatureEdges(&in.features);
+    if (!in.fieldOverrides.empty())
+    {
+        pz.setFieldOverrides(&in.fieldOverrides);
+        pz.setForcedCorners(&in.forcedCorners);
+    }
     if (!in.pinned.empty())
         pz.setPinnedVertices(&in.pinned);
     if (!in.hints.empty())
@@ -3263,6 +3437,9 @@ static PoleResult findPolesWithin(const geo::Mesh& source, const QuadRemeshOptio
     for (size_t i = 0; i < at.size(); ++i)
     {
         glm::dvec3 c = w.iso.pos[at[i]];
+        // A layout made whole turns on both sides; the result mirrors its positive half.
+        if (w.wholeLayout && w.plane.distance(c) < -1e-9)
+            continue;
         out.poles.push_back({c, 4 - charge[i]});
         if (w.symmetric && std::abs(w.plane.distance(c)) > 1e-9)
         {
