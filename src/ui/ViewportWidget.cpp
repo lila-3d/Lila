@@ -338,7 +338,8 @@ namespace
 double smoothingPref(const char* key) { return std::clamp(PrefStore::get().value<double>("general", key, 0.0), 0.0, 1.0); }
 double lookSmoothing() { return smoothingPref(viewportDisplay::kCameraLookSmoothing); }
 double moveSmoothing() { return smoothingPref(viewportDisplay::kCameraMoveSmoothing); }
-double cameraSmoothing() { return std::max(lookSmoothing(), moveSmoothing()); }
+// Camera smoothing is off until its playback is reliable; the prefs and the drone popover rows are commented out with it.
+double cameraSmoothing() { return 0.0; /* std::max(lookSmoothing(), moveSmoothing()); */ }
 
 /** Milliseconds on a steady clock, with sub-millisecond resolution for spacing camera samples. */
 double sampleClockMs()

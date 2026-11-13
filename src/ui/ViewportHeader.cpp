@@ -497,16 +497,17 @@ bool hdrShiftClick(QToolButton* b, const std::string& action)
                   {"1 m/s: walking through a room", "10 m/s: across a building or street", "100 m/s: across a town or terrain",
                    "1000 m/s: across a region"},
                   "Flying speed. R and right drag + wheel change it while flying.", [](double v) { drone::setSpeed(v * 100.0); });
-        namespace vd = viewportDisplay;
-        const std::vector<std::pair<QString, double>> amounts = {{"Off", 0.0}, {"Light", 0.4}, {"Medium", 0.7}, {"Strong", 1.0}};
-        const QStringList amountTips = {"Follows the mouse exactly", "Evens out the mouse with almost no delay",
-                                        "Smooth even on uneven mouse input, a little behind it", "Smoothest, the most behind"};
-        menu->addSection("Smoothing");
-        presetRow("Look", PrefStore::get().value<double>("general", vd::kCameraLookSmoothing, 0.0), 0.0, 1.0, 2, QString(), amounts, amountTips,
-                  "Turning: tumbling and the Drone Camera's mouse look. 0 to 1.",
-                  [](double v) { PrefStore::get().set("general", vd::kCameraLookSmoothing, v); });
-        presetRow("Move", PrefStore::get().value<double>("general", vd::kCameraMoveSmoothing, 0.0), 0.0, 1.0, 2, QString(), amounts, amountTips,
-                  "Travel and zoom. 0 to 1.", [](double v) { PrefStore::get().set("general", vd::kCameraMoveSmoothing, v); });
+        // Camera smoothing is off for now (see cameraSmoothing in ViewportWidget.cpp).
+        // namespace vd = viewportDisplay;
+        // const std::vector<std::pair<QString, double>> amounts = {{"Off", 0.0}, {"Light", 0.4}, {"Medium", 0.7}, {"Strong", 1.0}};
+        // const QStringList amountTips = {"Follows the mouse exactly", "Evens out the mouse with almost no delay",
+        //                                 "Smooth even on uneven mouse input, a little behind it", "Smoothest, the most behind"};
+        // menu->addSection("Smoothing");
+        // presetRow("Look", PrefStore::get().value<double>("general", vd::kCameraLookSmoothing, 0.0), 0.0, 1.0, 2, QString(), amounts, amountTips,
+        //           "Turning: tumbling and the Drone Camera's mouse look. 0 to 1.",
+        //           [](double v) { PrefStore::get().set("general", vd::kCameraLookSmoothing, v); });
+        // presetRow("Move", PrefStore::get().value<double>("general", vd::kCameraMoveSmoothing, 0.0), 0.0, 1.0, 2, QString(), amounts, amountTips,
+        //           "Travel and zoom. 0 to 1.", [](double v) { PrefStore::get().set("general", vd::kCameraMoveSmoothing, v); });
         menu->popup(b->mapToGlobal(QPoint(0, b->height())));
         return true;
     }
