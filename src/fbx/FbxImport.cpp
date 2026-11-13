@@ -870,7 +870,7 @@ ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOp
     // Characters from Z-up (Unreal) files turn to face Lila's forward; see characterTurn.
     bool zUpFile = false;
     fileToCanonical(axes, &zUpFile);
-    const bool turnCharacter = zUpFile && (fbx->skin_clusters.count > 0 || fbx->bones.count > 0);
+    const bool turnCharacter = opts.turnCharacters && zUpFile && (fbx->skin_clusters.count > 0 || fbx->bones.count > 0);
     const glm::dmat3 fileToLilaAxes3 =
         turnCharacter ? characterTurn(math::upAxis()) * fileToLila(axes, math::upAxis()) : fileToLila(axes, math::upAxis());
     const glm::dmat4 C = glm::dmat4(fileToLilaAxes3) * glm::scale(glm::dmat4(1.0), glm::dvec3(unitScale));
