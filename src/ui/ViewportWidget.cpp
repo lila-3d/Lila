@@ -335,7 +335,13 @@ void ViewportWidget::leaveEvent(QEvent* e)
 
 namespace
 {
-double cameraSmoothing() { return std::clamp(PrefStore::get().value<double>("general", viewportDisplay::kCameraSmoothing, 0.0), 0.0, 1.0); }
+double smoothingPref(const char* key) { return std::clamp(PrefStore::get().value<double>("general", key, 0.0), 0.0, 1.0); }
+double lookSmoothing() { return smoothingPref(viewportDisplay::kCameraLookSmoothing); }
+double moveSmoothing() { return smoothingPref(viewportDisplay::kCameraMoveSmoothing); }
+double cameraSmoothing() { return std::max(lookSmoothing(), moveSmoothing()); }
+
+/** The share of the gap one frame of dt closes: all of it when off, 63% in 0.12 s at smoothing 1. */
+double easeShare(double smoothing, double dt) { return smoothing <= 0.0 ? 1.0 : 1.0 - std::exp(-dt / (smoothing * 0.12)); }
 
 /** The shortest turn from a to b, degrees. */
 double angleToward(double a, double b) { return std::remainder(b - a, 360.0); }
@@ -343,8 +349,8 @@ double angleToward(double a, double b) { return std::remainder(b - a, 360.0); }
 
 const Camera& ViewportWidget::shownCamera()
 {
-    // Off, flying (the drone eases itself), or a change no easing can bridge: the camera as it is.
-    if (cameraSmoothing() <= 0.0 || !mShownValid || drone::active(this) || mShownCamera.ortho != mCamera.ortho ||
+    // Off, or a change no easing can bridge: the camera as it is.
+    if (cameraSmoothing() <= 0.0 || !mShownValid || mShownCamera.ortho != mCamera.ortho ||
         mShownCamera.free != mCamera.free || mShownCamera.zUp != mCamera.zUp)
         return mCamera;
     return mShownCamera;
@@ -381,27 +387,25 @@ void ViewportWidget::startCameraEase()
 
 void ViewportWidget::easeCamera()
 {
-    const double smoothing = cameraSmoothing();
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     const double dt = std::clamp(double(now - mEaseLastMs) / 1000.0, 0.0, 0.1);
     mEaseLastMs = now;
     Camera& s = mShownCamera;
     const Camera& c = mCamera;
-    if (smoothing <= 0.0 || drone::active(this))
+    if (cameraSmoothing() <= 0.0)
     {
         s = c;
         mEaseTimer->stop();
         return;
     }
-    // Exponential approach: smoothing 1 closes 63% of the gap in 0.12 s.
-    const double k = 1.0 - std::exp(-dt / (smoothing * 0.12));
+    const double k = easeShare(moveSmoothing(), dt), turn = easeShare(lookSmoothing(), dt);
     const Camera from = s;
     s = c;
     s.target = from.target + (c.target - from.target) * k;
     s.distance = std::exp(std::log(std::max(from.distance, 1e-6)) + (std::log(std::max(c.distance, 1e-6)) - std::log(std::max(from.distance, 1e-6))) * k);
     s.orthoWidth = std::exp(std::log(std::max(from.orthoWidth, 1e-6)) + (std::log(std::max(c.orthoWidth, 1e-6)) - std::log(std::max(from.orthoWidth, 1e-6))) * k);
-    s.yaw = from.yaw + angleToward(from.yaw, c.yaw) * k;
-    s.pitch = from.pitch + (c.pitch - from.pitch) * k;
+    s.yaw = from.yaw + angleToward(from.yaw, c.yaw) * turn;
+    s.pitch = from.pitch + (c.pitch - from.pitch) * turn;
     s.focalLength = from.focalLength + (c.focalLength - from.focalLength) * k;
     const bool settled = glm::length(s.target - c.target) < 1e-4 * std::max(c.distance, 1.0) && std::abs(std::log(s.distance / c.distance)) < 1e-4 &&
                          std::abs(angleToward(s.yaw, c.yaw)) < 0.01 && std::abs(s.pitch - c.pitch) < 0.01 && std::abs(s.focalLength - c.focalLength) < 1e-3 &&

@@ -619,7 +619,7 @@ void registerActions(std::function<ViewportWidget*()> activeView)
                               toggle(v);
                       },
                   .doc = "Fly the view through the scene with Unreal's viewport keys, listed in the view while flying. Nothing can be "
-                         "edited until you leave.",
+                         "edited until you leave. Shift-click the button for speed and smoothing.",
                   .checked =
                       [activeView] {
                           ViewportWidget* v = activeView();

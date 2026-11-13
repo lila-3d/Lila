@@ -1,3 +1,4 @@
+#include "ui/DroneCamera.h"
 #include "ui/ViewportHeader.h"
 #include "ui/ViewportHeaderConfig.h"
 
@@ -412,6 +413,40 @@ bool hdrShiftClick(QToolButton* b, const std::string& action)
         QMenu* menu = tearoff::findMenu(mainWindow(), {"Create", "Reference Images"});
         if (!menu)
             return false;
+        menu->popup(b->mapToGlobal(QPoint(0, b->height())));
+        return true;
+    }
+    if (action == "view.drone")
+    {
+        // Speed and smoothing, set before or between flights; while flying, right drag + wheel changes the speed.
+        auto* menu = new QMenu(b);
+        menu->setAttribute(Qt::WA_DeleteOnClose);
+        menu->addSection("Drone Camera");
+        auto spinRow = [menu](const QString& label, double value, double lo, double hi, double step, int decimals, const QString& suffix,
+                              const QString& tip, std::function<void(double)> set) {
+            QWidget* holder = nullptr;
+            QHBoxLayout* row = hdrRow(menu, label, &holder);
+            auto* spin = new QDoubleSpinBox(holder);
+            spin->setRange(lo, hi);
+            spin->setSingleStep(step);
+            spin->setDecimals(decimals);
+            spin->setSuffix(suffix);
+            spin->setKeyboardTracking(false);
+            spin->setValue(value);
+            spin->setToolTip(tip);
+            QObject::connect(spin, &QDoubleSpinBox::valueChanged, holder, std::move(set));
+            row->addWidget(spin, 1);
+        };
+        spinRow("Speed", drone::speed() / 100.0, 0.01, 100000.0, 1.0, 2, " m/s", "Flying speed; R and right drag + wheel change it while flying.",
+                [](double v) { drone::setSpeed(v * 100.0); });
+        namespace vd = viewportDisplay;
+        menu->addSection("Smoothing");
+        spinRow("Look", PrefStore::get().value<double>("general", vd::kCameraLookSmoothing, 0.0), 0.0, 1.0, 0.05, 2, QString(),
+                "How softly the view turns after the mouse: 0 follows it exactly. Applies to tumbling too.",
+                [](double v) { PrefStore::get().set("general", vd::kCameraLookSmoothing, v); });
+        spinRow("Move", PrefStore::get().value<double>("general", vd::kCameraMoveSmoothing, 0.0), 0.0, 1.0, 0.05, 2, QString(),
+                "How softly the view travels and zooms after the input: 0 follows it exactly.",
+                [](double v) { PrefStore::get().set("general", vd::kCameraMoveSmoothing, v); });
         menu->popup(b->mapToGlobal(QPoint(0, b->height())));
         return true;
     }
