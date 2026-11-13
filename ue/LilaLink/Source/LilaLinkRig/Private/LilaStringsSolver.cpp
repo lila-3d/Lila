@@ -563,9 +563,17 @@ void ForwardTurn(const FProblem& P, FPose& S, const int32 G, const FQuat& Q)
 	Place(P, S, W, G, TurnedAbout(W[G], Q), false);
 }
 
+/** V at unit length, as glm::normalize: GetSafeNormal returns zero below a squared length of 1e-8, which loses the tiny
+ * turns a nearly straight limb asks for. Zero stays zero. */
+FVector Unit(const FVector& V)
+{
+	const double L = V.Size();
+	return L > 0.0 ? V / L : FVector::ZeroVector;
+}
+
 FQuat TurnBetween(const FVector& From, const FVector& To)
 {
-	const FVector A = From.GetSafeNormal(), B = To.GetSafeNormal();
+	const FVector A = Unit(From), B = Unit(To);
 	const double C = FVector::DotProduct(A, B);
 	if (C > 1.0 - 1e-12)
 	{
@@ -576,7 +584,7 @@ FQuat TurnBetween(const FVector& From, const FVector& To)
 	{
 		Axis = FMath::Abs(A.X) < 0.9 ? FVector::CrossProduct(A, FVector(1, 0, 0)) : FVector::CrossProduct(A, FVector(0, 1, 0));
 	}
-	return FQuat(Axis.GetSafeNormal(), FMath::Acos(FMath::Clamp(C, -1.0, 1.0)));
+	return FQuat(Unit(Axis), FMath::Acos(FMath::Clamp(C, -1.0, 1.0)));
 }
 
 /** Two-bone start for a limb: the elbow placed by the law of cosines in the limb's bend plane. */
@@ -589,12 +597,12 @@ void TwoBoneStart(const FProblem& P, FPose& S, const int32 Upper, const int32 Lo
 	{
 		return;
 	}
-	const FVector Dir = (Target - A).GetSafeNormal();
+	const FVector Dir = Unit(Target - A);
 	const double D = FMath::Clamp((Target - A).Size(), FMath::Abs(L1 - L2) + 1e-6, L1 + L2 - 1e-6);
 	FVector Bend = (B - A) - FVector::DotProduct(B - A, Dir) * Dir;
 	if (Bend.Size() < 1e-6 * L1)
 	{
-		const FVector Reach = (C - A).GetSafeNormal();
+		const FVector Reach = Unit(C - A);
 		Bend = (B - A) - FVector::DotProduct(B - A, Reach) * Reach;
 		Bend -= FVector::DotProduct(Bend, Dir) * Dir;
 		if (Bend.Size() < 1e-9)
@@ -602,7 +610,7 @@ void TwoBoneStart(const FProblem& P, FPose& S, const int32 Upper, const int32 Lo
 			return;
 		}
 	}
-	Bend = Bend.GetSafeNormal();
+	Bend = Unit(Bend);
 	const double Angle = FMath::Acos(FMath::Clamp((L1 * L1 + D * D - L2 * L2) / (2.0 * L1 * D), -1.0, 1.0));
 	const FVector Elbow = A + L1 * (FMath::Cos(Angle) * Dir + FMath::Sin(Angle) * Bend);
 	Place(P, S, W, Upper, TurnedAbout(W[Upper], TurnBetween(B - A, Elbow - A)), false);
