@@ -742,7 +742,7 @@ struct Work
      * shapes keep Lila's own size field: read across a crease, that measure calls every edge of a cube curved.
      */
     bool stockSizes = false;
-    /** The quads asked of the stock layout, over all of iso. */
+    /** The quads asked of the stock layout, over all of iso off its caps. */
     double stockQuads = 0.0;
     /**
      * A symmetric remesh laid out on the closed whole: iso is the positive half joined to its mirror image, with its edges
@@ -755,8 +755,6 @@ struct Work
      */
     geo::Mesh caps;
     std::optional<geo::MeshBvh> capsBvh;
-    /** The caps' part of iso's area. */
-    double capShare = 0.0;
     /** Whether a point of the capped surface lies on a cap rather than on the source. */
     bool onCap(const glm::dvec3& p) const
     {
@@ -1005,7 +1003,7 @@ std::unordered_set<uint64_t> symmetrize(Surface& iso, const geo::SymmetryPlane& 
  * False when a border isn't a plain loop, or the caps would be a large part of the result (a sheet seen from one side
  * has a border all round it and a cap the size of itself).
  */
-bool capBorders(Surface& iso, geo::Mesh& caps, std::unordered_set<uint64_t>& chain, double& capShare)
+bool capBorders(Surface& iso, geo::Mesh& caps, std::unordered_set<uint64_t>& chain)
 {
     constexpr double kLargestShare = 0.3;
     // Each border edge the way its triangle runs it, so the caps face the same way round.
@@ -1056,7 +1054,6 @@ bool capBorders(Surface& iso, geo::Mesh& caps, std::unordered_set<uint64_t>& cha
             return false;
         loops.push_back(std::move(loop));
     }
-    capArea = 0.0;
     for (const std::vector<Index>& loop : loops)
     {
         // A border left by deleting faces is a sawtooth, and the layout would turn at every tooth. The working border
@@ -1085,7 +1082,6 @@ bool capBorders(Surface& iso, geo::Mesh& caps, std::unordered_set<uint64_t>& cha
         {
             // Against the surface's own direction along the edge.
             triangles.push_back({(i + 1) % loop.size(), i, loop.size()});
-            capArea += 0.5 * glm::length(glm::cross(iso.pos[loop[i]] - centre, iso.pos[loop[(i + 1) % loop.size()]] - centre));
         }
         // No shorter than the loop's own edges, which stay whole: the cap has to meet the surface point for point.
         AutoRemesher::IsotropicRemesher remesher(vertices, triangles);
@@ -1119,7 +1115,6 @@ bool capBorders(Surface& iso, geo::Mesh& caps, std::unordered_set<uint64_t>& cha
         for (size_t i = 0; i < loop.size(); ++i)
             chain.insert(edgeKey(loop[i], loop[(i + 1) % loop.size()]));
     }
-    capShare = capArea / (capArea + surfaceArea);
     iso.pos.insert(iso.pos.end(), addedPoints.begin(), addedPoints.end());
     iso.density.resize(iso.pos.size(), 1.0f);
     std::vector<Index> sizes(added.size(), 3);
@@ -1197,7 +1192,7 @@ bool prepareStock(Work& w, const QuadRemeshOptions& opts, double faces, double h
     }
     if (!w.closed)
     {
-        if (!capBorders(w.iso, w.caps, w.iso.hard, w.capShare))
+        if (!capBorders(w.iso, w.caps, w.iso.hard))
         {
             w.iso = Surface();
             w.wholeLayout = false;
@@ -1208,8 +1203,7 @@ bool prepareStock(Work& w, const QuadRemeshOptions& opts, double faces, double h
     w.iso.detectFeatures(-1.0, 75.0, 0.0);
     w.isoSize.assign(w.iso.pos.size(), w.h0);
     w.stock = w.stockSizes = true;
-    // The quads on the caps are laid out too and then dropped.
-    w.stockQuads = (opts.targetEdgeLength > 0.0 ? s.totalArea() / (w.h0 * w.h0) : faces * halves) / (1.0 - w.capShare);
+    w.stockQuads = opts.targetEdgeLength > 0.0 ? s.totalArea() / (w.h0 * w.h0) : faces * halves;
     if (std::getenv("LILA_STAGE_LOG"))
         std::fprintf(stderr, "stock triangles: %zu simplified, %zu working, edge %g\n", s.tris.size(), w.iso.tris.size(), voxel);
     Budget::note(std::to_string(w.iso.tris.size()) + " working triangles for about " + std::to_string(int(faces * halves)) + " faces");

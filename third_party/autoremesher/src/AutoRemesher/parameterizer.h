@@ -113,7 +113,8 @@ public:
     void setScalingSmoothing(int passes) { m_scalingSmoothing = passes; }
     /**
      * Per triangle, nonzero for faces whose shape is not to be read as curvature (a cap closing an open border): they
-     * take the neutral size and don't turn the normals of the vertices they share.
+     * take the neutral size, don't turn the normals of the vertices they share, and aren't counted towards the target
+     * quad count.
      */
     void setUnsizedFaces(const std::vector<uint8_t>* faces) { m_unsizedFaces = faces; }
     /** Per triangle, a factor on the quad size the curvature adaptivity gives. */
