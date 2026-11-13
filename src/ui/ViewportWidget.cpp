@@ -360,32 +360,25 @@ bool sameView(const Camera& a, const Camera& b)
            a.orthoWidth == b.orthoWidth;
 }
 
-/**
- * The two samples to blend for playback time t and the blend, past 1 when t runs beyond the newest sample: playback
- * then carries on at the last speed, fading to a stop over carry ms, and glides back to the newest sample over the next
- * carry ms if no input followed (the mouse stopped).
- */
-template <class Samples> std::tuple<const Camera*, const Camera*, double> around(const Samples& s, double t, double carry)
+/** The two samples around t and how far between them t is; before the first and after the last, that sample holds. */
+template <class Samples> std::tuple<const Camera*, const Camera*, double> around(const Samples& s, double t)
 {
     if (t <= s.front().ms)
         return {&s.front().camera, &s.front().camera, 0.0};
     for (size_t i = 1; i < s.size(); ++i)
         if (t <= s[i].ms)
             return {&s[i - 1].camera, &s[i].camera, (t - s[i - 1].ms) / std::max(s[i].ms - s[i - 1].ms, 1e-3)};
-    // Only a stream of motion carries on: a single step (a wheel click, a frame) arrives as two samples and stops there.
-    if (s.size() < 3 || carry <= 0.0)
-        return {&s.back().camera, &s.back().camera, 1.0};
-    const auto& a = s[s.size() - 2];
-    const auto& b = s.back();
-    const double span = std::max(b.ms - a.ms, 1e-3), over = t - b.ms;
-    const double x = std::min(over, carry), peak = 1.0 + (carry * 0.5) / span;
-    double f = 1.0 + (x - x * x / (2.0 * carry)) / span;
-    if (over > carry)
-    {
-        const double back = std::clamp((over - carry) / carry, 0.0, 1.0);
-        f = peak + (1.0 - peak) * back * back * (3.0 - 2.0 * back);
-    }
-    return {&a.camera, &b.camera, f};
+    return {&s.back().camera, &s.back().camera, 1.0};
+}
+
+/**
+ * A playback delay moved toward want slowly enough (a quarter of the time passed) that playback time only ever runs
+ * forward, so a change in the input's pace never pulls the view back.
+ */
+double settleDelay(double current, double want, double dtMs)
+{
+    const double step = 0.25 * dtMs;
+    return current + std::clamp(want - current, -step, step);
 }
 } // namespace
 
@@ -451,29 +444,34 @@ void ViewportWidget::easeCamera()
             mEaseTimer->stop();
         return;
     }
-    // Smoothing 1 plays back two update intervals (plus their spread) behind the input, 0.5 about one. A short carry past
-    // the newest sample covers the long gaps between updates without stopping.
-    const double base = std::clamp(mInputIntervalMs + mInputSpreadMs, 4.0, 60.0), carry = base;
-    const double now = sampleClockMs(), lookDelay = lookSmoothing() * 2.0 * base, moveDelay = moveSmoothing() * 2.0 * base;
+    // Smoothing 1 plays back far enough behind to cover the long gaps between updates (their mean plus three spreads),
+    // 0.5 half that; interpolating only between updates that have arrived keeps the motion continuous.
+    const double cover = std::clamp(mInputIntervalMs + 3.0 * mInputSpreadMs, 4.0, 80.0);
+    const double now = sampleClockMs(), dt = mPlaybackLastMs > 0.0 ? std::clamp(now - mPlaybackLastMs, 0.0, 100.0) : 0.0;
+    mPlaybackLastMs = now;
+    mLookDelayMs = settleDelay(mLookDelayMs, lookSmoothing() * cover, dt);
+    mMoveDelayMs = settleDelay(mMoveDelayMs, moveSmoothing() * cover, dt);
+    const double lookDelay = mLookDelayMs, moveDelay = mMoveDelayMs;
     Camera& s = mShownCamera;
     s = mCamera;
     {
-        const auto [a, b, f] = around(mCameraSamples, now - moveDelay, moveDelay > 0.0 ? carry : 0.0);
+        const auto [a, b, f] = around(mCameraSamples, now - moveDelay);
         s.target = a->target + (b->target - a->target) * f;
         s.distance = std::exp(std::log(std::max(a->distance, 1e-6)) + (std::log(std::max(b->distance, 1e-6)) - std::log(std::max(a->distance, 1e-6))) * f);
         s.orthoWidth = std::exp(std::log(std::max(a->orthoWidth, 1e-6)) + (std::log(std::max(b->orthoWidth, 1e-6)) - std::log(std::max(a->orthoWidth, 1e-6))) * f);
         s.focalLength = a->focalLength + (b->focalLength - a->focalLength) * f;
     }
     {
-        const auto [a, b, f] = around(mCameraSamples, now - lookDelay, lookDelay > 0.0 ? carry : 0.0);
+        const auto [a, b, f] = around(mCameraSamples, now - lookDelay);
         s.yaw = a->yaw + angleToward(a->yaw, b->yaw) * f;
         s.pitch = a->pitch + (b->pitch - a->pitch) * f;
     }
-    // Caught up once both playback times are past the newest sample and the glide back from carrying on.
-    if (now - std::max(lookDelay, moveDelay) >= mCameraSamples.back().ms + 2.0 * carry)
+    // Caught up once both playback times have passed the newest sample.
+    if (now - std::max(lookDelay, moveDelay) >= mCameraSamples.back().ms)
     {
         s = mCamera;
         mEaseTimer->stop();
+        mPlaybackLastMs = 0.0;
     }
     submit();
 }

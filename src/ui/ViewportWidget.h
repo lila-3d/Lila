@@ -291,6 +291,8 @@ private:
     std::deque<CameraSample> mCameraSamples;
     /** Running estimates of the time between camera updates while moving, and of how much it varies, ms. */
     double mInputIntervalMs = 16.0, mInputSpreadMs = 4.0;
+    /** Each playback's current delay behind input, ms, and when playback last ran. */
+    double mLookDelayMs = 0.0, mMoveDelayMs = 0.0, mPlaybackLastMs = 0.0;
     Camera mShownCamera;
     bool mShownValid = false;
     QTimer* mEaseTimer = nullptr;

@@ -54,6 +54,7 @@
 #include <QSpinBox>
 #include <QTimer>
 #include <QToolButton>
+#include <QKeyEvent>
 #include <QWidgetAction>
 
 #include <algorithm>
@@ -406,6 +407,42 @@ QString hdrShiftHint(const std::string& action)
     return {};
 }
 
+/** Tab and Shift+Tab step through the popover's value fields in order, round and round; a menu would take them otherwise. */
+class DroneTabRing : public QObject
+{
+public:
+    using QObject::QObject;
+    void add(QWidget* w)
+    {
+        mFields.push_back(w);
+        w->installEventFilter(this);
+    }
+
+protected:
+    bool eventFilter(QObject* obj, QEvent* e) override
+    {
+        if (e->type() != QEvent::KeyPress)
+            return false;
+        auto* k = static_cast<QKeyEvent*>(e);
+        if (k->key() != Qt::Key_Tab && k->key() != Qt::Key_Backtab)
+            return false;
+        const auto it = std::find(mFields.begin(), mFields.end(), obj);
+        if (it == mFields.end() || mFields.empty())
+            return false;
+        const int n = int(mFields.size()), at = int(it - mFields.begin()), step = k->key() == Qt::Key_Backtab ? -1 : 1;
+        QWidget* next = mFields[size_t((at + step + n) % n)];
+        if (auto* spin = qobject_cast<QAbstractSpinBox*>(obj))
+            spin->interpretText();
+        next->setFocus(Qt::TabFocusReason);
+        if (auto* spin = qobject_cast<QAbstractSpinBox*>(next))
+            spin->selectAll();
+        return true;
+    }
+
+private:
+    std::vector<QWidget*> mFields;
+};
+
 bool hdrShiftClick(QToolButton* b, const std::string& action)
 {
     if (action == "viewport.toggleImagePlanes")
@@ -418,35 +455,58 @@ bool hdrShiftClick(QToolButton* b, const std::string& action)
     }
     if (action == "view.drone")
     {
-        // Speed and smoothing, set before or between flights; while flying, right drag + wheel changes the speed.
+        // Speed and smoothing, set before or between flights; while flying, R and right drag + wheel change the speed.
         auto* menu = new QMenu(b);
         menu->setAttribute(Qt::WA_DeleteOnClose);
-        menu->addSection("Drone Camera");
-        auto spinRow = [menu](const QString& label, double value, double lo, double hi, double step, int decimals, const QString& suffix,
-                              const QString& tip, std::function<void(double)> set) {
+        auto* tabs = new DroneTabRing(menu);
+        // A row: presets as one segmented strip for the usual choices, and the exact value beside it.
+        auto presetRow = [menu, tabs](const QString& label, double value, double lo, double hi, int decimals, const QString& unit,
+                                      const std::vector<std::pair<QString, double>>& presets, const QStringList& tips, const QString& tip,
+                                      std::function<void(double)> set) {
             QWidget* holder = nullptr;
             QHBoxLayout* row = hdrRow(menu, label, &holder);
-            auto* spin = new QDoubleSpinBox(holder);
-            spin->setRange(lo, hi);
-            spin->setSingleStep(step);
-            spin->setDecimals(decimals);
-            spin->setSuffix(suffix);
-            spin->setKeyboardTracking(false);
-            spin->setValue(value);
-            spin->setToolTip(tip);
-            QObject::connect(spin, &QDoubleSpinBox::valueChanged, holder, std::move(set));
-            row->addWidget(spin, 1);
+            auto* strip = new controls::Segmented(holder);
+            for (int i = 0; i < int(presets.size()); ++i)
+                strip->add(presets[size_t(i)].first, QString(), i < tips.size() ? tips[i] : QString(), i);
+            QDoubleSpinBox* field = controls::valueField(lo, hi, decimals, unit, holder);
+            field->setFixedWidth(72);
+            field->setKeyboardTracking(false);
+            field->setToolTip(tip);
+            auto showPreset = [strip, presets](double v) {
+                for (int i = 0; i < int(presets.size()); ++i)
+                    if (std::abs(presets[size_t(i)].second - v) < 1e-6)
+                    {
+                        strip->setCurrent(i);
+                        return;
+                    }
+                strip->clearCurrent();
+            };
+            field->setValue(value);
+            showPreset(value);
+            QObject::connect(field, &QDoubleSpinBox::valueChanged, holder, [set, showPreset](double v) {
+                set(v);
+                showPreset(v);
+            });
+            QObject::connect(strip, &controls::Segmented::picked, field, [field, presets](int id) { field->setValue(presets[size_t(id)].second); });
+            row->addWidget(strip);
+            row->addWidget(field);
+            tabs->add(field);
         };
-        spinRow("Speed", drone::speed() / 100.0, 0.01, 100000.0, 1.0, 2, " m/s", "Flying speed; R and right drag + wheel change it while flying.",
-                [](double v) { drone::setSpeed(v * 100.0); });
+        menu->addSection("Drone Camera");
+        presetRow("Speed", drone::speed() / 100.0, 0.01, 100000.0, 2, "m/s", {{"1", 1.0}, {"10", 10.0}, {"100", 100.0}, {"1000", 1000.0}},
+                  {"1 m/s: walking through a room", "10 m/s: across a building or street", "100 m/s: across a town or terrain",
+                   "1000 m/s: across a region"},
+                  "Flying speed. R and right drag + wheel change it while flying.", [](double v) { drone::setSpeed(v * 100.0); });
         namespace vd = viewportDisplay;
+        const std::vector<std::pair<QString, double>> amounts = {{"Off", 0.0}, {"Light", 0.4}, {"Medium", 0.7}, {"Strong", 1.0}};
+        const QStringList amountTips = {"Follows the mouse exactly", "Evens out the mouse with almost no delay",
+                                        "Smooth even on uneven mouse input, a little behind it", "Smoothest, the most behind"};
         menu->addSection("Smoothing");
-        spinRow("Look", PrefStore::get().value<double>("general", vd::kCameraLookSmoothing, 0.0), 0.0, 1.0, 0.05, 2, QString(),
-                "How softly the view turns after the mouse: 0 follows it exactly. Applies to tumbling too.",
-                [](double v) { PrefStore::get().set("general", vd::kCameraLookSmoothing, v); });
-        spinRow("Move", PrefStore::get().value<double>("general", vd::kCameraMoveSmoothing, 0.0), 0.0, 1.0, 0.05, 2, QString(),
-                "How softly the view travels and zooms after the input: 0 follows it exactly.",
-                [](double v) { PrefStore::get().set("general", vd::kCameraMoveSmoothing, v); });
+        presetRow("Look", PrefStore::get().value<double>("general", vd::kCameraLookSmoothing, 0.0), 0.0, 1.0, 2, QString(), amounts, amountTips,
+                  "Turning: tumbling and the Drone Camera's mouse look. 0 to 1.",
+                  [](double v) { PrefStore::get().set("general", vd::kCameraLookSmoothing, v); });
+        presetRow("Move", PrefStore::get().value<double>("general", vd::kCameraMoveSmoothing, 0.0), 0.0, 1.0, 2, QString(), amounts, amountTips,
+                  "Travel and zoom. 0 to 1.", [](double v) { PrefStore::get().set("general", vd::kCameraMoveSmoothing, v); });
         menu->popup(b->mapToGlobal(QPoint(0, b->height())));
         return true;
     }
