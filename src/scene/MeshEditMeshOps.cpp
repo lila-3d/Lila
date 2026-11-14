@@ -398,6 +398,28 @@ void registerMeshEditMeshOpsCommands()
     });
 
     ops::registerCommand({
+        .name = "remeshDensity",
+        .doc = "Set how dense Quad Remesh makes the selected faces, or the whole of the selected meshes in object mode: the point "
+               "attribute density, a multiple of the faces they would get otherwise. 1 clears it.",
+        .flags = {{"value", "v", T::Float, 2.0, "Density: 2 is twice the faces there, 0.5 half.", {}, {}, 0.0625, 16.0}},
+        .run = [](const Args& a) -> json {
+            const float value = float(std::clamp(a.get<double>("value", 2.0), 0.0625, 16.0));
+            return editSelected("Remesh Density", K::Vertex, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
+                const bool fresh = !m.pointAttrs().has("density");
+                std::span<float> density = m.pointAttrs().getOrAdd<float>("density");
+                if (fresh)
+                    std::fill(density.begin(), density.end(), 1.0f);
+                if (sel.empty())
+                    std::fill(density.begin(), density.end(), value);
+                for (Index p : withMirror(m, s, sel, K::Vertex))
+                    if (m.pointValid(p))
+                        density[p] = value;
+                return EditResult{};
+            }, true);
+        },
+    });
+
+    ops::registerCommand({
         .name = "polyBevelWeight",
         .doc = "Set the bevel weight of the selected edges, read by Auto Bevel in weight mode (it bevels edges above its "
                "weightThreshold).",

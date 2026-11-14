@@ -311,7 +311,8 @@ TopologyToolkit::TopologyToolkit(QWidget* parent) : QWidget(parent)
     add("Constructs", listBox, false);
 
     add("Auto Retopo", topologyGroup({push("topo.runRegion", "Retopo Region", body), push("topo.region", "Region Brush", body),
-                                      push("mesh.quadRemesh", "Quad Remesh", body), push("mesh.voxelRemesh", "Voxel Remesh", body),
+                                      push("mesh.quadRemesh", "Quad Remesh", body), push("mesh.remeshDensity", "Remesh Density", body),
+                                      push("mesh.voxelRemesh", "Voxel Remesh", body),
                                       push("topo.settle", "Settle", body), push("mesh.relax", "Relax Mesh", body)},
                                      {"retopo.poles"}, 2, body));
 

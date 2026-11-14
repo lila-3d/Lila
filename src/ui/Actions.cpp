@@ -666,6 +666,10 @@ void registerBuiltins()
     cmd("mesh.softFoliageNormals", "Soft Foliage Normals", "Mesh", "softFoliageNormals", json::object(),
         "Points the normals of leaf cards out from a dome around the mesh (mixed 80% by default), so foliage shades as soft clumps.");
     cmd("mesh.quadRemesh", "Quad Remesh", "Mesh", "quadRemesh", json::object(), "Rebuilds the mesh as evenly sized, flowing quads.");
+    add({.id = "mesh.remeshDensity", .label = "Remesh Density", .category = "Mesh",
+         .doc = "Sets how dense Quad Remesh makes the selected faces: 2 is twice the faces there, 1 clears it.",
+         .python = ops::toPython("remeshDensity", json::object()), .command = "remeshDensity", .call = json::object(),
+         .keywords = {"paint density", "face density", "polypaint", "zremesher"}});
     cmd("mesh.repair", "Repair Mesh", "Mesh", "meshRepair", json::object(),
         "Fixes coincident points, lamina and zero-area faces, non-manifold geometry and flipped faces; the option box picks the checks.");
     cmd("mesh.selectIssues", "Select Mesh Issues", "Mesh", "meshRepair", {{"mode", "select"}},

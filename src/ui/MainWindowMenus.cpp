@@ -166,7 +166,7 @@ void MainWindow::buildMenus()
     menu("Topology", "Topology", Area::MenuBar, syncChecks, "topology", {"Model", "Sculpt"});
     menus::addActions("Topology", {"#Session", "retopo.setReference", "window.topologyToolkit", "#Draw", "retopo.draw", "topo.pencil", "topo.patch",
                                    "topo.strip", "topo.stroke", "topo.cylinder", "topo.cap", "#Shape", "topo.handles", "topo.relax", "topo.settle", "mesh.relax",
-                                   "#Auto Retopo", "topo.region", "topo.runRegion", "mesh.quadRemesh", "retopo.poles", "mesh.voxelRemesh",
+                                   "#Auto Retopo", "topo.region", "topo.runRegion", "mesh.quadRemesh", "mesh.remeshDensity", "retopo.poles", "mesh.voxelRemesh",
                                    "#Constructs", "topo.freezeAll", "#Display", "topo.qualityOverlay"});
 
     menu("Model", "Model", Area::MenuBar, {}, "", {"Model"});

@@ -336,6 +336,11 @@ std::vector<FlagDef> remeshFlags(const char* symmetry)
                       "as for guides."},
                      "curve|mesh"),
             {"featureGuidePoints", "", T::List, nullptr, "Feature guide polylines as lists of world [x, y, z]."},
+            nodeFlag({"densityVolumes", "", T::List, nullptr,
+                      "Meshes placed over the areas that want a different face size: each acts from its centre out to its largest half extent, "
+                      "easing out to the edge. A sphere over a head, say."},
+                     "mesh"),
+            {"volumeFaceSize", "", T::Float, 0.5, "Edge length inside the density volumes, as a multiple of what it would be: under 1 is denser.", {}, {}, 0.35, 2.8},
             {"densityHandles", "", T::List, nullptr,
              "Local face size as {position: world [x, y, z], radius, scale}: scale times the edge length at the centre (0.35 to 2.8), easing out to the radius."},
             {"pureQuads", "", T::Bool, true, "All quads; false allows a few triangles and pentagons."},
@@ -373,6 +378,16 @@ QuadRemeshOptions remeshOptions(const Args& given, const Node& src, const char* 
     o.featureGuides = guidesFor(a, src, "featureGuides", "featureGuidePoints");
     if (a.has("densityHandles") && !a.flags["densityHandles"].is_null())
         o.densityHandles = densityHandlesFor(a.flags["densityHandles"], src, cmd);
+    if (a.has("densityVolumes") && a.flags["densityVolumes"].is_array())
+        for (const json& name : a.flags["densityVolumes"])
+        {
+            if (!name.is_string())
+                continue;
+            const geo::Bounds box = meshInSpaceOf(meshArg(name.get<std::string>(), cmd), src).bounds();
+            const glm::dvec3 size = box.size();
+            o.densityHandles.push_back({0.5 * (box.min + box.max), 0.5 * std::max({size.x, size.y, size.z}),
+                                        std::clamp(a.get<double>("volumeFaceSize", 0.5), 0.35, 2.8)});
+        }
     o.pureQuads = a.get<bool>("pureQuads", true);
     o.resolveGaps = a.get<bool>("resolveGaps", true);
     o.edgesAround = std::clamp(a.get<int>("edgesAround", 12), 0, 64);

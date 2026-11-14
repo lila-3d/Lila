@@ -2150,6 +2150,22 @@ bool prepareStock(Work& w, const QuadRemeshOptions& opts, double faces, double h
     if (w.keptCaps.numFaces() > 0)
         w.keptCapsBvh.emplace(w.keptCaps);
     w.iso.detectFeatures(-1.0, 75.0, 0.0);
+    // Painted density comes over from the source: the stock triangles are made afresh and carry none.
+    if (const std::span<const float> painted = w.src.pointAttrs().get<float>("density"); !painted.empty())
+        tbb::parallel_for(size_t(0), w.iso.pos.size(), [&](size_t v) {
+            geo::BvhClosest on;
+            if (!w.bvh->closestPoint(w.iso.pos[v], on) || on.face == kInvalid)
+                return;
+            float sum = 0.0f;
+            int count = 0;
+            for (Index p : w.src.facePoints(on.face))
+            {
+                sum += painted[p];
+                ++count;
+            }
+            if (count > 0)
+                w.iso.density[v] = sum / float(count);
+        });
     w.isoSize.assign(w.iso.pos.size(), w.h0);
     w.stock = w.stockSizes = true;
     dumpWorking(w.iso);
@@ -5553,10 +5569,58 @@ void matchPoles(const QuadRemeshOptions& opts, QuadRemeshResult& result)
 }
 } // namespace
 
+/**
+ * A density handle for each patch of painted density. Sizes alone move a layout little: it changes its face size only
+ * round poles, and a handle brings those. Each joined run of points painted away from 1 gives one handle over it, at the
+ * patch's mean density.
+ */
+static std::vector<DensityHandle> handlesFromPaint(const geo::Mesh& source)
+{
+    std::vector<DensityHandle> out;
+    const std::span<const float> painted = source.pointAttrs().get<float>("density");
+    if (painted.empty())
+        return out;
+    const auto marked = [&](Index p) { return source.pointValid(p) && std::abs(painted[p] - 1.0f) > 0.05f; };
+    std::vector<uint8_t> seen(source.pointCapacity(), 0);
+    for (Index start = 0; start < source.pointCapacity(); ++start)
+    {
+        if (seen[start] || !marked(start))
+            continue;
+        std::vector<Index> patch{start};
+        seen[start] = 1;
+        glm::dvec3 centre(0.0);
+        double density = 0.0;
+        for (size_t i = 0; i < patch.size(); ++i)
+        {
+            centre += source.position(patch[i]);
+            density += std::log(double(std::clamp(painted[patch[i]], 1.0f / 16.0f, 16.0f)));
+            source.forEachPointEdge(patch[i], [&](Index e) {
+                const Index o = source.edgeOtherPoint(e, patch[i]);
+                if (!seen[o] && marked(o))
+                {
+                    seen[o] = 1;
+                    patch.push_back(o);
+                }
+            });
+        }
+        if (patch.size() < 3)
+            continue;
+        centre /= double(patch.size());
+        double radius = 0.0;
+        for (Index p : patch)
+            radius = std::max(radius, glm::distance(source.position(p), centre));
+        // Density is faces per area, so the edge goes by one over its root.
+        out.push_back({centre, radius, std::clamp(std::exp(-0.5 * density / double(patch.size())), 0.35, 2.8)});
+    }
+    return out;
+}
+
 static QuadRemeshResult quadRemeshWithin(const geo::Mesh& source, const QuadRemeshOptions& opts)
 {
     QuadRemeshResult result;
     QuadRemeshOptions laid = opts;
+    const std::vector<DensityHandle> fromPaint = handlesFromPaint(source);
+    laid.densityHandles.insert(laid.densityHandles.end(), fromPaint.begin(), fromPaint.end());
     std::string gridNote;
     if (opts.method == RemeshMethod::Grid)
     {

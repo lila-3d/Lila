@@ -53,11 +53,13 @@ void registerBuiltinOverrides(std::map<std::string, Override, std::less<>>& m)
         remesh.sections[f] = "Density";
     for (const char* f : {"useHardEdges", "sharpAngle", "jointPoleAvoidance", "pureQuads", "relaxIterations"})
         remesh.sections[f] = "Edge Flow";
-    for (const char* f : {"guides", "featureGuides"})
+    for (const char* f : {"guides", "featureGuides", "densityVolumes", "volumeFaceSize"})
         remesh.sections[f] = "Guides";
     for (const char* f : {"transferUvs", "transferNormals", "keepSource"})
         remesh.sections[f] = "Output";
-    remesh.labels = {{"transferUvs", "Transfer UVs"}, {"guides", "Flow Curves"}, {"featureGuides", "Edge Loop Curves"}};
+    remesh.labels = {{"transferUvs", "Transfer UVs"},      {"guides", "Flow Curves"},          {"featureGuides", "Edge Loop Curves"},
+                     {"densityVolumes", "Density Volumes"}, {"volumeFaceSize", "Volume Face Size"}};
+    remesh.ranges["volumeFaceSize"] = {0.35, 2.8, 0.05, ""};
     remesh.notes["guides"] = [] { return std::string("Draw with Curves > Pencil Curve"); };
     remesh.ranges["sharpAngle"] = {0.0, 180.0, 1.0, " deg"};
     remesh.ranges["adaptivity"] = {0.0, 1.0, 0.05, ""};
