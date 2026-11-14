@@ -3612,6 +3612,40 @@ void closeFlatFaces(geo::Mesh& m, double h)
     m.removeAllLoose();
 }
 
+/**
+ * Takes the nearest border point onto each corner of the source's border the result's border stops short of: the grid
+ * drops the part cells at a corner its lines don't quite meet in, and the corner comes out cut off. Returns how many.
+ */
+int reachBorderCorners(geo::Mesh& m, const FeatureLines& border, double h)
+{
+    // As far as six quads: a sharp tip is cut by one chord, and its nearest border point is that chord's end however far.
+    // At ten a thin strip starts taking points from the next turn of itself.
+    constexpr double kMissed = 0.3, kReach = 6.0;
+    std::vector<Index> onBorder;
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        if (m.pointValid(p) && m.isBoundaryPoint(p))
+            onBorder.push_back(p);
+    int moved = 0;
+    for (const glm::dvec3& corner : border.corners())
+    {
+        size_t best = onBorder.size();
+        double bestD = kReach * h;
+        for (size_t i = 0; i < onBorder.size(); ++i)
+            if (const double d = glm::distance(m.position(onBorder[i]), corner); d < bestD)
+            {
+                bestD = d;
+                best = i;
+            }
+        if (best == onBorder.size() || bestD < kMissed * h)
+            continue;
+        m.setPosition(onBorder[best], corner);
+        onBorder[best] = onBorder.back();
+        onBorder.pop_back();
+        ++moved;
+    }
+    return moved;
+}
+
 /** The connected parts of a surface, each with its share of the per-vertex sizes. */
 std::vector<std::pair<Surface, std::vector<double>>> surfaceParts(const Surface& s, const std::vector<double>& size)
 {
@@ -3798,6 +3832,12 @@ QuadRemeshResult coverRemesh(Work& w, const QuadRemeshOptions& opts, Stopwatch& 
                 at[axis] = 0.0;
                 m.setPosition(p, at);
             }
+    if (refine && !w.stock && !std::getenv("LILA_QR_NO_CORNER_REACH"))
+    {
+        const int reached = reachBorderCorners(m, w.border, h0);
+        if (std::getenv("LILA_STAGE_LOG"))
+            std::fprintf(stderr, "border corners reached: %d\n", reached);
+    }
     std::vector<FeatureKind> feature = pointFeatures(m, w.creases, w.border, 0.3 * h0);
     if (refine)
     {
