@@ -542,9 +542,9 @@ void closeChainGaps(const geo::Mesh& m, std::vector<std::array<Index, 2>>& chain
 /**
  * Cuts each feature guide into the mesh with the knife, so an edge chain runs exactly along it; returns those edges
  * as point pairs. Guide points are taken onto the surface, a few per source edge apart, so the cut between two of them
- * follows the surface closely.
+ * follows the surface closely. dropped counts the guides that couldn't be cut in.
  */
-std::vector<std::array<Index, 2>> imprintGuides(geo::Mesh& m, const std::vector<std::vector<glm::dvec3>>& guides)
+std::vector<std::array<Index, 2>> imprintGuides(geo::Mesh& m, const std::vector<std::vector<glm::dvec3>>& guides, int& dropped)
 {
     LILA_ZONE();
 
@@ -595,7 +595,10 @@ std::vector<std::array<Index, 2>> imprintGuides(geo::Mesh& m, const std::vector<
             }
         }
         if (points.size() < 2)
+        {
+            ++dropped;
             continue;
+        }
         geo::KnifeOptions ko;
         ko.closed = closed;
         auto borderEdges = [](const geo::Mesh& mesh) {
@@ -611,6 +614,7 @@ std::vector<std::array<Index, 2>> imprintGuides(geo::Mesh& m, const std::vector<
         if (borderEdges(m) > open)
         {
             m = before;
+            ++dropped;
             continue;
         }
         // The cut's own edges, not the diagonals it adds inside the faces it splits: ends and middle on the cut's path.
@@ -652,8 +656,11 @@ std::vector<std::array<Index, 2>> imprintGuides(geo::Mesh& m, const std::vector<
     return out;
 }
 
-/** The same on a working surface: its hard edges, density and pins carry over, and the guides' edges join the hard set. */
-void imprintGuides(Surface& s, const std::vector<std::vector<glm::dvec3>>& guides)
+/**
+ * The same on a working surface: its hard edges, density and pins carry over, and the guides' edges join the hard set.
+ * Returns how many guides couldn't be cut in.
+ */
+int imprintGuides(Surface& s, const std::vector<std::vector<glm::dvec3>>& guides)
 {
     std::vector<Index> sizes(s.tris.size(), 3), corners;
     corners.reserve(s.tris.size() * 3);
@@ -661,11 +668,12 @@ void imprintGuides(Surface& s, const std::vector<std::vector<glm::dvec3>>& guide
         corners.insert(corners.end(), t.begin(), t.end());
     geo::Mesh m = geo::Mesh::fromPolygons(s.pos, sizes, corners);
     if (m.pointCapacity() != Index(s.pos.size()))
-        return;
-    const std::vector<std::array<Index, 2>> cut = imprintGuides(m, guides);
+        return int(guides.size());
+    int dropped = 0;
+    const std::vector<std::array<Index, 2>> cut = imprintGuides(m, guides, dropped);
     Surface out = surfaceFromMesh(m, false);
     if (out.pos.size() < s.pos.size())
-        return;
+        return int(guides.size());
     for (size_t v = 0; v < s.density.size(); ++v)
         out.density[v] = s.density[v];
     out.hard = s.hard;
@@ -673,6 +681,7 @@ void imprintGuides(Surface& s, const std::vector<std::vector<glm::dvec3>>& guide
         out.hard.insert(edgeKey(a, b));
     out.pins = s.pins;
     s = std::move(out);
+    return dropped;
 }
 
 /**
@@ -772,6 +781,8 @@ struct Work
     FeatureLines creases, border;
     /** The edges imprinted along edge loop curves: feature edges for the layout to follow, but no crease of the shape. */
     std::vector<std::array<glm::dvec3, 2>> guideSegs;
+    /** What the result should say about how it was made. */
+    std::vector<std::string> notes;
     Surface iso;
     /** Quad edge length per vertex of iso. */
     std::vector<double> isoSize;
@@ -1291,7 +1302,9 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
     if (!opts.featureGuides.empty())
     {
         const std::unordered_set<uint64_t> own = s.hard;
-        imprintGuides(s, opts.featureGuides);
+        if (const int dropped = imprintGuides(s, opts.featureGuides))
+            w.notes.push_back(std::to_string(dropped) + " of " + std::to_string(opts.featureGuides.size()) +
+                              " edge loop curves couldn't be cut into the surface, so the layout doesn't follow them");
         for (uint64_t key : s.hard)
             if (!own.contains(key))
                 w.guideSegs.push_back({s.pos[Index(key >> 32)], s.pos[Index(key & 0xffffffffu)]});
@@ -1391,8 +1404,8 @@ struct CoverInput
     std::vector<AutoRemesher::Vector3> guidance;
     /** For the stock layout: a factor on its own sizes, and the longest edge allowed, each empty when it does nothing. */
     std::vector<double> sizeFactor, sizeLimit;
-    /** Per triangle, whether it is on a cap. Empty without caps. */
-    std::vector<uint8_t> onCap;
+    /** Per triangle, whether it is on a cap that is dropped, and on any cap at all (dropped or kept). Empty without. */
+    std::vector<uint8_t> onCap, onAnyCap;
     /** The field turned through corners too sharp for it to lie along both sides, and those sides' corners held. */
     std::vector<std::pair<size_t, AutoRemesher::Vector3>> fieldOverrides;
     std::unordered_set<size_t> forcedCorners;
@@ -3598,6 +3611,7 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
             result.notes.push_back("the mesh isn't symmetric across " + std::string(1, char('X' + opts.symmetryAxis)) + " (" +
                                    std::to_string(int(std::lround(100.0 * off))) + "% of it has no mirror image), so this mirrors its +" +
                                    std::string(1, char('X' + opts.symmetryAxis)) + " half; set Symmetry to Off for it");
+    result.notes.insert(result.notes.end(), w.notes.begin(), w.notes.end());
     QuadRemeshResult r = coverRemesh(w, opts, clock);
     if (!r.ok() && !opts.featureGuides.empty())
     {
@@ -3828,8 +3842,9 @@ QuadRemeshResult cleanest(const geo::Mesh& source, const QuadRemeshOptions& opts
             asked = finer.targetFaces;
         keepOrMerge(result, std::move(again), take);
         if (take)
-            result.notes = {"at " + std::to_string(opts.targetFaces) + " faces the layout folded at thin parts or tight spots, so it was made finer (" +
-                            std::to_string(finer.targetFaces) + " asked)"};
+            result.notes.insert(result.notes.begin(), "at " + std::to_string(opts.targetFaces) +
+                                                          " faces the layout folded at thin parts or tight spots, so it was made finer (" +
+                                                          std::to_string(finer.targetFaces) + " asked)");
         if (result.ok() && !many(result))
             break;
     }
