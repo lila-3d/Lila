@@ -4627,18 +4627,24 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         result.error = r.error;
         return result;
     }
-    // The stock extraction now and then folds along a kept cap's rim or in a tight spot the grid traces cleanly.
+    // A body with flat faces is laid out both ways and the better result kept: neither way wins at every face count
+    // (the stock extraction now and then folds along a kept cap's rim), and pole counts swing by a third from one
+    // count to the next. Clearly fewer flaws decide, else fewer poles.
     constexpr int kFewFlaws = 3;
-    if (w.keptCapsBvh && r.defects > kFewFlaws)
+    if (w.keptCapsBvh && !std::getenv("LILA_QR_NO_FALLBACK"))
     {
         QuadRemeshResult own = quadRemeshOnce(source, opts, false);
-        if (own.ok() && own.defects < r.defects)
+        const bool cleaner = own.defects + kFewFlaws < r.defects, dirtier = r.defects + kFewFlaws < own.defects;
+        if (own.ok() && (cleaner || (!dirtier && own.metrics.irregular < r.metrics.irregular)))
         {
             own.attempts.insert(own.attempts.begin(), {r.layout, r.mesh.numFaces(), r.defects, r.metrics.irregular});
-            own.notes.push_back("laid out as a creased shape: with its flat faces as caps the layout left " + std::to_string(r.defects) +
-                                " folds, this way " + std::to_string(own.defects));
+            own.notes.push_back("laid out as a creased shape: with its flat faces as caps the layout had " + std::to_string(r.defects) +
+                                " folds and " + std::to_string(r.metrics.irregular) + " poles, this way " + std::to_string(own.defects) +
+                                " and " + std::to_string(own.metrics.irregular));
             return own;
         }
+        if (own.ok())
+            result.attempts.insert(result.attempts.end(), own.attempts.begin(), own.attempts.end());
     }
     result.attempts.push_back({r.layout, r.mesh.numFaces(), r.defects, r.metrics.irregular});
     result.mesh = std::move(r.mesh);
