@@ -166,7 +166,7 @@ struct QuadRemeshOptions
     /** How far Joint Density's extra faces reach from a fold, in faces; they halve every two. */
     double jointDensityReach = 6.0;
     /** Align to edges flagged "hard". */
-    bool useHardEdges = true;
+    bool useHardEdges = false;
     /** Smooth the simplified working surface first: for stair-stepped sources such as voxel shells, which read as noise in the flow. */
     bool smoothInput = false;
     /** Also align to edges whose faces meet sharper than this many degrees; negative disables. */

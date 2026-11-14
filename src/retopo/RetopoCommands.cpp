@@ -271,8 +271,8 @@ const std::vector<RemeshPreset>& remeshPresets()
          {{"targetFaces", 40000}, {"adaptivity", 0.35}, {"jointDensity", 1.0}, {"jointPoleAvoidance", 30.0}, {"edgesAround", 24}, {"sharpAngle", 40.0}}},
         {"stylized", "Stylized", "5K faces, even spacing for broad shapes, joints as Game Character.",
          {{"targetFaces", 5000}, {"adaptivity", 0.15}, {"jointDensity", 0.5}, {"jointPoleAvoidance", 30.0}, {"edgesAround", 10}, {"sharpAngle", 40.0}}},
-        {"hardSurface", "Hard Surface", "6K faces, dense at curves, loops on hard edges and creases over 30 degrees, no joint handling.",
-         {{"targetFaces", 6000}, {"adaptivity", 0.5}, {"jointDensity", 0.0}, {"jointPoleAvoidance", 0.0}, {"edgesAround", 8}, {"sharpAngle", 30.0}, {"useHardEdges", true}}},
+        {"hardSurface", "Hard Surface", "6K faces, dense at curves, loops on creases over 30 degrees, no joint handling.",
+         {{"targetFaces", 6000}, {"adaptivity", 0.5}, {"jointDensity", 0.0}, {"jointPoleAvoidance", 0.0}, {"edgesAround", 8}, {"sharpAngle", 30.0}}},
         {"prop", "Prop", "3K faces, dense at curves, no joint handling.",
          {{"targetFaces", 3000}, {"adaptivity", 0.4}, {"jointDensity", 0.0}, {"jointPoleAvoidance", 0.0}, {"edgesAround", 8}, {"sharpAngle", 40.0}}},
     };
@@ -318,7 +318,7 @@ std::vector<FlagDef> remeshFlags(const char* symmetry)
             {"timeout", "", T::Float, 0.0, "Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits until done or aborted.", {}, {}, 0.0},
             {"targetEdgeLength", "", T::Float, 0.0, "Edge length, cm; overrides targetFaces when positive.", {}, {}, 0.0},
             {"adaptivity", "", T::Float, 0.25, "0 uniform, 1 much denser where curved; painted point 'density' multiplies.", {}, {}, 0.0, 1.0},
-            {"useHardEdges", "", T::Bool, true, "Follow edges marked hard."},
+            {"useHardEdges", "", T::Bool, false, "Follow edges marked hard."},
             {"sharpAngle", "", T::Float, 40.0, "Also follow creases sharper than this, degrees; negative disables.", {}, {}, {}, 180.0},
             {"symmetry", "", T::String, symmetry, "off, x, y or z: remesh half and mirror, exactly symmetric. The mesh has to be symmetric across that plane through its origin.",
              {"off", "x", "y", "z"}},
@@ -362,7 +362,7 @@ QuadRemeshOptions remeshOptions(const Args& given, const Node& src, const char* 
     o.timeout = std::max(0.0, a.get<double>("timeout", 0.0));
     o.targetEdgeLength = a.get<double>("targetEdgeLength", 0.0);
     o.adaptivity = std::clamp(a.get<double>("adaptivity", 0.25), 0.0, 1.0);
-    o.useHardEdges = a.get<bool>("useHardEdges", true);
+    o.useHardEdges = a.get<bool>("useHardEdges", false);
     o.sharpAngle = a.get<double>("sharpAngle", 40.0);
     std::string sym = a.get<std::string>("symmetry", "off");
     if (sym != "off" && (sym.size() != 1 || sym[0] < 'x' || sym[0] > 'z'))

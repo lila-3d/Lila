@@ -1949,6 +1949,10 @@ int bluntSpikes(Surface& iso, const geo::MeshBvh& bvh, double h, std::vector<uin
     return spots;
 }
 
+double doublyCurvedShare(const Surface& s);
+/** The share of a surface curving both ways at once past which it is a sculpt, not a modelled shape. */
+constexpr double kSculpted = 0.4;
+
 /** Working triangles per quad for the stock stages, which size their quads off the triangles' mean edge. */
 constexpr double kStockTriangles = 6.0;
 
@@ -2002,7 +2006,8 @@ bool prepareStock(Work& w, const QuadRemeshOptions& opts, double faces, double h
     {
         std::vector<uint8_t> body;
         std::vector<size_t> stray;
-        if (!keepCaps || std::getenv("LILA_QR_NO_KEPT_CAPS") || !withoutFlatFaces(s, w.h0, body, stray))
+        // Sculpts only: a modelled cylinder is a body with two flat faces too, and its side wants the creased layout.
+        if (!keepCaps || std::getenv("LILA_QR_NO_KEPT_CAPS") || !withoutFlatFaces(s, w.h0, body, stray) || doublyCurvedShare(s) <= kSculpted)
             return false;
         for (size_t e : stray)
         {
@@ -2327,7 +2332,7 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
     }
     w.border.build(s, 0.5 * w.h0, true);
     const double curved = doublyCurvedShare(s);
-    w.organic = curved > 0.4 && !std::getenv("LILA_QR_MODELLED");
+    w.organic = curved > kSculpted && !std::getenv("LILA_QR_MODELLED");
     if (std::getenv("LILA_STAGE_LOG"))
         std::fprintf(stderr, "curved both ways: %.2f of the surface\n", curved);
     // Sculpts only: on a modelled shape a spot like that is a cone's tip, which is the shape.
