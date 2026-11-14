@@ -1131,6 +1131,22 @@ bool capBorders(Surface& iso, geo::Mesh& caps, std::unordered_set<uint64_t>& cha
     return true;
 }
 
+/** LILA_ISO_DUMP: the working triangles as an OBJ, their feature edges as lines. */
+void dumpWorking(const Surface& iso)
+{
+    const char* dump = std::getenv("LILA_ISO_DUMP");
+    FILE* f = dump ? std::fopen(dump, "w") : nullptr;
+    if (!f)
+        return;
+    for (const glm::dvec3& p : iso.pos)
+        std::fprintf(f, "v %.9g %.9g %.9g\n", p.x, p.y, p.z);
+    for (const auto& t : iso.tris)
+        std::fprintf(f, "f %d %d %d\n", int(t[0] + 1), int(t[1] + 1), int(t[2] + 1));
+    for (uint64_t key : iso.hard)
+        std::fprintf(f, "l %d %d\n", int(key >> 32) + 1, int(key & 0xffffffffu) + 1);
+    std::fclose(f);
+}
+
 /** Working triangles per quad for the stock stages, which size their quads off the triangles' mean edge. */
 constexpr double kStockTriangles = 6.0;
 
@@ -1205,6 +1221,7 @@ bool prepareStock(Work& w, const QuadRemeshOptions& opts, double faces, double h
     w.iso.detectFeatures(-1.0, 75.0, 0.0);
     w.isoSize.assign(w.iso.pos.size(), w.h0);
     w.stock = w.stockSizes = true;
+    dumpWorking(w.iso);
     w.stockQuads = opts.targetEdgeLength > 0.0 ? s.totalArea() / (w.h0 * w.h0) : faces * halves;
     if (std::getenv("LILA_STAGE_LOG"))
         std::fprintf(stderr, "stock triangles: %zu simplified, %zu working, edge %g\n", s.tris.size(), w.iso.tris.size(), voxel);
@@ -1332,6 +1349,8 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
         if (w.iso.edgeFeature[e] && !w.iso.edgeBoundary[e])
             creased += glm::distance(w.iso.pos[w.iso.edges[e][0]], w.iso.pos[w.iso.edges[e][1]]);
     w.stockSizes = creased * w.h0 < 0.02 * w.iso.totalArea() && !std::getenv("LILA_QR_OWN_SIZES");
+    if (std::getenv("LILA_STAGE_LOG"))
+        std::fprintf(stderr, "creased %g of %g, stock sizes %d\n", creased * w.h0, 0.02 * w.iso.totalArea(), int(w.stockSizes));
     if (w.symmetric && !std::getenv("LILA_QR_HALF"))
     {
         // Laid out whole like the stock path: the half joined to its mirror image, its cut an edge chain to hold.
@@ -1354,17 +1373,7 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
         w.wholeLayout = true;
     }
     w.stockQuads = opts.targetEdgeLength > 0.0 ? w.iso.totalArea() / (w.h0 * w.h0) : faces * (w.wholeLayout ? halves : 1.0);
-    if (const char* dump = std::getenv("LILA_ISO_DUMP"))
-        if (FILE* f = std::fopen(dump, "w"))
-        {
-            for (const glm::dvec3& p : w.iso.pos)
-                std::fprintf(f, "v %.9g %.9g %.9g\n", p.x, p.y, p.z);
-            for (const auto& t : w.iso.tris)
-                std::fprintf(f, "f %d %d %d\n", int(t[0] + 1), int(t[1] + 1), int(t[2] + 1));
-            for (uint64_t key : w.iso.hard)
-                std::fprintf(f, "l %d %d\n", int(key >> 32) + 1, int(key & 0xffffffffu) + 1);
-            std::fclose(f);
-        }
+    dumpWorking(w.iso);
     Budget::note(std::to_string(w.iso.tris.size()) + " working triangles for about " + std::to_string(int(faces)) + " faces");
     clock.lap("isotropic");
 }
@@ -2645,12 +2654,260 @@ constexpr double kLoopReach = 0.6;
 /** Longest hole, in edges, the grid's holes are filled across; a longer one means the cover folded over a region. */
 constexpr size_t kMaxGridHole = 24;
 
-/**
- * Closes the grid's holes off the source's borders: an even loop as a ladder of quads, an odd one as a ladder plus a
- * triangle for the pairing to walk off. False when a hole is too long or can't be traced as one loop.
- */
-bool fillGridHoles(const std::vector<glm::dvec3>& points, std::vector<std::vector<Index>>& faces, const Work& w)
+/** One way of closing a hole: its faces, the points it adds inside (indexed on from the soup's own), and what it costs. */
+struct HoleFill
 {
+    std::vector<std::vector<Index>> faces;
+    std::vector<glm::dvec3> added;
+    /**
+     * The irregular points it leaves: its own inner pole and the loop points that end up with three or five faces, with
+     * any other count but four weighing as four of those.
+     */
+    int poles = 0;
+    double unsquare = 0.0;
+
+    bool better(const HoleFill& o) const
+    {
+        // A fill with a corner folded back loses to any without.
+        const bool folded = unsquare >= 10.0, otherFolded = o.unsquare >= 10.0;
+        if (folded != otherFolded)
+            return otherFolded;
+        // A pole weighs as two corners 30 degrees off square: weighed any heavier, the fills that save one start to fold.
+        return 0.5 * double(poles) + unsquare < 0.5 * double(o.poles) + o.unsquare;
+    }
+};
+
+/** Builds a hole's fills over the soup's points, with the fill's own points indexed after them. */
+struct HoleFiller
+{
+    const std::vector<glm::dvec3>& points;
+    const std::vector<Index>& loop;
+    /** Faces each loop point has before the fill. */
+    const std::vector<int>& have;
+
+    glm::dvec3 at(const HoleFill& fill, Index p) const { return p < Index(points.size()) ? points[p] : fill.added[p - points.size()]; }
+
+    Index add(HoleFill& fill, const glm::dvec3& p) const
+    {
+        fill.added.push_back(p);
+        return Index(points.size() + fill.added.size() - 1);
+    }
+
+    void rate(HoleFill& fill, int innerPoles) const
+    {
+        std::unordered_map<Index, int> got;
+        for (const auto& f : fill.faces)
+            for (Index p : f)
+                ++got[p];
+        fill.poles = innerPoles;
+        for (size_t i = 0; i < loop.size(); ++i)
+        {
+            // Two faces round a point is a doublet and six or more a fan, each worse than several plain poles.
+            const int around = have[i] + got[loop[i]];
+            fill.poles += around == 4 ? 0 : around == 3 || around == 5 ? 1 : 4;
+        }
+        fill.unsquare = 0.0;
+        for (const auto& f : fill.faces)
+            for (size_t k = 0; k < f.size(); ++k)
+            {
+                const glm::dvec3 p = at(fill, f[k]), u = at(fill, f[(k + f.size() - 1) % f.size()]) - p, v = at(fill, f[(k + 1) % f.size()]) - p;
+                const double lu = glm::length(u), lv = glm::length(v);
+                const double c = lu > 0.0 && lv > 0.0 ? glm::dot(u, v) / (lu * lv) : -1.0;
+                fill.unsquare += c * c + (c < -0.9 ? 10.0 : 0.0);
+            }
+    }
+
+    /**
+     * A block of quads between four runs of points going round it, each starting where the one before ends; opposite
+     * runs are as long as each other. The points inside are blended from the four runs.
+     */
+    void block(HoleFill& fill, const std::vector<Index>& s0, const std::vector<Index>& s1, const std::vector<Index>& s2,
+               const std::vector<Index>& s3) const
+    {
+        const size_t m = s0.size() - 1, n = s1.size() - 1;
+        std::vector<Index> grid((m + 1) * (n + 1));
+        const glm::dvec3 c00 = at(fill, s0[0]), c10 = at(fill, s0[m]), c11 = at(fill, s1[n]), c01 = at(fill, s3[0]);
+        for (size_t j = 0; j <= n; ++j)
+            for (size_t i = 0; i <= m; ++i)
+            {
+                Index& g = grid[j * (m + 1) + i];
+                if (j == 0)
+                    g = s0[i];
+                else if (i == m)
+                    g = s1[j];
+                else if (j == n)
+                    g = s2[m - i];
+                else if (i == 0)
+                    g = s3[n - j];
+                else
+                {
+                    const double u = double(i) / double(m), v = double(j) / double(n);
+                    g = add(fill, (1.0 - v) * at(fill, s0[i]) + v * at(fill, s2[m - i]) + (1.0 - u) * at(fill, s3[n - j]) + u * at(fill, s1[j]) -
+                                      ((1.0 - u) * (1.0 - v) * c00 + u * (1.0 - v) * c10 + u * v * c11 + (1.0 - u) * v * c01));
+                }
+            }
+        for (size_t j = 0; j < n; ++j)
+            for (size_t i = 0; i < m; ++i)
+                fill.faces.push_back({grid[j * (m + 1) + i], grid[j * (m + 1) + i + 1], grid[(j + 1) * (m + 1) + i + 1], grid[(j + 1) * (m + 1) + i]});
+    }
+
+    /** The loop's points from position a on round to position b. */
+    std::vector<Index> run(size_t a, size_t b) const
+    {
+        std::vector<Index> out{loop[a % loop.size()]};
+        for (size_t k = a % loop.size(); k != b % loop.size();)
+        {
+            k = (k + 1) % loop.size();
+            out.push_back(loop[k]);
+        }
+        return out;
+    }
+
+    /**
+     * The fill the hole's own corners ask for, when it has only corners (three faces there already) and straight points
+     * (two): a block of quads for four corners with opposite sides alike, and for three, five or six a block at each
+     * corner round one pole in the middle. False when the sides' lengths don't allow it.
+     */
+    bool patch(HoleFill& fill) const
+    {
+        std::vector<size_t> corners;
+        for (size_t i = 0; i < loop.size(); ++i)
+        {
+            if (have[i] == 3)
+                corners.push_back(i);
+            else if (have[i] != 2)
+                return false;
+        }
+        const size_t c = corners.size(), n = loop.size();
+        if (c < 3 || c > 6)
+            return false;
+        std::vector<int> side(c);
+        for (size_t i = 0; i < c; ++i)
+            side[i] = int((corners[(i + 1) % c] + n - corners[i]) % n);
+        if (c == 4)
+        {
+            if (side[0] != side[2] || side[1] != side[3])
+                return false;
+            block(fill, run(corners[0], corners[1]), run(corners[1], corners[2]), run(corners[2], corners[3]), run(corners[3], corners[0]));
+            rate(fill, 0);
+            return true;
+        }
+        // Side i is spoke i - 1's length then spoke i + 1's. Stepping by two that closes on itself after an odd count
+        // (all the spokes for three or five corners, every other one for six), which leaves one answer.
+        std::vector<int> spoke(c, 0);
+        for (size_t start = 0; start < (c % 2 ? 1u : 2u); ++start)
+        {
+            int k = 0;
+            size_t j = start;
+            do
+            {
+                k = side[(j + 1) % c] - k;
+                j = (j + 2) % c;
+            } while (j != start);
+            if (k % 2 != 0)
+                return false;
+            spoke[start] = k / 2;
+            for (j = start; (j + 2) % c != start; j = (j + 2) % c)
+                spoke[(j + 2) % c] = side[(j + 1) % c] - spoke[j];
+        }
+        for (int s : spoke)
+            if (s < 1)
+                return false;
+        glm::dvec3 middle(0.0);
+        for (Index p : loop)
+            middle += points[p] / double(n);
+        const Index centre = add(fill, middle);
+        // Each spoke from its side's split point in to the centre.
+        std::vector<size_t> split(c);
+        std::vector<std::vector<Index>> spokes(c);
+        for (size_t i = 0; i < c; ++i)
+        {
+            split[i] = (corners[i] + size_t(spoke[(i + c - 1) % c])) % n;
+            spokes[i].push_back(loop[split[i]]);
+            for (int k = 1; k < spoke[i]; ++k)
+                spokes[i].push_back(add(fill, glm::mix(points[loop[split[i]]], middle, double(k) / double(spoke[i]))));
+            spokes[i].push_back(centre);
+        }
+        for (size_t i = 0; i < c; ++i)
+        {
+            const size_t before = (i + c - 1) % c;
+            std::vector<Index> back(spokes[before].rbegin(), spokes[before].rend());
+            block(fill, run(corners[i], split[i]), spokes[i], back, run(split[before], corners[i]));
+        }
+        rate(fill, 1);
+        return true;
+    }
+
+    /** Ladders of quads across an even loop, one per offset; the best joins `fill`'s faces when it beats it. */
+    void ladders(const std::vector<Index>& ring, const HoleFill& prefix, HoleFill& best, bool& any) const
+    {
+        const size_t n = ring.size(), m = n / 2;
+        for (size_t s = 0; s < m; ++s)
+        {
+            HoleFill fill = prefix;
+            if (n == 4)
+                fill.faces.push_back(ring);
+            else
+                for (size_t i = 0; i + 1 < m; ++i)
+                    fill.faces.push_back({ring[(s + i) % n], ring[(s + i + 1) % n], ring[(s + n - 2 - i) % n], ring[(s + n - 1 - i) % n]});
+            rate(fill, 0);
+            if (!any || fill.better(best))
+                best = std::move(fill);
+            any = true;
+            if (n == 4)
+                break;
+        }
+    }
+
+    /**
+     * The fill that leaves the fewest irregular points, the squarest among those: the hole's own patch, or a ladder of
+     * quads at any offset, with a triangle off any one point first when the loop is odd, for the pairing to walk off.
+     */
+    HoleFill best() const
+    {
+        HoleFill out;
+        bool any = false;
+        if (HoleFill own; patch(own))
+        {
+            out = std::move(own);
+            any = true;
+        }
+        if (loop.size() % 2 == 0)
+            ladders(loop, HoleFill(), out, any);
+        else
+            for (size_t r = 0; r < loop.size(); ++r)
+            {
+                const size_t n = loop.size();
+                HoleFill ear;
+                ear.faces.push_back({loop[r], loop[(r + 1) % n], loop[(r + 2) % n]});
+                std::vector<Index> ring;
+                for (size_t k = 0; k < n; ++k)
+                    if (k != (r + 1) % n)
+                        ring.push_back(loop[k]);
+                if (ring.size() < 4)
+                {
+                    rate(ear, 0);
+                    if (!any || ear.better(out))
+                        out = std::move(ear);
+                    any = true;
+                }
+                else
+                    ladders(ring, ear, out, any);
+            }
+        return out;
+    }
+};
+
+/**
+ * Closes the grid's holes off the source's borders, each with the fill that leaves the fewest irregular points (see
+ * HoleFiller::best). False when a hole is too long or can't be traced as one loop.
+ */
+bool fillGridHoles(std::vector<glm::dvec3>& points, std::vector<std::vector<Index>>& faces, const Work& w)
+{
+    std::vector<int> faceCount(points.size(), 0);
+    for (const auto& f : faces)
+        for (Index p : f)
+            ++faceCount[p];
     std::unordered_set<uint64_t> half;
     auto dkey = [](Index a, Index b) { return (uint64_t(a) << 32) | b; };
     for (const auto& f : faces)
@@ -2686,16 +2943,41 @@ bool fillGridHoles(const std::vector<glm::dvec3>& points, std::vector<std::vecto
         }
         if (at != start || loop.size() < 3 || loop.size() > kMaxGridHole)
             return false;
-        if (loop.size() % 2 == 1)
+        std::vector<int> have(loop.size());
+        for (size_t i = 0; i < loop.size(); ++i)
+            have[i] = faceCount[loop[i]];
+        HoleFill fill;
+        if (std::getenv("LILA_QR_LADDER_HOLES"))
         {
-            faces.push_back({loop[0], loop[1], loop[2]});
-            loop.erase(loop.begin() + 1);
+            if (loop.size() % 2 == 1)
+            {
+                fill.faces.push_back({loop[0], loop[1], loop[2]});
+                loop.erase(loop.begin() + 1);
+            }
+            if (loop.size() == 4)
+                fill.faces.push_back(loop);
+            else if (loop.size() > 4)
+                for (auto& quad : ladder(points, loop))
+                    fill.faces.push_back(std::move(quad));
         }
-        if (loop.size() == 4)
-            faces.push_back(loop);
-        else if (loop.size() > 4)
-            for (auto& quad : ladder(points, loop))
-                faces.push_back(std::move(quad));
+        else
+            fill = HoleFiller{points, loop, have}.best();
+        if (std::getenv("LILA_HOLE_LOG"))
+        {
+            std::string shape;
+            for (int n : have)
+                shape += char('0' + std::min(n, 9));
+            std::fprintf(stderr, "hole %zu: %s, %zu faces, %zu points inside, %d irregular\n", have.size(), shape.c_str(), fill.faces.size(),
+                         fill.added.size(), fill.poles);
+        }
+        points.insert(points.end(), fill.added.begin(), fill.added.end());
+        faceCount.resize(points.size(), 0);
+        for (auto& f : fill.faces)
+        {
+            for (Index p : f)
+                ++faceCount[p];
+            faces.push_back(std::move(f));
+        }
     }
     return true;
 }
