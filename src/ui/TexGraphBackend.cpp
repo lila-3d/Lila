@@ -365,7 +365,7 @@ void newSet()
 {
     UndoChunk chunk("New Texture Set");
     std::string slot = slotForNewSet();
-    json call = argsCall({uniqueName(slot.empty() ? "TextureSet" : slot + "Tex")});
+    json call = argsCall({uniqueName(slot.empty() ? "TextureSet" : tex::defaultSetName(slot))});
     if (!slot.empty())
         call["settings"] = {{"material", slot}};
     json r = runUi("texCreateSet", call);
@@ -406,6 +406,11 @@ void exportFile(const char* suffix)
         log::info("exported {}", r.get<std::string>());
 }
 } // namespace
+
+void openTextureSet(const std::string& set)
+{
+    openSet(set);
+}
 
 void registerTexGraphBackend()
 {

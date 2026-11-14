@@ -28,6 +28,9 @@ LILA_UI_API void registerTextureGraphUi();
 /** The texture set a material slot binds to: the one whose material setting names the slot, else the one named like it. */
 LILA_UI_API std::string textureSetForSlot(scene::Graph& g, const std::string& slot);
 
+/** Shows the Texture Graph panel with the set open in its editors. */
+LILA_UI_API void openTextureSet(const std::string& set);
+
 /** The set the texture actions work on: the Texture Graph editor's, else the 2D View's, else the first. */
 LILA_UI_API std::string currentTextureSet();
 

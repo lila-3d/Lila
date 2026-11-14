@@ -786,7 +786,7 @@ def bakeGroup(*objects: Any, project: str | None = None, lows: Sequence[Any] | N
         addHigh: Add highs. Short form ah.
         removeHigh: Remove highs. Short form rh.
         self: Add (True) or remove (False) the lows themselves as a high. Short form sf.
-        modifiers: Bake-only modifier stack, [{"kind": "subdivision", "params": {"levels": 2}}] or a preset name, for the highs given in this call (else every high). Kinds are modifierKinds(). Short form md.
+        modifiers: Bake-only modifier stack, [{"kind": "subdivision", "params": {"levels": 2}}] or a preset name, for the highs given in this call (else every high). Kinds are modifierKinds(). A subdivision here blends its uvs unless its params say uvs: 1 (Fit Surface), which takes many times longer on dense highs. Short form md.
         preset: A bake modifier preset instead of modifiers=: Smooth x2, Smooth x1-x4, Auto Bevel + Smooth, none. Short form ps.
         cage: A cage mesh with the low's topology (one low); empty uses the auto cage. Short form cg.
         cageOffset: Scales the auto cage's push (frontal distance). Short form co.
@@ -812,7 +812,7 @@ def bakeGroupPerMesh(*objects: Any, project: str | None = None, preset: str | No
     """
 
 def bakeLint(project: str | None = None, groups: Sequence[Any] | None = None, checks: Sequence[Any] | None = None, highs: bool | None = None, backend: str | None = None, *, pj: str | None = None, g: Sequence[Any] | None = None, c: Sequence[Any] | None = None, hi: bool | None = None, be: str | None = None) -> Any:
-    """Check a bake project before baking: hard edges off UV seams, overlapping UVs (also across groups writing one texture), missing or collapsed UVs, islands off their mesh's texel density, mirrored islands against tangent signs, lows with no high in range, highs outside the cage and cage topology; non-planar faces whose triangulation depends on the exporter only when checks names triangulation. Problems too small to show in the map are left out. bake runs it first and lists its warnings. Returns {issues: [{check, severity, group, mesh, message, data}], warnings, checks, distances: [{group, frontal, rear, frontalAuto, rearAuto, measured}]} (Auto distances are measured against the highs when highs is on).
+    """Check a bake project before baking: hard edges off UV seams, overlapping UVs (also across groups writing one texture), missing or collapsed UVs, islands off their mesh's texel density, mirrored islands against tangent signs, lows with no high in range, highs outside the cage, cage topology and lows shown without a modifier their export runs, where the viewport reads texels baked elsewhere (previewMesh); non-planar faces whose triangulation depends on the exporter only when checks names triangulation. Problems too small to show in the map are left out. bake runs it first and lists its warnings. Returns {issues: [{check, severity, group, mesh, message, data}], warnings, checks, distances: [{group, frontal, rear, frontalAuto, rearAuto, measured}]} (Auto distances are measured against the highs when highs is on).
 
     Args:
         project: The bake project; defaults to the scene's only one. Short form pj.
@@ -9316,6 +9316,13 @@ def show(*objects: Any, all: bool | None = None) -> Any:
         all: Show everything. Default False.
     """
 
+def showExportMesh(*objects: Any) -> Any:
+    """Show meshes as they export: every modifier's viewport state takes its export state, so a Subdivision left off in the viewport but on for export runs in both, and baked maps preview on the mesh they were baked for. Returns the modifiers changed.
+
+    Args:
+        objects: meshes.
+    """
+
 def showLastHidden() -> Any:
     """Show the objects the last hide (or hiding toggle) hid. Returns them."""
 
@@ -10081,7 +10088,7 @@ def symmetrizeSelection() -> Any:
     """Add the mirror images of the component selection, on each mesh whose symmetry is on."""
 
 def symmetryCheck(*objects: Any) -> Any:
-    """Report how symmetric meshes are across their symmetry plane (or round their radial axis): the largest distance between a point and its partner's reflection (or its orbit's image), and the points without a partner. For radial symmetry also the unmatched point ids and the count the mesh fits best. Changes nothing.
+    """Report how symmetric meshes are across their symmetry plane (or round their radial axis): the largest distance between a point and its partner's reflection (or its orbit's image), and the points without a partner. For radial symmetry also the unmatched point ids and the count the mesh fits best. For a mirror, planeTilt is how far (degrees) the plane sits off the world axes under the object's transform; a tilted one is warned about. Changes nothing.
 
     Args:
         objects: objects.
@@ -10244,7 +10251,7 @@ def texBrushPresets(name: str | None = None, reload: bool | None = None, *, n: s
     """
 
 def texBuildGraph(*objects: Any, assign: Sequence[Any] | None = None) -> Any:
-    """Build a material's texture graph from a compact spec, creating its texture set when it doesn't exist: {material, set, settings, description, nodes: [{name, type, params: {...}, values: {...}, position}], links: ['A.out -> Output.baseColor', ...]}. The set defaults to <material>Tex. A Material Output named Output is added when missing; positions are laid out when omitted. Nothing changes unless the whole spec is valid; the error lists every problem with the valid names. Returns the set, the material, the channels the graph drives and any compile error.
+    """Build a material's texture graph from a compact spec, creating its texture set when it doesn't exist: {material, set, settings, description, nodes: [{name, type, params: {...}, values: {...}, position}], links: ['A.out -> Output.baseColor', ...]}. The set defaults to the one bound to the material, else <material>Tex without the material's M_ prefix. A Material Output named Output is added when missing; positions are laid out when omitted. Nothing changes unless the whole spec is valid; the error lists every problem with the valid names. Returns the set, the material, the channels the graph drives and any compile error.
 
     Args:
         objects: spec.
