@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <map>
+#include <numeric>
 #include <chrono>
 #include <climits>
 #include <cmath>
@@ -764,6 +765,18 @@ struct Work
      */
     geo::Mesh caps;
     std::optional<geo::MeshBvh> capsBvh;
+    /**
+     * The caps that stand in for a creased shape's flat faces (a bust's cut base): laid out and kept, their rims held as
+     * edge loops like any cap's.
+     */
+    geo::Mesh keptCaps;
+    std::optional<geo::MeshBvh> keptCapsBvh;
+    /** Whether a point of the working triangles lies on a kept cap: they are flat, so on one is on its plane. */
+    bool onKeptCap(const glm::dvec3& p) const
+    {
+        geo::BvhClosest on;
+        return keptCapsBvh && keptCapsBvh->closestPoint(p, on, 1e-4 * h0);
+    }
     /** Whether a point of the capped surface lies on a cap rather than on the source. */
     bool onCap(const glm::dvec3& p) const
     {
@@ -1014,9 +1027,11 @@ std::unordered_set<uint64_t> symmetrize(Surface& iso, const geo::SymmetryPlane& 
  * Closes an open working surface with a cap over each border loop: a fan to the loop's centre, remeshed to the working
  * triangles' size with the loop left as it is. The border edges are returned, for the layout to hold as edge loops.
  * False when a border isn't a plain loop, or the caps would be a large part of the result (a sheet seen from one side
- * has a border all round it and a cap the size of itself).
+ * has a border all round it and a cap the size of itself). With `border` given, only the loops along it are the
+ * source's own borders; the caps over the others go to `kept`, and those loops are left as they are.
  */
-bool capBorders(Surface& iso, geo::Mesh& caps, std::unordered_set<uint64_t>& chain)
+bool capBorders(Surface& iso, geo::Mesh& caps, std::unordered_set<uint64_t>& chain, const FeatureLines* border = nullptr, double reach = 0.0,
+                geo::Mesh* kept = nullptr)
 {
     constexpr double kLargestShare = 0.3;
     // Each border edge the way its triangle runs it, so the caps face the same way round.
@@ -1036,7 +1051,7 @@ bool capBorders(Surface& iso, geo::Mesh& caps, std::unordered_set<uint64_t>& cha
     if (next.empty())
         return true;
     const double edge = iso.meanEdgeLength();
-    std::vector<Index> capCorners;
+    std::vector<Index> capCorners, keptCorners;
     std::vector<std::array<Index, 3>> added;
     std::vector<glm::dvec3> addedPoints;
     double capArea = 0.0;
@@ -1069,9 +1084,16 @@ bool capBorders(Surface& iso, geo::Mesh& caps, std::unordered_set<uint64_t>& cha
     }
     for (const std::vector<Index>& loop : loops)
     {
+        bool own = true;
+        if (border)
+        {
+            glm::dvec3 q;
+            for (Index v : loop)
+                own = own && border->closest(iso.pos[v], reach, q);
+        }
         // A border left by deleting faces is a sawtooth, and the layout would turn at every tooth. The working border
         // is evened out along itself; the result's border points go back onto the source's own.
-        for (int pass = 0; pass < 12; ++pass)
+        for (int pass = 0; own && pass < 12; ++pass)
         {
             std::vector<glm::dvec3> evened(loop.size());
             for (size_t i = 0; i < loop.size(); ++i)
@@ -1124,19 +1146,21 @@ bool capBorders(Surface& iso, geo::Mesh& caps, std::unordered_set<uint64_t>& cha
         if (met != loop.size())
             return false;
         for (const auto& t : remesher.remeshedTriangles())
+        {
             added.push_back({id[t[0]], id[t[1]], id[t[2]]});
+            std::vector<Index>& corners = own ? capCorners : keptCorners;
+            corners.insert(corners.end(), {id[t[0]], id[t[1]], id[t[2]]});
+        }
         for (size_t i = 0; i < loop.size(); ++i)
             chain.insert(edgeKey(loop[i], loop[(i + 1) % loop.size()]));
     }
     iso.pos.insert(iso.pos.end(), addedPoints.begin(), addedPoints.end());
     iso.density.resize(iso.pos.size(), 1.0f);
-    std::vector<Index> sizes(added.size(), 3);
     for (const auto& t : added)
-    {
         iso.tris.push_back(t);
-        capCorners.insert(capCorners.end(), t.begin(), t.end());
-    }
-    caps = geo::Mesh::fromPolygons(iso.pos, sizes, capCorners);
+    caps = geo::Mesh::fromPolygons(iso.pos, std::vector<Index>(capCorners.size() / 3, 3), capCorners);
+    if (kept)
+        *kept = geo::Mesh::fromPolygons(iso.pos, std::vector<Index>(keptCorners.size() / 3, 3), keptCorners);
     iso.buildTopology();
     iso.buildGeometry();
     return true;
@@ -1158,12 +1182,115 @@ void dumpWorking(const Surface& iso)
     std::fclose(f);
 }
 
+/**
+ * A creased shape whose creases are all rims of flat faces on an otherwise smooth body (a sculpted bust cut flat at the
+ * base): the body's triangles, with the flat faces taken off for caps to stand in. False for any other creased shape.
+ * A few stray sharp edges on the body itself (under a crease for every fifty quads' worth of surface) don't count and
+ * come back in `stray`. s needs detectFeatures; h is the quad edge.
+ */
+bool withoutFlatFaces(const Surface& s, double h, std::vector<std::array<Index, 3>>& body, std::vector<size_t>& stray)
+{
+    const auto why = [](int check) {
+        if (std::getenv("LILA_STAGE_LOG"))
+            std::fprintf(stderr, "flat faces: check %d failed\n", check);
+        return false;
+    };
+    const double tolerance = 0.1 * h;
+    constexpr double kLargestShare = 0.3;
+    const Index nt = Index(s.tris.size());
+    std::vector<Index> parent(nt);
+    std::iota(parent.begin(), parent.end(), Index(0));
+    const auto find = [&](Index x) {
+        while (parent[x] != x)
+            x = parent[x] = parent[parent[x]];
+        return x;
+    };
+    for (size_t e = 0; e < s.edges.size(); ++e)
+        if (s.edgeTriCount[e] == 2 && !s.edgeFeature[e])
+            parent[find(s.edgeTris[e][0])] = find(s.edgeTris[e][1]);
+    std::vector<double> area(nt, 0.0);
+    double total = 0.0;
+    for (Index t = 0; t < nt; ++t)
+    {
+        area[find(t)] += s.triArea[t];
+        total += s.triArea[t];
+    }
+    const Index main = Index(std::max_element(area.begin(), area.end()) - area.begin());
+    if (area[main] < (1.0 - kLargestShare) * total)
+        return why(1);
+    // Every crease has the body on one side and a face on the other.
+    for (size_t e = 0; e < s.edges.size(); ++e)
+        if (s.edgeFeature[e] && !s.edgeBoundary[e])
+        {
+            // An edge the simplifying left with three triangles is no crease of the shape.
+            if (s.edgeTriCount[e] != 2)
+            {
+                stray.push_back(e);
+                continue;
+            }
+            const Index a = find(s.edgeTris[e][0]), b = find(s.edgeTris[e][1]);
+            if (a == main && b == main)
+                stray.push_back(e);
+            else if (a != main && b != main)
+                return why(3);
+        }
+    double strayLength = 0.0;
+    for (size_t e : stray)
+        if (s.edgeTriCount[e] == 2)
+            strayLength += glm::distance(s.pos[s.edges[e][0]], s.pos[s.edges[e][1]]);
+    if (strayLength * h > 0.02 * total)
+        return why(4);
+    // Each face flat, and a disc: one rim, no handle.
+    struct Face
+    {
+        glm::dvec3 normal{0.0}, centre{0.0};
+        std::unordered_set<Index> points;
+        int triangles = 0, edges = 0;
+        /** Holds an edge with three triangles, so its counts say nothing of its shape. */
+        bool tangled = false;
+    };
+    std::unordered_map<Index, Face> faces;
+    for (Index t = 0; t < nt; ++t)
+        if (const Index c = find(t); c != main)
+        {
+            Face& f = faces[c];
+            f.normal += s.triNormal[t] * s.triArea[t];
+            f.centre += (s.pos[s.tris[t][0]] + s.pos[s.tris[t][1]] + s.pos[s.tris[t][2]]) * (s.triArea[t] / 3.0);
+            f.points.insert(s.tris[t].begin(), s.tris[t].end());
+            ++f.triangles;
+        }
+    if (faces.empty())
+        return why(5);
+    for (size_t e = 0; e < s.edges.size(); ++e)
+        for (int k = 0; k < std::min<int>(s.edgeTriCount[e], 2); ++k)
+            if (const Index c = find(s.edgeTris[e][k]); c != main && (k == 0 || find(s.edgeTris[e][0]) != c))
+            {
+                ++faces[c].edges;
+                faces[c].tangled = faces[c].tangled || s.edgeTriCount[e] > 2;
+            }
+    for (auto& [c, f] : faces)
+    {
+        if (area[c] <= 0.0 || (!f.tangled && int(f.points.size()) - f.edges + f.triangles != 1))
+            return why(6);
+        f.centre /= area[c];
+        f.normal = glm::normalize(f.normal);
+        for (Index p : f.points)
+            if (std::abs(glm::dot(s.pos[p] - f.centre, f.normal)) > tolerance)
+                return why(7);
+    }
+    for (Index t = 0; t < nt; ++t)
+        if (find(t) == main)
+            body.push_back(s.tris[t]);
+    return true;
+}
+
 /** Working triangles per quad for the stock stages, which size their quads off the triangles' mean edge. */
 constexpr double kStockTriangles = 6.0;
 
 /**
  * The stock stages' working triangles. False when the simplified surface turns out to have creases to hold, which the
- * stock isotropic pass can't be told about; s is then spent and has to be read again.
+ * stock isotropic pass can't be told about; s is then spent and has to be read again. Creases that are only the rims
+ * of flat faces are held all the same: the faces come off, the body is laid out as an open shape, and its caps are kept.
  */
 bool prepareStock(Work& w, const QuadRemeshOptions& opts, double faces, double halves, Stopwatch& clock)
 {
@@ -1200,9 +1327,43 @@ bool prepareStock(Work& w, const QuadRemeshOptions& opts, double faces, double h
     };
     fill(s, simpleVertices, simpleTriangles);
     s.detectFeatures(opts.sharpAngle, 75.0, 2.0 * w.h0);
+    bool creased = false;
     for (size_t e = 0; e < s.edges.size(); ++e)
-        if (s.edgeFeature[e] && !s.edgeBoundary[e])
+        creased = creased || (s.edgeFeature[e] && s.edgeTriCount[e] == 2);
+    if (creased)
+    {
+        std::vector<std::array<Index, 3>> body;
+        std::vector<size_t> stray;
+        if (std::getenv("LILA_QR_NO_KEPT_CAPS") || !withoutFlatFaces(s, w.h0, body, stray))
             return false;
+        for (size_t e : stray)
+        {
+            s.edgeFeature[e] = 0;
+            for (Index v : s.edges[e])
+                s.feature[v] = FeatureKind::None;
+        }
+        // The stock isotropic pass crumples a flat face made of slivers, so it only sees the body.
+        std::vector<Index> local(s.pos.size(), kInvalid);
+        vertices.clear();
+        triangles.clear();
+        for (const auto& t : body)
+        {
+            std::vector<size_t> tri;
+            for (Index v : t)
+            {
+                if (local[v] == kInvalid)
+                {
+                    local[v] = Index(vertices.size());
+                    vertices.push_back(AutoRemesher::Vector3(s.pos[v].x, s.pos[v].y, s.pos[v].z));
+                }
+                tri.push_back(size_t(local[v]));
+            }
+            triangles.push_back(std::move(tri));
+        }
+        AutoRemesher::AutoRemesher::resample(vertices, triangles, voxel, 4.0 * opts.adaptivity, 180.0, 0.0, 0, nullptr, nullptr, &progress, nullptr,
+                                             nullptr);
+        w.creases.build(s, 0.5 * w.h0, false, true);
+    }
     w.border.build(s, 0.5 * w.h0, true);
     clock.lap("surface");
     {
@@ -1214,28 +1375,36 @@ bool prepareStock(Work& w, const QuadRemeshOptions& opts, double faces, double h
         w.simpleBvh.emplace(w.simple);
     }
     fill(w.iso, vertices, triangles);
+    // Kept caps go on first, so the chain on the symmetry plane runs across them too.
+    if (creased && !capBorders(w.iso, w.caps, w.iso.hard, &w.border, 0.75 * w.h0, &w.keptCaps))
+    {
+        w.iso = Surface();
+        return false;
+    }
     if (w.symmetric)
     {
-        w.iso.hard = symmetrize(w.iso, w.plane, opts.symmetryAxis);
+        const std::unordered_set<uint64_t> chain = symmetrize(w.iso, w.plane, opts.symmetryAxis);
+        w.iso.hard.insert(chain.begin(), chain.end());
         w.wholeLayout = true;
     }
-    if (!w.closed)
+    if (!w.closed && !creased && !capBorders(w.iso, w.caps, w.iso.hard))
     {
-        if (!capBorders(w.iso, w.caps, w.iso.hard))
-        {
-            w.iso = Surface();
-            w.wholeLayout = false;
-            return false;
-        }
-        w.capsBvh.emplace(w.caps);
+        w.iso = Surface();
+        w.wholeLayout = false;
+        return false;
     }
+    if (w.caps.numFaces() > 0)
+        w.capsBvh.emplace(w.caps);
+    if (w.keptCaps.numFaces() > 0)
+        w.keptCapsBvh.emplace(w.keptCaps);
     w.iso.detectFeatures(-1.0, 75.0, 0.0);
     w.isoSize.assign(w.iso.pos.size(), w.h0);
     w.stock = w.stockSizes = true;
     dumpWorking(w.iso);
     w.stockQuads = opts.targetEdgeLength > 0.0 ? s.totalArea() / (w.h0 * w.h0) : faces * halves;
     if (std::getenv("LILA_STAGE_LOG"))
-        std::fprintf(stderr, "stock triangles: %zu simplified, %zu working, edge %g\n", s.tris.size(), w.iso.tris.size(), voxel);
+        std::fprintf(stderr, "stock triangles: %zu simplified, %zu working, edge %g, %u cap and %u kept cap triangles, %zu held edges\n", s.tris.size(),
+                     w.iso.tris.size(), voxel, unsigned(w.caps.numFaces()), unsigned(w.keptCaps.numFaces()), w.iso.hard.size());
     Budget::note(std::to_string(w.iso.tris.size()) + " working triangles for about " + std::to_string(int(faces * halves)) + " faces");
     clock.lap("isotropic");
     return true;
@@ -1632,6 +1801,14 @@ CoverInput coverInput(const Work& w, const QuadRemeshOptions& opts, std::string&
         in.onCap.resize(iso.tris.size());
         tbb::parallel_for(size_t(0), iso.tris.size(), [&](size_t t) { in.onCap[t] = w.onCap(centre(t)); });
     }
+    if (w.keptCapsBvh)
+    {
+        in.onAnyCap.resize(iso.tris.size());
+        tbb::parallel_for(size_t(0), iso.tris.size(),
+                          [&](size_t t) { in.onAnyCap[t] = (!in.onCap.empty() && in.onCap[t]) || w.onKeptCap(centre(t)); });
+    }
+    else
+        in.onAnyCap = in.onCap;
 
     // Flow guides: faces the curve passes over follow it.
     if (!opts.guides.empty())
@@ -1887,8 +2064,10 @@ void setUp(AutoRemesher::Parameterizer& pz, const CoverInput& in, const Work& w)
         pz.setGradientAdaptivity(4.0 * w.adaptivity);
         tameSizes(pz);
         pz.setTargetQuadCount(w.stockQuads);
+        if (!in.onAnyCap.empty())
+            pz.setUnsizedFaces(&in.onAnyCap);
         if (!in.onCap.empty())
-            pz.setUnsizedFaces(&in.onCap);
+            pz.setUncountedFaces(&in.onCap);
         pz.setFeatureEdges(&in.features);
         if (!in.sizeFactor.empty())
             pz.setFaceScalingMultiplier(&in.sizeFactor);
