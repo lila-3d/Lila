@@ -3562,6 +3562,56 @@ void dropBorderFlaps(geo::Mesh& m, double h)
         m.removeAllLoose();
 }
 
+/**
+ * Closes up the faces left with no area once their points are on the creases: points taken onto the same spot become
+ * one, and a quad squashed onto a line (two opposite corners together between the other two) goes, those corners one.
+ */
+void closeFlatFaces(geo::Mesh& m, double h)
+{
+    const double together = 1e-6 * h;
+    std::vector<Index> target(m.pointCapacity(), kInvalid), squashed;
+    auto root = [&](Index p) {
+        while (target[p] != kInvalid && target[p] != p)
+            p = target[p];
+        return p;
+    };
+    bool any = false;
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+    {
+        if (!m.faceValid(f) || m.faceArea(f) > 1e-6 * h * h)
+            continue;
+        const std::vector<Index> pts = m.facePoints(f);
+        bool closed = false;
+        for (size_t k = 0; k < pts.size(); ++k)
+        {
+            const Index a = root(pts[k]), b = root(pts[(k + 1) % pts.size()]);
+            if (a != b && glm::distance(m.position(a), m.position(b)) < together)
+            {
+                target[b] = a;
+                closed = any = true;
+            }
+        }
+        if (closed || pts.size() != 4)
+            continue;
+        const double d02 = glm::distance(m.position(pts[0]), m.position(pts[2])), d13 = glm::distance(m.position(pts[1]), m.position(pts[3]));
+        const Index a = root(d02 < d13 ? pts[0] : pts[1]), b = root(d02 < d13 ? pts[2] : pts[3]);
+        if (std::min(d02, d13) > 0.25 * h || a == b || m.isBoundaryPoint(a) != m.isBoundaryPoint(b))
+            continue;
+        target[b] = a;
+        squashed.push_back(f);
+        any = true;
+    }
+    if (!any)
+        return;
+    for (Index f : squashed)
+        m.removeFace(f);
+    for (Index p = 0; p < Index(target.size()); ++p)
+        if (target[p] != kInvalid)
+            target[p] = root(p);
+    geo::weldPoints(m, target);
+    m.removeAllLoose();
+}
+
 /** The connected parts of a surface, each with its share of the per-vertex sizes. */
 std::vector<std::pair<Surface, std::vector<double>>> surfaceParts(const Surface& s, const std::vector<double>& size)
 {
@@ -3755,6 +3805,7 @@ QuadRemeshResult coverRemesh(Work& w, const QuadRemeshOptions& opts, Stopwatch& 
         freeCreaseFlaps(m, feature, *w.simpleBvh, h0);
         relaxAlongFeatures(m, feature, *w.simpleBvh, w.creases, w.border, h0, opts.relaxIterations, axis);
         unfold(m, feature, src, bvh, *w.simpleBvh, axis, h0);
+        closeFlatFaces(m, h0);
         dropBorderFlaps(m, h0);
     }
     clock.lap("refine");
