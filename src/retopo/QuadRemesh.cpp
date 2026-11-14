@@ -3522,6 +3522,35 @@ bool coverSoup(Work& w, const QuadRemeshOptions& opts, std::vector<glm::dvec3>& 
     return true;
 }
 
+/**
+ * Removes faces left lying flat along a border, hung on it by one edge: a quad that straddled the border of a cap has
+ * its two outer points taken onto the border with the rest, and no area left.
+ */
+void dropBorderFlaps(geo::Mesh& m, double h)
+{
+    std::vector<Index> hung;
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+    {
+        if (!m.faceValid(f) || m.faceArea(f) > 0.02 * h * h)
+            continue;
+        std::vector<Index> loose;
+        bool onBorder = true;
+        for (Index p : m.facePoints(f))
+        {
+            onBorder = onBorder && m.isBoundaryPoint(p);
+            if (m.pointValence(p) == 2)
+                loose.push_back(p);
+        }
+        if (onBorder && loose.size() >= 2)
+            hung.insert(hung.end(), loose.begin(), loose.end());
+    }
+    for (Index p : hung)
+        if (m.pointValid(p))
+            m.removePoint(p);
+    if (!hung.empty())
+        m.removeAllLoose();
+}
+
 /** The connected parts of a surface, each with its share of the per-vertex sizes. */
 std::vector<std::pair<Surface, std::vector<double>>> surfaceParts(const Surface& s, const std::vector<double>& size)
 {
@@ -3715,6 +3744,7 @@ QuadRemeshResult coverRemesh(Work& w, const QuadRemeshOptions& opts, Stopwatch& 
         freeCreaseFlaps(m, feature, *w.simpleBvh, h0);
         relaxAlongFeatures(m, feature, *w.simpleBvh, w.creases, w.border, h0, opts.relaxIterations, axis);
         unfold(m, feature, src, bvh, *w.simpleBvh, axis, h0);
+        dropBorderFlaps(m, h0);
     }
     clock.lap("refine");
 
