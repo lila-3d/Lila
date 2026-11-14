@@ -729,9 +729,22 @@ constexpr double kTriangleRatio = 1.0;
 
 double triangleRatio() { return kTriangleRatio; }
 
+/** A sharp tip cut off the working surface and built back on the result: see clipSharpTips and closeTips. */
+struct ClippedTip
+{
+    /** The cut is the plane across `axis` at `depth` from the tip, out to `radius` from the axis. */
+    glm::dvec3 tip, axis;
+    double depth = 0.0, radius = 0.0;
+    /** The creases running across the tip (a prism's edge between its two corners) the rungs end on; empty for a point. */
+    std::vector<std::array<glm::dvec3, 2>> core;
+    /** The cut's own points on the surface. */
+    std::vector<glm::dvec3> rim;
+};
+
 /** The source surface, its features and the quad size wanted over it, then the working triangles the quads are laid out on. */
 struct Work
 {
+    std::vector<ClippedTip> tips;
     geo::Mesh src;
     std::optional<geo::MeshBvh> bvh;
     bool closed = false;
@@ -1166,6 +1179,442 @@ bool capBorders(Surface& iso, geo::Mesh& caps, std::unordered_set<uint64_t>& cha
     return true;
 }
 
+/**
+ * Cuts the sharp tips off a closed creased surface: where three or more creases meet and two of them bound a sector of
+ * a face under 45 degrees (a star prism's points, a blade's tip), lines of the layout held along both sides run
+ * together and the cover collapses all the way up the spike. Each such tip is cut across where its sector is a quad
+ * wide, leaving a hole whose rim is a border to the layout; closeTips builds the tip back on the result. s needs
+ * buildTopology, buildGeometry and detectFeatures, and needs them again when anything was cut.
+ */
+void clipSharpTips(Surface& s, double h, double sharpAngleDeg, std::vector<ClippedTip>& tips)
+{
+    constexpr double kSharpest = 0.7853981633974483, kWidth = 1.0, kDeepest = 6.0, kLargestShare = 0.25;
+    const Index n = s.vertexCount();
+    const double cosSharp = sharpAngleDeg >= 0.0 ? std::cos(glm::radians(sharpAngleDeg)) : -2.0;
+    auto sharp = [&](Index e) {
+        if (s.edgeTriCount[e] != 2)
+            return false;
+        return s.edgeFeature[e] != 0 || glm::dot(s.triNormal[s.edgeTris[e][0]], s.triNormal[s.edgeTris[e][1]]) < cosSharp;
+    };
+    std::vector<std::vector<Index>> around(n);
+    for (Index t = 0; t < Index(s.tris.size()); ++t)
+        for (Index v : s.tris[t])
+            around[v].push_back(t);
+    struct Candidate
+    {
+        double angle;
+        Index v;
+        glm::dvec3 axis;
+    };
+    std::vector<Candidate> candidates;
+    for (Index v = 0; v < n; ++v)
+    {
+        if (s.onBoundary[v])
+            continue;
+        std::unordered_map<Index, Index> edgeTo, byFirst;
+        int creases = 0;
+        for (Index k = s.adjStart[v]; k < s.adjStart[v + 1]; ++k)
+        {
+            edgeTo[s.adj[k]] = s.adjEdge[k];
+            creases += sharp(s.adjEdge[k]);
+        }
+        if (creases < 3)
+            continue;
+        auto sides = [&](Index t, Index& a, Index& b) {
+            const auto& tri = s.tris[t];
+            const int k = tri[0] == v ? 0 : tri[1] == v ? 1 : 2;
+            a = tri[(k + 1) % 3];
+            b = tri[(k + 2) % 3];
+        };
+        for (Index t : around[v])
+        {
+            Index a, b;
+            sides(t, a, b);
+            byFirst[a] = t;
+        }
+        Candidate best{kSharpest, kInvalid, glm::dvec3(0.0)};
+        for (Index start : around[v])
+        {
+            Index a, b;
+            sides(start, a, b);
+            if (!sharp(edgeTo[a]))
+                continue;
+            const Index first = a;
+            double angle = 0.0;
+            bool closed = false;
+            Index t = start;
+            for (size_t guard = 0; guard < around[v].size(); ++guard)
+            {
+                sides(t, a, b);
+                angle += std::acos(std::clamp(glm::dot(glm::normalize(s.pos[a] - s.pos[v]), glm::normalize(s.pos[b] - s.pos[v])), -1.0, 1.0));
+                if (sharp(edgeTo[b]))
+                {
+                    closed = true;
+                    break;
+                }
+                auto next = byFirst.find(b);
+                if (next == byFirst.end())
+                    break;
+                t = next->second;
+            }
+            if (closed && angle > 1e-3 && angle < best.angle)
+                best = {angle, v, glm::normalize(glm::normalize(s.pos[first] - s.pos[v]) + glm::normalize(s.pos[b] - s.pos[v]))};
+        }
+        if (best.v != kInvalid)
+            candidates.push_back(best);
+    }
+    if (candidates.empty())
+        return;
+    std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) { return a.angle < b.angle; });
+    const double total = s.totalArea();
+    // Per vertex, the tip whose cut takes it off.
+    std::vector<int> region(n, -1);
+    std::vector<ClippedTip> cut;
+    for (const Candidate& c : candidates)
+    {
+        if (region[c.v] >= 0)
+            continue;
+        ClippedTip tip;
+        tip.tip = s.pos[c.v];
+        tip.axis = c.axis;
+        tip.depth = std::min(kDeepest * h, 0.5 * kWidth * h / std::tan(0.5 * c.angle));
+        auto along = [&](Index v) { return glm::dot(s.pos[v] - tip.tip, tip.axis); };
+        // What the plane takes off: the points this side of it joined to the tip.
+        std::vector<Index> taken{c.v}, stack{c.v};
+        std::unordered_set<Index> inside{c.v};
+        bool clean = true;
+        double area = 0.0;
+        while (!stack.empty() && clean)
+        {
+            const Index v = stack.back();
+            stack.pop_back();
+            clean = !s.onBoundary[v] && region[v] < 0;
+            area += s.area[v];
+            for (Index k = s.adjStart[v]; k < s.adjStart[v + 1] && clean; ++k)
+            {
+                const Index u = s.adj[k];
+                clean = region[u] < 0;
+                if (along(u) < tip.depth && inside.insert(u).second)
+                {
+                    taken.push_back(u);
+                    stack.push_back(u);
+                }
+            }
+        }
+        if (!clean || area > kLargestShare * total)
+            continue;
+        const int id = int(cut.size());
+        for (Index v : taken)
+            region[v] = id;
+        for (size_t e = 0; e < s.edges.size(); ++e)
+        {
+            const Index a = s.edges[e][0], b = s.edges[e][1];
+            if (region[a] != id || region[b] != id || !sharp(Index(e)))
+                continue;
+            const glm::dvec3 dir = glm::normalize(s.pos[b] - s.pos[a]);
+            if (std::abs(glm::dot(dir, tip.axis)) < 0.5)
+                tip.core.push_back({s.pos[a], s.pos[b]});
+        }
+        cut.push_back(std::move(tip));
+    }
+    if (cut.empty())
+        return;
+    std::unordered_map<uint64_t, Index> onEdge;
+    auto crossing = [&](Index in, Index out) {
+        const uint64_t key = edgeKey(in, out);
+        if (auto it = onEdge.find(key); it != onEdge.end())
+            return it->second;
+        ClippedTip& tip = cut[size_t(region[in])];
+        const double a = glm::dot(s.pos[in] - tip.tip, tip.axis), b = glm::dot(s.pos[out] - tip.tip, tip.axis);
+        const double t = std::clamp((tip.depth - a) / std::max(b - a, 1e-300), 0.0, 1.0);
+        const Index made = Index(s.pos.size());
+        s.pos.push_back(glm::mix(s.pos[in], s.pos[out], t));
+        s.density.push_back(glm::mix(s.density[in], s.density[out], float(t)));
+        tip.radius = std::max(tip.radius, glm::distance(s.pos[made], tip.tip + tip.depth * tip.axis));
+        tip.rim.push_back(s.pos[made]);
+        if (s.hard.contains(key))
+            s.hard.insert(edgeKey(made, out));
+        onEdge[key] = made;
+        return made;
+    };
+    std::vector<std::array<Index, 3>> kept;
+    for (const auto& tri : s.tris)
+    {
+        int in = 0;
+        for (Index v : tri)
+            in += region[v] >= 0;
+        if (in == 0)
+            kept.push_back(tri);
+        if (in == 0 || in == 3)
+            continue;
+        // The part beyond the plane: the points off the tip and the two crossings.
+        std::vector<Index> poly;
+        for (int k = 0; k < 3; ++k)
+        {
+            const Index a = tri[k], b = tri[(k + 1) % 3];
+            if (region[a] < 0)
+                poly.push_back(a);
+            if ((region[a] < 0) != (region[b] < 0))
+                poly.push_back(region[a] >= 0 ? crossing(a, b) : crossing(b, a));
+        }
+        for (size_t k = 1; k + 1 < poly.size(); ++k)
+            kept.push_back({poly[0], poly[k], poly[k + 1]});
+    }
+    s.tris = std::move(kept);
+    tips.insert(tips.end(), cut.begin(), cut.end());
+}
+
+/**
+ * Builds the tips clipSharpTips cut off back onto the result: each hole left round a cut is closed with rungs of faces
+ * running from its rim to the tip's own creases, a ring a quad apart, the last ring on the crease (or the tip point).
+ * Returns how many tips were closed.
+ */
+int closeTips(geo::Mesh& m, const std::vector<ClippedTip>& tips, double h, const geo::MeshBvh& surface)
+{
+    if (tips.empty())
+        return 0;
+    // A cut the extraction closed over: the faces lying on its plane go, and leave its rim.
+    {
+        bool any = false;
+        for (Index f = 0; f < m.faceCapacity(); ++f)
+        {
+            if (!m.faceValid(f))
+                continue;
+            const glm::dvec3 centre = m.faceCentroid(f), normal = m.faceNormal(f);
+            for (const ClippedTip& tip : tips)
+                if (std::abs(glm::dot(centre - tip.tip, tip.axis) - tip.depth) < 0.25 * h &&
+                    glm::distance(centre, tip.tip + tip.depth * tip.axis) < tip.radius && std::abs(glm::dot(normal, tip.axis)) > 0.7)
+                {
+                    m.removeFace(f);
+                    any = true;
+                    break;
+                }
+        }
+        if (any)
+            m.removeAllLoose();
+    }
+    // Each border edge the way its face runs it.
+    std::unordered_map<Index, Index> next;
+    auto trace = [&] {
+        next.clear();
+        for (Index f = 0; f < m.faceCapacity(); ++f)
+            if (m.faceValid(f))
+                m.forEachFaceCorner(f, [&](Index c) {
+                    if (m.isBoundaryEdge(m.cornerEdge(c)))
+                        next[m.cornerPoint(c)] = m.cornerNextPoint(c);
+                });
+    };
+    trace();
+    // Two rim points taken onto the same corner of a cut are one point.
+    {
+        std::vector<Index> target(m.pointCapacity(), kInvalid);
+        bool any = false;
+        for (const auto& [a, b] : next)
+            if (glm::distance(m.position(a), m.position(b)) < 1e-6 * h)
+            {
+                Index to = a;
+                while (target[to] != kInvalid)
+                    to = target[to];
+                if (to != b)
+                {
+                    target[b] = to;
+                    any = true;
+                }
+            }
+        if (any)
+        {
+            for (Index p = 0; p < Index(target.size()); ++p)
+                if (target[p] != kInvalid)
+                    while (target[target[p]] != kInvalid)
+                        target[p] = target[target[p]];
+            geo::weldPoints(m, target);
+            m.removeAllLoose();
+            trace();
+        }
+    }
+    std::vector<std::vector<Index>> loops;
+    std::unordered_set<Index> seen;
+    for (const auto& [start, unused] : next)
+    {
+        if (seen.contains(start))
+            continue;
+        std::vector<Index> loop;
+        Index at = start;
+        while (!seen.contains(at) && next.contains(at))
+        {
+            seen.insert(at);
+            loop.push_back(at);
+            at = next.at(at);
+        }
+        if (at == start && loop.size() >= 3)
+            loops.push_back(std::move(loop));
+    }
+    int closed = 0;
+    std::vector<uint8_t> used(loops.size(), 0);
+    for (const ClippedTip& tip : tips)
+    {
+        const glm::dvec3 middle = tip.tip + tip.depth * tip.axis;
+        for (size_t l = 0; l < loops.size(); ++l)
+        {
+            if (used[l])
+                continue;
+            std::vector<Index>& loop = loops[l];
+            std::vector<uint8_t> atCut(loop.size());
+            size_t count = 0;
+            for (size_t i = 0; i < loop.size(); ++i)
+            {
+                const glm::dvec3 at = m.position(loop[i]);
+                // On the cut's plane and by its rim: the plane alone passes through the next tip's rim too.
+                if (std::abs(glm::dot(at - tip.tip, tip.axis) - tip.depth) > 0.75 * h)
+                    continue;
+                for (size_t k = 0; k < tip.rim.size() && !atCut[i]; ++k)
+                    atCut[i] = glm::distance(at, tip.rim[k]) < 2.5 * h;
+                count += atCut[i];
+            }
+            if (std::getenv("LILA_TIP_LOG") && count > 0)
+            {
+                std::string flags;
+                for (uint8_t f : atCut)
+                    flags += f ? 'x' : '.';
+                std::fprintf(stderr, "tip loop %s\n", flags.c_str());
+            }
+            if (5 * count < 3 * loop.size() || count < 3)
+                continue;
+            if (count < loop.size())
+            {
+                // The rim with a notch in it, where the layout left a face or two out beside the cut: each notch is
+                // closed with one face, and the rim runs straight past it.
+                size_t first = 0;
+                while (!atCut[first] || atCut[(first + loop.size() - 1) % loop.size()])
+                    first = (first + 1) % loop.size();
+                std::vector<Index> rim, notch;
+                bool whole = true;
+                for (size_t n = 0; n < loop.size() && whole; ++n)
+                {
+                    const size_t i = (first + n) % loop.size();
+                    if (!atCut[i])
+                    {
+                        notch.push_back(loop[i]);
+                        whole = notch.size() <= 4;
+                        continue;
+                    }
+                    if (!notch.empty())
+                    {
+                        // Against the border's own direction, from the rim point after the notch back to the one before.
+                        std::vector<Index> face{loop[i]};
+                        face.insert(face.end(), notch.rbegin(), notch.rend());
+                        face.push_back(rim.back());
+                        m.addFace(std::span<const Index>(face));
+                        notch.clear();
+                    }
+                    rim.push_back(loop[i]);
+                }
+                if (!whole)
+                    continue;
+                if (!notch.empty())
+                {
+                    std::vector<Index> face{rim.front()};
+                    face.insert(face.end(), notch.rbegin(), notch.rend());
+                    face.push_back(rim.back());
+                    m.addFace(std::span<const Index>(face));
+                }
+                loop = std::move(rim);
+            }
+            used[l] = 1;
+            // Where each rim point's rungs end: the nearest point of the tip's creases, those close together as one.
+            std::vector<glm::dvec3> ends;
+            std::vector<Index> endPoint, endOf(loop.size());
+            double furthest = 0.0;
+            for (size_t i = 0; i < loop.size(); ++i)
+            {
+                const glm::dvec3 at = m.position(loop[i]);
+                const glm::dvec3 foot = tip.core.empty() ? tip.tip : closestOnSegments(at, tip.core);
+                furthest = std::max(furthest, glm::distance(at, foot));
+                size_t same = ends.size();
+                for (size_t k = 0; k < ends.size() && same == ends.size(); ++k)
+                    if (glm::distance(ends[k], foot) < 0.4 * h)
+                        same = k;
+                if (same == ends.size())
+                {
+                    ends.push_back(foot);
+                    endPoint.push_back(m.addPoint(foot));
+                }
+                endOf[i] = Index(same);
+            }
+            // Along the tip's crease, for the ends that fall between a face's own two.
+            glm::dvec3 along(0.0);
+            for (const auto& [a, b] : tip.core)
+                if (glm::distance(a, b) > glm::length(along))
+                    along = b - a;
+            auto between = [&](Index from, Index to) {
+                std::vector<std::pair<double, Index>> found;
+                const double a = glm::dot(ends[from], along), b = glm::dot(ends[to], along);
+                for (size_t k = 0; k < ends.size(); ++k)
+                    if (const double at = glm::dot(ends[k], along); Index(k) != from && Index(k) != to && at > std::min(a, b) && at < std::max(a, b))
+                        found.push_back({a < b ? at : -at, endPoint[k]});
+                std::sort(found.begin(), found.end());
+                return found;
+            };
+            const int rungs = std::clamp(int(std::lround(furthest / h)), 1, 8);
+            // ring[j][i]: rim point i moved j rungs towards its end.
+            std::vector<std::vector<Index>> ring(size_t(rungs) + 1, std::vector<Index>(loop.size()));
+            for (size_t i = 0; i < loop.size(); ++i)
+            {
+                ring[0][i] = loop[i];
+                ring[size_t(rungs)][i] = endPoint[endOf[i]];
+                for (int j = 1; j < rungs; ++j)
+                {
+                    const glm::dvec3 at = glm::mix(m.position(loop[i]), ends[endOf[i]], double(j) / double(rungs));
+                    geo::BvhClosest on;
+                    ring[size_t(j)][i] = m.addPoint(surface.closestPoint(at, on, 2.0 * h) ? on.point : at);
+                }
+            }
+            // Two rim edges running to the same end close with one quad between them, not a triangle each.
+            std::vector<uint8_t> paired(loop.size(), 0);
+            const size_t last = size_t(rungs) - 1;
+            for (size_t i = 0; i < loop.size() && loop.size() >= 4; ++i)
+            {
+                const size_t before = (i + loop.size() - 1) % loop.size(), k = (i + 1) % loop.size(), after = (k + 1) % loop.size();
+                if (paired[before] || paired[i] || paired[k] || endOf[i] != endOf[k] || endOf[k] != endOf[after] || ring[last][i] == ring[last][k] ||
+                    ring[last][k] == ring[last][after] || ring[last][i] == ring[last][after])
+                    continue;
+                // Not across one of the tip's own creases: the two triangles have to lie in one face of the shape.
+                const glm::dvec3 end = ends[endOf[k]], shared = m.position(ring[last][k]);
+                const glm::dvec3 one = glm::cross(m.position(ring[last][i]) - shared, end - shared), two = glm::cross(end - shared, m.position(ring[last][after]) - shared);
+                if (glm::dot(glm::normalize(one), glm::normalize(two)) < 0.9)
+                    continue;
+                const std::vector<Index> face{ring[last][after], ring[last][k], ring[last][i], endPoint[endOf[k]]};
+                m.addFace(std::span<const Index>(face));
+                paired[i] = paired[k] = 1;
+            }
+            for (size_t i = 0; i < loop.size(); ++i)
+            {
+                const size_t k = (i + 1) % loop.size();
+                for (size_t j = 0; j < size_t(rungs); ++j)
+                {
+                    if (j == last && paired[i])
+                        continue;
+                    // Against the rim edge's own direction, so the new face winds with the one across it.
+                    // The other side of the tip may have a row more: its end on the crease joins this face's last edge.
+                    std::vector<Index> face;
+                    for (Index p : {ring[j][k], ring[j][i], ring[j + 1][i]})
+                        if (std::find(face.begin(), face.end(), p) == face.end())
+                            face.push_back(p);
+                    if (j + 1 == size_t(rungs) && endOf[i] != endOf[k])
+                        for (const auto& [at, p] : between(endOf[i], endOf[k]))
+                            face.push_back(p);
+                    if (std::find(face.begin(), face.end(), ring[j + 1][k]) == face.end())
+                        face.push_back(ring[j + 1][k]);
+                    if (face.size() >= 3)
+                        m.addFace(std::span<const Index>(face));
+                }
+            }
+            ++closed;
+        }
+    }
+    return closed;
+}
+
 /** LILA_ISO_DUMP: the working triangles as an OBJ, their feature edges as lines. */
 void dumpWorking(const Surface& iso)
 {
@@ -1500,8 +1949,30 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
     }
     clock.lap("surface");
 
-    w.border.build(s, 0.5 * w.h0, true);
+    // The working triangles lie on the simplified surface, which keeps the shape but not the sculpted pores that would
+    // read as curvature everywhere. Taken, with the creases, before any tip is cut off: the tips go back on.
+    {
+        std::vector<Index> sizes(s.tris.size(), 3), corners;
+        corners.reserve(s.tris.size() * 3);
+        for (const auto& t : s.tris)
+            corners.insert(corners.end(), t.begin(), t.end());
+        w.simple = geo::Mesh::fromPolygons(s.pos, sizes, corners);
+        w.simpleBvh.emplace(w.simple);
+    }
     w.creases.build(s, 0.5 * w.h0, false, true);
+    if (w.closed && !w.symmetric && opts.pinnedPoints.empty() && !std::getenv("LILA_QR_NO_TIP_CLIP"))
+    {
+        clipSharpTips(s, w.h0, opts.sharpAngle, w.tips);
+        if (!w.tips.empty())
+        {
+            s.buildTopology();
+            s.buildGeometry();
+            s.detectFeatures(opts.sharpAngle, 75.0, 2.0 * w.h0);
+        }
+        if (std::getenv("LILA_STAGE_LOG"))
+            std::fprintf(stderr, "sharp tips cut off: %zu\n", w.tips.size());
+    }
+    w.border.build(s, 0.5 * w.h0, true);
     std::vector<double> target = sizeField(s, w, opts, faces, CurvatureSizing::Triangles);
     if (std::getenv("LILA_STAGE_LOG"))
     {
@@ -1519,16 +1990,6 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
     clock.lap("density");
     for (double& t : target)
         t /= triangleRatio();
-    // The working triangles lie on the simplified surface, which keeps the shape but not the sculpted pores that would
-    // read as curvature everywhere.
-    {
-        std::vector<Index> sizes(s.tris.size(), 3), corners;
-        corners.reserve(s.tris.size() * 3);
-        for (const auto& t : s.tris)
-            corners.insert(corners.end(), t.begin(), t.end());
-        w.simple = geo::Mesh::fromPolygons(s.pos, sizes, corners);
-        w.simpleBvh.emplace(w.simple);
-    }
     w.iso = remeshIsotropic(s, target, *w.simpleBvh, w.creases, w.border);
     w.iso.buildTopology();
     w.iso.buildGeometry();
@@ -2009,7 +2470,7 @@ void turnSharpCorners(const Surface& iso, const std::vector<uint8_t>& guideEdge,
         }
         for (Index k = iso.adjStart[v]; k < iso.adjStart[v + 1]; ++k)
             features += side(iso.adjEdge[k]);
-        if (features != 2)
+        if (std::getenv("LILA_QR_TIP3") ? features < 2 : features != 2)
             continue;
         for (Index start : around[v])
         {
@@ -3209,6 +3670,22 @@ bool fillGridHoles(std::vector<glm::dvec3>& points, std::vector<std::vector<Inde
         }
         if (at != start || loop.size() < 3 || loop.size() > kMaxGridHole)
             return why(3);
+        // A bridged chain with next to no area between it and the border is the border itself, a little off where it
+        // was looked for: filled, it would be faces lying flat along it.
+        {
+            bool bridge = false;
+            glm::dvec3 area(0.0);
+            double round = 0.0;
+            for (size_t i = 0; i < loop.size(); ++i)
+            {
+                const glm::dvec3 a = points[loop[i]], b = points[loop[(i + 1) % loop.size()]];
+                bridge = bridge || bridged.contains(loop[i]);
+                area += 0.5 * glm::cross(a - points[loop[0]], b - points[loop[0]]);
+                round += glm::distance(a, b);
+            }
+            if (bridge && glm::length(area) < 0.02 * w.h0 * round)
+                continue;
+        }
         std::vector<int> have(loop.size());
         // A point on the border is whole with two faces round it, not four.
         for (size_t i = 0; i < loop.size(); ++i)
@@ -3234,6 +3711,20 @@ bool fillGridHoles(std::vector<glm::dvec3>& points, std::vector<std::vector<Inde
             std::string shape;
             for (int n : have)
                 shape += char('0' + std::min(n, 9));
+            shape += " crease ";
+            glm::dvec3 on, middle(0.0);
+            for (Index p : loop)
+            {
+                shape += w.creases.closestCorner(points[p], 0.3 * w.h0, on) ? 'C' : w.creases.closest(points[p], 0.3 * w.h0, on) ? 'x' : '.';
+                middle += points[p] / double(loop.size());
+            }
+            int corners = 0;
+            double radius = 0.0;
+            for (Index p : loop)
+                radius = std::max(radius, glm::distance(points[p], middle));
+            for (const glm::dvec3& c : w.creases.corners())
+                corners += glm::distance(c, middle) < 1.5 * radius;
+            shape += " corners near " + std::to_string(corners);
             std::fprintf(stderr, "hole %zu: %s, %zu faces, %zu points inside, %d irregular\n", have.size(), shape.c_str(), fill.faces.size(),
                          fill.added.size(), fill.poles);
         }
@@ -3946,6 +4437,13 @@ QuadRemeshResult coverRemesh(Work& w, const QuadRemeshOptions& opts, Stopwatch& 
         unfold(m, feature, src, bvh, *w.simpleBvh, axis, h0);
         closeFlatFaces(m, h0);
         dropBorderFlaps(m, h0);
+    }
+    // Once the rims of the cuts are on their planes: before, a rim wanders along the tip's creases and its rungs fold flat.
+    if (!w.tips.empty())
+    {
+        const int closed = closeTips(m, w.tips, h0, *w.simpleBvh);
+        if (std::getenv("LILA_STAGE_LOG"))
+            std::fprintf(stderr, "sharp tips built back: %d of %zu\n", closed, w.tips.size());
     }
     clock.lap("refine");
 
