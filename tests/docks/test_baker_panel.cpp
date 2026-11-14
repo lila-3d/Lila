@@ -592,6 +592,58 @@ TEST_CASE("baker panel: presets stick on group and High rows, typed params edit 
     }
 }
 
+TEST_CASE("baker panel: Unlink Material lists the highs' materials, adds one under the group's lows and Remove takes it out")
+{
+    setupBaker();
+    ops::execute("newScene", json::object());
+    UndoStack::get().clear();
+    addPlane("crate_low", 0.0);
+    addPlane("crate_high", 1.0);
+    const std::string bolts = addPlane("bolts", 1.5);
+    ops::execute("createMaterial", {{"args", {"M_Bolts"}}});
+    ops::execute("assignMaterial", {{"args", {"M_Bolts", bolts}}});
+
+    ui::BakerPanel panel;
+    panel.resize(420, 900);
+    panel.show();
+    pump();
+    child<QToolButton>(&panel, "bakerAutoGroup")->click();
+    pump();
+    REQUIRE_FALSE(panel.project().empty());
+    const std::string group = onlyGroup(panel.project())->path();
+    ops::execute("bakeGroup", {{"args", {group}}, {"addHigh", {bolts}}});
+    pump();
+    auto* groups = child<QTreeWidget>(&panel, "bakerGroups");
+    groups->setCurrentItem(findRow(groups, QString::fromStdString(onlyGroup(panel.project())->name())));
+    pump();
+
+    QMenu* menu = child<QToolButton>(&panel, "bakerUnlinkMaterial")->menu();
+    REQUIRE(menu);
+    Q_EMIT menu->aboutToShow();
+    QAction* pickBolts = nullptr;
+    for (QAction* a : menu->actions())
+        if (a->text() == "M_Bolts")
+            pickBolts = a;
+    REQUIRE(pickBolts);
+    pickBolts->trigger();
+    pump();
+    auto unlinks = [&] { return bake::groupSettings(*onlyGroup(panel.project())).unlinks; };
+    REQUIRE(unlinks().size() == 1);
+    CHECK(unlinks()[0].lows.empty());
+    CHECK(unlinks()[0].meshes.empty());
+    CHECK(unlinks()[0].materials == std::vector<std::string>{"M_Bolts"});
+
+    auto* tree = child<QTreeWidget>(&panel, "bakerUnlinks");
+    QTreeWidgetItem* row = findRow(tree, "M_Bolts");
+    REQUIRE(row);
+    REQUIRE(row->parent());
+    CHECK(row->parent()->text(0) == "All lows");
+    row->setSelected(true);
+    child<QToolButton>(&panel, "bakerUnlinkRemove")->click();
+    pump();
+    CHECK(unlinks().empty());
+}
+
 TEST_CASE("baker actions and menu are registered with docs")
 {
     setupBaker();

@@ -99,7 +99,11 @@ private:
     /** The selected meshes stop occluding (and, with projection, projecting onto) low, or every low of the group when empty. */
     void unlinkSelected(const std::string& group, const std::string& low, bool projection);
     void setUnlinks(const std::string& group, const std::vector<bake::Unlink>& unlinks);
-    /** Selected mesh rows leave their unlink; a selected low row drops its whole unlink. */
+    /** Selected mesh and material rows leave their unlink; a selected low row drops its whole unlink. */
+    /** Unlinks a material from the low, or from every low of the group when low is empty. */
+    void unlinkMaterial(const std::string& group, const std::string& low, const std::string& material, bool projection);
+    /** The materials on the highs (and self lows) of every group in the current group's project. */
+    std::vector<std::string> unlinkableMaterials() const;
     void removeSelectedUnlinks();
     /** R G B A rows for a channel pack map: each a source map and its channel (or luminance/max), or a constant. */
     void addPackChannels(const std::string& map, const nlohmann::json& channels);

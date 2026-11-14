@@ -620,6 +620,35 @@ BakeInputs buildInputs(scene::Graph& g, scene::NodeId project, const std::vector
     return in;
 }
 
+namespace
+{
+/**
+ * Whether any triangle of the group's high h has one of the materials. Links are per high, so a high that also has other
+ * materials is skipped whole, with a warning.
+ */
+bool usesMaterial(BakeInputs& in, const GroupInputs& gi, size_t h, const std::vector<std::string>& materials)
+{
+    if (materials.empty() || h >= gi.highs.size())
+        return false;
+    const MeshSoup& soup = gi.highs[h].soup;
+    std::vector<uint8_t> used(soup.materialNames.size(), 0);
+    for (uint32_t id : soup.materials)
+        if (id < used.size())
+            used[id] = 1;
+    bool match = false, other = false;
+    for (size_t id = 0; id < used.size(); ++id)
+        if (used[id])
+            (std::ranges::find(materials, soup.materialNames[id]) != materials.end() ? match : other) = true;
+    if (match && other)
+    {
+        std::string w = "group " + gi.name + ": " + gi.highNodes[h] + " is unlinked whole by material, though only some of its faces have it";
+        if (std::ranges::find(in.warnings, w) == in.warnings.end())
+            in.warnings.push_back(std::move(w));
+    }
+    return match;
+}
+} // namespace
+
 void buildLinks(BakeInputs& in)
 {
     uint32_t total = 0;
@@ -656,7 +685,7 @@ void buildLinks(BakeInputs& in)
                 for (const GroupInputs& other : in.groups)
                     for (size_t h = 0; h < other.highNodes.size(); ++h)
                     {
-                        if (std::ranges::find(u.meshes, other.highNodes[h]) == u.meshes.end())
+                        if (std::ranges::find(u.meshes, other.highNodes[h]) == u.meshes.end() && !usesMaterial(in, other, h, u.materials))
                             continue;
                         if (u.occlusion)
                             set(l, RayKind::Occlusion, other.highBase + uint32_t(h));

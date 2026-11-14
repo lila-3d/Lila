@@ -280,9 +280,10 @@ void registerCommands()
                   {"aoScope", "as", T::String, nullptr, "AO occluders: self, group or all.", {"self", "group", "all"}},
                   {"skew", "sk", T::Float, nullptr, "0 to 1: tilts rays from the smooth normals toward each low face's normal.", {}, {}, 0.0, 1.0},
                   {"unlinks", "ul", T::Any, nullptr,
-                   "Replace the unlinks: [{\"lows\": [...] (empty: every low), \"meshes\": [...], \"occlusion\": True, \"projection\": False}]. "
-                   "The lows' AO and other occlusion rays pass through those meshes (any high or occluder, a self high by its low's "
-                   "name); projection=True also bakes nothing from them onto the lows."},
+                   "Replace the unlinks: [{\"lows\": [...] (empty: every low), \"meshes\": [...], \"materials\": [...], \"occlusion\": True, "
+                   "\"projection\": False}]. The lows' AO and other occlusion rays pass through those meshes (any high or occluder, a "
+                   "self high by its low's name) and through every high with faces of those materials; projection=True also bakes "
+                   "nothing from them onto the lows."},
                   {"addHighFile", "ahf", T::List, nullptr, "Add highs streamed from files at bake time (.fbx, .obj, .abc), never loaded into the scene."},
                   {"removeHighFile", "rhf", T::List, nullptr, "Remove file highs."},
                   {"fileObject", "fob", T::String, nullptr, "With addHighFile: only the file's meshes whose name contains this."},
@@ -391,7 +392,7 @@ void registerCommands()
             {
                 const json& list = a.flags["unlinks"];
                 if (!list.is_array() && !list.is_null())
-                    throw CommandError("bakeGroup: unlinks is a list of {lows, meshes, occlusion, projection}");
+                    throw CommandError("bakeGroup: unlinks is a list of {lows, meshes, materials, occlusion, projection}");
                 s.unlinks.clear();
                 for (const json& j : list.is_array() ? list : json::array())
                 {
@@ -408,7 +409,7 @@ void registerCommands()
                         l = meshPath(g, l, "bakeGroup");
                     for (std::string& m : u.meshes)
                         m = meshPath(g, m, "bakeGroup");
-                    if (!u.meshes.empty())
+                    if (!u.empty())
                         s.unlinks.push_back(std::move(u));
                 }
             }

@@ -795,7 +795,7 @@ def bakeGroup(*objects: Any, project: str | None = None, lows: Sequence[Any] | N
         ignoreBackfaces: Rays only hit high faces facing them. Short form ib.
         aoScope: AO occluders: self, group or all. Short form as. One of 'self', 'group', 'all'.
         skew: 0 to 1: tilts rays from the smooth normals toward each low face's normal. Short form sk.
-        unlinks: Replace the unlinks: [{"lows": [...] (empty: every low), "meshes": [...], "occlusion": True, "projection": False}]. The lows' AO and other occlusion rays pass through those meshes (any high or occluder, a self high by its low's name); projection=True also bakes nothing from them onto the lows. Short form ul.
+        unlinks: Replace the unlinks: [{"lows": [...] (empty: every low), "meshes": [...], "materials": [...], "occlusion": True, "projection": False}]. The lows' AO and other occlusion rays pass through those meshes (any high or occluder, a self high by its low's name) and through every high with faces of those materials; projection=True also bakes nothing from them onto the lows. Short form ul.
         addHighFile: Add highs streamed from files at bake time (.fbx, .obj, .abc), never loaded into the scene. Short form ahf.
         removeHighFile: Remove file highs. Short form rhf.
         fileObject: With addHighFile: only the file's meshes whose name contains this. Short form fob.
