@@ -1184,11 +1184,11 @@ void dumpWorking(const Surface& iso)
 
 /**
  * A creased shape whose creases are all rims of flat faces on an otherwise smooth body (a sculpted bust cut flat at the
- * base): the body's triangles, with the flat faces taken off for caps to stand in. False for any other creased shape.
+ * base): per triangle whether it is the body's, with the flat faces to come off for caps to stand in. False for any other creased shape.
  * A few stray sharp edges on the body itself (under a crease for every fifty quads' worth of surface) don't count and
  * come back in `stray`. s needs detectFeatures; h is the quad edge.
  */
-bool withoutFlatFaces(const Surface& s, double h, std::vector<std::array<Index, 3>>& body, std::vector<size_t>& stray)
+bool withoutFlatFaces(const Surface& s, double h, std::vector<uint8_t>& body, std::vector<size_t>& stray)
 {
     const auto why = [](int check) {
         if (std::getenv("LILA_STAGE_LOG"))
@@ -1278,9 +1278,9 @@ bool withoutFlatFaces(const Surface& s, double h, std::vector<std::array<Index, 
             if (std::abs(glm::dot(s.pos[p] - f.centre, f.normal)) > tolerance)
                 return why(7);
     }
+    body.resize(nt);
     for (Index t = 0; t < nt; ++t)
-        if (find(t) == main)
-            body.push_back(s.tris[t]);
+        body[t] = find(t) == main;
     return true;
 }
 
@@ -1292,7 +1292,7 @@ constexpr double kStockTriangles = 6.0;
  * stock isotropic pass can't be told about; s is then spent and has to be read again. Creases that are only the rims
  * of flat faces are held all the same: the faces come off, the body is laid out as an open shape, and its caps are kept.
  */
-bool prepareStock(Work& w, const QuadRemeshOptions& opts, double faces, double halves, Stopwatch& clock)
+bool prepareStock(Work& w, const QuadRemeshOptions& opts, double faces, double halves, Stopwatch& clock, bool keepCaps)
 {
     LILA_ZONE();
 
@@ -1332,9 +1332,9 @@ bool prepareStock(Work& w, const QuadRemeshOptions& opts, double faces, double h
         creased = creased || (s.edgeFeature[e] && s.edgeTriCount[e] == 2);
     if (creased)
     {
-        std::vector<std::array<Index, 3>> body;
+        std::vector<uint8_t> body;
         std::vector<size_t> stray;
-        if (std::getenv("LILA_QR_NO_KEPT_CAPS") || !withoutFlatFaces(s, w.h0, body, stray))
+        if (!keepCaps || std::getenv("LILA_QR_NO_KEPT_CAPS") || !withoutFlatFaces(s, w.h0, body, stray))
             return false;
         for (size_t e : stray)
         {
@@ -1342,19 +1342,30 @@ bool prepareStock(Work& w, const QuadRemeshOptions& opts, double faces, double h
             for (Index v : s.edges[e])
                 s.feature[v] = FeatureKind::None;
         }
-        // The stock isotropic pass crumples a flat face made of slivers, so it only sees the body.
-        std::vector<Index> local(s.pos.size(), kInvalid);
+        // The stock isotropic pass crumples a flat face made of slivers, so it only sees the body: the source's own
+        // triangles that lie on the simplified body.
+        std::vector<Index> sizes(s.tris.size(), 3), corners;
+        for (const auto& t : s.tris)
+            corners.insert(corners.end(), t.begin(), t.end());
+        const geo::Mesh simplified = geo::Mesh::fromPolygons(s.pos, sizes, corners);
+        const geo::MeshBvh onSimplified(simplified);
+        const Surface source = surfaceFromMesh(w.src, opts.useHardEdges);
+        std::vector<Index> local(source.pos.size(), kInvalid);
         vertices.clear();
         triangles.clear();
-        for (const auto& t : body)
+        for (const auto& t : source.tris)
         {
+            geo::BvhClosest hit;
+            if (!onSimplified.closestPoint((source.pos[t[0]] + source.pos[t[1]] + source.pos[t[2]]) / 3.0, hit) || hit.face == kInvalid ||
+                !body[hit.face])
+                continue;
             std::vector<size_t> tri;
             for (Index v : t)
             {
                 if (local[v] == kInvalid)
                 {
                     local[v] = Index(vertices.size());
-                    vertices.push_back(AutoRemesher::Vector3(s.pos[v].x, s.pos[v].y, s.pos[v].z));
+                    vertices.push_back(AutoRemesher::Vector3(source.pos[v].x, source.pos[v].y, source.pos[v].z));
                 }
                 tri.push_back(size_t(local[v]));
             }
@@ -1410,7 +1421,7 @@ bool prepareStock(Work& w, const QuadRemeshOptions& opts, double faces, double h
     return true;
 }
 
-void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts, Stopwatch& clock)
+void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts, Stopwatch& clock, bool keepCaps = true)
 {
     LILA_ZONE();
 
@@ -1448,7 +1459,7 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
                        !std::getenv("LILA_QR_OWN");
     if (plain)
     {
-        if (prepareStock(w, opts, faces, halves, clock))
+        if (prepareStock(w, opts, faces, halves, clock, keepCaps))
             return;
         s = surfaceFromMesh(w.src, opts.useHardEdges);
         s.pins = opts.pinnedPoints;
@@ -3802,14 +3813,15 @@ double asymmetry(const geo::Mesh& m, const geo::MeshBvh& bvh, int axis)
     return double(far) / double(n);
 }
 
-QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions& opts)
+/** keepCaps false lays a body with flat faces out as any creased shape, without the stock stages. */
+QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions& opts, bool keepCaps = true)
 {
     LILA_ZONE();
 
     QuadRemeshResult result;
     Stopwatch clock(result.timings);
     Work w;
-    prepareWork(w, source, opts, clock);
+    prepareWork(w, source, opts, clock, keepCaps);
     if (!w.error.empty())
     {
         result.error = w.error;
@@ -3836,6 +3848,19 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
     {
         result.error = r.error;
         return result;
+    }
+    // The stock extraction now and then folds along a kept cap's rim or in a tight spot the grid traces cleanly.
+    constexpr int kFewFlaws = 3;
+    if (w.keptCapsBvh && r.defects > kFewFlaws)
+    {
+        QuadRemeshResult own = quadRemeshOnce(source, opts, false);
+        if (own.ok() && own.defects < r.defects)
+        {
+            own.attempts.insert(own.attempts.begin(), {r.layout, r.mesh.numFaces(), r.defects, r.metrics.irregular});
+            own.notes.push_back("laid out as a creased shape: with its flat faces as caps the layout left " + std::to_string(r.defects) +
+                                " folds, this way " + std::to_string(own.defects));
+            return own;
+        }
     }
     result.attempts.push_back({r.layout, r.mesh.numFaces(), r.defects, r.metrics.irregular});
     result.mesh = std::move(r.mesh);
