@@ -2470,7 +2470,7 @@ void turnSharpCorners(const Surface& iso, const std::vector<uint8_t>& guideEdge,
         }
         for (Index k = iso.adjStart[v]; k < iso.adjStart[v + 1]; ++k)
             features += side(iso.adjEdge[k]);
-        if (std::getenv("LILA_QR_TIP3") ? features < 2 : features != 2)
+        if (features != 2)
             continue;
         for (Index start : around[v])
         {
