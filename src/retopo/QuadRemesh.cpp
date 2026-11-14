@@ -807,6 +807,11 @@ struct ClippedTip
 struct Work
 {
     std::vector<ClippedTip> tips;
+    /**
+     * The tips of a symmetric shape that lie on its plane: cut off the whole before it is halved, so half of each cut's
+     * rim is on either side, and built back once the result is whole again.
+     */
+    std::vector<ClippedTip> planeTips;
     geo::Mesh src;
     std::optional<geo::MeshBvh> bvh;
     bool closed = false;
@@ -1259,9 +1264,11 @@ bool capBorders(Surface& iso, geo::Mesh& caps, std::unordered_set<uint64_t>& cha
  * a face under 45 degrees (a star prism's points, a blade's tip), lines of the layout held along both sides run
  * together and the cover collapses all the way up the spike. Each such tip is cut across where its sector is a quad
  * wide, leaving a hole whose rim is a border to the layout; closeTips builds the tip back on the result. s needs
- * buildTopology, buildGeometry and detectFeatures, and needs them again when anything was cut.
+ * buildTopology, buildGeometry and detectFeatures, and needs them again when anything was cut. With `wanted`, only the
+ * tips it passes are cut.
  */
-void clipSharpTips(Surface& s, double h, double sharpAngleDeg, std::vector<ClippedTip>& tips)
+void clipSharpTips(Surface& s, double h, double sharpAngleDeg, std::vector<ClippedTip>& tips,
+                   const std::function<bool(const glm::dvec3& tip, const glm::dvec3& axis)>& wanted = {})
 {
     constexpr double kSharpest = 0.7853981633974483, kWidth = 1.0, kDeepest = 6.0, kLargestShare = 0.25;
     const Index n = s.vertexCount();
@@ -1372,7 +1379,7 @@ void clipSharpTips(Surface& s, double h, double sharpAngleDeg, std::vector<Clipp
     std::vector<ClippedTip> cut;
     for (const Candidate& c : candidates)
     {
-        if (region[c.v] >= 0)
+        if (region[c.v] >= 0 || (wanted && !wanted(s.pos[c.v], c.axis)))
             continue;
         ClippedTip tip;
         tip.tip = s.pos[c.v];
@@ -2213,6 +2220,27 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
     const bool decimated = double(s.tris.size()) > 8.0 * halves * workTris;
     if (decimated)
         decimateSurface(s, Index(4.0 * halves * workTris));
+    const bool clipTips = w.closed && opts.pinnedPoints.empty() && !std::getenv("LILA_QR_NO_TIP_CLIP");
+    if (w.symmetric && clipTips)
+    {
+        s.buildTopology();
+        s.buildGeometry();
+        s.detectFeatures(opts.sharpAngle, 75.0, 2.0 * w.h0);
+        const double on = 1e-6 * std::sqrt(s.totalArea());
+        FeatureLines wholeCreases;
+        wholeCreases.build(s, 0.5 * w.h0, false, true);
+        // The tips the plane halves: pointing along it, from a crease that runs across it (a prism's edge). A tip
+        // whose own point is on the plane is left: its half rim on each cap is under a quad long, and comes out notched.
+        clipSharpTips(s, w.h0, opts.sharpAngle, w.planeTips, [&](const glm::dvec3& tip, const glm::dvec3& axis) {
+            if (std::abs(glm::dot(axis, w.plane.normal)) > 1e-6 || std::abs(w.plane.distance(tip)) < on)
+                return false;
+            glm::dvec3 q;
+            const glm::dvec3 across = w.plane.project(tip);
+            return wholeCreases.closest(across, on, q);
+        });
+        if (std::getenv("LILA_STAGE_LOG"))
+            std::fprintf(stderr, "sharp tips on the plane cut off: %zu\n", w.planeTips.size());
+    }
     if (w.symmetric)
     {
         clipSurface(s, w.plane, opts.symmetryAxis);
@@ -2257,7 +2285,7 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
         w.simpleBvh.emplace(w.simple);
     }
     w.creases.build(s, 0.5 * w.h0, false, true);
-    if (w.closed && !w.symmetric && opts.pinnedPoints.empty() && !std::getenv("LILA_QR_NO_TIP_CLIP"))
+    if (clipTips)
     {
         clipSharpTips(s, w.h0, opts.sharpAngle, w.tips);
         if (!w.tips.empty())
@@ -4953,9 +4981,35 @@ QuadRemeshResult coverRemesh(Work& w, const QuadRemeshOptions& opts, Stopwatch& 
                 m.flipFace(f);
 
     const int axis = w.symmetric ? opts.symmetryAxis : -1;
+    // A border point on the rim of a cut-off tip is no seam point, however near the plane the rim brings it.
+    const auto onPlaneRim = [&](const glm::dvec3& p) {
+        for (const ClippedTip& tip : w.planeTips)
+        {
+            const double along = glm::dot(p - tip.tip, tip.axis);
+            if (std::abs(along - tip.depth) < 0.3 * h0 && glm::distance(p, tip.tip + along * tip.axis) < tip.radius + 0.5 * h0)
+                return true;
+        }
+        return false;
+    };
+    // Except where the rim ends on the seam: its last point, next along the border to a seam point, is the corner.
+    const auto onSeam = [&](Index p) {
+        if (!m.pointValid(p) || !m.isBoundaryPoint(p))
+            return false;
+        const double off = std::abs(w.plane.distance(m.position(p)));
+        if (off >= 0.35 * h0)
+            return false;
+        if (off < 0.05 * h0 || !onPlaneRim(m.position(p)))
+            return true;
+        bool corner = false;
+        m.forEachPointEdge(p, [&](Index e) {
+            const Index o = m.edgeOtherPoint(e, p);
+            corner = corner || (m.isBoundaryEdge(e) && std::abs(w.plane.distance(m.position(o))) < 0.35 * h0 && !onPlaneRim(m.position(o)));
+        });
+        return corner;
+    };
     if (w.symmetric)
         for (Index p = 0; p < m.pointCapacity(); ++p)
-            if (m.pointValid(p) && m.isBoundaryPoint(p) && std::abs(w.plane.distance(m.position(p))) < 0.35 * h0)
+            if (onSeam(p))
             {
                 glm::dvec3 at = m.position(p);
                 at[axis] = 0.0;
@@ -5000,7 +5054,7 @@ QuadRemeshResult coverRemesh(Work& w, const QuadRemeshOptions& opts, Stopwatch& 
     {
         // Seam points sit exactly on the plane so the mirror welds them and the halves match bit for bit.
         for (Index p = 0; p < m.pointCapacity(); ++p)
-            if (m.pointValid(p) && m.isBoundaryPoint(p) && std::abs(w.plane.distance(m.position(p))) < 0.35 * h0)
+            if (onSeam(p))
             {
                 glm::dvec3 at = m.position(p);
                 at[axis] = 0.0;
@@ -5014,6 +5068,13 @@ QuadRemeshResult coverRemesh(Work& w, const QuadRemeshOptions& opts, Stopwatch& 
         m.compact();
         joinSeamTriangles(m, w.plane, h0);
         m.compact();
+        if (!w.planeTips.empty())
+        {
+            const int closed = closeTips(m, w.planeTips, h0, bvh);
+            m.compact();
+            if (std::getenv("LILA_STAGE_LOG"))
+                std::fprintf(stderr, "sharp tips on the plane built back: %d of %zu\n", closed, w.planeTips.size());
+        }
         if (opts.middleSmoothing > 0.0)
             smoothMiddle(m, axis, opts.middleSmoothing);
     }
