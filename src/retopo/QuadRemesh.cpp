@@ -370,7 +370,10 @@ void smoothMiddle(geo::Mesh& m, int axis, double strength)
     }
 }
 
-/** Faces facing against the source surface under them. */
+/**
+ * Faces facing against the source surface: under their centre and under at least half their corners. A face across the
+ * bottom of a groove narrower than itself has its centre in the air, nearest whichever wall, and is no fold.
+ */
 std::vector<Index> foldedFaces(const geo::Mesh& m, const geo::Mesh& src, const geo::MeshBvh& bvh)
 {
     std::vector<Index> out;
@@ -378,8 +381,17 @@ std::vector<Index> foldedFaces(const geo::Mesh& m, const geo::Mesh& src, const g
     {
         if (!m.faceValid(f))
             continue;
+        const glm::dvec3 facing = m.faceAreaVector(f);
         geo::BvhClosest c;
-        if (bvh.closestPoint(m.faceCentroid(f), c) && glm::dot(m.faceAreaVector(f), src.faceNormal(c.face)) < 0.0)
+        if (!bvh.closestPoint(m.faceCentroid(f), c) || glm::dot(facing, src.faceNormal(c.face)) >= 0.0)
+            continue;
+        int against = 0, corners = 0;
+        for (Index p : m.facePoints(f))
+        {
+            ++corners;
+            against += bvh.closestPoint(m.position(p), c) && glm::dot(facing, src.faceNormal(c.face)) < 0.0;
+        }
+        if (2 * against >= corners)
             out.push_back(f);
     }
     return out;
