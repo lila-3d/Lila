@@ -1205,6 +1205,7 @@ void clipSharpTips(Surface& s, double h, double sharpAngleDeg, std::vector<Clipp
         double angle;
         Index v;
         glm::dvec3 axis;
+        Index sides[2];
     };
     std::vector<Candidate> candidates;
     for (Index v = 0; v < n; ++v)
@@ -1232,7 +1233,7 @@ void clipSharpTips(Surface& s, double h, double sharpAngleDeg, std::vector<Clipp
             sides(t, a, b);
             byFirst[a] = t;
         }
-        Candidate best{kSharpest, kInvalid, glm::dvec3(0.0)};
+        Candidate best{kSharpest, kInvalid, glm::dvec3(0.0), {kInvalid, kInvalid}};
         for (Index start : around[v])
         {
             Index a, b;
@@ -1258,7 +1259,7 @@ void clipSharpTips(Surface& s, double h, double sharpAngleDeg, std::vector<Clipp
                 t = next->second;
             }
             if (closed && angle > 1e-3 && angle < best.angle)
-                best = {angle, v, glm::normalize(glm::normalize(s.pos[first] - s.pos[v]) + glm::normalize(s.pos[b] - s.pos[v]))};
+                best = {angle, v, glm::normalize(glm::normalize(s.pos[first] - s.pos[v]) + glm::normalize(s.pos[b] - s.pos[v])), {first, b}};
         }
         if (best.v != kInvalid)
             candidates.push_back(best);
@@ -1267,6 +1268,30 @@ void clipSharpTips(Surface& s, double h, double sharpAngleDeg, std::vector<Clipp
         return;
     std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) { return a.angle < b.angle; });
     const double total = s.totalArea();
+    // A sculpt's stray sharp edges meet in sharp sectors too: a tip's two sides run on as creases as far as the cut,
+    // and are the sector's width apart there. Returns where the side meets the cut.
+    auto reachesCut = [&](const ClippedTip& tip, Index from, Index to) {
+        for (Index prev = from, at = to, guard = 0; guard < n; ++guard)
+        {
+            if (glm::dot(s.pos[at] - tip.tip, tip.axis) >= tip.depth)
+                return at;
+            const glm::dvec3 dir = glm::normalize(s.pos[at] - s.pos[prev]);
+            Index next = kInvalid;
+            double straightest = 0.8;
+            for (Index k = s.adjStart[at]; k < s.adjStart[at + 1]; ++k)
+                if (const Index u = s.adj[k]; u != prev && sharp(s.adjEdge[k]))
+                    if (const double d = glm::dot(glm::normalize(s.pos[u] - s.pos[at]), dir); d > straightest)
+                    {
+                        straightest = d;
+                        next = u;
+                    }
+            if (next == kInvalid)
+                return kInvalid;
+            prev = at;
+            at = next;
+        }
+        return kInvalid;
+    };
     // Per vertex, the tip whose cut takes it off.
     std::vector<int> region(n, -1);
     std::vector<ClippedTip> cut;
@@ -1278,6 +1303,12 @@ void clipSharpTips(Surface& s, double h, double sharpAngleDeg, std::vector<Clipp
         tip.tip = s.pos[c.v];
         tip.axis = c.axis;
         tip.depth = std::min(kDeepest * h, 0.5 * kWidth * h / std::tan(0.5 * c.angle));
+        const Index ends[2] = {reachesCut(tip, c.v, c.sides[0]), reachesCut(tip, c.v, c.sides[1])};
+        if (ends[0] == kInvalid || ends[1] == kInvalid || glm::distance(s.pos[ends[0]], s.pos[ends[1]]) < 0.5 * kWidth * h)
+            continue;
+        if (std::getenv("LILA_TIP_LOG"))
+            std::fprintf(stderr, "tip at %.3f %.3f %.3f, sector %.1f degrees, cut %.2f quads deep\n", tip.tip.x, tip.tip.y, tip.tip.z,
+                         glm::degrees(c.angle), tip.depth / h);
         auto along = [&](Index v) { return glm::dot(s.pos[v] - tip.tip, tip.axis); };
         // What the plane takes off: the points this side of it joined to the tip.
         std::vector<Index> taken{c.v}, stack{c.v};
