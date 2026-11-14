@@ -76,6 +76,12 @@ public:
     }
 
     /** Asked of each open loop before it is filled; true leaves it open, as for a border the source has itself. */
+    /** Points the smoothing leaves where they are: those on an edge loop the cover was held to. */
+    void setHoldVertex(std::function<bool(const Vector3& position)> holdVertex)
+    {
+        m_holdVertex = std::move(holdVertex);
+    }
+
     void setKeepHole(std::function<bool(const std::vector<Vector3>& loop)> keepHole)
     {
         m_keepHole = std::move(keepHole);
@@ -164,6 +170,7 @@ private:
     void rebuildHalfEdges();
     void fixHoles();
     std::function<bool(const std::vector<Vector3>& loop)> m_keepHole;
+    std::function<bool(const Vector3& position)> m_holdVertex;
 };
 
 }

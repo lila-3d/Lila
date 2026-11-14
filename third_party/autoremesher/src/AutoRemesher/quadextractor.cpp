@@ -1582,6 +1582,10 @@ void QuadExtractor::smoothAndProject(size_t iterations,
             locked[it.first.second] = true;
         }
     }
+    if (m_holdVertex)
+        for (size_t i = 0; i < locked.size(); ++i)
+            if (!locked[i] && m_holdVertex(m_remeshedVertices[i]))
+                locked[i] = true;
 
     std::vector<::Vector3> targetVertices;
     targetVertices.reserve(m_vertices->size());

@@ -3628,7 +3628,11 @@ int uncovered(const geo::Mesh& m, const Work& w)
             continue;
         geo::BvhClosest c;
         if (!result.closestPoint(at, c, 2.0 * w.h0))
+        {
             missing += iso.area[v];
+            if (std::getenv("LILA_DEFECT_LIST"))
+                std::fprintf(stderr, "defect uncovered %.3f %.3f %.3f\n", at.x, at.y, at.z);
+        }
     }
     const int quads = int(missing / std::max(w.h0 * w.h0, 1e-12));
     return quads >= 2 ? quads : 0;
@@ -4525,6 +4529,17 @@ bool coverSoup(Work& w, const QuadRemeshOptions& opts, std::vector<glm::dvec3>& 
             qe.setOriginalTriangleUvs(&originalUvs);
             qe.setSingularVertices(&singular);
             qe.setProgressHandler([](float, const char*) { Budget::checkpoint(); });
+            // A kept cap's rim is a lattice line of the cover, and its points stay on it: smoothed with the rest they
+            // slide into the wedge where a shoulder meets the cut base, and the rows end up crossing the rim.
+            std::vector<std::array<glm::dvec3, 2>> rims;
+            for (Index e = 0; e < w.keptCaps.edgeCapacity(); ++e)
+                if (w.keptCaps.edgeValid(e) && w.keptCaps.isBoundaryEdge(e))
+                    rims.push_back({w.keptCaps.position(w.keptCaps.edgePoint(e, 0)), w.keptCaps.position(w.keptCaps.edgePoint(e, 1))});
+            if (!rims.empty() && !std::getenv("LILA_QR_LOOSE_RIMS"))
+                qe.setHoldVertex([&rims, h0](const AutoRemesher::Vector3& p) {
+                    const glm::dvec3 at = fromAr(p);
+                    return glm::distance(closestOnSegments(at, rims), at) < 1e-3 * h0;
+                });
             // A loop along the source's own border (or the symmetry cut) stays open.
             qe.setKeepHole([&](const std::vector<AutoRemesher::Vector3>& loop) {
                 if (border.empty())
@@ -4665,6 +4680,97 @@ int reachBorderCorners(geo::Mesh& m, const FeatureLines& border, double h)
         onBorder[best] = onBorder.back();
         onBorder.pop_back();
         ++moved;
+    }
+    return moved;
+}
+
+/**
+ * Takes the result out to the stretches of a kept cap's rim it cuts off. Where the rim turns back on itself tighter
+ * than a quad (the tip of a shoulder on a bust's cut base) the layout runs straight across, and the tip is left
+ * uncovered. The nearest of the result's points on the rim goes to the furthest point of each stretch that lies over
+ * a quad from the result's own edges along the rim, and is returned, to be held there.
+ */
+std::vector<Index> reachRimTips(geo::Mesh& m, const geo::Mesh& caps, double h)
+{
+    constexpr double kOnRim = 0.5, kMissed = 1.0, kReach = 6.0;
+    std::vector<std::array<glm::dvec3, 2>> segs;
+    std::vector<Index> rim;
+    std::unordered_map<Index, size_t> at;
+    std::vector<std::array<size_t, 2>> links;
+    for (Index e = 0; e < caps.edgeCapacity(); ++e)
+        if (caps.edgeValid(e) && caps.isBoundaryEdge(e))
+        {
+            std::array<size_t, 2> link;
+            for (int k = 0; k < 2; ++k)
+            {
+                const auto [it, fresh] = at.try_emplace(caps.edgePoint(e, k), rim.size());
+                if (fresh)
+                    rim.push_back(caps.edgePoint(e, k));
+                link[k] = it->second;
+            }
+            links.push_back(link);
+            segs.push_back({caps.position(caps.edgePoint(e, 0)), caps.position(caps.edgePoint(e, 1))});
+        }
+    std::vector<Index> moved;
+    if (segs.empty())
+        return moved;
+    std::vector<uint8_t> isOnRim(m.pointCapacity(), 0);
+    std::vector<Index> onRim;
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        if (m.pointValid(p) && glm::distance(closestOnSegments(m.position(p), segs), m.position(p)) < kOnRim * h)
+        {
+            isOnRim[p] = 1;
+            onRim.push_back(p);
+        }
+    // The result's own edges along the rim, and how far each point of the rim is from them.
+    std::vector<std::array<glm::dvec3, 2>> laid;
+    for (Index e = 0; e < m.edgeCapacity(); ++e)
+        if (m.edgeValid(e) && isOnRim[m.edgePoint(e, 0)] && isOnRim[m.edgePoint(e, 1)])
+            laid.push_back({m.position(m.edgePoint(e, 0)), m.position(m.edgePoint(e, 1))});
+    if (laid.empty())
+        return moved;
+    std::vector<double> off(rim.size());
+    for (size_t i = 0; i < rim.size(); ++i)
+        off[i] = glm::distance(closestOnSegments(caps.position(rim[i]), laid), caps.position(rim[i]));
+    // The stretches missed, each a run of rim points joined along the rim.
+    std::vector<size_t> parent(rim.size());
+    std::iota(parent.begin(), parent.end(), size_t(0));
+    const auto find = [&](size_t x) {
+        while (parent[x] != x)
+            x = parent[x] = parent[parent[x]];
+        return x;
+    };
+    for (const auto& link : links)
+        if (off[link[0]] > kMissed * h && off[link[1]] > kMissed * h)
+            parent[find(link[0])] = find(link[1]);
+    std::unordered_map<size_t, size_t> furthest;
+    for (size_t i = 0; i < rim.size(); ++i)
+        if (off[i] > kMissed * h)
+        {
+            const auto [it, fresh] = furthest.try_emplace(find(i), i);
+            if (!fresh && off[i] > off[it->second])
+                it->second = i;
+        }
+    for (const auto& [stretch, i] : furthest)
+    {
+        const glm::dvec3 tip = caps.position(rim[i]);
+        size_t best = onRim.size();
+        double bestD = kReach * h;
+        for (size_t k = 0; k < onRim.size(); ++k)
+            if (const double d = glm::distance(m.position(onRim[k]), tip); d < bestD)
+            {
+                bestD = d;
+                best = k;
+            }
+        if (best == onRim.size())
+            continue;
+        if (std::getenv("LILA_TIP_LOG"))
+            std::fprintf(stderr, "rim tip at %.2f %.2f %.2f, %.2f quads off, point from %.2f quads away\n", tip.x, tip.y, tip.z, off[i] / h,
+                         bestD / h);
+        m.setPosition(onRim[best], tip);
+        moved.push_back(onRim[best]);
+        onRim[best] = onRim.back();
+        onRim.pop_back();
     }
     return moved;
 }
@@ -4861,10 +4967,20 @@ QuadRemeshResult coverRemesh(Work& w, const QuadRemeshOptions& opts, Stopwatch& 
         if (std::getenv("LILA_STAGE_LOG"))
             std::fprintf(stderr, "border corners reached: %d\n", reached);
     }
+    std::vector<Index> rimTips;
+    if (refine && w.keptCaps.numFaces() > 0 && !std::getenv("LILA_QR_NO_CORNER_REACH"))
+    {
+        rimTips = reachRimTips(m, w.keptCaps, h0);
+        if (std::getenv("LILA_STAGE_LOG"))
+            std::fprintf(stderr, "rim tips reached: %zu\n", rimTips.size());
+    }
     std::vector<FeatureKind> feature = pointFeatures(m, w.creases, w.border, 0.3 * h0);
     if (refine)
     {
         projectPoints(m, feature, *w.simpleBvh, w.creases, w.border, 0.3 * h0);
+        // Held like corners from here on, or the relax draws them back along the rim.
+        for (Index p : rimTips)
+            feature[p] = FeatureKind::Corner;
         freeCreaseFlaps(m, feature, *w.simpleBvh, h0);
         relaxAlongFeatures(m, feature, *w.simpleBvh, w.creases, w.border, h0, opts.relaxIterations, axis);
         unfold(m, feature, src, bvh, *w.simpleBvh, axis, h0);
@@ -4992,11 +5108,11 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         result.error = r.error;
         return result;
     }
-    // A body with flat faces is laid out both ways and the better result kept: neither way wins at every face count
-    // (the stock extraction now and then folds along a kept cap's rim), and pole counts swing by a third from one
-    // count to the next. Clearly fewer flaws decide, else fewer poles.
+    // A body with flat faces whose kept-cap layout has a flaw is laid out as a creased shape too, and the better result
+    // kept: clearly fewer flaws decide, else fewer poles. A clean kept-cap layout stands: it has the fewer poles three
+    // times in four, and the second layout doubles the time.
     constexpr int kFewFlaws = 3;
-    if (w.keptCapsBvh && !std::getenv("LILA_QR_NO_FALLBACK"))
+    if (w.keptCapsBvh && (r.defects > 0 || std::getenv("LILA_QR_BOTH")) && !std::getenv("LILA_QR_NO_FALLBACK"))
     {
         QuadRemeshResult own = quadRemeshOnce(source, opts, false);
         const bool cleaner = own.defects + kFewFlaws < r.defects, dirtier = r.defects + kFewFlaws < own.defects;
@@ -5050,6 +5166,19 @@ Index defects(const geo::Mesh& m, const geo::Mesh& src, const geo::MeshBvh& bvh,
             count += m.edgeValid(e) && m.isBoundaryEdge(e);
     for (Index p = 0; p < m.pointCapacity(); ++p)
         count += m.pointValid(p) && m.pointValence(p) > 8;
+    if (std::getenv("LILA_DEFECT_LIST"))
+    {
+        std::fprintf(stderr, "defect counts: %zu folds, %zu not manifold\n", folded.size(), m.validate(geo::kValidateManifold).size());
+        for (Index f = 0; f < m.faceCapacity(); ++f)
+            if (m.faceValid(f) && m.faceArea(f) <= 1e-9 * size * size)
+            {
+                const glm::dvec3 c = m.faceCentroid(f);
+                std::fprintf(stderr, "defect flat face %.3f %.3f %.3f\n", c.x, c.y, c.z);
+            }
+        for (Index p = 0; p < m.pointCapacity(); ++p)
+            if (m.pointValid(p) && m.pointValence(p) > 8)
+                std::fprintf(stderr, "defect fan %.3f %.3f %.3f\n", m.position(p).x, m.position(p).y, m.position(p).z);
+    }
     // A hole filled in one piece: a face of many sides, or one far bigger than the faces round it.
     for (Index f = 0; f < m.faceCapacity(); ++f)
     {
