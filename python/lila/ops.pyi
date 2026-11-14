@@ -7385,7 +7385,7 @@ def putOnTurntable(*objects: Any) -> Any:
         objects: objects.
     """
 
-def quadRemesh(*objects: Any, preset: str | None = None, method: str | None = None, targetFaces: int | None = None, countTolerance: float | None = None, timeout: float | None = None, targetEdgeLength: float | None = None, adaptivity: float | None = None, useHardEdges: bool | None = None, sharpAngle: float | None = None, symmetry: str | None = None, middleSmoothing: float | None = None, guides: Sequence[Any] | None = None, guidePoints: Sequence[Any] | None = None, featureGuides: Sequence[Any] | None = None, featureGuidePoints: Sequence[Any] | None = None, densityHandles: Sequence[Any] | None = None, pureQuads: bool | None = None, jointDensity: float | None = None, jointDensityReach: float | None = None, jointPoleAvoidance: float | None = None, edgesAround: int | None = None, resolveGaps: bool | None = None, poles: Sequence[Any] | None = None, relaxIterations: int | None = None, transferUvs: bool | None = None, transferNormals: bool | None = None, keepSource: bool | None = None, hideSource: bool | None = None, name: str | None = None) -> Any:
+def quadRemesh(*objects: Any, preset: str | None = None, method: str | None = None, targetFaces: int | None = None, countTolerance: float | None = None, timeout: float | None = None, targetEdgeLength: float | None = None, adaptivity: float | None = None, useHardEdges: bool | None = None, sharpAngle: float | None = None, symmetry: str | None = None, middleSmoothing: float | None = None, guides: Sequence[Any] | None = None, guidePoints: Sequence[Any] | None = None, featureGuides: Sequence[Any] | None = None, featureGuidePoints: Sequence[Any] | None = None, densityVolumes: Sequence[Any] | None = None, volumeFaceSize: float | None = None, densityHandles: Sequence[Any] | None = None, pureQuads: bool | None = None, jointDensity: float | None = None, jointDensityReach: float | None = None, jointPoleAvoidance: float | None = None, edgesAround: int | None = None, resolveGaps: bool | None = None, poles: Sequence[Any] | None = None, relaxIterations: int | None = None, transferUvs: bool | None = None, transferNormals: bool | None = None, keepSource: bool | None = None, hideSource: bool | None = None, name: str | None = None) -> Any:
     """Auto quad remesh: a new all-quad mesh whose edge flow follows curvature, hard edges and guide curves, at about the target face count, optionally with UVs and normals transferred from the source. Open borders, sharp creases, crease corners and cone tips are kept. Where the layout folds at a part too thin or tight for the requested size (a strip narrower than the edge length) it retries finer, so the face count can come out higher. The kept source is hidden. Runs off the UI thread with a cancellable progress bar, and gives up after timeout= seconds with an error saying how far it got, changing nothing. Returns {name, metrics, layout, attempts: [{layout, faces, defects, irregular}] for every layout tried, notes: where the result departs from what was asked}, and with poles= where each pole landed: {point, position, valence, valenceMatched}, or null where none came out near it.
 
     Args:
@@ -7397,7 +7397,7 @@ def quadRemesh(*objects: Any, preset: str | None = None, method: str | None = No
         timeout: Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits until done or aborted. Default 0.0.
         targetEdgeLength: Edge length, cm; overrides targetFaces when positive. Default 0.0.
         adaptivity: 0 uniform, 1 much denser where curved; painted point 'density' multiplies. Default 0.25.
-        useHardEdges: Follow edges marked hard. Default True.
+        useHardEdges: Follow edges marked hard. Default False.
         sharpAngle: Also follow creases sharper than this, degrees; negative disables. Default 40.0.
         symmetry: off, x, y or z: remesh half and mirror, exactly symmetric. The mesh has to be symmetric across that plane through its origin. One of 'off', 'x', 'y', 'z'. Default 'x'.
         middleSmoothing: With symmetry, fills a groove along the middle edge loop (a sternum, a spine) so the rows cross it level: 0 follows the source, 1 smooths six faces either side. Default 0.0.
@@ -7405,6 +7405,8 @@ def quadRemesh(*objects: Any, preset: str | None = None, method: str | None = No
         guidePoints: Guide polylines as lists of world [x, y, z].
         featureGuides: Curves, or meshes whose edges trace lines, that get an edge loop laid exactly on them, like a hard edge. Draw them as for guides.
         featureGuidePoints: Feature guide polylines as lists of world [x, y, z].
+        densityVolumes: Meshes placed over the areas that want a different face size: each acts from its centre out to its largest half extent, easing out to the edge. A sphere over a head, say.
+        volumeFaceSize: Edge length inside the density volumes, as a multiple of what it would be: under 1 is denser. Default 0.5.
         densityHandles: Local face size as {position: world [x, y, z], radius, scale}: scale times the edge length at the centre (0.35 to 2.8), easing out to the radius.
         pureQuads: All quads; false allows a few triangles and pentagons. Default True.
         jointDensity: Extra faces at joints, armpits and finger webs, where the mesh bends: 0 none, 1 about three times as dense there. Default 0.0.
@@ -7579,6 +7581,13 @@ def relocateScene(*objects: Any, to: Sequence[float] | None = None, offset: Sequ
         relocateScene("Ground", from="bottom")
 
         relocateScene("Hero", from="Hero", rotation="yaw", nodes=["Hero"])
+    """
+
+def remeshDensity(value: float | None = None, *, v: float | None = None) -> Any:
+    """Set how dense Quad Remesh makes the selected faces, or the whole of the selected meshes in object mode: the point attribute density, a multiple of the faces they would get otherwise. 1 clears it.
+
+    Args:
+        value: Density: 2 is twice the faces there, 0.5 half. Short form v. Default 2.0.
     """
 
 def removeAnimLayerMembers(*objects: Any, layer: str | None = None, l: str | None = None) -> Any:
@@ -8056,7 +8065,7 @@ def retopoDrawSetReference(mesh: str | None = None, reference: str | None = None
         create: Create the mesh if it doesn't exist (taking the reference's symmetry). Default False.
     """
 
-def retopoPoles(*objects: Any, preset: str | None = None, method: str | None = None, targetFaces: int | None = None, countTolerance: float | None = None, timeout: float | None = None, targetEdgeLength: float | None = None, adaptivity: float | None = None, useHardEdges: bool | None = None, sharpAngle: float | None = None, symmetry: str | None = None, middleSmoothing: float | None = None, guides: Sequence[Any] | None = None, guidePoints: Sequence[Any] | None = None, featureGuides: Sequence[Any] | None = None, featureGuidePoints: Sequence[Any] | None = None, densityHandles: Sequence[Any] | None = None, pureQuads: bool | None = None, jointDensity: float | None = None, jointDensityReach: float | None = None, jointPoleAvoidance: float | None = None, edgesAround: int | None = None, resolveGaps: bool | None = None, poles: Sequence[Any] | None = None) -> Any:
+def retopoPoles(*objects: Any, preset: str | None = None, method: str | None = None, targetFaces: int | None = None, countTolerance: float | None = None, timeout: float | None = None, targetEdgeLength: float | None = None, adaptivity: float | None = None, useHardEdges: bool | None = None, sharpAngle: float | None = None, symmetry: str | None = None, middleSmoothing: float | None = None, guides: Sequence[Any] | None = None, guidePoints: Sequence[Any] | None = None, featureGuides: Sequence[Any] | None = None, featureGuidePoints: Sequence[Any] | None = None, densityVolumes: Sequence[Any] | None = None, volumeFaceSize: float | None = None, densityHandles: Sequence[Any] | None = None, pureQuads: bool | None = None, jointDensity: float | None = None, jointDensityReach: float | None = None, jointPoleAvoidance: float | None = None, edgesAround: int | None = None, resolveGaps: bool | None = None, poles: Sequence[Any] | None = None) -> Any:
     """The poles quadRemesh's edge flow would turn at with these options, without remeshing: where each one is and its valence (3 or 5). Move, add or remove them and pass them back as quadRemesh(poles=...). Also returns, per closed shell, what (4 - valence) over its poles has to sum to.
 
     Args:
@@ -8068,7 +8077,7 @@ def retopoPoles(*objects: Any, preset: str | None = None, method: str | None = N
         timeout: Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits until done or aborted. Default 0.0.
         targetEdgeLength: Edge length, cm; overrides targetFaces when positive. Default 0.0.
         adaptivity: 0 uniform, 1 much denser where curved; painted point 'density' multiplies. Default 0.25.
-        useHardEdges: Follow edges marked hard. Default True.
+        useHardEdges: Follow edges marked hard. Default False.
         sharpAngle: Also follow creases sharper than this, degrees; negative disables. Default 40.0.
         symmetry: off, x, y or z: remesh half and mirror, exactly symmetric. The mesh has to be symmetric across that plane through its origin. One of 'off', 'x', 'y', 'z'. Default 'off'.
         middleSmoothing: With symmetry, fills a groove along the middle edge loop (a sternum, a spine) so the rows cross it level: 0 follows the source, 1 smooths six faces either side. Default 0.0.
@@ -8076,6 +8085,8 @@ def retopoPoles(*objects: Any, preset: str | None = None, method: str | None = N
         guidePoints: Guide polylines as lists of world [x, y, z].
         featureGuides: Curves, or meshes whose edges trace lines, that get an edge loop laid exactly on them, like a hard edge. Draw them as for guides.
         featureGuidePoints: Feature guide polylines as lists of world [x, y, z].
+        densityVolumes: Meshes placed over the areas that want a different face size: each acts from its centre out to its largest half extent, easing out to the edge. A sphere over a head, say.
+        volumeFaceSize: Edge length inside the density volumes, as a multiple of what it would be: under 1 is denser. Default 0.5.
         densityHandles: Local face size as {position: world [x, y, z], radius, scale}: scale times the edge length at the centre (0.35 to 2.8), easing out to the radius.
         pureQuads: All quads; false allows a few triangles and pentagons. Default True.
         jointDensity: Extra faces at joints, armpits and finger webs, where the mesh bends: 0 none, 1 about three times as dense there. Default 0.0.
