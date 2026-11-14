@@ -770,6 +770,8 @@ struct Work
     std::optional<geo::MeshBvh> simpleBvh;
     /** The feature lines off the borders, and the borders. */
     FeatureLines creases, border;
+    /** The edges imprinted along edge loop curves: feature edges for the layout to follow, but no crease of the shape. */
+    std::vector<std::array<glm::dvec3, 2>> guideSegs;
     Surface iso;
     /** Quad edge length per vertex of iso. */
     std::vector<double> isoSize;
@@ -1270,7 +1272,13 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
     // collapse.
     refineSurface(s, triEdge);
     if (!opts.featureGuides.empty())
+    {
+        const std::unordered_set<uint64_t> own = s.hard;
         imprintGuides(s, opts.featureGuides);
+        for (uint64_t key : s.hard)
+            if (!own.contains(key))
+                w.guideSegs.push_back({s.pos[Index(key >> 32)], s.pos[Index(key & 0xffffffffu)]});
+    }
     s.buildTopology();
     s.buildGeometry();
     s.detectFeatures(opts.sharpAngle, 75.0, 2.0 * w.h0);
@@ -1454,7 +1462,8 @@ void stockSizes(const Work& w, const QuadRemeshOptions& opts, std::vector<double
     }
 }
 
-void turnSharpCorners(const Surface& iso, CoverInput& in);
+void turnSharpCorners(const Surface& iso, const std::vector<uint8_t>& guideEdge, CoverInput& in);
+std::vector<uint8_t> guideEdges(const Work& w);
 
 AutoRemesher::Vector3 toAr(const glm::dvec3& p) { return AutoRemesher::Vector3(p.x, p.y, p.z); }
 glm::dvec3 fromAr(const AutoRemesher::Vector3& p) { return glm::dvec3(p.x(), p.y(), p.z()); }
@@ -1697,12 +1706,11 @@ CoverInput coverInput(const Work& w, const QuadRemeshOptions& opts, std::string&
     }
     else if (w.symmetric && !w.wholeLayout)
         in.guidance = symmetricFlow(w, in, error);
-    // Not with edge loop curves: where one crosses a crease or border at a slant, the two make a sharp sector that is
-    // no corner.
-    if (in.guidance.empty() && !w.stock && opts.featureGuides.empty() && !std::getenv("LILA_QR_NO_CORNERS"))
-        turnSharpCorners(iso, in);
+    if (in.guidance.empty() && !w.stock && !std::getenv("LILA_QR_NO_CORNERS"))
+        turnSharpCorners(iso, guideEdges(w), in);
     if (std::getenv("LILA_STAGE_LOG"))
-        std::fprintf(stderr, "sharp corners: %zu triangles turned, %zu sides held\n", in.fieldOverrides.size(), in.forcedCorners.size());
+        std::fprintf(stderr, "sharp corners: %zu triangles turned, %zu sides held, %zu curve segments\n", in.fieldOverrides.size(),
+                     in.forcedCorners.size(), w.guideSegs.size());
     return in;
 }
 
@@ -1721,6 +1729,30 @@ void tameSizes(AutoRemesher::Parameterizer& pz)
     pz.setMaxAspectRatio(1.5);
 }
 
+/** Per edge of the working triangles, whether it lies along an imprinted edge loop curve (on either side of a whole layout). */
+std::vector<uint8_t> guideEdges(const Work& w)
+{
+    const Surface& iso = w.iso;
+    std::vector<uint8_t> out(iso.edges.size(), 0);
+    if (w.guideSegs.empty())
+        return out;
+    tbb::parallel_for(size_t(0), iso.edges.size(), [&](size_t e) {
+        if (!iso.edgeFeature[e] || iso.edgeTriCount[e] != 2)
+            return;
+        glm::dvec3 a = iso.pos[iso.edges[e][0]], b = iso.pos[iso.edges[e][1]];
+        if (w.wholeLayout && w.plane.distance(0.5 * (a + b)) < 0.0)
+        {
+            a = w.plane.reflect(a);
+            b = w.plane.reflect(b);
+        }
+        // Ends and middle: a crease leaving the curve at a slant has its far end off it.
+        const double reach = 0.05 * glm::distance(a, b);
+        auto on = [&](const glm::dvec3& p) { return glm::distance(closestOnSegments(p, w.guideSegs), p) < reach; };
+        out[e] = on(a) && on(b) && on(0.5 * (a + b));
+    });
+    return out;
+}
+
 /**
  * Corners where two feature edges meet at under 45 degrees and no third joins them: turned at a prism's tip, where a
  * third crease runs down the side, the star prism came out with half as many poles again. A quad corner there has one side along U and the other
@@ -1729,7 +1761,7 @@ void tameSizes(AutoRemesher::Parameterizer& pz)
  * round, a quarter turn short of the corner's own angle), and the two sides are held to whichever direction that
  * makes them nearer.
  */
-void turnSharpCorners(const Surface& iso, CoverInput& in)
+void turnSharpCorners(const Surface& iso, const std::vector<uint8_t>& guideEdge, CoverInput& in)
 {
     constexpr double kSharpest = glm::radians(45.0);
     const Index n = iso.vertexCount();
@@ -1738,10 +1770,13 @@ void turnSharpCorners(const Surface& iso, CoverInput& in)
     for (Index t = 0; t < Index(iso.tris.size()); ++t)
         for (Index v : iso.tris[t])
             around[v].push_back(t);
+    // Only creases and borders are a corner's sides: an edge loop curve crossing one at a slant makes a sharp sector
+    // that is no corner.
+    auto side = [&](Index e) { return iso.edgeFeature[e] != 0 && !guideEdge[e]; };
     auto featureBetween = [&](Index a, Index b) {
         for (Index k = iso.adjStart[a]; k < iso.adjStart[a + 1]; ++k)
             if (iso.adj[k] == b)
-                return iso.edgeFeature[iso.adjEdge[k]] != 0;
+                return side(iso.adjEdge[k]);
         return false;
     };
     for (Index v = 0; v < n; ++v)
@@ -1763,7 +1798,7 @@ void turnSharpCorners(const Surface& iso, CoverInput& in)
             byFirst[a] = t;
         }
         for (Index k = iso.adjStart[v]; k < iso.adjStart[v + 1]; ++k)
-            features += iso.edgeFeature[iso.adjEdge[k]] != 0;
+            features += side(iso.adjEdge[k]);
         if (features != 2)
             continue;
         for (Index start : around[v])
