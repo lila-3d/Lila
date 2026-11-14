@@ -229,3 +229,5 @@ Still open: the ear folds that remain (head 16000 at 0.25, open bust Z 5450: the
 Measured, defaults, count tolerance 0: head 5450 Z 5512 faces, 46 poles, 2 triangles and 2 n-gons; off 5454, 50, all quads; Mochi 6000 X 6674, 102; head 16000 Z at 0.15 16974, 64, all quads; at 0.25 16192, 62, all quads, no folds; open bust 5450 Z 5756, 36; off 5567, 57, 2 n-gons; flat bust 5450 Z 5780, 43; off 5260, 54. Suites retopo, rig, bake, uv pass on a full build (run one at a time; lila_rig_tests died once with a heap error when run four at a time with the uv suites and passed three times alone).
 
 Still open, added: head 5450 Z has 4 odd faces left by the pairing; open bust 5700 off's uncovered shoulder; Mochi's face count runs 11% over the ask.
+
+- Use Hard Edges is off by default (Jared, 2026-11-15), in the command, the options and every preset; Hard Surface no longer sets it. With no hard edges a modelled cylinder passed withoutFlatFaces and took the stock kept-cap layout (26 poles against 8): kept caps are now for sculpted bodies only (doublyCurvedShare over kSculpted, the measure the own path already uses).
