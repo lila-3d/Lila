@@ -2651,6 +2651,8 @@ void setUp(AutoRemesher::Parameterizer& pz, const CoverInput& in, const Work& w)
             pz.setFaceHints(&in.hints);
         if (!in.stiffness.empty())
             pz.setFieldStiffness(&in.stiffness);
+        if (!in.guidance.empty())
+            pz.setSingularitySimplification(false);
         pz.setProgressHandler([](float, const char*) { Budget::checkpoint(); });
         return;
     }
@@ -4139,6 +4141,91 @@ void unfold(geo::Mesh& m, const std::vector<FeatureKind>& feature, const geo::Me
 }
 
 /**
+ * Turns the flow round each density handle so it has the poles a change of face size needs. A layout changes its face
+ * size only round poles: with none near, the cover evens a handle's size out again. Four poles on a ring inside the
+ * handle and four of the opposite kind on a ring near its rim scale the faces between the rings by the rings' radii, so
+ * the inner ring sits at the outer one's radius times the handle's scale (or one over it): valence 3 inside and 5
+ * outside for smaller faces, the other way round for larger.
+ *
+ * Each inner pole pairs with the outer one on its spoke, and the flow is turned by a quarter of the angle the pair is
+ * seen under: a quarter turn across the stretch between them, which a cross field doesn't see, and next to nothing far
+ * off. Measured in the handle's tangent plane, faded out past the handle and on faces turned away from it. With a whole
+ * symmetric layout a handle off the plane acts on its mirror image too, and one on it has its spokes either side.
+ */
+void turnFlowRoundHandles(const Work& w, const QuadRemeshOptions& opts, std::vector<AutoRemesher::Vector3>& field)
+{
+    constexpr double kOuter = 0.9;
+    const Surface& iso = w.iso;
+    const double tiny = 1e-6 * glm::length(w.src.bounds().size());
+    struct Ring
+    {
+        glm::dvec3 centre, normal, u, v;
+        double inner, outer, radius, sign;
+    };
+    std::vector<Ring> rings;
+    for (const DensityHandle& handle : opts.densityHandles)
+    {
+        const double scale = std::clamp(handle.scale, 0.35, 2.8);
+        geo::BvhClosest c;
+        if (!(handle.radius > 0.0) || std::abs(scale - 1.0) < 0.05 || !w.bvh->closestPoint(handle.position, c))
+            continue;
+        Ring ring;
+        ring.centre = c.point;
+        ring.normal = w.src.faceNormal(c.face);
+        glm::dvec3 across = w.symmetric ? w.plane.normal : glm::dvec3(0.0);
+        across -= ring.normal * glm::dot(ring.normal, across);
+        ring.u = glm::length(across) > 1e-6 ? glm::normalize(across) : anyTangent(ring.normal);
+        ring.v = glm::cross(ring.normal, ring.u);
+        ring.radius = handle.radius;
+        ring.outer = kOuter * handle.radius;
+        ring.inner = ring.outer * std::min(scale, 1.0 / scale);
+        ring.sign = scale < 1.0 ? 1.0 : -1.0;
+        rings.push_back(ring);
+        if (w.wholeLayout && std::abs(w.plane.distance(ring.centre)) > tiny)
+        {
+            // The mirror image turns the other way round.
+            const auto flip = [&](const glm::dvec3& d) { return d - 2.0 * glm::dot(d, w.plane.normal) * w.plane.normal; };
+            ring.centre = w.plane.reflect(ring.centre);
+            ring.normal = flip(ring.normal);
+            ring.u = flip(ring.u);
+            ring.v = flip(ring.v);
+            ring.sign = -ring.sign;
+            rings.push_back(ring);
+        }
+    }
+    if (rings.empty())
+        return;
+    tbb::parallel_for(size_t(0), iso.tris.size(), [&](size_t t) {
+        const auto& tri = iso.tris[t];
+        const glm::dvec3 at = (iso.pos[tri[0]] + iso.pos[tri[1]] + iso.pos[tri[2]]) / 3.0, normal = iso.triNormal[t];
+        double turn = 0.0;
+        for (const Ring& ring : rings)
+        {
+            const glm::dvec3 d = at - ring.centre;
+            const double far = glm::length(d) / ring.radius, facing = glm::dot(normal, ring.normal);
+            if (far >= 2.0 || facing <= 0.0)
+                continue;
+            const double fade = (1.0 - glm::smoothstep(1.3, 2.0, far)) * glm::smoothstep(0.0, 0.3, facing);
+            const glm::dvec2 x(glm::dot(d, ring.u), glm::dot(d, ring.v));
+            double seen = 0.0;
+            for (int k = 0; k < 4; ++k)
+            {
+                // Diagonal to the plane's normal, so a handle on the plane has two spokes either side of it.
+                const double angle = 0.7853981633974483 + 1.5707963267948966 * k;
+                const glm::dvec2 spoke(std::cos(angle), std::sin(angle));
+                const glm::dvec2 a = x - ring.outer * spoke, b = x - ring.inner * spoke;
+                seen += std::atan2(a.x * b.y - a.y * b.x, a.x * b.x + a.y * b.y);
+            }
+            turn += ring.sign * fade * 0.25 * seen;
+        }
+        if (turn == 0.0)
+            return;
+        const glm::dvec3 dir = fromAr(field[t]);
+        field[t] = toAr(std::cos(turn) * dir + std::sin(turn) * glm::cross(normal, dir));
+    });
+}
+
+/**
  * One connected part's quads as a polygon soup: the cover solved over the working triangles, traced from its integer
  * grid (or the library's extraction where the grid leaves a hole).
  */
@@ -4149,6 +4236,17 @@ bool coverSoup(Work& w, const QuadRemeshOptions& opts, std::vector<glm::dvec3>& 
         CoverInput in = coverInput(w, opts, error);
         if (!error.empty())
             return false;
+        if (in.guidance.empty() && !opts.densityHandles.empty() && !std::getenv("LILA_QR_NO_HANDLE_POLES"))
+        {
+            // The layout's own flow first, poles cancelled as usual; the handles' poles go into that.
+            AutoRemesher::Parameterizer flow(&in.vertices, &in.triangles, nullptr);
+            setUp(flow, in, w);
+            if (flow.solveField() && flow.field().size() == in.triangles.size())
+            {
+                in.guidance = flow.field();
+                turnFlowRoundHandles(w, opts, in.guidance);
+            }
+        }
         AutoRemesher::Parameterizer pz(&in.vertices, &in.triangles, in.guidance.empty() ? nullptr : &in.guidance);
         setUp(pz, in, w);
         if (!pz.parameterize())
