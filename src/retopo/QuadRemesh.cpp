@@ -3107,6 +3107,11 @@ struct HoleFiller
  */
 bool fillGridHoles(std::vector<glm::dvec3>& points, std::vector<std::vector<Index>>& faces, const Work& w)
 {
+    const auto why = [](int check) {
+        if (std::getenv("LILA_HOLE_LOG"))
+            std::fprintf(stderr, "hole fill: check %d failed\n", check);
+        return false;
+    };
     std::vector<int> faceCount(points.size(), 0);
     for (const auto& f : faces)
         for (Index p : f)
@@ -3126,29 +3131,88 @@ bool fillGridHoles(std::vector<glm::dvec3>& points, std::vector<std::vector<Inde
             if (half.contains(dkey(b, a)) || w.border.closest(0.5 * (points[a] + points[b]), 0.25 * w.h0, q))
                 continue;
             if (!next.emplace(b, a).second)
-                return false;
+                return why(1);
         }
-    std::unordered_set<Index> seen;
+    // A gap cut right across a strip, or a notch in the border, leaves chains that start and end on the source's border
+    // instead of loops. Each end goes on to the nearest chain start along the border, which closes them.
+    std::unordered_set<Index> bridged;
+    {
+        std::unordered_set<Index> entered;
+        for (const auto& [from, to] : next)
+            entered.insert(to);
+        std::vector<Index> starts, ends;
+        for (const auto& [from, to] : next)
+        {
+            if (!entered.contains(from))
+                starts.push_back(from);
+            if (!next.contains(to))
+                ends.push_back(to);
+        }
+        // Each chain's end by its start, and its length in points.
+        std::unordered_map<Index, std::pair<Index, int>> chainOf;
+        for (Index st : starts)
+        {
+            Index at = st;
+            int length = 1;
+            for (auto it = next.find(at); it != next.end() && length < 4096; it = next.find(at), ++length)
+                at = it->second;
+            chainOf[at] = {st, length};
+        }
+        // Along the border from the end to the start: their chord's middle is near it (cutting a corner of it at most),
+        // where a chord across the strip has its middle half its length from either side. A short chain straight across
+        // a strip is as near its own start as the next chain's, and is no loop by itself.
+        std::vector<std::tuple<double, Index, Index>> links;
+        for (Index e : ends)
+            for (Index st : starts)
+            {
+                const double d = glm::distance(points[e], points[st]);
+                if (d >= 4.0 * w.h0 || !w.border.closest(0.5 * (points[e] + points[st]), 0.25 * w.h0 + 0.3 * d, q))
+                    continue;
+                if (const auto own = chainOf.find(e); own != chainOf.end() && own->second.first == st && own->second.second < 4)
+                    continue;
+                links.push_back({d, e, st});
+            }
+        std::sort(links.begin(), links.end());
+        std::unordered_set<Index> startTaken;
+        for (const auto& [d, e, st] : links)
+            if (!next.contains(e) && !startTaken.contains(st))
+            {
+                next[e] = st;
+                startTaken.insert(st);
+                bridged.insert(e);
+                bridged.insert(st);
+            }
+    }
+    std::unordered_set<Index> seen, unclosed;
     for (const auto& [start, unused] : next)
     {
         if (seen.contains(start))
             continue;
         std::vector<Index> loop;
         Index at = start;
-        while (!seen.contains(at))
+        bool open = false;
+        while (!open && !seen.contains(at))
         {
             seen.insert(at);
             loop.push_back(at);
             auto it = next.find(at);
             if (it == next.end())
-                return false;
-            at = it->second;
+                open = true;
+            else
+                at = it->second;
+        }
+        // A chain nothing closed (its other side is too far along the border) stays a gap in the border.
+        if (open || unclosed.contains(at))
+        {
+            unclosed.insert(loop.begin(), loop.end());
+            continue;
         }
         if (at != start || loop.size() < 3 || loop.size() > kMaxGridHole)
-            return false;
+            return why(3);
         std::vector<int> have(loop.size());
+        // A point on the border is whole with two faces round it, not four.
         for (size_t i = 0; i < loop.size(); ++i)
-            have[i] = faceCount[loop[i]];
+            have[i] = faceCount[loop[i]] + (bridged.contains(loop[i]) ? 2 : 0);
         HoleFill fill;
         if (std::getenv("LILA_QR_LADDER_HOLES"))
         {
@@ -3182,6 +3246,10 @@ bool fillGridHoles(std::vector<glm::dvec3>& points, std::vector<std::vector<Inde
             faces.push_back(std::move(f));
         }
     }
+    // A gap left open has to be shallow enough for its points to be taken onto the border.
+    for (Index p : unclosed)
+        if (!w.border.closest(points[p], w.h0, q))
+            return why(4);
     return true;
 }
 
@@ -3223,6 +3291,22 @@ void gridSoup(const Work& w, const std::vector<std::vector<AutoRemesher::Vector2
         }
     if (holes > 0 && !fillGridHoles(points, faces, w))
     {
+        if (std::getenv("LILA_STAGE_LOG"))
+            std::fprintf(stderr, "integer grid: holes not closed, left to the library's extraction\n");
+        if (const char* path = std::getenv("LILA_GRID_DUMP"))
+            if (FILE* f = std::fopen(path, "w"))
+            {
+                for (const glm::dvec3& p : points)
+                    std::fprintf(f, "v %.9g %.9g %.9g\n", p.x, p.y, p.z);
+                for (const auto& face : faces)
+                {
+                    std::fprintf(f, "f");
+                    for (Index v : face)
+                        std::fprintf(f, " %d", int(v + 1));
+                    std::fprintf(f, "\n");
+                }
+                std::fclose(f);
+            }
         points.clear();
         faces.clear();
     }
@@ -3491,6 +3575,21 @@ bool coverSoup(Work& w, const QuadRemeshOptions& opts, std::vector<glm::dvec3>& 
         std::unique_ptr<std::vector<std::vector<AutoRemesher::Vector2>>> uvs = pz.takeTriangleUvs();
         std::vector<std::vector<AutoRemesher::Vector2>> originalUvs = pz.originalTriangleUvs();
         std::vector<size_t> singular = pz.singularVertexIndices();
+        // LILA_UV_DUMP: per working triangle its centre, its area and its area in the cover (signed).
+        if (const char* path = std::getenv("LILA_UV_DUMP"))
+            if (FILE* f = std::fopen(path, "w"))
+            {
+                for (size_t t = 0; t < originalUvs.size(); ++t)
+                {
+                    const auto& uv = originalUvs[t];
+                    const auto& tri = w.iso.tris[t];
+                    const glm::dvec3 c = (w.iso.pos[tri[0]] + w.iso.pos[tri[1]] + w.iso.pos[tri[2]]) / 3.0;
+                    std::fprintf(f, "%g %g %g %g %g %g %g %g %g %g %g\n", c.x, c.y, c.z, w.iso.triArea[t],
+                                 0.5 * ((uv[1].x() - uv[0].x()) * (uv[2].y() - uv[0].y()) - (uv[1].y() - uv[0].y()) * (uv[2].x() - uv[0].x())),
+                                 uv[0].x(), uv[0].y(), uv[1].x(), uv[1].y(), uv[2].x(), uv[2].y());
+                }
+                std::fclose(f);
+            }
         const FeatureLines& border = w.border;
         const double h0 = w.h0;
         if (!std::getenv("LILA_AR_EXTRACT") && !w.stock)
