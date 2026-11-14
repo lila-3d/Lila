@@ -1168,13 +1168,40 @@ QWidget* BakerPanel::buildResults()
     auto* clear = bakerPush(mSummaryBox, "Clear", "Clear: the bake messages");
     clear->setObjectName("bakerClearSummary");
     connect(clear, &QToolButton::clicked, this, [this] {
+        mResultOcclusion = false;
+        mResultBaked = false;
+        mCacheDropped = 0.0;
+        syncLightingNote();
+        syncPreviewNote();
+        syncCacheNote();
         mSummary->clear();
         mSummaryBox->hide();
     });
     buttons->addWidget(clear);
+    mEnvironmentLighting = bakerPush(mSummaryBox, "Environment Lighting",
+                                     "Environment Lighting: light the viewport with the HDRI, where baked occlusion shows. Sculpt lighting all but hides it");
+    mEnvironmentLighting->setObjectName("bakerEnvironmentLighting");
+    mEnvironmentLighting->hide();
+    connect(mEnvironmentLighting, &QToolButton::clicked, this, [] { actions::run(json("viewport.lighting.environment")); });
+    buttons->addWidget(mEnvironmentLighting);
+    mShowExportMesh = bakerPush(mSummaryBox, "Show Export Mesh",
+                                "Show Export Mesh: turn on, in the viewport, the modifiers these meshes export with, so the maps preview on the mesh they were baked for");
+    mShowExportMesh->setObjectName("bakerShowExportMesh");
+    mShowExportMesh->hide();
+    connect(mShowExportMesh, &QToolButton::clicked, this, [this] { showExportMesh(); });
+    buttons->addWidget(mShowExportMesh);
+    mRaiseCache = bakerPush(mSummaryBox, "Raise Cache", "Raise Cache: let the snapshot cache hold every mesh of this bake, so re-bakes reuse them instead of preparing them again");
+    mRaiseCache->setObjectName("bakerRaiseCache");
+    mRaiseCache->hide();
+    connect(mRaiseCache, &QToolButton::clicked, this, [this] { raiseSnapshotCache(); });
+    buttons->addWidget(mRaiseCache);
+    mPrefListener = PrefStore::get().onChanged([this](const std::string& file) {
+        if (file == "general")
+            syncLightingNote();
+    });
     buttons->addStretch(1);
     // One column width, so the buttons line up.
-    for (QToolButton* b : {mAssign, openOutput, clear})
+    for (QToolButton* b : {mAssign, openOutput, clear, mEnvironmentLighting, mShowExportMesh, mRaiseCache})
         b->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     mThumbs = new ThumbList(split);
     mThumbs->setObjectName("bakerThumbs");

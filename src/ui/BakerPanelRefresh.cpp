@@ -350,6 +350,7 @@ void BakerPanel::refresh()
         if (!last.is_null() && last.dump() != mShownResult)
             showResult(last);
     }
+    syncPreviewNote();
 }
 
 void BakerPanel::refreshProjects()

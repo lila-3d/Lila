@@ -270,7 +270,8 @@ void registerCommands()
                   {"self", "sf", T::Bool, nullptr, "Add (True) or remove (False) the lows themselves as a high."},
                   {"modifiers", "md", T::Any, nullptr,
                    "Bake-only modifier stack, [{\"kind\": \"subdivision\", \"params\": {\"levels\": 2}}] or a preset name, for the "
-                   "highs given in this call (else every high). Kinds are modifierKinds()."},
+                   "highs given in this call (else every high). Kinds are modifierKinds(). A subdivision here blends its uvs unless "
+                   "its params say uvs: 1 (Fit Surface), which takes many times longer on dense highs."},
                   {"preset", "ps", T::String, nullptr, "A bake modifier preset instead of modifiers=: Smooth x2, Smooth x1-x4, Auto Bevel + Smooth, none."},
                   nodeFlag({"cage", "cg", T::String, nullptr, "A cage mesh with the low's topology (one low); empty uses the auto cage."}, "mesh"),
                   {"cageOffset", "co", T::Float, nullptr, "Scales the auto cage's push (frontal distance).", {}, {}, 0.0},
