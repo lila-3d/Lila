@@ -2051,6 +2051,30 @@ bool prepareStock(Work& w, const QuadRemeshOptions& opts, double faces, double h
         w.simpleBvh.emplace(w.simple);
     }
     fill(w.iso, vertices, triangles);
+    if (const char* passes = std::getenv("LILA_QR_SMOOTH_ISO"))
+    {
+        // Debug: the working triangles smoothed so many passes, border points left, so detail narrower than a quad
+        // stays out of the layout. Fewer poles over a batch of sizes, more at some single ones: see DECISIONS.md.
+        std::vector<glm::dvec3> next(w.iso.pos.size());
+        for (int pass = 0; pass < std::atoi(passes); ++pass)
+        {
+            for (Index v = 0; v < w.iso.vertexCount(); ++v)
+            {
+                next[v] = w.iso.pos[v];
+                bool border = w.iso.adjStart[v] == w.iso.adjStart[v + 1];
+                glm::dvec3 mean(0.0);
+                for (Index k = w.iso.adjStart[v]; k < w.iso.adjStart[v + 1]; ++k)
+                {
+                    border = border || w.iso.edgeTriCount[w.iso.adjEdge[k]] != 2;
+                    mean += w.iso.pos[w.iso.adj[k]];
+                }
+                if (!border)
+                    next[v] = 0.5 * (w.iso.pos[v] + mean / double(w.iso.adjStart[v + 1] - w.iso.adjStart[v]));
+            }
+            w.iso.pos.swap(next);
+        }
+        w.iso.buildGeometry();
+    }
     if (!std::getenv("LILA_QR_NO_BLUNT"))
     {
         // Each vertex's own edge length, for the triangles to come back to once the pits are filled.
