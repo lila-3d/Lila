@@ -688,10 +688,11 @@ int imprintGuides(Surface& s, const std::vector<std::vector<glm::dvec3>>& guides
 /**
  * Caps the lattice spacing on thin parts, like fingers, so at least `around` edges go round them: the thickness straight
  * through the shape (to the inside of the far wall) stands in for a tube's diameter. The cap grows out gradually, like
- * fitGaps'. cf is the lattice's coarsening, the spacing per result edge.
+ * fitGaps'. cf is the lattice's coarsening, the spacing per result edge. The cap goes no lower than `deepest` of the
+ * spacing it is given.
  */
 void fitThickness(const Surface& s, const geo::Mesh& src, const geo::MeshBvh& bvh, const std::vector<double>& curvature, int around, double cf,
-                  std::vector<double>& scale)
+                  double deepest, std::vector<double>& scale)
 {
     LILA_ZONE();
 
@@ -700,7 +701,7 @@ void fitThickness(const Surface& s, const geo::Mesh& src, const geo::MeshBvh& bv
     std::vector<double> cap(n, std::numeric_limits<double>::max());
     tbb::parallel_for(Index(0), n, [&](Index v) {
         if (const double t = roundThickness(s, src, bvh, curvature, v, scale[v] / perDiameter); t > 0.0)
-            cap[v] = std::max(perDiameter * t, 0.25 * scale[v]);
+            cap[v] = std::max(perDiameter * t, deepest * scale[v]);
     });
     for (int it = 0; it < 30; ++it)
     {
@@ -765,6 +766,11 @@ struct Work
      * shapes keep Lila's own size field: read across a crease, that measure calls every edge of a cube curved.
      */
     bool stockSizes = false;
+    /**
+     * A sculpted shape on Lila's own path: most of it curves both ways at once, as against the flat and rolled faces of
+     * a modelled one. Its working triangles follow the quads' sizes, and its sizes dip less: see sizeTrianglesByQuads.
+     */
+    bool organic = false;
     /** The quads asked of the stock layout, over all of iso off its caps. */
     double stockQuads = 0.0;
     /**
@@ -864,9 +870,9 @@ enum class CurvatureSizing
  * Per vertex, the edge length multiplier curvature asks for (autoremesher's measures). Triangles: the normal's turn per
  * unit length round the vertex against its 75th percentile, squared into an importance, down to 0.35 where curved and
  * up to 3 where flat. Quads: the steepest normal turn per length to a neighbour against the median, raised to -strength,
- * 0.3 to 3.
+ * `smallest` to 3.
  */
-std::vector<double> curvatureMultiplier(const Surface& s, double strength, CurvatureSizing sizing)
+std::vector<double> curvatureMultiplier(const Surface& s, double strength, CurvatureSizing sizing, double smallest)
 {
     const Index n = s.vertexCount();
     std::vector<double> mult(n, 1.0);
@@ -924,7 +930,7 @@ std::vector<double> curvatureMultiplier(const Surface& s, double strength, Curva
     if (mean <= 0.0)
         return mult;
     for (Index v = 0; v < n; ++v)
-        mult[v] = std::clamp(std::pow(std::max(curv[v] / mean, 1e-3), -strength), 0.3, 3.0);
+        mult[v] = std::clamp(std::pow(std::max(curv[v] / mean, 1e-3), -strength), smallest, 3.0);
     return mult;
 }
 
@@ -957,7 +963,8 @@ std::vector<double> sizeField(const Surface& s, const Work& w, const QuadRemeshO
         }
         rho = std::move(next);
     }
-    const std::vector<double> bend = curvatureMultiplier(s, 4.0 * opts.adaptivity, sizing);
+    // A sculpt's sizes dip half as deep: its curvature is busy at every scale, and the cover folds at each deep dip.
+    const std::vector<double> bend = curvatureMultiplier(s, 4.0 * opts.adaptivity, sizing, w.organic ? 0.5 : 0.3);
     for (Index v = 0; v < n; ++v)
         rho[v] /= bend[v] * bend[v];
     // Joints get theirs after the spread, which would flatten a fold's narrow peak. A fold reads as a saddle only along
@@ -996,7 +1003,7 @@ std::vector<double> sizeField(const Surface& s, const Work& w, const QuadRemeshO
     if (opts.resolveGaps && w.closed)
         fitGaps(s, w.src, *w.bvh, size);
     if (opts.edgesAround > 0 && w.closed)
-        fitThickness(s, w.src, *w.bvh, curv.magnitude, opts.edgesAround, 1.0, size);
+        fitThickness(s, w.src, *w.bvh, curv.magnitude, opts.edgesAround, 1.0, w.organic ? 0.5 : 0.25, size);
     limitGrowth(s, size, kSizeGrowth);
     return size;
 }
@@ -1901,6 +1908,51 @@ bool prepareStock(Work& w, const QuadRemeshOptions& opts, double faces, double h
     return true;
 }
 
+/**
+ * The share of the surface that curves both ways at once (a dome or a saddle, a sculpt nearly everywhere), as against
+ * flat or rolled the one way (a modelled shape's faces between its creases).
+ */
+double doublyCurvedShare(const Surface& s)
+{
+    const Curvature curv = estimateCurvature(s);
+    // Against the shape's own size, so the answer is the same at any face count.
+    const double size = std::sqrt(s.totalArea());
+    double both = 0.0, all = 0.0;
+    for (Index v = 0; v < s.vertexCount(); ++v)
+    {
+        all += s.area[v];
+        // Not flat (a radius under twice the shape's size), nor one principal curvature next to nothing beside the other.
+        const double magnitude = curv.magnitude[v], apart = curv.anisotropy[v];
+        if (magnitude * size > 0.5 && std::abs(apart / magnitude - 1.0) > 0.2)
+            both += s.area[v];
+    }
+    return all > 0.0 ? both / all : 0.0;
+}
+
+/**
+ * Remeshes the working triangles to the quads' own sizes. The first pass sizes them by another curvature measure and
+ * comes out up to four times finer than the quads where the shape is busy; the flow then follows detail smaller than a
+ * quad (a groove in an ear), turns where no quad can, and the cover folds there. s is the surface they were made from.
+ * For sculpted shapes only: a modelled one needs the finer triangles to hold its thin parts between creases.
+ */
+void sizeTrianglesByQuads(Work& w, const Surface& s)
+{
+    LILA_ZONE();
+
+
+    const SizeField quads(w.iso, w.isoSize);
+    std::vector<double> target(s.pos.size());
+    tbb::parallel_for(size_t(0), s.pos.size(), [&](size_t v) { target[v] = quads.at(s.pos[v]) / triangleRatio(); });
+    Surface again = remeshIsotropic(s, target, *w.simpleBvh, w.creases, w.border);
+    again.buildTopology();
+    again.buildGeometry();
+    again.detectFeatures(-1.0, 75.0, 0.0);
+    std::vector<double> size(again.pos.size());
+    tbb::parallel_for(size_t(0), again.pos.size(), [&](size_t v) { size[v] = quads.at(again.pos[v]); });
+    w.iso = std::move(again);
+    w.isoSize = std::move(size);
+}
+
 void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts, Stopwatch& clock, bool keepCaps = true)
 {
     LILA_ZONE();
@@ -2004,6 +2056,10 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
             std::fprintf(stderr, "sharp tips cut off: %zu\n", w.tips.size());
     }
     w.border.build(s, 0.5 * w.h0, true);
+    const double curved = doublyCurvedShare(s);
+    w.organic = curved > 0.4 && !std::getenv("LILA_QR_MODELLED");
+    if (std::getenv("LILA_STAGE_LOG"))
+        std::fprintf(stderr, "curved both ways: %.2f of the surface\n", curved);
     std::vector<double> target = sizeField(s, w, opts, faces, CurvatureSizing::Triangles);
     if (std::getenv("LILA_STAGE_LOG"))
     {
@@ -2029,13 +2085,16 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
     // The quads' own sizes, measured on the working triangles where curvature reads at about the quads' scale.
     w.isoSize = sizeField(w.iso, w, opts, faces, CurvatureSizing::Quads);
     // Creased is a crease for every fifty quads' worth of surface or so: a sculpt's few stray sharp edges don't count.
+    // On a sculpt a tenth of that: its one real crease (the rim of a flat base) is short beside its area at any size.
     double creased = 0.0;
     for (size_t e = 0; e < w.iso.edges.size(); ++e)
         if (w.iso.edgeFeature[e] && !w.iso.edgeBoundary[e])
             creased += glm::distance(w.iso.pos[w.iso.edges[e][0]], w.iso.pos[w.iso.edges[e][1]]);
-    w.stockSizes = creased * w.h0 < 0.02 * w.iso.totalArea() && !std::getenv("LILA_QR_OWN_SIZES");
+    w.stockSizes = creased * w.h0 < (w.organic ? 0.002 : 0.02) * w.iso.totalArea() && !std::getenv("LILA_QR_OWN_SIZES");
     if (std::getenv("LILA_STAGE_LOG"))
         std::fprintf(stderr, "creased %g of %g, stock sizes %d\n", creased * w.h0, 0.02 * w.iso.totalArea(), int(w.stockSizes));
+    if (w.organic && !w.stockSizes)
+        sizeTrianglesByQuads(w, s);
     if (w.symmetric && !std::getenv("LILA_QR_HALF"))
     {
         // Laid out whole like the stock path: the half joined to its mirror image, its cut an edge chain to hold.
@@ -2132,7 +2191,7 @@ void stockSizes(const Work& w, const QuadRemeshOptions& opts, std::vector<double
                 fitGaps(iso, w.src, *w.bvh, fitted);
             // A little under the ask: the layout rounds the count round a part to a whole number, down as often as up.
             if (opts.edgesAround > 0)
-                fitThickness(iso, w.src, *w.bvh, curvature, opts.edgesAround, 0.92, fitted);
+                fitThickness(iso, w.src, *w.bvh, curvature, opts.edgesAround, 0.92, 0.25, fitted);
             for (size_t v = 0; v < size.size(); ++v)
                 if (fitted[v] < 0.98 * from)
                     size[v] = std::min(size[v], fitted[v]);
@@ -4106,9 +4165,9 @@ bool coverSoup(Work& w, const QuadRemeshOptions& opts, std::vector<glm::dvec3>& 
                     const auto& uv = originalUvs[t];
                     const auto& tri = w.iso.tris[t];
                     const glm::dvec3 c = (w.iso.pos[tri[0]] + w.iso.pos[tri[1]] + w.iso.pos[tri[2]]) / 3.0;
-                    std::fprintf(f, "%g %g %g %g %g %g %g %g %g %g %g\n", c.x, c.y, c.z, w.iso.triArea[t],
+                    std::fprintf(f, "%g %g %g %g %g %g %g %g %g %g %g %g\n", c.x, c.y, c.z, w.iso.triArea[t],
                                  0.5 * ((uv[1].x() - uv[0].x()) * (uv[2].y() - uv[0].y()) - (uv[1].y() - uv[0].y()) * (uv[2].x() - uv[0].x())),
-                                 uv[0].x(), uv[0].y(), uv[1].x(), uv[1].y(), uv[2].x(), uv[2].y());
+                                 uv[0].x(), uv[0].y(), uv[1].x(), uv[1].y(), uv[2].x(), uv[2].y(), in.faceSize[t]);
                 }
                 std::fclose(f);
             }
