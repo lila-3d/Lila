@@ -1952,6 +1952,9 @@ int bluntSpikes(Surface& iso, const geo::MeshBvh& bvh, double h, std::vector<uin
 /** Working triangles per quad for the stock stages, which size their quads off the triangles' mean edge. */
 constexpr double kStockTriangles = 6.0;
 
+/** Passes of smoothing over the stock working triangles before the layout. */
+constexpr int kStockSmoothing = 2;
+
 /**
  * The stock stages' working triangles. False when the simplified surface turns out to have creases to hold, which the
  * stock isotropic pass can't be told about; s is then spent and has to be read again. Creases that are only the rims
@@ -2051,12 +2054,13 @@ bool prepareStock(Work& w, const QuadRemeshOptions& opts, double faces, double h
         w.simpleBvh.emplace(w.simple);
     }
     fill(w.iso, vertices, triangles);
-    if (const char* passes = std::getenv("LILA_QR_SMOOTH_ISO"))
     {
-        // Debug: the working triangles smoothed so many passes, border points left, so detail narrower than a quad
-        // stays out of the layout. Fewer poles over a batch of sizes, more at some single ones: see DECISIONS.md.
+        // The working triangles are smoothed a little, border points left, so detail narrower than a quad stays out of
+        // the flow: a quarter fewer poles on a head over a dozen sizes. LILA_QR_SMOOTH_ISO sets the passes, 0 for none.
+        const char* asked = std::getenv("LILA_QR_SMOOTH_ISO");
+        const int passes = asked ? std::atoi(asked) : kStockSmoothing;
         std::vector<glm::dvec3> next(w.iso.pos.size());
-        for (int pass = 0; pass < std::atoi(passes); ++pass)
+        for (int pass = 0; pass < passes; ++pass)
         {
             for (Index v = 0; v < w.iso.vertexCount(); ++v)
             {
@@ -2464,16 +2468,24 @@ void stockSizes(const Work& w, const QuadRemeshOptions& opts, std::vector<double
         // The stock sizes run from a third of the mean to three times it, and each fit looks only as far as the size it
         // is given and stops at a fraction of it: one from each end and the mean, the tightest of the three.
         constexpr double kLargest = 3.0;
-        const std::vector<double> curvature = opts.edgesAround > 0 ? estimateCurvature(iso).magnitude : std::vector<double>();
-        std::vector<double> size(iso.pos.size(), kLargest * w.h0);
+        // Measured where the points lie on the source: the working triangles are smoothed, which draws a thin limb in.
+        Surface onSource = w.iso;
+        tbb::parallel_for(size_t(0), onSource.pos.size(), [&](size_t v) {
+            geo::BvhClosest c;
+            if (w.bvh->closestPoint(onSource.pos[v], c))
+                onSource.pos[v] = c.point;
+        });
+        onSource.buildGeometry();
+        const std::vector<double> curvature = opts.edgesAround > 0 ? estimateCurvature(onSource).magnitude : std::vector<double>();
+        std::vector<double> size(onSource.pos.size(), kLargest * w.h0);
         for (double from : {kLargest * w.h0, w.h0, w.h0 / kLargest})
         {
-            std::vector<double> fitted(iso.pos.size(), from);
+            std::vector<double> fitted(onSource.pos.size(), from);
             if (opts.resolveGaps)
-                fitGaps(iso, w.src, *w.bvh, fitted);
+                fitGaps(onSource, w.src, *w.bvh, fitted);
             // A little under the ask: the layout rounds the count round a part to a whole number, down as often as up.
             if (opts.edgesAround > 0)
-                fitThickness(iso, w.src, *w.bvh, curvature, opts.edgesAround, 0.85, 0.25, fitted);
+                fitThickness(onSource, w.src, *w.bvh, curvature, opts.edgesAround, 0.85, 0.25, fitted);
             for (size_t v = 0; v < size.size(); ++v)
                 if (fitted[v] < 0.98 * from)
                     size[v] = std::min(size[v], fitted[v]);
@@ -2488,9 +2500,9 @@ void stockSizes(const Work& w, const QuadRemeshOptions& opts, std::vector<double
         if (any)
         {
             // A triangle is limited by its tightest corner; a corner with no limit doesn't loosen the others.
-            limit.assign(iso.tris.size(), 0.0);
-            for (size_t t = 0; t < iso.tris.size(); ++t)
-                for (Index v : iso.tris[t])
+            limit.assign(onSource.tris.size(), 0.0);
+            for (size_t t = 0; t < onSource.tris.size(); ++t)
+                for (Index v : onSource.tris[t])
                     if (size[v] > 0.0)
                         limit[t] = limit[t] > 0.0 ? std::min(limit[t], size[v]) : size[v];
         }
