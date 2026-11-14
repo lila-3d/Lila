@@ -1166,14 +1166,29 @@ void MaterialEditor::rebuild()
     setButton->setObjectName("materialTextureSet");
     setButton->setToolTip("The texture set drawing this material in the viewport. Its channels replace the dimmed map slots "
                           "below. Click to open it in the Texture Graph.");
-    grid->addWidget(setButton, row++, 1, 1, 2, Qt::AlignLeft);
+    auto* unbind = new QToolButton(mBody);
+    unbind->setObjectName("materialTextureSetUnbind");
+    unbind->setIcon(icon("x"));
+    unbind->setToolTip("Unbind: the material draws its own maps again. The texture set is kept.");
+    auto* setRow = new QHBoxLayout;
+    setRow->setContentsMargins(0, 0, 0, 0);
+    setRow->setSpacing(3);
+    setRow->addWidget(setButton);
+    setRow->addWidget(unbind);
+    setRow->addStretch(1);
+    grid->addLayout(setRow, row++, 1, 1, 2);
     connect(setButton, &QPushButton::clicked, this, [bound] {
         if (!bound->name.empty())
             openTextureSet(bound->name);
     });
-    mUpdaters.push_back([setLabel, setButton, bound] {
+    connect(unbind, &QToolButton::clicked, this, [bound] {
+        if (!bound->name.empty())
+            runUi("texSetSettings", {{"args", json::array({bound->name, {{"material", ""}}})}});
+    });
+    mUpdaters.push_back([setLabel, setButton, unbind, bound] {
         setLabel->setVisible(!bound->name.empty());
         setButton->setVisible(!bound->name.empty());
+        unbind->setVisible(!bound->name.empty());
         setButton->setText(qs(bound->name));
     });
     color("Base Color", kBaseColor);
