@@ -4799,7 +4799,7 @@ def ikPose(*objects: Any, position: Sequence[float] | None = None, rotation: Seq
         rotateBy: World rotation added, degrees XYZ. Short form rb.
     """
 
-def imagePlane(*objects: Any, fileName: str | None = None, camera: str | None = None, name: str | None = None, showInAllViews: bool | None = None, skipSelect: bool | None = None, useFrameExtension: bool | None = None, frameOffset: int | None = None, startFrame: float | None = None, fps: float | None = None, fit: str | None = None, width: float | None = None, height: float | None = None, maintainRatio: bool | None = None, offsetX: float | None = None, offsetY: float | None = None, depth: float | None = None, rotation: float | None = None, alphaGain: float | None = None, brightness: float | None = None, contrast: float | None = None, displayColor: str | None = None, displayMode: str | None = None, placement: str | None = None, locked: bool | None = None, drawOrder: int | None = None, keyBackground: bool | None = None, keyTolerance: float | None = None, f: str | None = None, c: str | None = None, n: str | None = None, sia: bool | None = None, ss: bool | None = None, ufe: bool | None = None, fo: int | None = None, sf: float | None = None, fi: str | None = None, w: float | None = None, h: float | None = None, mr: bool | None = None, ox: float | None = None, oy: float | None = None, d: float | None = None, ro: float | None = None, ag: float | None = None, br: float | None = None, ct: float | None = None, dc: str | None = None, dm: str | None = None, pl: str | None = None, lk: bool | None = None, do: int | None = None, kb: bool | None = None, kt: float | None = None) -> Any:
+def imagePlane(*objects: Any, fileName: str | None = None, camera: str | None = None, name: str | None = None, showInAllViews: bool | None = None, skipSelect: bool | None = None, useFrameExtension: bool | None = None, frameOffset: int | None = None, startFrame: float | None = None, fps: float | None = None, fit: str | None = None, width: float | None = None, height: float | None = None, maintainRatio: bool | None = None, offsetX: float | None = None, offsetY: float | None = None, depth: float | None = None, rotation: float | None = None, alphaGain: float | None = None, brightness: float | None = None, contrast: float | None = None, displayColor: str | None = None, displayMode: str | None = None, placement: str | None = None, views: str | None = None, locked: bool | None = None, drawOrder: int | None = None, keyBackground: bool | None = None, keyTolerance: float | None = None, f: str | None = None, c: str | None = None, n: str | None = None, sia: bool | None = None, ss: bool | None = None, ufe: bool | None = None, fo: int | None = None, sf: float | None = None, fi: str | None = None, w: float | None = None, h: float | None = None, mr: bool | None = None, ox: float | None = None, oy: float | None = None, d: float | None = None, ro: float | None = None, ag: float | None = None, br: float | None = None, ct: float | None = None, dc: str | None = None, dm: str | None = None, pl: str | None = None, vw: str | None = None, lk: bool | None = None, do: int | None = None, kb: bool | None = None, kt: float | None = None) -> Any:
     """Create an image plane for modelling from reference images, or edit the image plane named. Returns its name.
 
     Args:
@@ -4827,6 +4827,7 @@ def imagePlane(*objects: Any, fileName: str | None = None, camera: str | None = 
         displayColor: color or grayscale. Short form dc. One of 'color', 'grayscale'.
         displayMode: lookingThrough or allViews. Short form dm. One of 'lookingThrough', 'allViews'.
         placement: behind, inScene or inFront of the geometry. Short form pl. One of 'behind', 'inScene', 'inFront'.
+        views: Views it shows in, space separated (persp front ...); empty for the default. Short form vw.
         locked: Not pickable in the viewport (reference mode). Short form lk.
         drawOrder: Higher draws in front of lower among planes with the same placement. Short form do.
         keyBackground: Clear the picture's background (its top left corner's color). Short form kb.
@@ -4853,6 +4854,15 @@ def imagePlaneGuide(*objects: Any, lines: Any | None = None, remove: int | None 
         lines: Guides to add: [[x0, y0, x1, y1], ...] in the plane's local cm. Short form l.
         remove: Index of a guide to remove. Short form rm.
         clear: Remove every guide. Short form cl. Default False.
+    """
+
+def imagePlaneView(*objects: Any, view: str | None = None, mode: str | None = None, v: str | None = None, m: str | None = None) -> Any:
+    """Sets which views image planes show in: only the view, also the view, not the view, or back to the default. Returns the planes.
+
+    Args:
+        objects: image planes (omit for the selected ones).
+        view: View: persp, top, bottom, front, back, left, right or side. Short form v.
+        mode: only, add, remove, or all (the default views again). Short form m. One of 'only', 'add', 'remove', 'all'. Default 'only'.
     """
 
 def import3dTiles(*objects: Any, maxError: float | None = None, centre: Sequence[Any] | None = None, radius: float | None = None, maxTiles: int | None = None, georeference: bool | None = None, name: str | None = None, n: str | None = None) -> Any:
@@ -7286,6 +7296,20 @@ def polySeparate(*objects: Any) -> Any:
         objects: objects.
     """
 
+def polySlide(amount: float | None = None, direction: Sequence[float] | None = None, even: bool | None = None) -> Any:
+    """Slide the selected edges along the edges beside them, or in vertex mode each selected vertex along one of its own edges, without changing the surface's shape. A face selection slides its border. Follows the mesh's symmetry.
+
+    Args:
+        amount: How far, -1 to 1: a fraction of each rail, the sign picking the side. Default 0.5.
+        direction: World direction the positive side leans toward; picks each vertex's edge in vertex mode (required there).
+        even: Slide every point the same distance (amount times the shortest rail) instead of the same fraction. Default False.
+
+    Examples:
+        polySlide(amount=0.25)
+
+        polySlide(amount=-0.5, even=True)
+    """
+
 def polySoftEdge(angle: float | None = None) -> Any:
     """Make the selected edges soft or hard by the angle their faces meet at: sharper than angle turns hard, the rest soft. 180 softens every edge, 0 hardens every edge. In object mode, whole selected meshes.
 
@@ -7328,11 +7352,11 @@ def polySpinEdge() -> Any:
     """Turn each selected edge one step within its two faces."""
 
 def polySplitRings(count: int | None = None, direction: str | None = None, edgeFlow: bool | None = None) -> Any:
-    """Subdivide one way: insert loops across every ring through the selected edges, or across the selected faces in one direction, without the perpendicular cuts a full subdivide adds. Returns the new edges.
+    """Subdivide one way: insert loops beside or across the selected edges, or across the selected faces in one direction, without the perpendicular cuts a full subdivide adds. Returns the new edges.
 
     Args:
         count: Loops per ring, evenly spaced. Default 1.
-        direction: Faces: across adds lines across the selection's short way, along the long way. One of 'across', 'along'. Default 'along'.
+        direction: Edges: along adds loops parallel to them in the faces either side, across cuts every ring through them. Faces: across adds lines across the selection's short way, along the long way. One of 'across', 'along'. Default 'along'.
         edgeFlow: Curve the new loops to follow the surrounding surface rather than lie flat. Default True.
     """
 
