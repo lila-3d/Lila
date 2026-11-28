@@ -121,7 +121,7 @@ TEST_CASE("V snaps to the centers of locators and joints")
 TEST_CASE("V skips points hidden behind a mesh")
 {
     run("newScene");
-    run("polyCube", {{"width", 20}, {"height", 20}, {"depth", 20}});
+    const std::string cube = run("polyCube", {{"width", 20}, {"height", 20}, {"depth", 20}})[0];
     std::string front = run("spaceLocator", {{"position", {5, 5, 50}}, {"skipSelect", true}});
     std::string back = run("spaceLocator", {{"position", {5, 5, -50}}, {"skipSelect", true}});
     scene::Graph& g = scene::Graph::current();
@@ -139,4 +139,9 @@ TEST_CASE("V skips points hidden behind a mesh")
     checkHit(at(back, false), D3(5, 5, -50));
     CHECK_FALSE(at(back, true));
     checkHit(at(front, true), D3(5, 5, 50));
+
+    // A templated mesh draws as wire, so it hides nothing.
+    run("createDisplayLayer", {{"name", "Wire"}, {"args", {cube}}});
+    run("displayLayer", {{"args", {"Wire"}}, {"displayType", "template"}});
+    checkHit(at(back, true), D3(5, 5, -50));
 }

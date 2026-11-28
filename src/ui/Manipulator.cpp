@@ -1230,7 +1230,7 @@ std::optional<glm::dvec3> Manipulator::snapTarget(QPointF px, unsigned snaps) co
     // Only what the user can see is a target, unless meshes are drawn see-through.
     const PrefStore& prefs = PrefStore::get();
     if (!prefs.value<bool>("general", viewportDisplay::kXray, false) && prefs.value<std::string>("general", "/viewport/displayMode", "") != "wireframe")
-        nearest.hideOccluded(std::vector<NodeId>(moving.begin(), moving.end()));
+        nearest.hideOccluded(std::vector<NodeId>(moving.begin(), moving.end()), d.components ? d.startMeshes : decltype(d.startMeshes){});
     for (NodeId id : g.nodes())
     {
         scene::Node* n = g.node(id);

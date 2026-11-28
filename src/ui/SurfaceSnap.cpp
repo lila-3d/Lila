@@ -5,6 +5,7 @@
 #include "core/Profile.h"
 #include "geo/Bvh.h"
 #include "ops/Command.h"
+#include "scene/DisplayLayers.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Transform.h"
@@ -83,19 +84,35 @@ std::optional<Target> target(const scene::Graph& g, NodeId id)
     return Target{id, mesh, n->as<glm::dmat4>(scene::Transform::kWorldMatrix)};
 }
 
-/** The snap surfaces if any are set (and designated allows them), else every visible mesh, minus exclude. */
-std::vector<Target> targets(const std::vector<NodeId>& exclude, bool designated = true)
+using Shapes = std::unordered_map<NodeId, scene::MeshPtr>;
+
+/**
+ * The snap surfaces if any are set (and designated allows them), else every visible mesh but templated ones, minus
+ * exclude. A mesh in shapes takes that shape.
+ */
+std::vector<Target> targets(const std::vector<NodeId>& exclude, bool designated = true, const Shapes& shapes = {})
 {
     scene::Graph& g = scene::Graph::current();
     g.evaluate();
     std::vector<NodeId> ids = designated ? surfaces() : std::vector<NodeId>{};
-    if (ids.empty())
+    const bool all = ids.empty();
+    if (all)
         ids = g.nodes();
     std::vector<Target> out;
     for (NodeId id : ids)
-        if (!contains(exclude, id))
-            if (auto t = target(g, id))
-                out.push_back(std::move(*t));
+    {
+        if (contains(exclude, id))
+            continue;
+        // A template layer draws its meshes as wire, so they are no surface to land on or hide behind.
+        if (all && scene::displayLayers::display(g, id).type == scene::displayLayers::DisplayType::Template)
+            continue;
+        if (auto t = target(g, id))
+        {
+            if (auto s = shapes.find(id); s != shapes.end() && s->second)
+                t->mesh = s->second;
+            out.push_back(std::move(*t));
+        }
+    }
     return out;
 }
 
@@ -110,25 +127,27 @@ glm::dvec3 worldNormal(const Target& t, const geo::MeshBvh& bvh, geo::Index tria
 }
 } // namespace
 
-static std::optional<Hit> raycastAmong(const glm::dvec3& origin, const glm::dvec3& dir, const std::vector<NodeId>& exclude, bool designated);
+static std::optional<Hit> raycastAmong(const glm::dvec3& origin, const glm::dvec3& dir, const std::vector<NodeId>& exclude, bool designated,
+                                       const Shapes& shapes = {});
 
 std::optional<Hit> raycast(const glm::dvec3& origin, const glm::dvec3& dir, const std::vector<NodeId>& exclude)
 {
     return raycastAmong(origin, dir, exclude, true);
 }
 
-std::optional<Hit> firstHit(const glm::dvec3& origin, const glm::dvec3& dir, const std::vector<NodeId>& exclude)
+std::optional<Hit> firstHit(const glm::dvec3& origin, const glm::dvec3& dir, const std::vector<NodeId>& exclude, const Shapes& shapes)
 {
-    return raycastAmong(origin, dir, exclude, false);
+    return raycastAmong(origin, dir, exclude, false, shapes);
 }
 
-static std::optional<Hit> raycastAmong(const glm::dvec3& origin, const glm::dvec3& dir, const std::vector<NodeId>& exclude, bool designated)
+static std::optional<Hit> raycastAmong(const glm::dvec3& origin, const glm::dvec3& dir, const std::vector<NodeId>& exclude, bool designated,
+                                       const Shapes& shapes)
 {
     LILA_ZONE();
 
     std::optional<Hit> best;
     double bestDist = 1e300;
-    for (const Target& t : targets(exclude, designated))
+    for (const Target& t : targets(exclude, designated, shapes))
     {
         auto bvh = bvhFor(t.mesh);
         if (bvh->empty())

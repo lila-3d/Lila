@@ -29,7 +29,7 @@ bool Nearest::occluded(const glm::dvec3& world, QPointF screen) const
         return false;
     glm::dvec3 origin, dir;
     mView.ray(screen, origin, dir);
-    const auto hit = surfaceSnap::firstHit(origin, dir, mOccluderIgnore);
+    const auto hit = surfaceSnap::firstHit(origin, dir, mOccluderIgnore, mOccluderShapes);
     if (!hit)
         return false;
     // The candidate's own surface hits at its depth, so only a hit clearly nearer hides it.

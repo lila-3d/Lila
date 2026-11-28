@@ -6,6 +6,7 @@
 #include "geo/Primitives.h"
 #include "core/PrefStore.h"
 #include "ops/Command.h"
+#include "scene/Camera.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
@@ -548,5 +549,65 @@ TEST_CASE("Edit Pivot on a vertex snaps to another vertex with V and undoes")
     CHECK(centreAt(from));
 
     ui::tools::setPivotEdit(false);
+    scene::components::setMode(ComponentMode::Object);
+}
+
+TEST_CASE("MMB drag from a vertex snaps it with V onto another vertex its own faces lean over")
+{
+    run("newScene");
+    const std::string pipe = run("polyPipe")[0];
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    scene::MeshPtr mesh = node(pipe).as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+    ui::ViewInfo view;
+    view.eye = {0.0, 25.0, 30.0};
+    view.view = glm::lookAt(view.eye, glm::dvec3(0, 5, 0), glm::dvec3(0, 1, 0));
+    view.proj = scene::camera::projection({0.4, 0.4}, false, 0.1, 0.0);
+    view.width = view.height = 800.0;
+    scene::components::setMode(ComponentMode::Vertex);
+    ui::tools::setCurrent(ui::Tool::Move);
+
+    // Every pair of top vertices, dragged one onto the other from the picked vertex in one-pixel steps.
+    double top = -1e9;
+    for (geo::Index i = 0; i < mesh->pointCapacity(); ++i)
+        if (mesh->pointValid(i))
+            top = std::max(top, mesh->position(i).y);
+    std::vector<int> tops;
+    for (geo::Index i = 0; i < mesh->pointCapacity(); ++i)
+        if (mesh->pointValid(i) && std::abs(mesh->position(i).y - top) < 1e-6 && mesh->position(i).z > 0.0)
+            tops.push_back(int(i));
+    int tried = 0, missed = 0;
+    for (int picked : tops)
+        for (int target : tops)
+        {
+            if (picked == target)
+                continue;
+            const glm::dvec3 targetWorld = mesh->position(geo::Index(target));
+            run("selectComponents", {{"args", {pipe}}, {"vertices", {picked}}});
+            const QPointF from = *view.project(mesh->position(geo::Index(picked))), to = *view.project(targetWorld);
+            const int steps = std::max(1, int(std::hypot(to.x() - from.x(), to.y() - from.y())));
+            {
+                ui::Manipulator m;
+                m.setView(view);
+                REQUIRE(m.visible());
+                REQUIRE(m.press(from, Qt::MiddleButton, Qt::NoModifier));
+                ui::tools::setSnap(ui::SnapVertex, true);
+                for (int k = 1; k <= steps; ++k)
+                    m.drag(from + (to - from) * (double(k) / steps), Qt::NoModifier);
+                m.release();
+                ui::tools::setSnap(ui::SnapVertex, false);
+            }
+            g.evaluate();
+            const scene::MeshPtr after = node(pipe).as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+            ++tried;
+            if (glm::distance(after->position(geo::Index(picked)), targetWorld) > 1e-3)
+                ++missed;
+            run("undo");
+            g.evaluate();
+            mesh = node(pipe).as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+        }
+    MESSAGE("missed " << missed << " of " << tried);
+    CHECK(tried > 10);
+    CHECK(missed == 0);
     scene::components::setMode(ComponentMode::Object);
 }

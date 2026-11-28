@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <unordered_map>
 #include <vector>
 
 namespace lila::scene
@@ -35,11 +36,15 @@ public:
     /** The point of the segment nearest the cursor on screen. */
     void segment(const glm::dvec3& a, const glm::dvec3& b);
 
-    /** Skips candidates hidden behind a mesh surface, as seen from the view. Meshes in ignore never hide anything. */
-    void hideOccluded(std::vector<scene::NodeId> ignore)
+    /**
+     * Skips candidates hidden behind a mesh surface, as seen from the view. Meshes in ignore never hide anything; a mesh
+     * in shapes hides in that shape, so faces dragged toward the camera don't cover the targets they are dragged to.
+     */
+    void hideOccluded(std::vector<scene::NodeId> ignore, std::unordered_map<scene::NodeId, scene::MeshPtr> shapes = {})
     {
         mOcclusion = true;
         mOccluderIgnore = std::move(ignore);
+        mOccluderShapes = std::move(shapes);
     }
 
     const std::optional<glm::dvec3>& hit() const { return mHit; }
@@ -57,6 +62,7 @@ private:
     std::optional<glm::dvec3> mHit;
     bool mOcclusion = false;
     std::vector<scene::NodeId> mOccluderIgnore;
+    std::unordered_map<scene::NodeId, scene::MeshPtr> mOccluderShapes;
 };
 
 /**
