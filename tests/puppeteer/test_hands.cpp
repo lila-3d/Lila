@@ -3,6 +3,7 @@
 #include "TestUtil.h"
 #include "hand/HandMath.h"
 
+#include "core/Events.h"
 #include "curve/CurveNodes.h"
 
 #include "extensions/ExtensionManager.h"
@@ -545,6 +546,60 @@ TEST_CASE("hands: a finger that starts in what it grips opens out and closes bac
         CHECK(closest > radius);
         CHECK(closest < radius + thickness + 1.0);
     }
+}
+
+TEST_CASE("hands: a live grip follows what it holds, opens as it leaves, and stops when turned off")
+{
+    mannyWithHands();
+    run("puppeteerHandPose", {{"args", {"hand_r"}}, {"pose", "grip"}});
+    glm::dvec3 centre(0.0);
+    for (const char* j : {"middle_01_r", "middle_02_r", "middle_03_r", "index_02_r", "ring_02_r"})
+        centre += pos(j) / 5.0;
+    const glm::dvec3 axis = glm::normalize(pos("index_01_r") - pos("pinky_01_r"));
+    run("puppeteerHandPose", {{"args", {"hand_r"}}, {"pose", "flat"}});
+    run("polyCylinder", {{"radius", 1.4}, {"height", 20.0}, {"name", "bar"}});
+    const glm::dvec3 x = glm::normalize(glm::dvec3(axis.y, -axis.x, 0.0)), z = glm::cross(x, axis);
+    graph().setValue(graph().plug("bar.rotate"), lila::scene::eulerNear(glm::dmat3(x, axis, z), lila::scene::RotateOrder::XYZ, glm::dvec3(0.0)));
+    graph().setValue(graph().plug("bar.translate"), centre);
+
+    const json r = run("puppeteerHandGrip", {{"args", {"hand_r"}}, {"target", "bar"}, {"thickness", 0.8}, {"live", true}}).at(0);
+    CHECK(r["live"].get<bool>());
+    CHECK(r["fingers"]["middle"]["touching"].get<bool>());
+    const double held = handInfo("hand_r")["shape"]["fingers"]["middle"]["curl"].get<double>();
+    CHECK(held > 0.3);
+
+    auto idle = [] { lila::events::send({.type = lila::events::Event::AppIdle}); };
+    auto middleCurl = [] { return handInfo("hand_r")["shape"]["fingers"]["middle"]["curl"].get<double>(); };
+
+    // Out of the hand: the fingers open back to the pose they gripped from.
+    graph().setValue(graph().plug("bar.translate"), centre + glm::dvec3(0.0, 0.0, 200.0));
+    idle();
+    CHECK(middleCurl() == Approx(0.0).epsilon(0.03));
+
+    // Back in, a little nearer the fingertips: they close onto it again.
+    const glm::dvec3 tipward = glm::normalize(pos("middle_03_r") - pos("middle_01_r"));
+    graph().setValue(graph().plug("bar.translate"), centre + tipward * 0.5);
+    idle();
+    CHECK(middleCurl() > 0.3);
+    CHECK(middleCurl() < 1.0);
+
+    // An undone move puts the bar back, and the fingers follow it.
+    run("setAttr", {{"args", {"bar.translateZ", centre.z + 200.0}}});
+    CHECK(middleCurl() == Approx(0.0).epsilon(0.03));
+    run("undo");
+    CHECK(middleCurl() > 0.3);
+
+    // Posing a live hand changes the pose it grips from; it still grips.
+    run("puppeteerHandShape", {{"args", {"hand_r"}}, {"spread", 0.5}});
+    CHECK(middleCurl() > 0.3);
+
+    // Off: moving the bar leaves the fingers as they are.
+    run("puppeteerHandGrip", {{"args", {"hand_r"}}, {"live", false}});
+    const double kept = middleCurl();
+    graph().setValue(graph().plug("bar.translate"), centre + glm::dvec3(0.0, 0.0, 200.0));
+    idle();
+    CHECK(middleCurl() == Approx(kept).epsilon(0.001));
+    CHECK_FALSE(std::get<bool>(graph().value(graph().plug("hand_r_hand.gripLive"))));
 }
 
 TEST_CASE("hands: rubber hose fingers pose through their hose, and a plain named rig gets its hand")

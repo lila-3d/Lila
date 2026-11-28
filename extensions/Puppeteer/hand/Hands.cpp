@@ -646,6 +646,9 @@ struct AutoKeyOff
 
 bool keyArg(const Args& a) { return a.get<bool>("key", lila::scene::anim::autoKey()); }
 
+Pose gripStart(Graph& g, const Hand& h);
+void rebaseLive(Graph& g, const Hand& h);
+
 /** Runs edit on every target hand: its pose now in, the new pose out, written for the fingers in mask and keyed when asked. */
 json editHands(const Args& a, const char* command, const std::function<Pose(const Hand&, const Pose&, const Mask&)>& edit)
 {
@@ -661,8 +664,10 @@ json editHands(const Args& a, const char* command, const std::function<Pose(cons
             const std::optional<Hand> h = load(g, hn);
             if (!h)
                 throw CommandError(std::string(command) + ": " + g.node(hn)->path() + "'s joints are gone; run puppeteerHandSetup again");
-            const Pose base = currentPose(g, *h);
+            // A live hand's pose is edited open, as it was before gripping, and grips again from there.
+            const Pose base = gripStart(g, *h);
             writePose(g, *h, edit(*h, base, mask), mask, &written);
+            rebaseLive(g, *h);
             out.push_back({{"hand", g.node(hn)->path()}, {"side", sideName(h->side)}});
         }
     }
@@ -688,38 +693,50 @@ json handInfoJson(Graph& g, const Hand& h)
     const Pose p = currentPose(g, h);
     return {{"name", pathOf(g, h.node)},      {"character", pathOf(g, h.character)}, {"joint", pathOf(g, h.joint)},
             {"side", sideName(h.side)},       {"sideFrom", h.sideFrom},              {"fingers", fingers},
-            {"shape", shapeJson(h, p)},       {"pose", poseJson(p)}};
+            {"shape", shapeJson(h, p)},       {"pose", poseJson(p)},
+            {"live", std::get<bool>(g.value(plugOf(*g.node(h.node), "gripLive")))}};
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Grip.
 
+/**
+ * Meshes queried in their own space, so a mesh that only moves keeps its tree. Distances scale back by the mesh's
+ * average scale, exact for uniform scale.
+ */
 struct Collider
 {
-    std::vector<std::unique_ptr<geo::MeshBvh>> bvhs;
+    struct Part
+    {
+        std::shared_ptr<const geo::MeshBvh> bvh;
+        glm::dmat4 toLocal{1.0};
+        double scale = 1.0;
+    };
+    std::vector<Part> parts;
+    bool empty() const { return parts.empty(); }
     double distance(const glm::dvec3& p, double within) const
     {
         double best = std::numeric_limits<double>::max();
-        for (const auto& b : bvhs)
+        for (const Part& b : parts)
         {
             geo::BvhClosest c;
-            if (b->closestPoint(p, c, within))
-                best = std::min(best, c.distance);
+            if (b.bvh->closestPoint(glm::dvec3(b.toLocal * glm::dvec4(p, 1.0)), c, within / b.scale))
+                best = std::min(best, c.distance * b.scale);
         }
         return best;
     }
     bool inside(const glm::dvec3& p) const
     {
         // Odd crossings along a ray: inside a closed mesh.
-        for (const auto& b : bvhs)
+        for (const Part& b : parts)
         {
             int hits = 0;
-            glm::dvec3 o = p;
+            glm::dvec3 o = glm::dvec3(b.toLocal * glm::dvec4(p, 1.0));
             const glm::dvec3 dir = glm::normalize(glm::dvec3(0.31, 0.83, 0.47));
             for (int k = 0; k < 64; ++k)
             {
                 geo::BvhHit h;
-                if (!b->raycast(o, dir, h))
+                if (!b.bvh->raycast(o, dir, h))
                     break;
                 ++hits;
                 o = o + dir * (h.t + 1e-4);
@@ -731,19 +748,37 @@ struct Collider
     }
 };
 
-std::unique_ptr<geo::MeshBvh> worldBvh(Graph& g, const Node& mesh)
+/** Trees by mesh node, kept while the node's mesh value is the same one. */
+std::map<NodeId, std::pair<MeshPtr, std::shared_ptr<const geo::MeshBvh>>>& bvhCache()
+{
+    static std::map<NodeId, std::pair<MeshPtr, std::shared_ptr<const geo::MeshBvh>>> cache;
+    return cache;
+}
+
+/** Adds a mesh's tree; keep caches it, for meshes that are gripped again as they move. */
+void addMesh(Graph& g, const Node& mesh, Collider& c, bool keep = true)
 {
     const int out = mesh.type().attrIndex("outMesh");
     if (out < 0)
-        return nullptr;
+        return;
     const MeshPtr m = std::get<MeshPtr>(g.value({mesh.id(), out, -1}));
     if (!m || m->numFaces() == 0)
-        return nullptr;
-    geo::Mesh world = *m;
+        return;
     const glm::dmat4 xf = worldOf(g, mesh.id());
-    for (glm::dvec3& q : world.positions())
-        q = glm::dvec3(xf * glm::dvec4(q, 1.0));
-    return std::make_unique<geo::MeshBvh>(world);
+    const double det = std::abs(glm::determinant(glm::dmat3(xf)));
+    if (det < 1e-12)
+        return;
+    std::shared_ptr<const geo::MeshBvh> bvh;
+    if (keep)
+    {
+        auto& slot = bvhCache()[mesh.id()];
+        if (slot.first != m)
+            slot = {m, std::make_shared<const geo::MeshBvh>(*m)};
+        bvh = slot.second;
+    }
+    else
+        bvh = std::make_shared<const geo::MeshBvh>(*m);
+    c.parts.push_back({std::move(bvh), glm::inverse(xf), std::cbrt(det)});
 }
 
 /** Meshes a grip target names: a mesh, a transform over meshes, or a character's meshes. */
@@ -893,12 +928,347 @@ std::vector<std::vector<Angles>> waysOut(const Finger& f, const std::vector<Angl
     return out;
 }
 
+/** A finger's skin thickness for a grip, and where it came from (flag, mesh or estimate). */
+struct FingerRadius
+{
+    double radius = 0.0;
+    std::string from;
+};
+using Radii = std::array<FingerRadius, kRoles>;
+
+Collider colliderOf(Graph& g, const std::vector<NodeId>& meshes)
+{
+    Collider c;
+    for (NodeId m : meshes)
+        if (Node* n = g.node(m))
+            addMesh(g, *n, c);
+    return c;
+}
+
+Radii radiiOf(Graph& g, const Hand& h, std::optional<double> given)
+{
+    Collider own;
+    if (!given)
+        for (const std::string& m : skeletonMeshes(g, characterRoot(g, h.character)))
+            if (Node* mn = named(g, m))
+                addMesh(g, *mn, own, false);
+    Radii out;
+    for (const Finger& f : h.fingers)
+    {
+        if (given)
+        {
+            out[int(f.role)] = {*given, "flag"};
+            continue;
+        }
+        bool fromMesh = false;
+        const double r = thicknessOf(g, h, f, own, fromMesh);
+        out[int(f.role)] = {r, fromMesh ? "mesh" : "estimate"};
+    }
+    return out;
+}
+
+/**
+ * Closes the fingers in mask from start onto target, each joint stopping as its bone touches. A finger that can't open
+ * clear of the target stays at start. live writes every finger, and leaves one that touches nothing at start rather
+ * than shut, so a hand opens as what it held leaves it.
+ */
+json gripHand(Graph& g, const Hand& h, const Collider& target, const Mask& mask, const Pose& start, const Radii& radii, Written* written,
+              bool live)
+{
+    Pose closed = poseFrom(findLibrary("fist")->shape);
+    // The thumb closes across and round, past the grip pose, so it meets what it wraps.
+    closed.fingers[0] = poseFrom(Shape{{}, ts(0.8, 1.0, 0.6), 0.0}).fingers[0];
+    json fingers = json::object();
+    for (const Finger& f : h.fingers)
+    {
+        if (!mask[int(f.role)] || !start.fingers[int(f.role)])
+            continue;
+        const double radius = radii[int(f.role)].radius;
+        const FingerPose base = *start.fingers[int(f.role)];
+        // Hose fingers close as one; jointed ones stop joint by joint as each bone touches.
+        const size_t n = f.hose ? 1 : f.joints.size();
+        const FingerPose& shut = *closed.fingers[int(f.role)];
+        auto expand = [&](const std::vector<Angles>& v) {
+            FingerPose fp = base;
+            if (f.hose)
+                for (int j = 0; j < kCanon; ++j)
+                    fp.joints[j] = mix(base.joints[j], shut.joints[j], v[0].bend);
+            else
+                fp.joints = fromJoints(v);
+            return fp;
+        };
+        const std::vector<Angles> from = f.hose ? std::vector<Angles>{Angles{0.0}} : jointAngles(f, base);
+        const std::vector<Angles> to = f.hose ? std::vector<Angles>{Angles{1.0}} : jointAngles(f, shut);
+        auto contact = [&](const std::vector<Angles>& v) -> int {
+            writeFinger(g, f, expand(v), nullptr);
+            const std::vector<std::vector<glm::dvec3>> segs = segmentSamples(g, f);
+            for (size_t k = 0; k < segs.size(); ++k)
+                for (const glm::dvec3& p : segs[k])
+                    if (target.distance(p, radius) <= radius || target.inside(p))
+                        return f.hose ? 0 : int(std::min(k, n - 1));
+            return -1;
+        };
+        bool startedInside = false, stayed = false;
+        std::vector<Angles> got = from;
+        {
+            UndoStack& u = UndoStack::get();
+            const bool was = u.enabled();
+            u.setEnabled(false);
+            const FingerSnapshot before(g, f);
+            startedInside = contact(from) >= 0;
+            if (!startedInside)
+                got = wrap(from, to, contact);
+            else if (const std::optional<std::vector<Angles>> opened = f.hose ? std::nullopt : openOut(from, waysOut(f, from), contact))
+                got = wrap(*opened, to, contact);
+            else
+                stayed = true;
+            before.restore(g);
+            u.setEnabled(was);
+        }
+        const bool missed = !stayed && got == to;
+        const FingerPose result = stayed || (live && missed) ? base : expand(got);
+        if (!stayed || live)
+            writeFinger(g, f, result, written);
+        Pose one;
+        one.fingers[int(f.role)] = result;
+        fingers[roleName(f.role)] = {{"touching", !stayed && !missed},
+                                     {"startedInside", startedInside},
+                                     {"stayed", stayed},
+                                     {"curl", measureFingerCurl(one, f.role)},
+                                     {"thickness", radius},
+                                     {"thicknessFrom", radii[int(f.role)].from}};
+    }
+    return fingers;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Live grip: a hand whose gripLive is on grips its targets again whenever they or the hand move.
+
+json liveState(Graph& g, NodeId hn)
+{
+    const std::string s = std::get<std::string>(g.value(plugOf(*g.node(hn), "gripState")));
+    return s.empty() ? json() : json::parse(s, nullptr, false);
+}
+
+bool isLive(Graph& g, NodeId hn)
+{
+    Node* n = g.node(hn);
+    return n && n->type().isA(kHandType) && std::get<bool>(g.value(plugOf(*n, "gripLive")));
+}
+
+json maskJson(const Mask& m)
+{
+    json out = json::array();
+    for (int r = 0; r < kRoles; ++r)
+        if (m[r])
+            out.push_back(roleName(Role(r)));
+    return out;
+}
+
+void storeLive(Graph& g, NodeId hn, const std::vector<std::string>& targets, const Mask& mask, const Pose& base, const Radii& radii)
+{
+    json r = json::object();
+    for (int k = 0; k < kRoles; ++k)
+        if (!radii[k].from.empty())
+            r[roleName(Role(k))] = {radii[k].radius, radii[k].from};
+    const json st = {{"targets", targets}, {"fingers", maskJson(mask)}, {"base", poseJson(base)}, {"radii", r}};
+    g.setValue(plugOf(*g.node(hn), "gripState"), st.dump());
+    g.setValue(plugOf(*g.node(hn), "gripLive"), true);
+}
+
+/** The pose a hand opens from before it grips: a live hand's stored one, else the pose it holds now. */
+Pose gripStart(Graph& g, const Hand& h)
+{
+    if (isLive(g, h.node))
+        if (const json st = liveState(g, h.node); st.contains("base"))
+            return poseFromJson(st["base"]);
+    return currentPose(g, h);
+}
+
+namespace live
+{
+/** What a live grip last solved against: the hand joint's and each target mesh's world matrix, and the meshes. */
+struct Seen
+{
+    std::vector<glm::dmat4> xf;
+    std::vector<const void*> meshes;
+    bool operator==(const Seen&) const = default;
+};
+std::map<NodeId, Seen> gSeen;
+std::set<NodeId> gPendingKey;
+std::vector<NodeId> gHands;
+bool gHandsDirty = true, gPlaying = false, gBusy = false;
+uint64_t gNewestSeen = 0;
+double gLastTime = 0.0;
+
+const std::vector<NodeId>& liveHands(Graph& g)
+{
+    if (gHandsDirty)
+    {
+        gHands.clear();
+        for (NodeId id : g.nodes())
+            if (isLive(g, id))
+                gHands.push_back(id);
+        gHandsDirty = false;
+    }
+    return gHands;
+}
+
+/**
+ * Grips the hand onto its targets again if they or the hand moved (or always, with force). True when it did. recordOnly
+ * notes where things are now without gripping, after a command has just gripped.
+ */
+bool regrip(Graph& g, NodeId hn, bool force, bool recordOnly = false)
+{
+    if (!isLive(g, hn))
+        return false;
+    const json st = liveState(g, hn);
+    const std::optional<Hand> h = load(g, hn);
+    if (!st.is_object() || !h)
+        return false;
+    std::vector<NodeId> meshes;
+    for (const json& t : st.value("targets", json::array()))
+        if (Node* tn = named(g, t.get<std::string>()))
+            for (NodeId m : targetMeshes(g, tn->id()))
+                meshes.push_back(m);
+    Seen now;
+    now.xf.push_back(worldOf(g, h->joint));
+    for (NodeId m : meshes)
+    {
+        now.xf.push_back(worldOf(g, m));
+        const int out = g.node(m)->type().attrIndex("outMesh");
+        now.meshes.push_back(std::get<MeshPtr>(g.value({m, out, -1})).get());
+    }
+    Seen& seen = gSeen[hn];
+    if (!force && seen == now)
+        return false;
+    seen = std::move(now);
+    if (recordOnly)
+        return false;
+    const Collider target = colliderOf(g, meshes);
+    if (target.empty())
+        return false;
+    Radii radii;
+    const json given = st.value("radii", json::object());
+    for (const auto& [role, v] : given.items())
+        if (const std::optional<Role> r = roleFromName(role))
+            radii[int(*r)] = {v[0].get<double>(), v[1].get<std::string>()};
+    const AutoKeyOff off;
+    gripHand(g, *h, target, maskFromJson(st.value("fingers", json())), poseFromJson(st.value("base", json::object())), radii, nullptr, true);
+    return true;
+}
+
+/** Regrips every live hand that moved. Hands that moved by an edit rather than a time change get keyed with the edit's step. */
+void tick(Graph& g)
+{
+    if (gBusy || gPlaying)
+        return;
+    const std::vector<NodeId> hands = liveHands(g);
+    if (hands.empty())
+        return;
+    gBusy = true;
+    const bool timeMoved = g.time() != gLastTime;
+    gLastTime = g.time();
+    UndoStack& u = UndoStack::get();
+    const bool was = u.enabled();
+    u.setEnabled(false);
+    for (NodeId hn : hands)
+        if (regrip(g, hn, false) && !timeMoved)
+            gPendingKey.insert(hn);
+    u.setEnabled(was);
+    gBusy = false;
+}
+
+void forget()
+{
+    gSeen.clear();
+    gPendingKey.clear();
+    gHandsDirty = true;
+    bvhCache().clear();
+}
+
+/** A step was pushed, undone or redone: catch up, and key hands that regripped for a new step when auto key is on. */
+void stackChanged()
+{
+    if (gBusy)
+        return;
+    gHandsDirty = true;
+    Graph& g = Graph::current();
+    for (auto it = bvhCache().begin(); it != bvhCache().end();)
+        it = g.node(it->first) ? std::next(it) : bvhCache().erase(it);
+    tick(g);
+    const uint64_t newest = UndoStack::get().newestId();
+    const bool pushed = newest > gNewestSeen;
+    gNewestSeen = std::max(gNewestSeen, newest);
+    if (!pushed || gPendingKey.empty() || UndoStack::get().chunkOpen())
+        return;
+    std::vector<NodeId> keyed(gPendingKey.begin(), gPendingKey.end());
+    gPendingKey.clear();
+    if (!lila::scene::anim::autoKey())
+        return;
+    json args = json::array();
+    for (NodeId hn : keyed)
+        if (Node* n = g.node(hn))
+            args.push_back(n->path());
+    if (args.empty())
+        return;
+    gBusy = true;
+    try
+    {
+        ops::execute("puppeteerHandKey", {{"args", args}});
+    }
+    catch (const std::exception& e)
+    {
+        log::write(LogLevel::Warning, std::string("Live grip: keying the fingers failed: ") + e.what());
+    }
+    gNewestSeen = std::max(gNewestSeen, UndoStack::get().newestId());
+    gBusy = false;
+}
+} // namespace live
+
+/** Makes a live hand's pose now the one it grips from, and grips again. */
+void rebaseLive(Graph& g, const Hand& h)
+{
+    if (!isLive(g, h.node))
+        return;
+    json st = liveState(g, h.node);
+    if (!st.is_object())
+        return;
+    st["base"] = poseJson(currentPose(g, h));
+    g.setValue(plugOf(*g.node(h.node), "gripState"), st.dump());
+    live::regrip(g, h.node, true);
+}
+
+void warnStuck(Graph& g, NodeId hn, const json& fingers)
+{
+    std::string stuck;
+    for (const auto& [role, r] : fingers.items())
+        if (r.value("stayed", false))
+            stuck += (stuck.empty() ? "" : ", ") + role;
+    if (!stuck.empty())
+        log::write(LogLevel::Warning, "puppeteerHandGrip: " + stuck + " on " + g.node(hn)->path() +
+                                          " can't open clear of the target within their joint limits (the knuckle sits against it), so "
+                                          "they stay as posed. Move the target off the knuckles and grip again");
+}
+
 json gripCmd(const Args& a)
 {
     Graph& g = Graph::current();
     const Mask mask = maskFromJson(a.has("fingers") ? a.flags.at("fingers") : json());
     const bool key = keyArg(a);
     const std::vector<NodeId> hands = targetsOf(g, a, "puppeteerHandGrip");
+
+    if (a.has("live") && !a.get<bool>("live"))
+    {
+        json out = json::array();
+        for (NodeId hn : hands)
+        {
+            g.setValue(plugOf(*g.node(hn), "gripLive"), false);
+            out.push_back({{"hand", g.node(hn)->path()}, {"live", false}});
+        }
+        live::gHandsDirty = true;
+        return out;
+    }
 
     std::vector<NodeId> meshes;
     std::vector<std::string> targetNames;
@@ -910,20 +1280,23 @@ json gripCmd(const Args& a)
             if (Node* n = g.node(id); n && !rig::isJoint(*n) && !n->type().isA(kHandType) &&
                                       (!characterFor(g, id) || characterFor(g, id) != load(g, hands.front())->character || n->type().isA(kCharacterType)))
                 targetNames.push_back(n->path());
-    for (const std::string& t : targetNames)
-        for (NodeId m : targetMeshes(g, nodeNamed(g, t, "puppeteerHandGrip").id()))
+    for (std::string& t : targetNames)
+    {
+        const Node& tn = nodeNamed(g, t, "puppeteerHandGrip");
+        t = tn.path();
+        for (NodeId m : targetMeshes(g, tn.id()))
             meshes.push_back(m);
+    }
     if (meshes.empty())
         throw CommandError("puppeteerHandGrip: give target, a mesh or character to grip (or select one with the hand)");
 
     g.evaluate();
-    Collider target;
-    for (NodeId m : meshes)
-        if (auto b = worldBvh(g, *g.node(m)))
-            target.bvhs.push_back(std::move(b));
-    if (target.bvhs.empty())
+    const Collider target = colliderOf(g, meshes);
+    if (target.empty())
         throw CommandError("puppeteerHandGrip: the target has no faces");
 
+    const bool keepLive = a.get<bool>("live", false);
+    const std::optional<double> given = a.has("thickness") ? std::optional<double>(a.get<double>("thickness")) : std::nullopt;
     Written written;
     json out = json::array();
     {
@@ -933,86 +1306,20 @@ json gripCmd(const Args& a)
             const std::optional<Hand> h = load(g, hn);
             if (!h)
                 continue;
-            Collider own;
-            for (const std::string& m : skeletonMeshes(g, characterRoot(g, h->character)))
-                if (Node* mn = named(g, m))
-                    if (auto b = worldBvh(g, *mn))
-                        own.bvhs.push_back(std::move(b));
-            const Pose start = currentPose(g, *h);
-            Pose closed = poseFrom(findLibrary("fist")->shape);
-            // The thumb closes across and round, past the grip pose, so it meets what it wraps.
-            closed.fingers[0] = poseFrom(Shape{{}, ts(0.8, 1.0, 0.6), 0.0}).fingers[0];
-            json fingers = json::object();
-            for (const Finger& f : h->fingers)
-            {
-                if (!mask[int(f.role)] || !start.fingers[int(f.role)])
-                    continue;
-                bool fromMesh = false;
-                const double radius = a.has("thickness") ? a.get<double>("thickness") : thicknessOf(g, *h, f, own, fromMesh);
-                const FingerPose base = *start.fingers[int(f.role)];
-                // Hose fingers close as one; jointed ones stop joint by joint as each bone touches.
-                const size_t n = f.hose ? 1 : f.joints.size();
-                const FingerPose& shut = *closed.fingers[int(f.role)];
-                auto expand = [&](const std::vector<Angles>& v) {
-                    FingerPose fp = base;
-                    if (f.hose)
-                        for (int j = 0; j < kCanon; ++j)
-                            fp.joints[j] = mix(base.joints[j], shut.joints[j], v[0].bend);
-                    else
-                        fp.joints = fromJoints(v);
-                    return fp;
-                };
-                const std::vector<Angles> from = f.hose ? std::vector<Angles>{Angles{0.0}} : jointAngles(f, base);
-                const std::vector<Angles> to = f.hose ? std::vector<Angles>{Angles{1.0}} : jointAngles(f, shut);
-                auto contact = [&](const std::vector<Angles>& v) -> int {
-                    writeFinger(g, f, expand(v), nullptr);
-                    const std::vector<std::vector<glm::dvec3>> segs = segmentSamples(g, f);
-                    for (size_t k = 0; k < segs.size(); ++k)
-                        for (const glm::dvec3& p : segs[k])
-                            if (target.distance(p, radius) <= radius || target.inside(p))
-                                return f.hose ? 0 : int(std::min(k, n - 1));
-                    return -1;
-                };
-                bool startedInside = false, stayed = false;
-                std::vector<Angles> got = from;
-                {
-                    UndoStack& u = UndoStack::get();
-                    const bool was = u.enabled();
-                    u.setEnabled(false);
-                    const FingerSnapshot before(g, f);
-                    startedInside = contact(from) >= 0;
-                    if (!startedInside)
-                        got = wrap(from, to, contact);
-                    else if (const std::optional<std::vector<Angles>> opened = f.hose ? std::nullopt : openOut(from, waysOut(f, from), contact))
-                        got = wrap(*opened, to, contact);
-                    else
-                        stayed = true;
-                    before.restore(g);
-                    u.setEnabled(was);
-                }
-                const FingerPose result = stayed ? base : expand(got);
-                if (!stayed)
-                    writeFinger(g, f, result, &written);
-                Pose one;
-                one.fingers[int(f.role)] = result;
-                fingers[roleName(f.role)] = {{"touching", !stayed && got != to},
-                                             {"startedInside", startedInside},
-                                             {"stayed", stayed},
-                                             {"curl", measureFingerCurl(one, f.role)},
-                                             {"thickness", radius},
-                                             {"thicknessFrom", a.has("thickness") ? "flag" : fromMesh ? "mesh" : "estimate"}};
-            }
-            std::string stuck;
-            for (const auto& [role, r] : fingers.items())
-                if (r.value("stayed", false))
-                    stuck += (stuck.empty() ? "" : ", ") + role;
-            if (!stuck.empty())
-                log::write(LogLevel::Warning, "puppeteerHandGrip: " + stuck + " on " + g.node(hn)->path() +
-                                                  " can't open clear of the target within their joint limits (the knuckle sits against it), so "
-                                                  "they stay as posed. Move the target off the knuckles and grip again");
-            out.push_back({{"hand", g.node(hn)->path()}, {"fingers", fingers}});
+            const Pose start = gripStart(g, *h);
+            const Radii radii = radiiOf(g, *h, given);
+            const json fingers = gripHand(g, *h, target, mask, start, radii, &written, keepLive);
+            warnStuck(g, hn, fingers);
+            if (keepLive)
+                storeLive(g, hn, targetNames, mask, start, radii);
+            else if (isLive(g, hn))
+                g.setValue(plugOf(*g.node(hn), "gripLive"), false);
+            out.push_back({{"hand", g.node(hn)->path()}, {"fingers", fingers}, {"live", keepLive}});
         }
     }
+    live::gHandsDirty = true;
+    for (NodeId hn : hands)
+        live::regrip(g, hn, false, true);
     if (key)
         keyWritten(g, written);
     return out;
@@ -1035,6 +1342,9 @@ void registerHandType(ext::Context& ctx)
     t.ownAttrs = {
         {.name = "side", .type = PlugType::Enum, .defaultValue = int64_t(0), .flags = AttrInput | AttrStorable, .enumNames = kSides, .doc = "Which hand: left or right."},
         text("setup", "The hand's joints and frames (JSON).", AttrHidden),
+        {.name = "gripLive", .type = PlugType::Bool, .defaultValue = false, .flags = AttrInput | AttrStorable,
+         .doc = "Live grip: the fingers grip what puppeteerHandGrip(live=True) gave again whenever it or the hand moves."},
+        text("gripState", "A live grip's targets, fingers, thickness and the pose it grips from (JSON).", AttrHidden),
     };
     lila::scene::relocate::registerNeutral(t.name);
     types::registerType(ctx, std::move(t));
@@ -1293,15 +1603,18 @@ void registerHandCommands(ext::Context& ctx)
         .name = "puppeteerHandGrip",
         .doc = "Closes hands' fingers onto a mesh or another character until they touch: each finger curls the natural way and, "
                "as a bone touches, the joints before it stop and the rest carry on, so it wraps the surface. Thickness is how far "
-               "the finger's skin is from its bones, by default measured from the character's own mesh.",
+               "the finger's skin is from its bones, by default measured from the character's own mesh. live keeps gripping as the "
+               "target or the hand moves, from the pose the hand had before it gripped; posing a live hand changes that pose. "
+               "Returns each hand's fingers: touching, startedInside, stayed, curl, thickness.",
         .positionalDoc = "hands, fingers or a character (default the selection)",
         .flags = {
             nodeFlag({"target", "tg", T::Any, nullptr, "Mesh, group or character to grip; default what else is selected."}, "mesh"),
             {"thickness", "tk", T::Float, nullptr, "Finger skin thickness, cm."},
+            {"live", "lv", T::Bool, nullptr, "True keeps gripping: the fingers grip again whenever the target or the hand moves. False stops."},
             kFingersFlag, kSideFlag, kKeyFlag,
         },
         .run = gripCmd,
-        .examples = {"puppeteerHandGrip(\"hand_r\", target=\"sword_grip\")"},
+        .examples = {"puppeteerHandGrip(\"hand_r\", target=\"sword_grip\")", "puppeteerHandGrip(\"hand_r\", target=\"cup\", live=True)"},
     });
 
     ctx.registerCommand({
@@ -1333,5 +1646,13 @@ void registerHands(lila::ext::Context& ctx)
 {
     hand::registerHandType(ctx);
     hand::registerHandCommands(ctx);
+    using lila::events::Event;
+    ctx.subscribe(Event::AppIdle, [](const lila::events::EventData&) { hand::live::tick(Graph::current()); });
+    ctx.subscribe(Event::UndoStackChanged, [](const lila::events::EventData&) { hand::live::stackChanged(); });
+    ctx.subscribe(Event::PlaybackStarted, [](const lila::events::EventData&) { hand::live::gPlaying = true; });
+    ctx.subscribe(Event::PlaybackStopped, [](const lila::events::EventData&) { hand::live::gPlaying = false; });
+    for (Event e : {Event::SceneNew, Event::SceneOpened})
+        ctx.subscribe(e, [](const lila::events::EventData&) { hand::live::forget(); });
+    ctx.track("puppeteer:liveGrip", [] { hand::live::forget(); });
 }
 } // namespace puppeteer

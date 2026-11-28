@@ -637,6 +637,8 @@ public:
     }
 };
 
+bool liveGripOn();
+
 class HandsPanel : public QWidget
 {
 public:
@@ -822,8 +824,19 @@ public:
         // Weekly actions.
         auto* acts = new QHBoxLayout;
         acts->setSpacing(4);
-        for (auto [label, action] : {std::pair{"Mirror", "puppeteer.hands.mirror"}, {"Grip", "puppeteer.hands.grip"}, {"Key", "puppeteer.hands.key"}})
-            acts->addWidget(controls::push(action, mBody, label));
+        for (auto [label, action] : {std::pair{"Mirror", "puppeteer.hands.mirror"}, {"Grip", "puppeteer.hands.grip"}, {"Live Grip", "puppeteer.hands.liveGrip"},
+                                  {"Key", "puppeteer.hands.key"}})
+        {
+            QToolButton* b = controls::push(action, mBody, label);
+            if (std::string_view(action) == "puppeteer.hands.liveGrip")
+            {
+                // The panel can be built before the action registers, so the button is made a toggle here.
+                b->setCheckable(true);
+                connect(b, &QToolButton::clicked, b, [b] { b->setChecked(liveGripOn()); });
+                mLiveGrip = b;
+            }
+            acts->addWidget(b);
+        }
         acts->addStretch(1);
         body->addLayout(acts);
         body->addStretch(1);
@@ -1045,6 +1058,7 @@ public:
         if (!force && key == mKey)
             return;
         mKey = key;
+        mLiveGrip->setChecked(liveGripOn());
         std::vector<NodeId> hands = handsOf(g, ch);
         mEmpty->setVisible(hands.empty());
         mBody->setVisible(!hands.empty());
@@ -1113,6 +1127,7 @@ public:
     QComboBox *mFrom, *mTo;
     controls::SliderField* mMix;
     QTimer mCommit, mPoll;
+    QToolButton* mLiveGrip = nullptr;
     std::string mKey;
     bool mRefreshing = false;
 };
@@ -1172,6 +1187,60 @@ void gripAction()
         return;
     }
     call["target"] = targets;
+    runCommand("puppeteerHandGrip", call);
+}
+
+/** The hands the Hands actions reach now: the call's hand, or its character's hands on the call's side. */
+std::vector<NodeId> actionHands()
+{
+    Graph& g = Graph::current();
+    const json call = actionCall();
+    const std::string path = call["args"].empty() ? std::string() : call["args"][0].get<std::string>();
+    Node* n = path.empty() ? nullptr : named(g, path);
+    if (!n)
+        return {};
+    if (n->type().isA(kHandType))
+        return {n->id()};
+    const std::string side = call.value("side", "both");
+    std::vector<NodeId> out;
+    for (NodeId h : handsOf(g, n->id()))
+        if (side == "both" || sideName(Side(std::get<int64_t>(g.value(plugOf(*g.node(h), "side"))))) == side)
+            out.push_back(h);
+    return out;
+}
+
+bool liveGripOn()
+{
+    Graph& g = Graph::current();
+    for (NodeId h : actionHands())
+        if (std::get<bool>(g.value(plugOf(*g.node(h), "gripLive"))))
+            return true;
+    return false;
+}
+
+void liveGripAction()
+{
+    if (liveGripOn())
+    {
+        json call = actionCall();
+        call["live"] = false;
+        runCommand("puppeteerHandGrip", call);
+        return;
+    }
+    json call = actionCall();
+    Graph& g = Graph::current();
+    json targets = json::array();
+    const NodeId ch = panelCharacter();
+    for (NodeId id : g.selection())
+        if (Node* n = g.node(id); n && !rig::isJoint(*n) && !n->type().isA(kHandType) && characterFor(g, id) != ch)
+            targets.push_back(n->path());
+    if (targets.empty())
+    {
+        log::write(LogLevel::Warning, "Live Grip: select the mesh or character to hold along with the hand");
+        return;
+    }
+    call["target"] = targets;
+    call["live"] = true;
     runCommand("puppeteerHandGrip", call);
 }
 } // namespace
@@ -1247,6 +1316,13 @@ void registerHandUi(lila::ext::Context& ctx)
                        .doc = "Close the hand's fingers onto the other selected mesh or character until they touch, wrapping it.",
                        .icon = "hand-grab",
                        .keywords = {"hand", "grab", "hold", "fingers", "contact", "wrap"}});
+    actions::add(ctx, {.id = "puppeteer.hands.liveGrip", .label = "Live Grip", .category = kCat,
+                       .run = liveGripAction,
+                       .doc = "Keep the hand gripping the other selected mesh or character: the fingers close onto it again whenever it or "
+                              "the hand moves, and open as it leaves. Posing the hand changes the pose it grips from. Click again to stop.",
+                       .checked = [] { return liveGripOn(); },
+                       .icon = "hand-grab",
+                       .keywords = {"hand", "grab", "hold", "fingers", "contact", "wrap", "live", "follow", "auto grip"}});
     actions::add(ctx, {.id = "puppeteer.hands.savePose", .label = "Save Hand Pose", .category = kCat,
                        .run = savePoseAction,
                        .doc = "Save the hand's pose (the fingers the Hands panel reaches) to use on any hand of any character.",
@@ -1269,7 +1345,7 @@ void registerHandUi(lila::ext::Context& ctx)
     for (const std::string m : {"Puppeteer/Hands", "Animation/Hands"})
     {
         for (const char* a : {"window.puppeteerHands", "puppeteer.hands.pad", "", "puppeteer.hands.mirror", "puppeteer.hands.swap", "puppeteer.hands.grip",
-                              "puppeteer.hands.key", "puppeteer.hands.savePose", "", "puppeteer.hands.setup"})
+                              "puppeteer.hands.liveGrip", "puppeteer.hands.key", "puppeteer.hands.savePose", "", "puppeteer.hands.setup"})
             if (*a)
                 menus::addItem(ctx, {.id = "puppeteer.hands." + m + "." + a, .menu = m, .action = a});
             else
