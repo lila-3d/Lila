@@ -52,6 +52,7 @@ public:
         kKeyTolerance,
         kDrawOrder,
         kGuides,
+        kViews,
         kCount
     };
 };
@@ -152,13 +153,22 @@ LILA_SCENE_API std::string frameFile(const std::string& path, int64_t frame);
 
 /** A camera attr value as a view name ("side" is "right") or a camera node's name as is; empty for a free plane. */
 LILA_SCENE_API std::string cameraName(const std::string& value);
+/** The views a plane is limited to by its views attr, as cameraName gives them; empty when it has no limit. */
+LILA_SCENE_API std::vector<std::string> views(const Node& n);
+/**
+ * Whether a plane draws in view (a view name): in its views list when that is set, otherwise free planes
+ * everywhere and attached ones by displayMode.
+ */
+LILA_SCENE_API bool showsIn(const Node& n, const std::string& view);
+/** The viewport views: persp, top, bottom, front, back, left, right. */
+LILA_SCENE_API std::vector<std::string> allViews();
 /** A view name, a camera node in the current scene, or empty. */
 LILA_SCENE_API bool validCamera(const std::string& value);
 } // namespace imagePlane
 
 /** The imagePlane type. Idempotent; needs the transform type first. */
 LILA_SCENE_API void registerImagePlaneTypes();
-/** The imagePlane and imagePlaneCut commands. Idempotent. */
+/** The imagePlane, imagePlaneView and imagePlaneCut commands. Idempotent. */
 LILA_SCENE_API void registerImagePlaneCommands();
 /** imagePlaneCut alone; registerImagePlaneCommands calls it. */
 void registerImagePlaneCutCommand();

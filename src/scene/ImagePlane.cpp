@@ -11,6 +11,7 @@
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <sstream>
 
 namespace lila::scene
 {
@@ -74,6 +75,9 @@ std::vector<AttrDef> imagePlaneAttrs()
                                   .doc = "Higher draws in front of lower among planes with the same placement. A cut piece's adds to the plane it was cut from, so "
                                          "moving that plane moves the whole figure."};
     at(ImagePlane::kKeyBackground) = boolAttr("keyBackground", false, "Clears the picture's background: the color of its top left corner.");
+    at(ImagePlane::kViews) = {.name = "views", .type = PlugType::String, .defaultValue = std::string(), .flags = kPlaneStored,
+                              .doc = "Views the plane shows in, space separated (persp front ...), or none. Empty: free planes show in every view, attached "
+                                     "ones as displayMode says."};
     at(ImagePlane::kKeyTolerance) =
         floatAttr("keyTolerance", 0.15, "How far from the background color a pixel still clears, 0 to 1; the outer half fades.", 0.0, 1.0);
     return a;
@@ -117,6 +121,52 @@ ip::Quad place(const ip::FitResult& f, const glm::dvec3& center, const glm::dvec
     return q;
 }
 
+/** The words of a views string (space or comma separated) as view names, without repeats. */
+std::vector<std::string> splitViews(std::string text)
+{
+    std::ranges::replace(text, ',', ' ');
+    std::istringstream in(text);
+    std::vector<std::string> out;
+    for (std::string w; in >> w;)
+        if (std::string name = ip::cameraName(w); std::ranges::find(out, name) == out.end())
+            out.push_back(name);
+    return out;
+}
+
+/** View names from a views string or a list, checked. */
+std::vector<std::string> parseViews(const json& v)
+{
+    std::string text;
+    if (v.is_array())
+    {
+        for (const json& e : v)
+            if (e.is_string())
+                text += e.get<std::string>() + " ";
+    }
+    else if (v.is_string())
+        text = v.get<std::string>();
+    else
+        throw CommandError("imagePlane: views is a list of view names");
+    std::vector<std::string> out = splitViews(text);
+    for (const std::string& name : out)
+        if (name != "none" && !std::ranges::any_of(kViews, [&](const char* view) { return name == view; }))
+            throw CommandError("imagePlane: views are persp, top, bottom, front, back, left, right, side or none, not '" + name + "'");
+    return out;
+}
+
+std::string joinViews(const std::vector<std::string>& views)
+{
+    std::string out;
+    for (const std::string& v : views)
+        out += (out.empty() ? "" : " ") + v;
+    return out;
+}
+
+std::string viewsString(const json& v)
+{
+    return joinViews(parseViews(v));
+}
+
 void apply(Graph& g, Node& n, const Args& a)
 {
     NodeId id = n.id();
@@ -131,12 +181,14 @@ void apply(Graph& g, Node& n, const Args& a)
             throw CommandError("imagePlane: camera is a view name (persp, top, bottom, front, back, left, right, side), a camera node or empty, not '" + cam + "'");
         setAttr(ImagePlane::kCamera, ip::cameraName(cam));
     }
+    if (a.has("views"))
+        setAttr(ImagePlane::kViews, viewsString(a.flags["views"]));
     if (a.has("showInAllViews"))
         setAttr(ImagePlane::kDisplayMode, int64_t(a.get<bool>("showInAllViews") ? ip::DisplayMode::AllViews : ip::DisplayMode::LookingThrough));
     for (int attr = ImagePlane::kUseFrameExtension; attr < ImagePlane::kCount; ++attr)
     {
         const AttrDef& d = defs[size_t(attr)];
-        if (attr == ImagePlane::kCamera || !a.has(d.name))
+        if (attr == ImagePlane::kCamera || attr == ImagePlane::kViews || !a.has(d.name))
             continue;
         const json& v = a.flags[d.name];
         if (d.type == PlugType::Enum)
@@ -343,6 +395,24 @@ std::string cameraName(const std::string& value)
     return std::ranges::any_of(kViews, [&](const char* view) { return v == view; }) ? v : value;
 }
 
+std::vector<std::string> views(const Node& n)
+{
+    return splitViews(n.as<std::string>(ImagePlane::kViews));
+}
+
+bool showsIn(const Node& n, const std::string& view)
+{
+    if (std::vector<std::string> list = views(n); !list.empty())
+        return std::ranges::find(list, view) != list.end();
+    const std::string camera = cameraName(n.as<std::string>(ImagePlane::kCamera));
+    return camera.empty() || camera == view || DisplayMode(n.as<int64_t>(ImagePlane::kDisplayMode)) == DisplayMode::AllViews;
+}
+
+std::vector<std::string> allViews()
+{
+    return {std::begin(kViews), std::end(kViews)};
+}
+
 bool validCamera(const std::string& value)
 {
     std::string v = cameraName(value);
@@ -397,6 +467,7 @@ void registerImagePlaneCommands()
         {"displayColor", "dc", T::String, nullptr, "color or grayscale.", kDisplayColorNames},
         {"displayMode", "dm", T::String, nullptr, "lookingThrough or allViews.", kDisplayModeNames},
         {"placement", "pl", T::String, nullptr, "behind, inScene or inFront of the geometry.", kPlacementNames},
+        {"views", "vw", T::String, nullptr, "Views it shows in, space separated (persp front ...); empty for the default."},
         {"locked", "lk", T::Bool, nullptr, "Not pickable in the viewport (reference mode)."},
         {"drawOrder", "do", T::Int, nullptr, "Higher draws in front of lower among planes with the same placement."},
         {"keyBackground", "kb", T::Bool, nullptr, "Clear the picture's background (its top left corner's color)."},
@@ -446,5 +517,73 @@ void registerImagePlaneCommands()
             return n->path();
         },
     });
+
+    ops::registerCommand({
+        .name = "imagePlaneView",
+        .doc = "Sets which views image planes show in: only the view, also the view, not the view, or back to the default. Returns the planes.",
+        .positionalDoc = "image planes (omit for the selected ones)",
+        .flags = {{"view", "v", T::String, nullptr, "View: persp, top, bottom, front, back, left, right or side."},
+                  {"mode", "m", T::String, std::string("only"), "only, add, remove, or all (the default views again).", {"only", "add", "remove", "all"}}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            std::vector<Node*> planes;
+            if (a.positional.empty())
+            {
+                for (NodeId id : g.selection())
+                    if (Node* n = g.node(id); n && n->type().isA("imagePlane"))
+                        planes.push_back(n);
+            }
+            else
+                for (const json& p : a.positional)
+                {
+                    Node* n = g.find(p.get<std::string>());
+                    if (!n || !n->type().isA("imagePlane"))
+                        throw CommandError("imagePlaneView: " + p.get<std::string>() + " is not an image plane");
+                    planes.push_back(n);
+                }
+            if (planes.empty())
+                throw CommandError("imagePlaneView: select an image plane or name one");
+            const std::string mode = textMatch::lower(a.get<std::string>("mode", "only"));
+            std::string view;
+            if (mode != "all")
+            {
+                std::vector<std::string> v = parseViews(a.get<std::string>("view", ""));
+                if (v.size() != 1)
+                    throw CommandError("imagePlaneView: give one view");
+                view = v[0];
+            }
+            json out = json::array();
+            for (Node* n : planes)
+            {
+                // The views it shows in now, so adding to or removing from the default starts from what is on screen.
+                std::vector<std::string> shown;
+                for (const std::string& v : ip::allViews())
+                    if (ip::showsIn(*n, v))
+                        shown.push_back(v);
+                std::vector<std::string> next;
+                if (mode == "only")
+                    next = {view};
+                else if (mode == "add")
+                {
+                    next = shown;
+                    if (std::ranges::find(next, view) == next.end())
+                        next.push_back(view);
+                }
+                else if (mode == "remove")
+                    std::ranges::copy_if(shown, std::back_inserter(next), [&](const std::string& v) { return v != view; });
+                else if (mode != "all")
+                    throw CommandError("imagePlaneView: mode is only, add, remove or all");
+                // An empty list is the default, so hiding a plane from its last view stores none.
+                std::string value = next.empty() ? std::string("none") : joinViews(next);
+                // A list naming every view says nothing a free plane's default does not.
+                if (mode == "all" || (next.size() == ip::allViews().size() && ip::cameraName(n->as<std::string>(ImagePlane::kCamera)).empty()))
+                    value.clear();
+                g.setValue({n->id(), ImagePlane::kViews, -1}, value);
+                out.push_back(n->path());
+            }
+            return out;
+        },
+    });
 }
 } // namespace lila::scene
+

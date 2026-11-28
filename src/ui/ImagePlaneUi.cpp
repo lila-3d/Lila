@@ -296,14 +296,11 @@ std::vector<Placed> placedIn(const ViewInfo& view)
         if (!scene::effectivelyVisible(g, id) || !media::isLive(g, id))
             continue;
         std::string camera = ip::cameraName(n->as<std::string>(ImagePlane::kCamera));
+        if (!ip::showsIn(*n, view.camera))
+            continue;
         std::optional<ip::CameraFrame> frame;
-        if (!camera.empty())
-        {
-            if (camera != view.camera && ip::DisplayMode(n->as<int64_t>(ImagePlane::kDisplayMode)) != ip::DisplayMode::AllViews)
-                continue;
-            if (!(frame = cameraFor(camera, view)))
-                continue;
-        }
+        if (!camera.empty() && !(frame = cameraFor(camera, view)))
+            continue;
         render::TexturePtr image = imageFor(*n, g.time());
         if (!image || image->width <= 0 || image->height <= 0)
             continue;
@@ -1228,6 +1225,44 @@ private:
     std::string mCursorView;
     bool mDragging = false;
 };
+bool planeSelected()
+{
+    const scene::Graph& g = scene::Graph::current();
+    return std::ranges::any_of(g.selection(), [&](scene::NodeId id) { return g.node(id) && g.node(id)->type().isA("imagePlane"); });
+}
+
+/** Whether every selected image plane shows in view; false with none selected. */
+bool selectedShowIn(const std::string& view)
+{
+    const scene::Graph& g = scene::Graph::current();
+    bool any = false;
+    for (scene::NodeId id : g.selection())
+        if (const scene::Node* n = g.node(id); n && n->type().isA("imagePlane"))
+        {
+            if (!ip::showsIn(*n, view))
+                return false;
+            any = true;
+        }
+    return any;
+}
+
+/** imagePlaneView on planes (the selection when empty) for view, logging a failure. */
+void setViews(const std::vector<std::string>& planes, const std::string& view, const char* mode)
+{
+    try
+    {
+        json call = {{"view", view}, {"mode", mode}};
+        if (!planes.empty())
+            call["args"] = planes;
+        ops::execute("imagePlaneView", call, CallSource::UI);
+        viewportTools::requestRedraw();
+    }
+    catch (const CommandError& e)
+    {
+        log::error("{}", e.what());
+    }
+}
+
 } // namespace
 
 bool shownIn(const std::string& view)
@@ -1270,26 +1305,27 @@ void fillCameraMenu(QMenu* menu, const std::string& camera)
 {
     QObject::connect(menu->addAction("Import Image..."), &QAction::triggered, menu, [menu, camera] { importImage(menu->parentWidget(), camera); });
     scene::Graph& g = scene::Graph::current();
-    bool first = true;
-    for (scene::NodeId id : g.nodes())
+    const std::vector<scene::Node*>& planes = scene::sceneIndex::ofType(g, "imagePlane");
+    if (planes.empty())
+        return;
+    menu->addSeparator();
+    for (const scene::Node* n : planes)
     {
-        const scene::Node* n = g.node(id);
-        if (!n->type().isA("imagePlane") || ip::cameraName(n->as<std::string>(ImagePlane::kCamera)) != camera)
-            continue;
-        if (std::exchange(first, false))
-            menu->addSeparator();
+        QAction* a = menu->addAction(QString::fromStdString(n->name()));
+        a->setCheckable(true);
+        a->setChecked(ip::showsIn(*n, camera));
+        a->setToolTip("Shows this image plane in this view");
         std::string name = n->path();
-        QObject::connect(menu->addAction(QString::fromStdString("Select " + name)), &QAction::triggered, menu, [name] {
-            try
-            {
-                ops::execute("select", {{"args", {name}}}, CallSource::UI);
-            }
-            catch (const CommandError& e)
-            {
-                log::error("{}", e.what());
-            }
-        });
+        QObject::connect(a, &QAction::toggled, menu, [name, camera](bool on) { setViews({name}, camera, on ? "add" : "remove"); });
     }
+    menu->addSeparator();
+    const bool selected = planeSelected();
+    QAction* only = menu->addAction("Selected: This View Only");
+    only->setEnabled(selected);
+    QObject::connect(only, &QAction::triggered, menu, [camera] { setViews({}, camera, "only"); });
+    QAction* all = menu->addAction("Selected: All Views");
+    all->setEnabled(selected);
+    QObject::connect(all, &QAction::triggered, menu, [camera] { setViews({}, camera, "all"); });
 }
 
 void acceptDrops(ViewportWidget* view)
@@ -1343,6 +1379,39 @@ void install(std::function<ViewportWidget*()> active)
                   .doc = "Lays angle guides over a reference picture, to line limbs up while reposing it: drag from a joint (15 degree steps, "
                          "Shift for any angle), X mirrors across world X, Ctrl+click a guide to delete it.",
                   .python = "lila.ops.imagePlaneGuide(\"front\", lines=[(15, 47, 50, 12)])"});
+    actions::add({.id = "imagePlane.thisViewOnly",
+                  .label = "Active View Only",
+                  .category = "View",
+                  .run =
+                      [] {
+                          if (ViewportWidget* v = activeView() ? activeView()() : nullptr)
+                              setViews({}, v->viewName(), "only");
+                      },
+                  .enabled = planeSelected,
+                  .doc = "Shows the selected image planes only in the active view. Each view's Image Planes menu adds or removes single planes.",
+                  .python = "lila.ops.imagePlaneView(\"frontRef\", view=\"front\", mode=\"only\")",
+                  .keywords = {"isolate", "bind", "camera"}});
+    for (const std::string& view : ip::allViews())
+    {
+        QString label = QString::fromStdString(view);
+        label[0] = label[0].toUpper();
+        actions::add({.id = "imagePlane.view." + view,
+                      .label = label.toStdString(),
+                      .category = "Image Plane Views",
+                      .run = [view] { setViews({}, view, selectedShowIn(view) ? "remove" : "add"); },
+                      .enabled = planeSelected,
+                      .doc = "Shows or hides the selected image planes in the " + view + " view.",
+                      .python = "lila.ops.imagePlaneView(\"frontRef\", view=\"" + view + "\", mode=\"add\")",
+                      .checked = [view] { return selectedShowIn(view); },
+                      .keywords = {"image plane", "bind", "isolate"}});
+    }
+    actions::add({.id = "imagePlane.allViews",
+                  .label = "All Views",
+                  .category = "View",
+                  .run = [] { setViews({}, {}, "all"); },
+                  .enabled = planeSelected,
+                  .doc = "Shows the selected image planes in every view again.",
+                  .python = "lila.ops.imagePlaneView(\"frontRef\", mode=\"all\")"});
     actions::add({.id = "viewport.toggleImagePlanes",
                   .label = "Image Planes",
                   .category = "View",

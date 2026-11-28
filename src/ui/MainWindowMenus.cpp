@@ -124,7 +124,12 @@ void MainWindow::buildMenus()
                                              "create.disc", "create.pipe", "create.quadSphere", "create.icoSphere"});
     menus::addActions("Create", {"create.locator", "create.camera", "create.cameraFromView", "create.skyAtmosphere", "create.fogVolume", "create.emptyGroup", "create.turntableBase", "create.audio", "anim.importFootage"});
     addSubmenu("Create", "Reference Images");
-    menus::addActions("Create/Reference Images", {"create.imagePlane", "imagePlane.cut", "imagePlane.guides", "reference.addImages", "referenceOverlay.addImage", "", "referenceOverlay.adjust",
+    menus::addActions("Create/Reference Images", {"create.imagePlane", "imagePlane.cut", "imagePlane.guides"});
+    addSubmenu("Create/Reference Images", "Image Plane Views");
+    menus::addActions("Create/Reference Images/Image Plane Views", {"imagePlane.view.persp", "imagePlane.view.top", "imagePlane.view.bottom", "imagePlane.view.front",
+                                                                    "imagePlane.view.back", "imagePlane.view.left", "imagePlane.view.right", "",
+                                                                    "imagePlane.thisViewOnly", "imagePlane.allViews"});
+    menus::addActions("Create/Reference Images", {"reference.addImages", "referenceOverlay.addImage", "", "referenceOverlay.adjust",
                                                    "referenceOverlay.toggle", "referenceOverlay.next", ""});
     menus::addItem({.menu = "Create/Reference Images", .action = docs::pageAction("reference-images")});
     addSubmenu("Create", "Sets");

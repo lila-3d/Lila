@@ -126,6 +126,8 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"create.imagePlane", "photo"},
     {"imagePlane.cut", "slice"},
     {"imagePlane.guides", "angle"},
+    {"imagePlane.thisViewOnly", "eye-pin"},
+    {"imagePlane.allViews", "eye"},
     {"create.audio", "music"},
     {"help.licenses", "license"},
     {"sets.create", "box-multiple"},

@@ -391,3 +391,54 @@ TEST_CASE("imagePlaneGuide")
     run("undo");
     CHECK(ip::guides(*g.find(body)).size() == 1);
 }
+
+TEST_CASE("imagePlaneView")
+{
+    run("newScene");
+    Graph& g = Graph::current();
+    const std::string front = run("imagePlane", {{"fileName", "front.png"}}).get<std::string>();
+    const std::string back = run("imagePlane", {{"fileName", "back.png"}}).get<std::string>();
+    const std::string attached = run("imagePlane", {{"fileName", "top.png"}, {"camera", "top"}}).get<std::string>();
+    const Node& f = *g.find(front);
+    const Node& b = *g.find(back);
+    const Node& a = *g.find(attached);
+
+    // Free planes show everywhere, attached ones only through their camera.
+    CHECK(ip::showsIn(f, "front"));
+    CHECK(ip::showsIn(f, "back"));
+    CHECK(ip::showsIn(a, "top"));
+    CHECK_FALSE(ip::showsIn(a, "persp"));
+
+    run("imagePlaneView", {{"args", {front}}, {"view", "front"}, {"mode", "only"}});
+    run("imagePlaneView", {{"args", {front}}, {"view", "persp"}, {"mode", "add"}});
+    CHECK(ip::views(f) == std::vector<std::string>{"front", "persp"});
+    CHECK_FALSE(ip::showsIn(f, "back"));
+
+    // Removing from the default starts from every view.
+    run("imagePlaneView", {{"args", {back}}, {"view", "front"}, {"mode", "remove"}});
+    CHECK_FALSE(ip::showsIn(b, "front"));
+    CHECK(ip::showsIn(b, "back"));
+    CHECK(ip::showsIn(b, "persp"));
+    run("imagePlaneView", {{"args", {back}}, {"view", "front"}, {"mode", "add"}});
+    CHECK(b.as<std::string>(ImagePlane::kViews).empty());
+
+    // An attached plane hidden from its own camera shows nowhere, not back at the default.
+    run("imagePlaneView", {{"args", {attached}}, {"view", "top"}, {"mode", "remove"}});
+    CHECK_FALSE(ip::showsIn(a, "top"));
+    run("imagePlaneView", {{"args", {attached}}, {"mode", "all"}});
+    CHECK(ip::showsIn(a, "top"));
+
+    // The selection is the default target, and side is right.
+    g.select({b.id()});
+    run("imagePlaneView", {{"view", "side"}});
+    CHECK(ip::views(b) == std::vector<std::string>{"right"});
+    run("undo");
+    CHECK(b.as<std::string>(ImagePlane::kViews).empty());
+
+    run("imagePlane", {{"args", {front}}, {"views", "top, Back"}});
+    CHECK(ip::views(f) == std::vector<std::string>{"top", "back"});
+    CHECK_THROWS_AS(run("imagePlane", {{"args", {front}}, {"views", "sideways"}}), CommandError);
+    CHECK_THROWS_AS(run("imagePlaneView", {{"args", {front}}, {"view", "nowhere"}}), CommandError);
+    g.select({});
+    CHECK_THROWS_AS(run("imagePlaneView", {{"view", "front"}}), CommandError);
+}
