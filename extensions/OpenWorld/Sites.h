@@ -56,7 +56,7 @@ struct Kind
     std::string id;    // port, cruise, cemetery, airstrip, farm, village, compound, island, lighthouse
     std::string label; // Cargo Port
     std::string icon;
-    std::string group; // Coast, Inland, Compounds: how the palette groups them
+    std::string group; // Coast, Inland, Compounds, Hideouts: how the palette groups them
     std::string doc;
     std::vector<std::string> keywords;
     std::vector<std::string> params; // names in params(), in option-box order

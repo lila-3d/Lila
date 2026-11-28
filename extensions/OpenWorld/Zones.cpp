@@ -353,6 +353,8 @@ const std::vector<LayerType>& builtInTypes()
          {0.8f, 0.6f, 0.9f}, "Index of interiors: which interior and building a footprint holds."},
         {"missions", "Mission Markers", false, false, false, {{"mission", ""}, {"trigger", "enter"}, {"marker", "area"}}, "business", {1.0f, 0.85f, 0.2f},
          "Mission start and trigger areas."},
+        {"sites", "Sites", false, false, false, {{"site", ""}, {"siteKind", ""}}, "business", {0.85f, 0.5f, 0.3f},
+         "Site kit outlines, one zone per site, kept in step as the sites move."},
     };
     return all;
 }

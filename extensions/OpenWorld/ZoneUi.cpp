@@ -1306,7 +1306,7 @@ public:
         auto* check = panelkit::button("Check", "Gaps, overlaps and unnamed zones", this);
         connect(check, &QToolButton::clicked, this, [] { actions::run(nlohmann::json("openworld.zoneCheck")); });
         foot->addWidget(check);
-        foot->addWidget(panelkit::overflow({"openworld.zoneFromDistricts", "openworld.zoneFromTerrain", "openworld.zoneFromWater", "openworld.zoneFromCurve",
+        foot->addWidget(panelkit::overflow({"openworld.zoneFromDistricts", "openworld.zoneFromSites", "openworld.zoneFromTerrain", "openworld.zoneFromWater", "openworld.zoneFromCurve",
                                             "openworld.zonePlayArea", "openworld.zoneExport", "openworld.zoneImport", "openworld.zoneSendToUnreal", "openworld.zoneRemoveFromUnreal"},
                                            this));
         v->addLayout(foot);
@@ -1560,6 +1560,13 @@ void registerZoneUi(ext::Context& ctx)
          .doc = "One zone per district of the selected Settlement, named as the settlement names it.",
          .python = "zoneFromDistricts(settlement='Town')",
          .icon = "building-community"});
+    add({.id = "openworld.zoneFromSites",
+         .label = "Zones from Sites",
+         .category = "Open World",
+         .run = [] { warnOnThrow([] { actions::runWithOptions("zoneFromSites", withSet()); }); },
+         .doc = "One zone per site kit, its outline following the site as it moves.",
+         .python = "zoneFromSites(layer='sites')",
+         .icon = "map-pin-2"});
     add({.id = "openworld.zoneFromTerrain",
          .label = "Zones from Terrain Masks",
          .category = "Open World",
@@ -1639,7 +1646,7 @@ void registerZoneUi(ext::Context& ctx)
 
     addTools(ctx,
              {"", "openworld.zoneTool", "openworld.zonesPanel", "openworld.zoneLayer", "openworld.zoneFromCurve", "openworld.zoneFromDistricts",
-              "openworld.zoneFromTerrain", "openworld.zoneFromWater", "openworld.zonePlayArea", "openworld.zoneOverlay", "openworld.zoneCheck",
+              "openworld.zoneFromSites", "openworld.zoneFromTerrain", "openworld.zoneFromWater", "openworld.zonePlayArea", "openworld.zoneOverlay", "openworld.zoneCheck",
               "openworld.zoneExport", "openworld.zoneImport", "openworld.zoneSendToUnreal", "openworld.zoneRemoveFromUnreal"},
              {{.action = "openworld.zoneTool", .icon = "brush", .text = "Paint", .shelf = "Zones", .group = "Zones"},
               {.action = "openworld.zonesPanel", .icon = "map-2", .text = "Panel", .group = "Zones"},
@@ -1647,6 +1654,7 @@ void registerZoneUi(ext::Context& ctx)
               {.action = "openworld.zoneCheck", .icon = "list-check", .text = "Check", .group = "Zones"},
               {.action = "openworld.zoneLayer", .text = "Add Zone Layer", .rare = true},
               {.action = "openworld.zoneFromCurve", .text = "Zone from Curve", .rare = true},
+              {.action = "openworld.zoneFromSites", .text = "Zones from Sites", .rare = true},
               {.action = "openworld.zoneFromTerrain", .text = "Zones from Terrain", .rare = true},
               {.action = "openworld.zoneFromWater", .text = "Zones from Water", .rare = true},
               {.action = "openworld.zonePlayArea", .text = "Play Area", .rare = true},
@@ -1688,6 +1696,12 @@ void registerZoneUi(ext::Context& ctx)
                         }}};
     districts.docs = "open-world?id=zones";
     ops::options::setOverride("zoneFromDistricts", districts);
+
+    Override fromSites;
+    fromSites.order = {"layer", "type", "sites"};
+    fromSites.hidden = {"setName", "ground", "set", "attrs", "attrsByKind", "linkedOnly"};
+    fromSites.docs = "open-world?id=zones";
+    ops::options::setOverride("zoneFromSites", fromSites);
 
     Override terrain;
     terrain.order = {"terrain", "biomes", "masks", "layer", "type", "threshold"};

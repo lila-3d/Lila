@@ -66,4 +66,12 @@ void buildFarm(Kit& k);
 void buildVillage(Kit& k);
 void buildCompound(Kit& k);
 void buildIsland(Kit& k);
+void buildJunkyard(Kit& k);
+void buildShantytown(Kit& k);
+void buildUnfinished(Kit& k);
+void buildFishingCamp(Kit& k);
+void buildWarehouse(Kit& k);
+void buildRanch(Kit& k);
+void buildArena(Kit& k);
+void buildImpound(Kit& k);
 } // namespace openworld::sites

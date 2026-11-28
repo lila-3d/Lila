@@ -260,6 +260,11 @@ const Vocab& mexicanVocab()
         p["cruiseTerminal"] = {"Terminal de Cruceros {e}", "Muelle de Cruceros {s}"};
         p["customs"] = {"Aduana Marítima {e}", "Aduana {s}"};
         p["mausoleum"] = {"Familia {s} {s}", "Capilla Familiar {s} {s}", "Familia {s}"};
+        p["junkyard"] = {"Yonke {s}", "Deshuesadero {e}", "Autopartes Usadas {s}"};
+        p["fishingCamp"] = {"Campo Pesquero {e}", "Cooperativa Pesquera {e}"};
+        p["ranch"] = {"Rancho {e}", "Rancho {s}", "Hacienda {e}"};
+        p["palenque"] = {"Palenque {e}", "Palenque {s}"};
+        p["impoundLot"] = {"Corralón {e}", "Depósito Vehicular {#}"};
         x.business = {"Comercial {s}", "Tienda {e}", "Negocio {g}"};
         auto& k = x.kinds;
         k[Kind::Town] = {"{a} de {n}", "Villa {s}", "{n}", "Puerto {e}", "Real de {n}"};
@@ -384,6 +389,11 @@ const Vocab& englishVocab()
         p["cruiseTerminal"] = {"{e} Cruise Terminal", "{s} Pier"};
         p["customs"] = {"{e} Customs House", "{s} Customs Post"};
         p["mausoleum"] = {"{s} Family", "{s}-{s} Family", "{s} Family Chapel"};
+        p["junkyard"] = {"{s} Salvage", "{e} Auto Wreckers"};
+        p["fishingCamp"] = {"{e} Fishing Camp"};
+        p["ranch"] = {"{s} Ranch", "{e} Ranch"};
+        p["palenque"] = {"{e} Cockfight Pit"};
+        p["impoundLot"] = {"{e} Impound Lot", "Vehicle Pound {#}"};
         x.business = {"{s} & Co.", "{e} Store", "{g}'s"};
         auto& k = x.kinds;
         k[Kind::Town] = {"{n}", "Port {s}", "{s}ville", "{s} Springs", "New {s}"};

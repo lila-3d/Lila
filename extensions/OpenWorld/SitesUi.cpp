@@ -146,14 +146,14 @@ void siteOptionBox()
     opt::setOverride("siteCreate", std::move(o));
 }
 
-/** The Site Kits palette: every kind as a row, grouped Coast, Inland, Compounds; Check and Regrade (the selected site, else every one) under them. */
+/** The Site Kits palette: every kind as a row, grouped Coast, Inland, Compounds, Hideouts; Check and Regrade (the selected site, else every one) under them. */
 QWidget* makePalette(QWidget* parent)
 {
     auto* root = new QWidget(parent);
     auto* v = new QVBoxLayout(root);
     v->setContentsMargins(8, 6, 8, 8);
     v->setSpacing(4);
-    for (const char* group : {"Coast", "Inland", "Compounds"})
+    for (const char* group : {"Coast", "Inland", "Compounds", "Hideouts"})
     {
         auto* box = new QWidget(root);
         std::vector<QWidget*> rows;

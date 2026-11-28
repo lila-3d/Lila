@@ -1422,6 +1422,132 @@ void registerZoneCommands(ext::Context& ctx)
     });
 
     ctx.registerCommand({
+        .name = "zoneFromSites",
+        .doc = "Zones from site kits: one zone per site, its outline the site's, named as the site, into layer= (default sites, type "
+               "sites). A site that already has a zone in the layer keeps the zone's name and attributes and only moves its outline; "
+               "zones whose site is gone are dropped. attrsByKind gives new zones attributes per site kind. Sites keep their zones in "
+               "step on their own: siteEdit moves them and siteRemove drops them. Returns the zones made, moved and dropped.",
+        .positionalDoc = "zone set",
+        .flags = {setFlag(),
+                  {"sites", "si", T::List, nullptr, "Site ids (default every site)."},
+                  {"layer", "l", T::String, "sites", "Layer id."},
+                  {"type", "t", T::String, "sites", "Layer type when the layer is new.", typeIds()},
+                  {"attrs", "at", T::Any, nullptr, "Attributes every new zone gets."},
+                  {"attrsByKind", "ak", T::Any, nullptr, "Attributes new zones get by site kind: {kind: {name: value}}."},
+                  {"linkedOnly", "lo", T::Bool, false, "Only move or drop zones already made from these sites, in every zone set; make none."},
+                  {"setName", "sn", T::String, "Zones", "Name of a new zone set."},
+                  nodeFlag({"ground", "g", T::String, nullptr, "Terrain a new zone set drapes over."}, "mesh")},
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+            const char* cmd = "zoneFromSites";
+            if (!ops::find("siteList"))
+                throw CommandError(std::string(cmd) + ": the site kits are not loaded");
+            std::set<std::string> only;
+            for (const json& s : a.flags.value("sites", json::array()))
+                only.insert(s.is_string() ? s.get<std::string>() : s.dump());
+            struct SiteZone
+            {
+                std::string kind, name;
+                Polygon ring;
+            };
+            std::map<std::string, SiteZone> sites;
+            for (const json& s : ops::execute("siteList", json::object()))
+            {
+                const std::string id = s.value("id", std::string());
+                if ((!only.empty() && !only.contains(id)) || !s.contains("outline"))
+                    continue;
+                SiteZone z{s.value("kind", std::string()), s.value("name", std::string()), {}};
+                for (const json& p : s["outline"])
+                    z.ring.push_back(planeOf({p[0].get<double>(), 0.0, p[1].get<double>()}));
+                sites[id] = std::move(z);
+            }
+            auto siteOf = [](const Zone& z) {
+                return z.source.is_object() && z.source.value("kind", std::string()) == "site" ? z.source.value("site", std::string()) : std::string();
+            };
+            json moved = json::array(), dropped = json::array(), made = json::array();
+            // Moves or drops this layer's site zones; true when anything changed.
+            auto follow = [&](Layer& l) {
+                bool changed = false;
+                for (Zone& z : l.zones)
+                {
+                    const std::string id = siteOf(z);
+                    if (id.empty() || (!only.empty() && !only.contains(id)))
+                        continue;
+                    if (auto it = sites.find(id); it != sites.end() && (z.polygons.size() != 1 || z.polygons[0] != it->second.ring))
+                    {
+                        z.polygons = {it->second.ring};
+                        moved.push_back(z.id);
+                        changed = true;
+                    }
+                }
+                const size_t before = l.zones.size();
+                std::erase_if(l.zones, [&](const Zone& z) {
+                    const std::string id = siteOf(z);
+                    const bool gone = !id.empty() && (only.empty() || only.contains(id)) && !sites.contains(id);
+                    if (gone)
+                        dropped.push_back(z.id);
+                    return gone;
+                });
+                return changed || l.zones.size() != before;
+            };
+
+            if (a.get<bool>("linkedOnly", false))
+            {
+                for (scene::NodeId setId : zoneSets())
+                {
+                    SetRef r = readSet(*Graph::current().node(setId), cmd);
+                    bool changed = false;
+                    for (Layer& l : r.spec.layers)
+                        changed = follow(l) || changed;
+                    if (changed)
+                        store(r, r.spec);
+                }
+                return {{"moved", moved}, {"dropped", dropped}, {"zones", made}};
+            }
+
+            SetRef r = findSet(setName(a), cmd, true, &a);
+            json out = setHeader(r);
+            bool layerMade = false;
+            Layer& l = layerFor(r.spec, a, cmd, &layerMade, "sites");
+            follow(l);
+            std::set<std::string> linked;
+            for (const Zone& z : l.zones)
+                linked.insert(siteOf(z));
+            const json byKind = a.flags.value("attrsByKind", json::object());
+            for (const auto& [id, s] : sites)
+            {
+                if (linked.contains(id))
+                    continue;
+                Zone z;
+                z.id = sanitizeId(id);
+                for (int n = 2; l.zone(z.id); ++n)
+                    z.id = sanitizeId(id) + "_" + std::to_string(n);
+                z.polygons = {s.ring};
+                z.name = s.name;
+                z.nameSource = "site";
+                z.source = {{"kind", "site"}, {"site", id}, {"siteKind", s.kind}};
+                z.attrs = {{"site", id}, {"siteKind", s.kind}};
+                if (a.has("attrs"))
+                    mergeAttrs(l, z, a.flags["attrs"], cmd);
+                if (byKind.is_object() && byKind.contains(s.kind))
+                    mergeAttrs(l, z, byKind[s.kind], cmd);
+                if (z.name.empty())
+                    nameZone(r, r.spec, l, z, a, out);
+                l.zones.push_back(std::move(z));
+                made.push_back(zoneJson(l, l.zones.back()));
+            }
+            store(r, r.spec);
+            out["layer"] = l.id;
+            out["layerCreated"] = layerMade;
+            out["zones"] = made;
+            out["moved"] = moved;
+            out["dropped"] = dropped;
+            return out;
+        },
+        .examples = {"zoneFromSites()", "zoneFromSites(layer='raids', attrsByKind={'junkyard': {'faction': 'car thieves'}})"},
+    });
+
+    ctx.registerCommand({
         .name = "zoneFromTerrain",
         .doc = "Zones from a terrain's masks: one painted zone per mask (biomes=True takes every biome_<name> mask), id the mask's "
                "name, copied onto the zone grid. Region layers keep cells at or over threshold; density layers keep the mask's "

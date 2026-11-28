@@ -401,3 +401,89 @@ TEST_CASE("site kits: villages find every house a spot along their streets")
             CHECK(L.stats["houses"].get<int>() == houses);
         }
 }
+TEST_CASE("site commands: hideout kits lay out with markers, clear a settlement's lots and keep their zones in step")
+{
+    loadSitePackages();
+    if (!ops::find("settlementCreate"))
+        REQUIRE(extensions::ExtensionManager::get().load(LILA_TEST_SETTLEMENT_PACKAGE) == "Settlement");
+    ops::execute("newScene", json::object());
+    const std::string terrain = coastTerrain(251);
+
+    const std::vector<std::pair<std::string, json>> hideouts = {{"junkyard", {-120000, 40000}},  {"shantytown", {-60000, 40000}}, {"unfinished", {0, 40000}},
+                                                                {"fishingCamp", {-60000, -61000}}, {"warehouse", {60000, 40000}},  {"ranch", {0, 120000}},
+                                                                {"arena", {120000, 40000}},       {"impound", {-120000, 120000}}};
+    for (const auto& [kind, at] : hideouts)
+    {
+        CAPTURE(kind);
+        const json r = ops::execute("siteCreate", {{"kind", kind}, {"terrain", terrain}, {"at", at}, {"id", kind + "1"}});
+        CHECK(r["slots"].get<int>() > 0);
+        CHECK(r["ground"]["errors"].empty());
+        for (const char* marker : {"marker.loot", "marker.guard"})
+            CHECK(ops::execute("slotFind", {{"type", marker}, {"region", "site:" + kind + "1"}, {"limit", 0}})["count"].get<int>() > 0);
+    }
+    const json clean = ops::execute("siteCheck", json::object());
+    CAPTURE(clean.dump(1).substr(0, 4000));
+    CHECK(issuesOf(clean, "overlap") == 0);
+    CHECK(issuesOf(clean, "realName") == 0);
+    CHECK(issuesOf(clean, "water", "fishingCamp1") == 0);
+
+    // A junkyard dropped into a town takes the town's lots under it and gives them back when it leaves.
+    const double cx = 0.0, cz = -300000.0;
+    ops::execute("settlementCreate", {{"profile", "usTown"}, {"size", 40000.0}, {"seed", 2}, {"name", "Town"},
+                                      {"outline", {{cx - 20000, cz - 20000}, {cx + 20000, cz - 20000}, {cx + 20000, cz + 20000}, {cx - 20000, cz + 20000}}}});
+    auto lotsInside = [&](const json& outline) {
+        s::Ring ring;
+        for (const json& p : outline)
+            ring.push_back({p[0].get<double>(), p[1].get<double>()});
+        int n = 0;
+        for (const json& l : ops::execute("settlementLots", {{"args", {"Town"}}, {"limit", 0}})["lots"])
+            n += s::insideRing(ring, {l["center"][0].get<double>(), l["center"][1].get<double>()});
+        return n;
+    };
+    const std::string townMod = ops::execute("settlementInfo", {{"args", {"Town"}}})["modifier"].get<std::string>();
+    auto exclusionsNamed = [&](const std::string& name) {
+        const nlohmann::json edits = nlohmann::json::parse(ops::execute("getAttr", {{"args", {townMod + ".edits"}}}).get<std::string>());
+        int n = 0;
+        if (edits.contains("exclusions"))
+            for (const nlohmann::json& x : edits["exclusions"])
+                n += x.value("name", std::string()) == name;
+        return n;
+    };
+    const json made = ops::execute("siteCreate", {{"kind", "junkyard"}, {"terrain", ""}, {"at", {cx + 3000, cz + 2000}}, {"id", "townJunk"}});
+    CHECK(made["settlementsCleared"].size() == 1);
+    CHECK(exclusionsNamed("site:townJunk") == 1);
+    json outline;
+    for (const json& sl : ops::execute("siteList", json::object()))
+        if (sl["id"] == "townJunk")
+            outline = sl["outline"];
+    REQUIRE(outline.is_array());
+    CHECK(lotsInside(outline) == 0);
+    // An unrelated edit leaves the exclusion alone; a move takes it along.
+    CHECK(ops::execute("siteEdit", {{"args", {"townJunk"}}, {"wrecks", 30}})["settlementsCleared"].empty());
+    ops::execute("siteEdit", {{"args", {"townJunk"}}, {"at", {cx - 6000, cz - 4000}}});
+    CHECK(exclusionsNamed("site:townJunk") == 1);
+    ops::execute("siteEdit", {{"args", {"townJunk"}}, {"at", {cx + 200000, cz}}});
+    CHECK(exclusionsNamed("site:townJunk") == 0);
+
+    // Zones from the sites: one each, attributes per kind; they follow a move, keep their edits and go with the site.
+    const json zones = ops::execute("zoneFromSites", {{"layer", "raids"}, {"attrsByKind", {{"junkyard", {{"faction", "carThieves"}}}}}});
+    CHECK(zones["zones"].size() == hideouts.size() + 1);
+    ops::execute("zoneEdit", {{"layer", "raids"}, {"zone", "junkyard1"}, {"attrs", {{"restockHours", 48}}}});
+    ops::execute("siteEdit", {{"args", {"junkyard1"}}, {"at", {-150000, 40000}}});
+    const json at = ops::execute("zoneQuery", {{"point", {-150000, 300, 43000}}, {"layer", "raids"}});
+    CAPTURE(at.dump());
+    const json raid = at["layers"]["raids"];
+    CHECK(raid["zone"] == "junkyard1");
+    CHECK(raid["attrs"]["faction"] == "carThieves");
+    CHECK(raid["attrs"]["restockHours"] == 48);
+    CHECK(raid["attrs"]["siteKind"] == "junkyard");
+    CHECK(ops::execute("zoneFromSites", {{"layer", "raids"}})["zones"].empty());
+    ops::execute("siteRemove", {{"args", {"junkyard1"}}});
+    int left = 0;
+    const json listed = ops::execute("zoneList", json::object());
+    CAPTURE(listed.dump().substr(0, 3000));
+    for (const json& l : listed["layers"])
+        if (l["id"] == "raids")
+            left = l["count"].get<int>();
+    CHECK(left == int(hideouts.size()));
+}

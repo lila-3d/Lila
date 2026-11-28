@@ -1121,6 +1121,111 @@ json rebuildSiteBuildings(const std::string& cmd)
 
 /** Turns a site's greybox massing off (its buildings come from the Buildings generator) or back on. */
 void setMassing(const SiteRef& r, bool on) { ops::execute("setAttr", {{"args", {r.modifier + ".massing", on}}}); }
+
+std::vector<std::string> settlementModifierPaths(Graph& g)
+{
+    std::vector<std::string> out;
+    for (scene::NodeId id : g.nodes())
+        if (Node* n = g.node(id); n && gn::isGnModifier(*n) && n->type().attrIndex("lotScale") >= 0 && n->type().attrIndex("profile") >= 0 &&
+                                  n->type().attrIndex("edits") >= 0)
+            out.push_back(n->path());
+    return out;
+}
+
+/** Whether a settlement's lots come within reach of an outline: their centres' bounds, grown, against the outline's. */
+bool settlementReaches(const std::string& modifier, const Ring& outline)
+{
+    constexpr double kReach = 2500.0;
+    const json lots = ops::execute("settlementLots", {{"args", {modifier}}, {"limit", 0}});
+    P2 lo(std::numeric_limits<double>::infinity()), hi(-std::numeric_limits<double>::infinity());
+    for (const json& l : lots.value("lots", json::array()))
+        if (const json c = l.value("center", json()); c.is_array() && c.size() >= 2)
+        {
+            lo = glm::min(lo, P2(c[0].get<double>(), c[1].get<double>()));
+            hi = glm::max(hi, P2(c[0].get<double>(), c[1].get<double>()));
+        }
+    if (lo.x > hi.x)
+        return false;
+    P2 olo(std::numeric_limits<double>::infinity()), ohi(-std::numeric_limits<double>::infinity());
+    for (P2 q : outline)
+    {
+        olo = glm::min(olo, q);
+        ohi = glm::max(ohi, q);
+    }
+    return olo.x <= hi.x + kReach && ohi.x >= lo.x - kReach && olo.y <= hi.y + kReach && ohi.y >= lo.y - kReach;
+}
+
+/**
+ * Keeps every settlement clear of a site: one where the site reaches gets an exclusion named after the site matching its
+ * world outline, moved when the outline moves and dropped when the site leaves or is removed (outline null). Returns the
+ * settlements changed.
+ */
+json clearSettlements(const std::string& siteId, const Ring* outline)
+{
+    LILA_ZONE();
+    json changed = json::array();
+    const std::string tag = sites::ownerOf(siteId);
+    for (const std::string& mod : settlementModifierPaths(Graph::current()))
+    {
+        try
+        {
+            const json edits = attrText(mod + ".edits");
+            std::vector<int> mine;
+            json minePoly;
+            for (const json& x : edits.value("exclusions", json::array()))
+                if (x.value("name", std::string()) == tag)
+                {
+                    mine.push_back(x.value("id", 0));
+                    minePoly = x.value("polygon", json());
+                }
+            const bool reaches = outline && settlementReaches(mod, *outline);
+            if (!reaches && mine.empty())
+                continue;
+            if (reaches && mine.size() == 1 && minePoly.is_array() && minePoly.size() == outline->size())
+            {
+                bool same = true;
+                for (size_t i = 0; i < outline->size() && same; ++i)
+                    same = glm::length(P2(minePoly[i][0].get<double>(), minePoly[i][1].get<double>()) - (*outline)[i]) < 1.0;
+                if (same)
+                    continue;
+            }
+            if (!mine.empty())
+                ops::execute("settlementDelete", {{"args", {mod}}, {"ids", mine}});
+            if (reaches)
+                ops::execute("settlementAddExclusion", {{"args", {mod}}, {"polygon", sites::pts(*outline)}, {"margin", 300.0}, {"name", tag}});
+            changed.push_back(mod);
+        }
+        catch (const std::exception& e)
+        {
+            log::warn("Site {}: settlement {} not cleared: {}", siteId, mod, e.what());
+        }
+    }
+    return changed;
+}
+
+/** Moves or drops the zones made from a site (zoneFromSites), in every zone set. */
+void followZones(const std::string& siteId)
+{
+    if (!ops::find("zoneFromSites"))
+        return;
+    try
+    {
+        ops::execute("zoneFromSites", {{"sites", {siteId}}, {"linkedOnly", true}});
+    }
+    catch (const std::exception& e)
+    {
+        log::warn("Site {}: its zones did not follow: {}", siteId, e.what());
+    }
+}
+
+/** A site's outline in world space. */
+Ring worldOutline(const sites::Spec& s)
+{
+    Ring w;
+    for (P2 q : sites::layoutFor(s)->boundary)
+        w.push_back(sites::toWorld(s, q));
+    return w;
+}
 int& transformListener()
 {
     static int id = -1;
@@ -1251,8 +1356,9 @@ void registerSites(ext::Context& ctx)
                "rows, graves, walls, docks, markings) a typed slot with a stable id under site:<id>, so slot rules and overrides swap them. "
                "Every name (the site, shipping lines, mausoleum families, businesses, streets) is fictional. The terrain is graded with Terrain "
                "stamps, roads, canals and the coast airstrip, kept by id so siteEdit and siteGround replace them. Each kind takes its own "
-               "settings (siteKinds lists them). Returns the mesh, modifier, id, names, slot counts by type, envelope count, styles and what the "
-               "grading sent.",
+               "settings (siteKinds lists them). A settlement the site reaches into keeps its outline clear with an exclusion named "
+               "site:<id>, which siteEdit moves and siteRemove drops. Returns the mesh, modifier, id, names, slot counts by type, envelope "
+               "count, styles, what the grading sent and the settlements cleared.",
         .flags = createFlags,
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -1356,6 +1462,10 @@ void registerSites(ext::Context& ctx)
                 r = findSite(host, cmd);
             }
             json out = created(r, groundOut, cmd);
+            {
+                const Ring outline = worldOutline(r.spec);
+                out["settlementsCleared"] = clearSettlements(r.spec.id, &outline);
+            }
             out["terrainFrom"] = terrainFrom;
             out["atFrom"] = atFrom;
             out["waterLevelFrom"] = waterFrom;
@@ -1454,6 +1564,11 @@ void registerSites(ext::Context& ctx)
                 r = findSite(r.mesh, cmd);
             }
             json out = created(r, groundOut, cmd);
+            {
+                const Ring outline = worldOutline(r.spec);
+                out["settlementsCleared"] = clearSettlements(r.spec.id, &outline);
+                followZones(r.spec.id);
+            }
             out["fromTransform"] = folded;
             if (!massingOn(r) && s.toJson() != before)
                 out["buildings"] = rebuildSiteBuildings(cmd);
@@ -1525,6 +1640,8 @@ void registerSites(ext::Context& ctx)
             slots::unpublish(r.modifierId);
             sites::forgetSite(r.modifierId);
             json out = {{"site", r.spec.id}, {"mesh", r.mesh}, {"terrainRemoved", removed}, {"errors", errors}};
+            out["settlementsCleared"] = clearSettlements(r.spec.id, nullptr);
+            followZones(r.spec.id);
             if (Graph::current().find(kSiteBuildings))
                 out["buildings"] = rebuildSiteBuildings(cmd);
             return out;
@@ -1613,7 +1730,7 @@ void registerSites(ext::Context& ctx)
 
     ctx.registerCommand({
         .name = "siteList",
-        .doc = "The sites in the scene: id, kind, name, mesh, terrain, slot and envelope counts.",
+        .doc = "The sites in the scene: id, kind, name, mesh, terrain, slot and envelope counts, and the outline in world space.",
         .undoable = false,
         .run = [](const Args&) -> json {
             json out = json::array();
@@ -1625,6 +1742,7 @@ void registerSites(ext::Context& ctx)
                     const auto L = sites::layoutFor(r.spec);
                     e["slots"] = L->slots.size();
                     e["envelopes"] = L->envelopes.size();
+                    e["outline"] = sites::pts(worldOutline(r.spec));
                 }
                 catch (const std::exception& ex)
                 {

@@ -9,7 +9,7 @@ set(_terrain_sources ${_terrain}/Core.cpp ${_terrain}/Erosion.cpp ${_terrain}/In
 set(_clipper ${CMAKE_SOURCE_DIR}/src/curve/third_party/clipper2)
 lila_add_extension(lila_openworld_extension ID OpenWorld MANIFEST extension.json UI
     SOURCES OpenWorld.cpp OpenWorld.h RemixNode.h OsmDoc.cpp OsmDoc.h RemixSpec.cpp RemixSpec.h Warp.cpp Warp.h Remix.cpp Remix.h RemixWork.h
-            Features.cpp Repair.cpp Check.cpp RemixNode.cpp RemixCommands.cpp RemixUi.cpp Sites.h SitesKit.h SitesLayout.cpp SitesCoast.cpp SitesLand.cpp SitesCompound.cpp SitesNode.h SitesNode.cpp SitesCommands.cpp SitesUi.cpp
+            Features.cpp Repair.cpp Check.cpp RemixNode.cpp RemixCommands.cpp RemixUi.cpp Sites.h SitesKit.h SitesLayout.cpp SitesCoast.cpp SitesLand.cpp SitesCompound.cpp SitesHideouts.cpp SitesNode.h SitesNode.cpp SitesCommands.cpp SitesUi.cpp
             Zones.cpp Zones.h ZoneScene.h ZoneCommands.cpp ZoneUi.cpp
             World.h WorldScene.h WorldSpec.cpp WorldCommands.cpp WorldUnreal.cpp WorldCheck.cpp WorldMemory.cpp WorldUi.cpp WorldFetch.h WorldFetch.cpp WorldFetchCommands.cpp
             ${_terrain_sources} ${_clipper}/clipper.engine.cpp)

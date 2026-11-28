@@ -97,6 +97,43 @@ const std::vector<Param>& params()
         p("raiseIsland", T::Bool, false, "Raise the ground inside the island radius above the water (an island where there was sea)."),
         p("dockLength", T::Float, 6000.0, "Dock length out from the shore, cm.", 1000.0, 30000.0),
         p("boats", T::Int, 2, "Boats moored at the dock.", 0.0, 8.0),
+        // Junkyard
+        p("junkWidth", T::Float, 9000.0, "Fenced yard along the front, cm.", 4000.0, 40000.0),
+        p("junkDepth", T::Float, 7000.0, "Fenced yard depth, cm.", 4000.0, 40000.0),
+        p("wrecks", T::Int, 40, "Wrecked cars in the rows, stacks included.", 0.0, 400.0),
+        p("stackHeight", T::Int, 2, "Highest wreck stack.", 1.0, 4.0),
+        p("towTruck", T::Bool, true, "Tow truck by the gate with a car on its bed."),
+        // Shantytown
+        p("shacks", T::Int, 30, "Shacks of block and sheet metal.", 4.0, 300.0),
+        p("shantyRadius", T::Float, 6000.0, "How far the shacks spread from the centre, cm.", 2000.0, 30000.0),
+        // Unfinished building
+        p("towerFloors", T::Int, 8, "Floors of the concrete shell.", 2.0, 30.0),
+        p("towerWidth", T::Float, 3000.0, "Shell width along the front, cm.", 1500.0, 10000.0),
+        p("towerDepth", T::Float, 1800.0, "Shell depth, cm.", 1200.0, 6000.0),
+        p("generatorTrailer", T::Bool, true, "Generator on a trailer that can be hitched and towed away."),
+        // Fishing camp
+        p("campLength", T::Float, 8000.0, "Beach frontage, cm.", 3000.0, 40000.0),
+        p("campShacks", T::Int, 5, "Shacks behind the beach.", 1.0, 30.0),
+        p("pangas", T::Int, 6, "Pangas, beached or moored at the jetty.", 0.0, 30.0),
+        p("jettyLength", T::Float, 2500.0, "Jetty length out from the shore, cm (0 for none).", 0.0, 20000.0),
+        p("reeferTruck", T::Bool, true, "Refrigerated truck on the track."),
+        // Derelict warehouse
+        p("bodegaLength", T::Float, 6000.0, "Warehouse length, cm.", 2500.0, 30000.0),
+        p("bodegaDepth", T::Float, 3500.0, "Warehouse depth, cm.", 1500.0, 12000.0),
+        p("loadingDocks", T::Int, 4, "Loading docks along the warehouse front.", 1.0, 20.0),
+        p("bodegaTrailers", T::Int, 3, "Trailers backed up to the docks.", 0.0, 20.0),
+        p("freightRig", T::Bool, true, "Tractor unit hitched to a loaded trailer by the gate."),
+        // Ranch
+        p("ranchWidth", T::Float, 12000.0, "Ranch yard along the front, cm.", 5000.0, 60000.0),
+        p("ranchDepth", T::Float, 10000.0, "Ranch yard depth, cm.", 5000.0, 60000.0),
+        p("ranchRunway", T::Bool, true, "Dirt runway behind the yard with a light plane."),
+        // Cockfight arena
+        p("arenaRadius", T::Float, 1500.0, "Arena radius, cm.", 800.0, 4000.0),
+        p("parking", T::Int, 16, "Trucks in the parking lot.", 0.0, 120.0),
+        // Impound lot
+        p("impoundWidth", T::Float, 10000.0, "Fenced lot along the front, cm.", 4000.0, 60000.0),
+        p("impoundDepth", T::Float, 8000.0, "Fenced lot depth, cm.", 4000.0, 60000.0),
+        p("impounded", T::Int, 40, "Seized vehicles in the rows.", 0.0, 400.0),
     };
     return all;
 }
@@ -161,6 +198,49 @@ const std::vector<Kind>& kinds()
          {"island", "hideout", "isla", "private estate"},
          {"islandRadius", "raiseIsland", "compoundWidth", "compoundDepth", "wallHeight", "mansionFloors", "pool", "helipad", "dockLength", "boats"},
          "IslandCompound"},
+        {"junkyard", "Junkyard", "car-crash", "Hideouts",
+         "A fenced junkyard: rows of stacked wrecks, a chop shop, the office shack, tyre and scrap piles, a tow truck by the gate.",
+         {"scrapyard", "yonke", "yonque", "chop shop", "salvage", "wreckers"},
+         {"junkWidth", "junkDepth", "wrecks", "stackHeight", "towTruck"},
+         "Junkyard"},
+        {"shantytown", "Shantytown", "wall", "Hideouts",
+         "Block and sheet-metal shacks crowded along two dirt lanes, water tanks on the roofs, clotheslines and parked cars.",
+         {"colonia", "invasion", "squatter", "slum", "favela", "barrio"},
+         {"shacks", "shantyRadius"},
+         "Shantytown"},
+        {"unfinished", "Unfinished Building", "building-skyscraper", "Hideouts",
+         "A concrete shell left half built: hoarding round the site, scaffolding, a crane, rebar and block piles, the site office "
+         "and a generator trailer.",
+         {"obra negra", "construction site", "abandoned hotel", "shell", "half built"},
+         {"towerFloors", "towerWidth", "towerDepth", "generatorTrailer"},
+         "UnfinishedBuilding"},
+        {"fishingCamp", "Fishing Camp", "fish", "Hideouts",
+         "Fishing shacks behind a beach, pangas drawn up on the sand and moored at a jetty, net racks, fuel drums and a refrigerated "
+         "truck on the track.",
+         {"campo pesquero", "panga", "fishing village", "smugglers", "beach camp"},
+         {"campLength", "campShacks", "pangas", "jettyLength", "reeferTruck"},
+         "FishingCamp"},
+        {"warehouse", "Derelict Warehouse", "building-factory-2", "Hideouts",
+         "A fenced, run-down warehouse with loading docks, trailers backed up to them, pallets in the yard and a loaded rig by the gate.",
+         {"bodega", "abandoned warehouse", "packing plant", "freight", "hijackers"},
+         {"bodegaLength", "bodegaDepth", "loadingDocks", "bodegaTrailers", "freightRig"},
+         "DerelictWarehouse"},
+        {"ranch", "Ranch", "building-cottage", "Hideouts",
+         "A ranch yard behind a wooden fence: the ranch house, a barn, a corral, a water tank, parked SUVs and a dirt runway with a "
+         "light plane behind it.",
+         {"rancho", "hacienda", "pista", "narco ranch", "sierra"},
+         {"ranchWidth", "ranchDepth", "ranchRunway", "runwayLength", "aircraft"},
+         "Ranch"},
+        {"arena", "Cockfight Arena", "trophy", "Hideouts",
+         "A round arena with a pit inside, rooster cages behind it, food stalls, floodlights and a parking lot of trucks.",
+         {"palenque", "cockpit", "fighting pit", "gallera"},
+         {"arenaRadius", "parking"},
+         "CockfightArena"},
+        {"impound", "Impound Lot", "barrier-block", "Hideouts",
+         "A fenced impound lot: barrier gate and booth, the office, rows of seized vehicles, a tow truck and floodlights.",
+         {"corralon", "corralón", "vehicle pound", "police lot", "seized cars"},
+         {"impoundWidth", "impoundDepth", "impounded"},
+         "ImpoundLot"},
     };
     return all;
 }
@@ -324,6 +404,14 @@ std::string siteName(const std::string& kind, const std::string& culture, const 
         return book.place(Kind::Town, {}, key);
     if (kind == "island")
         return book.place(Kind::Island, {}, key);
+    if (kind == "shantytown")
+        return book.place(Kind::District, {}, key);
+    static const std::pair<const char*, const char*> programs[] = {{"junkyard", "junkyard"},      {"unfinished", "hotel"}, {"fishingCamp", "fishingCamp"},
+                                                                   {"warehouse", "warehouse"},    {"ranch", "ranch"},      {"arena", "palenque"},
+                                                                   {"impound", "impoundLot"}};
+    for (const auto& [k, program] : programs)
+        if (kind == k)
+            return book.place(Kind::Business, program, key);
     return book.place(Kind::Business, "mansion", key);
 }
 
@@ -399,6 +487,39 @@ const std::vector<TypeDef>& slotTypes()
         {"helipad", "Helipad", {2000, 10, 2000}, "ground", "cylinder", {"aviation"}, "A helipad pad and marking."},
         {"lighthouse", "Lighthouse part", {300, 400, 300}, "ground", "lamp", {"lighting", "waterfront"}, "Any lighthouse part."},
         {"lighthouse.lantern", "Lantern", {300, 400, 300}, "free", "lamp", {"lighting", "waterfront"}, "The lantern room on top of the tower."},
+        {"vehicle", "Vehicle", {190, 150, 460}, "ground", "box", {"vehicle"}, "Any parked vehicle; +Z forward."},
+        {"vehicle.car", "Car", {180, 140, 450}, "ground", "box", {"vehicle"}, "A parked car; +Z forward."},
+        {"vehicle.wreck", "Wrecked car", {180, 130, 450}, "ground", "box", {"vehicle", "junk"}, "A stripped car wreck, stackable; +Z its front."},
+        {"vehicle.pickup", "Pickup", {200, 180, 540}, "ground", "box", {"vehicle"}, "A pickup truck; +Z forward."},
+        {"vehicle.suv", "SUV", {200, 190, 490}, "ground", "box", {"vehicle"}, "An SUV; +Z forward."},
+        {"vehicle.moped", "Moped", {70, 110, 180}, "ground", "box", {"vehicle"}, "A moped or small motorcycle; +Z forward."},
+        {"truck.tow", "Tow truck", {250, 300, 800}, "ground", "box", {"vehicle"}, "A flatbed tow truck; +Z forward."},
+        {"truck.reefer", "Refrigerated truck", {250, 380, 900}, "ground", "box", {"vehicle"}, "A box truck with a refrigerated body; +Z forward."},
+        {"aircraft", "Aircraft", {1100, 270, 800}, "ground", "box", {"vehicle", "aviation"}, "Any parked aircraft; +Z to the nose."},
+        {"aircraft.light", "Light aircraft", {1100, 270, 800}, "ground", "box", {"vehicle", "aviation"}, "A parked single or twin; +Z to the nose."},
+        {"boat.panga", "Panga", {200, 100, 750}, "free", "box", {"vessel"}, "An open fibreglass fishing boat with an outboard; +Z to the bow."},
+        {"pile", "Pile", {300, 120, 300}, "ground", "box", {"debris"}, "Any pile."},
+        {"pile.tyres", "Tyre pile", {300, 150, 300}, "ground", "cylinder", {"debris", "junk"}, "A heap of old tyres."},
+        {"pile.scrap", "Scrap pile", {400, 180, 400}, "ground", "box", {"debris", "junk"}, "A heap of scrap metal and parts."},
+        {"pile.rebar", "Rebar bundle", {600, 40, 150}, "ground", "box", {"construction"}, "Bundled reinforcing bar; +X along the bars."},
+        {"crate", "Crate", {120, 100, 100}, "ground", "box", {"cargo"}, "Any crate."},
+        {"crate.pallet", "Loaded pallet", {120, 130, 100}, "ground", "box", {"cargo"}, "A pallet of boxes, blocks or sacks."},
+        {"scaffold", "Scaffolding", {300, 600, 150}, "ground", "panel", {"construction"}, "A scaffold bay against a facade; +X along it, scaled to the height."},
+        {"mixer.cement", "Cement mixer", {150, 150, 200}, "ground", "box", {"construction"}, "A towable cement mixer."},
+        {"generator.trailer", "Generator trailer", {200, 220, 450}, "ground", "box", {"construction", "vehicle"}, "A diesel generator on a towable trailer; +Z to the hitch."},
+        {"cabin.site", "Site cabin", {600, 260, 240}, "ground", "box", {"construction"}, "A portable site office; +Z its door side."},
+        {"fence.hoarding", "Hoarding", {300, 220, 10}, "ground", "panel", {"boundary", "construction"}, "A solid construction hoarding panel; +X along it."},
+        {"door.dock", "Loading dock door", {300, 320, 20}, "wall", "panel", {"opening", "industrial"}, "A roller door at dock height; +Z out of the wall."},
+        {"tank.water", "Water tank", {110, 130, 110}, "ground", "cylinder", {"utility"}, "A plastic rooftop or ground water tank."},
+        {"clothesline", "Clothesline", {400, 180, 10}, "ground", "panel", {"residential"}, "A line of washing between posts; +X along it."},
+        {"net.rack", "Net rack", {400, 180, 80}, "ground", "panel", {"waterfront"}, "Fishing nets drying on a frame; +X along it."},
+        {"cage.rooster", "Rooster cages", {200, 150, 60}, "ground", "box", {"animal"}, "A stack of fighting-rooster cages."},
+        {"stall.food", "Food stall", {250, 230, 180}, "ground", "box", {"commercial"}, "A food stall with an awning; +Z its counter side."},
+        {"ring.pit", "Pit", {500, 60, 500}, "ground", "cylinder", {"leisure"}, "A low walled fighting pit."},
+        {"marker", "Gameplay marker", {60, 180, 60}, "free", "pole", {"gameplay"}, "Any gameplay marker."},
+        {"marker.loot", "Loot point", {60, 60, 60}, "free", "box", {"gameplay"}, "Where a stash of loot spawns."},
+        {"marker.guard", "Guard post", {60, 180, 60}, "free", "pole", {"gameplay"}, "Where a guard stands or starts a patrol; +Z the way they face."},
+        {"marker.job", "Job vehicle", {60, 180, 60}, "free", "pole", {"gameplay"}, "The vehicle or trailer a side job takes away; data names the job."},
     };
     return all;
 }
@@ -722,6 +843,22 @@ Layout build(const Spec& s)
         buildCompound(k);
     else if (s.kind == "island")
         buildIsland(k);
+    else if (s.kind == "junkyard")
+        buildJunkyard(k);
+    else if (s.kind == "shantytown")
+        buildShantytown(k);
+    else if (s.kind == "unfinished")
+        buildUnfinished(k);
+    else if (s.kind == "fishingCamp")
+        buildFishingCamp(k);
+    else if (s.kind == "warehouse")
+        buildWarehouse(k);
+    else if (s.kind == "ranch")
+        buildRanch(k);
+    else if (s.kind == "arena")
+        buildArena(k);
+    else if (s.kind == "impound")
+        buildImpound(k);
     else
         throw std::runtime_error("kind is one of " + kindList() + ", not " + s.kind);
 
