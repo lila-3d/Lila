@@ -11,12 +11,6 @@ namespace openworld::sites
 {
 namespace
 {
-json heightFromWater(json flags, double above)
-{
-    flags["heightFromWater"] = above;
-    return flags;
-}
-
 /**
  * A graded yard x in [-W/2, W/2], z in [0, D]: fenced, its gate in the middle of the front (z = 0) and a track running off
  * toward -z.

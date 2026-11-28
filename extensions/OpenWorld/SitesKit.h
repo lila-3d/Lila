@@ -74,4 +74,11 @@ void buildWarehouse(Kit& k);
 void buildRanch(Kit& k);
 void buildArena(Kit& k);
 void buildImpound(Kit& k);
+
+/** Tags terrain flags with a height above the water level, resolved when the site is placed. */
+inline json heightFromWater(json flags, double above)
+{
+    flags["heightFromWater"] = above;
+    return flags;
+}
 } // namespace openworld::sites

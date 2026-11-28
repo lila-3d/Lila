@@ -49,12 +49,6 @@ std::string hexColour(double h, double s, double v)
     std::snprintf(buf, sizeof buf, "#%02x%02x%02x", int((r + m) * 255), int((g + m) * 255), int((b + m) * 255));
     return buf;
 }
-
-json heightFromWater(json flags, double above)
-{
-    flags["heightFromWater"] = above;
-    return flags;
-}
 } // namespace
 
 /** Yards sit at a fixed height above the water: their skirt widens to stay a slope the town's streets can meet, percent. */
