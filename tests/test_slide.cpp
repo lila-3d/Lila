@@ -14,14 +14,14 @@ using geo::Index;
 namespace
 {
 /** Plane point id at column i, row j (rows run toward -Z). */
-Index gridId(int sx, int i, int j) { return Index(j * (sx + 1) + i); }
+Index slideGridId(int sx, int i, int j) { return Index(j * (sx + 1) + i); }
 
 /** The edges of column i of a 4x4 plane, end to end. */
 std::vector<Index> column(const geo::Mesh& m, int i)
 {
     std::vector<Index> out;
     for (int j = 0; j < 4; ++j)
-        out.push_back(m.findEdge(gridId(4, i, j), gridId(4, i, j + 1)));
+        out.push_back(m.findEdge(slideGridId(4, i, j), slideGridId(4, i, j + 1)));
     return out;
 }
 } // namespace
@@ -45,10 +45,10 @@ TEST_CASE("edge slide moves a loop along the edges beside it and keeps the surfa
         CHECK(p.x == doctest::Approx(-25.0));
 
     // Uneven neighbours: a fraction follows each rail, even moves every point the shortest rail's share.
-    m.setPosition(gridId(4, 3, 2), m.position(gridId(4, 3, 2)) + glm::dvec3(25.0, 0.0, 0.0));
+    m.setPosition(slideGridId(4, 3, 2), m.position(slideGridId(4, 3, 2)) + glm::dvec3(25.0, 0.0, 0.0));
     rails = geo::edgeSlideRails(m, column(m, 2), &plusX);
     to = geo::slidePositions(m, rails, 0.5, false);
-    const auto mid = std::ranges::find(rails.points, gridId(4, 2, 2)) - rails.points.begin();
+    const auto mid = std::ranges::find(rails.points, slideGridId(4, 2, 2)) - rails.points.begin();
     CHECK(to[size_t(mid)].x == doctest::Approx(25.0));
     to = geo::slidePositions(m, rails, 0.5, true);
     for (const glm::dvec3& p : to)
@@ -70,12 +70,12 @@ TEST_CASE("edge slide on a border loop only slides inward")
 TEST_CASE("vertex slide follows the edge most along the direction")
 {
     geo::Mesh m = geo::makePlane({.width = 100.0, .depth = 100.0, .subdivX = 4, .subdivZ = 4});
-    const Index v = gridId(4, 2, 2);
+    const Index v = slideGridId(4, 2, 2);
     const geo::SlideRails rails = geo::vertexSlideRails(m, std::vector<Index>{v}, glm::dvec3(0.2, 0.0, -1.0));
     REQUIRE(rails.points.size() == 1);
-    CHECK(rails.ends[0][0] == gridId(4, 2, 3));
-    CHECK(rails.ends[0][1] == gridId(4, 2, 1));
-    CHECK(geo::slidePositions(m, rails, 1.0, false)[0].z == doctest::Approx(m.position(gridId(4, 2, 3)).z));
+    CHECK(rails.ends[0][0] == slideGridId(4, 2, 3));
+    CHECK(rails.ends[0][1] == slideGridId(4, 2, 1));
+    CHECK(geo::slidePositions(m, rails, 1.0, false)[0].z == doctest::Approx(m.position(slideGridId(4, 2, 3)).z));
     CHECK(geo::slidePositions(m, rails, -0.5, false)[0].z == doctest::Approx(m.position(v).z + 12.5));
 }
 
@@ -88,14 +88,14 @@ TEST_CASE("polySlide slides the selected edges as one undo step")
     run("polySlide", {{"amount", -0.5}, {"direction", {1, 0, 0}}});
     for (int j = 0; j <= 4; ++j)
     {
-        CHECK(meshOf(plane).position(gridId(4, 2, j)).x == doctest::Approx(-12.5));
-        CHECK(meshOf(plane).position(gridId(4, 2, j)).z == doctest::Approx(before.position(gridId(4, 2, j)).z));
+        CHECK(meshOf(plane).position(slideGridId(4, 2, j)).x == doctest::Approx(-12.5));
+        CHECK(meshOf(plane).position(slideGridId(4, 2, j)).z == doctest::Approx(before.position(slideGridId(4, 2, j)).z));
     }
     run("undo");
-    CHECK(meshOf(plane).position(gridId(4, 2, 2)).x == doctest::Approx(0.0));
+    CHECK(meshOf(plane).position(slideGridId(4, 2, 2)).x == doctest::Approx(0.0));
 
-    run("selectComponents", {{"args", {plane}}, {"vertices", {gridId(4, 2, 2)}}});
+    run("selectComponents", {{"args", {plane}}, {"vertices", {slideGridId(4, 2, 2)}}});
     CHECK_THROWS_AS(run("polySlide", {{"amount", 0.5}}), CommandError);
     run("polySlide", {{"amount", 0.5}, {"direction", {0, 0, -1}}});
-    CHECK(meshOf(plane).position(gridId(4, 2, 2)).z == doctest::Approx(before.position(gridId(4, 2, 2)).z - 12.5));
+    CHECK(meshOf(plane).position(slideGridId(4, 2, 2)).z == doctest::Approx(before.position(slideGridId(4, 2, 2)).z - 12.5));
 }
