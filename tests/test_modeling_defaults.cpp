@@ -227,6 +227,21 @@ TEST_CASE("polySplitRings in object mode splits the whole mesh")
     CHECK(points() == 18);
 }
 
+TEST_CASE("polySplitRings on edges: along beside them, across through their ring")
+{
+    run("newScene");
+    std::string plane = run("polyPlane", {{"width", 400.0}, {"depth", 100.0}, {"subdivisionsX", 4}, {"subdivisionsZ", 1}})[0];
+    run("selectMode", {{"args", {"edge"}}});
+    run("selectComponents", {{"args", {plane}}, {"edges", {0}}});
+    run("polySplitRings");
+    CHECK(faces(plane) == 8);
+    run("undo");
+    run("selectMode", {{"args", {"edge"}}});
+    run("selectComponents", {{"args", {plane}}, {"edges", {0}}});
+    run("polySplitRings", {{"direction", "across"}});
+    CHECK(faces(plane) == 5);
+}
+
 TEST_CASE("splitRings modifier splits live, on the selection or the whole mesh")
 {
     run("newScene");
@@ -242,7 +257,7 @@ TEST_CASE("splitRings modifier splits live, on the selection or the whole mesh")
 
     run("selectComponents", {{"args", {plane}}, {"edges", {0}}});
     run("addModifier", {{"args", {plane}}, {"kind", "splitRings"}});
-    CHECK(faces(plane) == 5);
+    CHECK(faces(plane) == 8);
 }
 
 TEST_CASE("splitRings modifier selection can be edited, applied and cancelled")
@@ -260,18 +275,18 @@ TEST_CASE("splitRings modifier selection can be edited, applied and cancelled")
     CHECK(run("componentSelection")[plane]["faces"].size() == 4);
     run("selectComponents", {{"args", {plane}}, {"edges", {0}}});
     run("splitRingsApplySelection", {{"args", {plane}}});
-    CHECK(faces(plane) == 5);
+    CHECK(faces(plane) == 8);
     CHECK(run("selectMode") == "object");
 
     run("splitRingsEditSelection", {{"args", {plane}}});
     CHECK(run("componentSelection")[plane]["edges"] == json::array({0}));
     run("selectComponents", {{"args", {plane}}, {"edges", {1, 2}}});
     run("splitRingsCancelSelection", {{"args", {plane}}});
-    CHECK(faces(plane) == 5);
+    CHECK(faces(plane) == 8);
 
     run("splitRingsEditSelection", {{"args", {plane}}});
     run("selectMode", {{"args", {"object"}}});
     CHECK_THROWS(run("splitRingsApplySelection", {{"args", {plane}}}));
     run("splitRingsCancelSelection", {{"args", {plane}}});
-    CHECK(faces(plane) == 5);
+    CHECK(faces(plane) == 8);
 }

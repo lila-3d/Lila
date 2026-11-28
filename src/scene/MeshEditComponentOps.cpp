@@ -286,10 +286,12 @@ void registerMeshEditComponentCommands()
 
     ops::registerCommand({
         .name = "polySplitRings",
-        .doc = "Subdivide one way: insert loops across every ring through the selected edges, or across the selected faces in one "
+        .doc = "Subdivide one way: insert loops beside or across the selected edges, or across the selected faces in one "
                "direction, without the perpendicular cuts a full subdivide adds. Returns the new edges.",
         .flags = {{"count", "", T::Int, 1, "Loops per ring, evenly spaced.", {}, {}, 1.0, 32.0},
-                  {"direction", "", T::String, "along", "Faces: across adds lines across the selection's short way, along the long way.",
+                  {"direction", "", T::String, "along",
+                   "Edges: along adds loops parallel to them in the faces either side, across cuts every ring through them. Faces: "
+                   "across adds lines across the selection's short way, along the long way.",
                    {"across", "along"}},
                   {"edgeFlow", "", T::Bool, true, "Curve the new loops to follow the surrounding surface rather than lie flat."}},
         .run = [](const Args& a) -> json {
@@ -305,7 +307,7 @@ void registerMeshEditComponentCommands()
                     for (Index f = 0; f < m.faceCapacity(); ++f)
                         if (m.faceValid(f))
                             sel.push_back(f);
-                const Ids ringEdges = kind == K::Face ? geo::regionRingEdges(m, sel, across) : sel;
+                const Ids ringEdges = kind == K::Face ? geo::regionRingEdges(m, sel, across) : across ? sel : geo::edgeSideRingEdges(m, sel);
                 const Ids made = geo::splitRings(m, ringEdges, count, s);
                 if (flow && !made.empty())
                     for (const geo::PointMove& mv : geo::editEdgeFlow(m, made, {}))

@@ -293,4 +293,19 @@ std::vector<Index> regionRingEdges(const Mesh& mesh, std::span<const Index> face
     }
     return out;
 }
+
+std::vector<Index> edgeSideRingEdges(const Mesh& mesh, std::span<const Index> edges)
+{
+    std::vector<Index> out;
+    for (Index e : edges)
+    {
+        if (!mesh.edgeValid(e))
+            continue;
+        mesh.forEachEdgeCorner(e, [&](Index c) {
+            if (mesh.faceSize(mesh.cornerFace(c)) == 4)
+                out.push_back(mesh.cornerEdge(mesh.cornerNext(c)));
+        });
+    }
+    return out;
+}
 } // namespace lila::geo

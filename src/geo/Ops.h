@@ -163,6 +163,12 @@ LILA_SCENE_API std::vector<Index> splitRings(Mesh& mesh, std::span<const Index> 
 LILA_SCENE_API std::vector<Index> regionRingEdges(const Mesh& mesh, std::span<const Index> faces, bool across);
 
 /**
+ * The rings to split for selected edges: each quad beside an edge gives its side edge, so the new loops run parallel to
+ * the selected edges, one set on each side.
+ */
+LILA_SCENE_API std::vector<Index> edgeSideRingEdges(const Mesh& mesh, std::span<const Index> edges);
+
+/**
  * Splits faces between selected points that are consecutive (among the selected) around a face but not already
  * joined by an edge, Maya's Connect. Returns the new edges.
  */

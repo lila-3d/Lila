@@ -274,6 +274,14 @@ TEST_CASE("split rings subdivides one way")
     splitRings(along, regionRingEdges(along, row, false));
     CHECK(along.numFaces() == 20);
     CHECK(pointAt(along, {0, 0, 12.5}) != kInvalid);
+
+    // Edges: a loop parallel to the selected edge in the quads either side, through the whole column.
+    Mesh sides = makePlane({100, 100, 4, 4});
+    splitRings(sides, edgeSideRingEdges(sides, columnEdges(sides, 0.0, -50.0, -25.0)));
+    CHECK(isValid(sides));
+    CHECK(sides.numFaces() == 24);
+    CHECK(pointsAtX(sides, -12.5) == 5);
+    CHECK(pointsAtX(sides, 12.5) == 5);
 }
 
 TEST_CASE("split rings follows symmetry")

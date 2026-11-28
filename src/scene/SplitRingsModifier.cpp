@@ -81,7 +81,10 @@ public:
             if (r.ids.empty())
                 return;
             geo::Mesh m = *in;
-            const std::vector<Index> ringEdges = r.kind == ComponentMode::Face ? geo::regionRingEdges(m, r.ids, as<int64_t>(kDirection) == 1) : r.ids;
+            const bool across = as<int64_t>(kDirection) == 1;
+            const std::vector<Index> ringEdges = r.kind == ComponentMode::Face ? geo::regionRingEdges(m, r.ids, across)
+                                                 : across                      ? r.ids
+                                                                               : geo::edgeSideRingEdges(m, r.ids);
             const std::vector<Index> made = geo::splitRings(m, ringEdges, int(std::clamp<int64_t>(as<int64_t>(kCount), 1, 32)));
             if (as<bool>(kEdgeFlow) && !made.empty())
                 for (const geo::PointMove& mv : geo::editEdgeFlow(m, made, {}))
@@ -206,7 +209,7 @@ void registerTypes()
     t.icon = "stack-2";
     t.doc = "Subdivides one way, kept live: loops across the rings of the edges or faces selected when it was added, curved to "
             "the surface. Without a selection it splits the whole mesh.";
-    AttrDef direction = splitRingsImpl::param("direction", PlugType::Enum, int64_t(0), "Faces: along adds loops down the selection's long way, across its short way.");
+    AttrDef direction = splitRingsImpl::param("direction", PlugType::Enum, int64_t(0), "Edges: along adds loops parallel to them either side, across cuts every ring through them. Faces: along adds loops down the selection's long way, across its short way.");
     direction.enumNames = {"along", "across"};
     t.ownAttrs = {
         {.name = "inMesh", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrHidden},
