@@ -2,10 +2,12 @@
 
 #include "core/Export.h"
 
+#include "geo/Slide.h"
 #include "scene/Plug.h"
 
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -201,4 +203,20 @@ using PointTargetSetup = std::function<PointTarget(const geo::Mesh&, const glm::
  * selected meshes. Returns how many meshes it changed.
  */
 LILA_SCENE_API int deformSelectedComponents(const char* label, const PointTargetSetup& setup, bool allowWhole = false);
+
+/** What slideSelectedComponents does: amount -1 to 1 along the rails, direction (world) picks the positive side. */
+struct SlideOptions
+{
+    double amount = 0.0;
+    std::optional<glm::dvec3> direction;
+    bool even = false;
+};
+/**
+ * The rails a slide follows on one base mesh: edge slide for edges (a face selection slides its border), vertex slide for
+ * points, which needs a direction. Empty when there is nothing to slide.
+ */
+LILA_SCENE_API geo::SlideRails slideRails(const geo::Mesh& mesh, const glm::dmat4& world, ComponentMode kind, const components::Ids& ids,
+                                          const std::optional<glm::dvec3>& direction);
+/** Slides the selected components along slideRails, keeping the surface's shape, with symmetry, as one undo step. Returns the meshes changed. */
+LILA_SCENE_API int slideSelectedComponents(const char* label, const SlideOptions& o);
 } // namespace lila::scene

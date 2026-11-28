@@ -29,6 +29,7 @@ lila_module(lila_geo Scene
     PointWeld.cpp
     Primitives.cpp
     Reduce.cpp
+    Slide.cpp
     SmartJoin.cpp
     SplitNgons.cpp
     SurfaceNets.cpp

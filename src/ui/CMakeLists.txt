@@ -140,6 +140,7 @@ lila_module(lila_ui UI
     RetopoPolesTool.cpp RetopoPolesTool.h
     TopologyTool.cpp TopologyTool.h TopologyModes.cpp TopologyToolkit.cpp TopologyToolkit.h
     KnifeTool.cpp KnifeTool.h
+    SlideTool.cpp SlideTool.h
     TargetWeldTool.cpp TargetWeldTool.h
     ArrayTool.cpp ArrayTool.h
     ClayTool.cpp

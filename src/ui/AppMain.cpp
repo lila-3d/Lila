@@ -43,6 +43,7 @@
 #include "ui/BakePaintTool.h"
 #include "ui/SurfaceSnap.h"
 #include "ui/ViewportRenderers.h"
+#include "ui/SlideTool.h"
 #include "ui/TargetWeldTool.h"
 #include "ui/TearOff.h"
 #include "ui/Telemetry.h"
@@ -172,6 +173,7 @@ void registerUi()
     registerCurveToolkitActions();
     registerKnifeActions();
     registerTargetWeldActions();
+    registerSlideActions();
     registerArrayToolActions();
     registerCurveUi();
     pointCloudDisplay::registerUi();

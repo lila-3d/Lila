@@ -58,6 +58,7 @@ add_executable(lila_tests
     test_modeling_defaults.cpp
     test_symmetry.cpp
     test_radial_symmetry.cpp
+    test_slide.cpp
     test_softselect.cpp
     test_gizmo.cpp
     test_history.cpp

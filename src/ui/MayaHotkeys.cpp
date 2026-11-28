@@ -315,6 +315,7 @@ const std::unordered_map<std::string, std::string>& actionTable()
         {"dR_connectTool", "mesh.connect"},
         {"TargetWeldTool", "mesh.targetWeld"},
         {"dR_targetWeldTool", "mesh.targetWeld"},
+        {"SlideEdgeTool", "mesh.slide"},
         {"MergeVertices", "mesh.merge"},
         {"MergeToCenter", "mesh.mergeCenter"},
         {"PolygonCollapse", "mesh.collapse"},

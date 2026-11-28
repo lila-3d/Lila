@@ -4,7 +4,9 @@
 #include "core/Profile.h"
 #include "geo/Bvh.h"
 #include "geo/Mesh.h"
+#include "geo/Slide.h"
 #include "geo/Symmetry.h"
+#include "geo/Topology.h"
 #include "scene/Components.h"
 #include "scene/Fields.h"
 #include "scene/Graph.h"
@@ -952,6 +954,37 @@ void offsetSelectedComponents(const char* label, const glm::dvec3& uvn)
         return [frames, linear, toLocal, uvn](Index p, const glm::dvec3& at) { return at + toLocal * (worldFrame((*frames)[p], linear) * uvn); };
     }, alongProvidedFrames(uvn));
 }
+
+geo::SlideRails slideRails(const geo::Mesh& m, const glm::dmat4& world, ComponentMode kind, const Ids& ids,
+                           const std::optional<glm::dvec3>& direction)
+{
+    const glm::dmat3 linear(world);
+    if (kind == ComponentMode::Vertex)
+        return direction ? geo::vertexSlideRails(m, ids, *direction, linear) : geo::SlideRails{};
+    const Ids edges = kind == ComponentMode::Face ? geo::regionBoundaryEdges(m, ids) : ids;
+    return geo::edgeSlideRails(m, edges, direction ? &*direction : nullptr, linear);
+}
+
+int slideSelectedComponents(const char* label, const SlideOptions& o)
+{
+    LILA_ZONE();
+
+    if (components::mode() == ComponentMode::Vertex && !o.direction)
+        throw CommandError(std::string(label) + ": vertex slide needs a direction");
+    return deformSelectedComponents(label, [&](const geo::Mesh& m, const glm::dmat4& world, ComponentMode kind, const Ids& ids) -> PointTarget {
+        const geo::SlideRails rails = slideRails(m, world, kind, ids, o.direction);
+        if (rails.points.empty())
+            return {};
+        const std::vector<glm::dvec3> to = geo::slidePositions(m, rails, o.amount, o.even, glm::dmat3(world));
+        auto moved = std::make_shared<std::unordered_map<Index, glm::dvec3>>();
+        for (size_t k = 0; k < rails.points.size(); ++k)
+            (*moved)[rails.points[k]] = to[k];
+        return [moved](uint32_t p, const glm::dvec3& at) {
+            auto it = moved->find(Index(p));
+            return it == moved->end() ? at : it->second;
+        };
+    });
+}
 } // namespace lila::scene
 
 namespace lila::scene::detail
@@ -996,6 +1029,27 @@ void registerMeshEditTransformCommands()
             transformSelectedComponents("Move Components", by);
             return nullptr;
         },
+    });
+
+    ops::registerCommand({
+        .name = "polySlide",
+        .doc = "Slide the selected edges along the edges beside them, or in vertex mode each selected vertex along one of its own "
+               "edges, without changing the surface's shape. A face selection slides its border. Follows the mesh's symmetry.",
+        .flags = {{"amount", "", T::Float, 0.5, "How far, -1 to 1: a fraction of each rail, the sign picking the side.", {}, {}, -1.0, 1.0},
+                  {"direction", "", T::Vec3, nullptr, "World direction the positive side leans toward; picks each vertex's edge in vertex mode (required there)."},
+                  {"even", "", T::Bool, false, "Slide every point the same distance (amount times the shortest rail) instead of the same fraction."}},
+        .run = [](const Args& a) -> json {
+            SlideOptions o;
+            o.amount = a.get<double>("amount");
+            if (a.has("direction"))
+                o.direction = vec(a.flags["direction"]);
+            o.even = a.get<bool>("even");
+            if (slideSelectedComponents("Slide", o) == 0)
+                throw CommandError("polySlide: select edges, faces or vertices on a mesh");
+            return nullptr;
+        },
+        .adjustable = true,
+        .examples = {"polySlide(amount=0.25)", "polySlide(amount=-0.5, even=True)"},
     });
 
     ops::registerCommand({

@@ -248,6 +248,7 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"mesh.merge", "arrows-join"},
     {"mesh.mergeCenter", "arrows-minimize"},
     {"mesh.targetWeld", "target"},
+    {"mesh.slide", "arrows-left-right"},
     {"mesh.collapse", "arrows-diagonal-minimize"},
     {"mesh.dissolve", "droplet"},
     {"mesh.spin", "rotate"},

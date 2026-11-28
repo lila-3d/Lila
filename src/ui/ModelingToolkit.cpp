@@ -76,7 +76,7 @@ ModelingToolkit::ModelingToolkit(QWidget* parent) : QWidget(parent)
                               {"mesh.triangulate", "mesh.quadrangulate", "mesh.transferAttributes", "mesh.repair", "mesh.relax", "mesh.bakeModifierStack"},
                               kModelingGroupColumns, body));
 
-    add("Components", modelingGroup({push("mesh.collapse", "Collapse", body), push("mesh.dissolve", "Dissolve", body), push("mesh.poke", "Poke", body),
+    add("Components", modelingGroup({push("mesh.slide", "Slide", body), push("mesh.collapse", "Collapse", body), push("mesh.dissolve", "Dissolve", body), push("mesh.poke", "Poke", body),
                                      push("mesh.spin", "Spin Edge", body), push("mesh.circularize", "Circularize", body),
                                      push("mesh.straighten", "Straighten", body)},
                                     {"mesh.connect", "mesh.mergeCenter", "mesh.targetWeld", "mesh.gridFill", "mesh.splitRings", "mesh.offsetLoop", "edit.delete"},
